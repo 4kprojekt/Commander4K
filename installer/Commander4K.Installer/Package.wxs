@@ -1,0 +1,41 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- UpgradeCode must never change: it is how a newer MSI finds and replaces an installed version. -->
+  <Package Name="Commander4K"
+           Manufacturer="4Kprojekt"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="5E1C8B2A-3D4F-4A6B-9C7D-2F8E1A0B4C6D"
+           Scope="perMachine"
+           Compressed="yes">
+    <SummaryInformation Description="Commander4K - dual-pane file manager" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Commander4K is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/4kprojekt/Commander4K" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/4kprojekt/Commander4K/issues" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Commander4K" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Commander4K">
+      <Component Directory="INSTALLFOLDER">
+        <File Source="$(var.PublishDir)Commander4K.exe" KeyPath="yes" />
+      </Component>
+      <!-- Tells the in-app updater to update through a new MSI instead of replacing the exe in Program Files. -->
+      <Component Directory="INSTALLFOLDER">
+        <File Source="$(var.MarkerFile)" Name="Commander4K.installed" />
+      </Component>
+      <Component Directory="INSTALLFOLDER">
+        <File Source="$(var.RepoRoot)LICENSE" Name="LICENSE.txt" />
+      </Component>
+      <Component Directory="INSTALLFOLDER" Id="StartMenuShortcut">
+        <Shortcut Name="Commander4K"
+                  Description="Dual-pane file manager"
+                  Directory="ProgramMenuFolder"
+                  Target="[INSTALLFOLDER]Commander4K.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKLM" Key="Software\4Kprojekt\Commander4K" Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+      </Component>
+    </Feature>
+  </Package>
+</Wix>

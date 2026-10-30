@@ -64,12 +64,46 @@ public sealed class ConfigStore(string configDirectory)
     public Task<SkinCatalog> LoadSkinsAsync(CancellationToken cancellationToken = default) =>
         SkinCatalog.LoadAsync(SkinsDirectory, cancellationToken);
 
-    public Task<KeymapFile> LoadKeymapAsync(CancellationToken cancellationToken = default) =>
-        LoadOrCreateAsync(
+    public async Task<KeymapFile> LoadKeymapAsync(CancellationToken cancellationToken = default)
+    {
+        var file = await LoadOrCreateAsync(
             KeymapFileName,
-            () => new KeymapFile { Bindings = new(DefaultKeymap.Bindings, StringComparer.OrdinalIgnoreCase) },
+            () => new KeymapFile
+            {
+                Bindings = new(DefaultKeymap.Bindings, StringComparer.OrdinalIgnoreCase),
+                KnownCommands = [.. DefaultKeymap.Bindings.Values.Distinct()],
+            },
             ConfigJsonContext.Default.KeymapFile,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+
+        if (MergeNewDefaults(file))
+        {
+            await SaveKeymapAsync(file, cancellationToken).ConfigureAwait(false);
+        }
+
+        return file;
+    }
+
+    /// <summary>Adds default bindings for commands introduced since the file was written; returns true when changed.</summary>
+    internal static bool MergeNewDefaults(KeymapFile file)
+    {
+        var known = new HashSet<string>((IEnumerable<string>?)file.KnownCommands ?? file.Bindings.Values, StringComparer.OrdinalIgnoreCase);
+        var bound = new HashSet<string>(file.Bindings.Keys, StringComparer.OrdinalIgnoreCase);
+        var changed = file.KnownCommands is null;
+        foreach (var (sequence, command) in DefaultKeymap.Bindings)
+        {
+            if (!known.Contains(command) && !bound.Contains(sequence))
+            {
+                file.Bindings[sequence] = command;
+                changed = true;
+            }
+        }
+
+        var allKnown = known.Concat(DefaultKeymap.Bindings.Values).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToList();
+        changed |= file.KnownCommands is null || allKnown.Count != file.KnownCommands.Count;
+        file.KnownCommands = allKnown;
+        return changed;
+    }
 
     public Task<ExternalToolsConfig> LoadToolsAsync(CancellationToken cancellationToken = default) =>
         LoadOrCreateAsync(

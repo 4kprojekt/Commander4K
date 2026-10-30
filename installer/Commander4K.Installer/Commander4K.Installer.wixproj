@@ -1,0 +1,17 @@
+<!--
+  MSI installer, built by build-release.ps1 -Package (not part of Commander4K.sln):
+    dotnet build installer/Commander4K.Installer/Commander4K.Installer.wixproj -c Release
+      -p:InstallerPlatform=x64|arm64 -p:ProductVersion=0.2.0 -p:PublishDir=<folder with Commander4K.exe>\ -p:MarkerFile=<path>
+  WiX 5 is used on purpose: WiX 6+ requires accepting the Open Source Maintenance Fee EULA.
+-->
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputName>Commander4K</OutputName>
+    <InstallerPlatform Condition="'$(InstallerPlatform)' == ''">x64</InstallerPlatform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.1</ProductVersion>
+    <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(PublishDir);MarkerFile=$(MarkerFile);RepoRoot=$(MSBuildThisFileDirectory)..\..\</DefineConstants>
+    <!-- ICE43/ICE57: a non-advertised Start menu shortcut in a per-machine package keyed in HKLM is valid at runtime;
+         the alternative (advertised shortcut) would embed the whole exe as the shortcut icon. ICE61: same-version upgrades. -->
+    <SuppressIces>ICE43;ICE57;ICE61</SuppressIces>
+  </PropertyGroup>
+</Project>

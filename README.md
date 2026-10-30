@@ -24,6 +24,13 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - `F3` viewer, `F4` your editor, `F7` new folder, `F8` delete;
   - `Alt+F7` parallel search that also looks inside files;
   - `Space` shows folder sizes, `Ctrl+T` opens a tab, `Ctrl+G` jumps to a recently used folder.
+- **Plugin panels:**
+  - system information (hardware, OS, security, hot-fixes, start-up, environment);
+  - task manager, with a process tree, live CPU and memory, and per-process resources and loaded DLLs;
+  - log analyzer, which groups messages into patterns and shows a per-hour timeline;
+  - a catalogue of PowerShell commands you can run on the current folder or the selected files.
+
+  Panels, menu commands and key bindings can come from plugins in `plugins/`.
 - **Skins:** Modern dark/light, Norton Commander, Midnight Commander and Total Commander classic. You can also make your own as JSON, or let AI design one (see below).
 - **Easy to configure:**
   - `Ctrl+,` opens a settings window that searches settings, shortcuts and config files;
@@ -37,11 +44,14 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
 
 ## Install
 
-Download `Commander4K-win-x64.exe` (Intel/AMD) or `Commander4K-win-arm64.exe` (Snapdragon and other ARM64 PCs) from [Releases](https://github.com/4kprojekt/Commander4K/releases) and run it. You don't need to install anything else.
+From [Releases](https://github.com/4kprojekt/Commander4K/releases), pick your architecture: `win-x64` for Intel/AMD, `win-arm64` for Snapdragon and other ARM64 PCs. Then choose a package:
 
-The executables are not code-signed yet, so Windows SmartScreen may warn on first start ("More info" → "Run anyway").
+- **Installer** (`Commander4K-<arch>.msi`): installs into Program Files and adds a Start menu shortcut. Settings go to `%AppData%\Commander4K`. Updates download and run the next MSI.
+- **Portable** (`Commander4K-<arch>.zip`): unzip anywhere and run `Commander4K.exe`. You don't need to install anything else. Settings live in a `config` folder next to the exe, and updates replace the exe in place.
 
-Settings live in a `config` folder next to the exe. If that folder isn't writable, they go to `%AppData%\Commander4K` instead.
+Every download is listed in `SHA256SUMS.txt`, and the built-in updater refuses files that don't match.
+
+The binaries are not code-signed yet, so Windows SmartScreen may warn on first start ("More info" → "Run anyway").
 
 ## Custom skins and AI-designed skins
 
@@ -59,7 +69,8 @@ Requirements: Windows 10/11 and the .NET 10 SDK.
 dotnet build Commander4K.sln
 dotnet test --solution Commander4K.sln
 dotnet run --project src/Commander4K.App
-./build-release.ps1            # single-file ReadyToRun builds in dist/win-x64 and dist/win-arm64
+./build-release.ps1                     # single-file ReadyToRun builds in dist/publish/<rid>
+./build-release.ps1 -Version 0.2.0 -Package   # + ZIP, MSI (WiX 5) and SHA256SUMS.txt in dist/release
 ```
 
 To publish a release, push a tag such as `v0.2.0`. The [release workflow](.github/workflows/release.yml) tests, builds both architectures and publishes the release assets the updater expects.

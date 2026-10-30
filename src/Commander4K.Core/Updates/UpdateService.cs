@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
@@ -20,32 +21,76 @@ public sealed record UpdateInfo(
 
 public sealed class UpdateException(string message, Exception? inner = null) : Exception(message, inner);
 
+/// <summary>How the running copy was installed, which decides how it updates itself.</summary>
+public enum InstallKind : byte
+{
+    /// <summary><c>dotnet run</c> or a framework-dependent folder: no self-update, link to the release page.</summary>
+    Development,
+
+    /// <summary>Unzipped single-file exe: the new exe is extracted from the release ZIP and swapped in.</summary>
+    Portable,
+
+    /// <summary>Installed by the MSI (marker file next to the exe): the new MSI is downloaded and run.</summary>
+    Msi,
+}
+
 /// <summary>
-/// Self-update from GitHub Releases. A release carries one single-file executable per architecture
-/// (<c>Commander4K-win-x64.exe</c>, <c>Commander4K-win-arm64.exe</c>) and a <c>SHA256SUMS.txt</c>; downloads are rejected
+/// Self-update from GitHub Releases. A release carries a portable ZIP and an MSI per architecture
+/// (<c>Commander4K-win-x64.zip</c>, <c>Commander4K-win-arm64.msi</c>, ...) and a <c>SHA256SUMS.txt</c>; downloads are rejected
 /// unless they match the published checksum. The running exe is replaced by renaming it to <c>.old</c> (Windows allows
 /// renaming a running image) and moving the new file into place; the old file is removed on the next start.
 /// </summary>
 public sealed class UpdateService(HttpClient http)
 {
     public const string ChecksumsAssetName = "SHA256SUMS.txt";
+
+    /// <summary>Written next to the exe by the MSI.</summary>
+    public const string MsiMarkerFileName = "Commander4K.installed";
+
     private const string ApiBase = "https://api.github.com";
 
-    public static string AssetNameFor(Architecture architecture) =>
-        architecture == Architecture.Arm64 ? "Commander4K-win-arm64.exe" : "Commander4K-win-x64.exe";
+    /// <summary>Release asset for this architecture and install kind, e.g. <c>Commander4K-win-arm64.zip</c>.</summary>
+    public static string AssetNameFor(Architecture architecture, InstallKind kind = InstallKind.Portable) =>
+        $"Commander4K-{(architecture == Architecture.Arm64 ? "win-arm64" : "win-x64")}{(kind == InstallKind.Msi ? ".msi" : ".zip")}";
 
-    /// <summary>
-    /// Self-update replaces one file, so it only works for the published single-file exe — not for <c>dotnet run</c>
-    /// or a framework-dependent folder, where the user is pointed to the release page instead.
-    /// </summary>
-    public static bool CanSelfUpdate(string? processPath) =>
-        processPath is not null
-        && string.Equals(Path.GetFileName(processPath), "Commander4K.exe", StringComparison.OrdinalIgnoreCase)
-        && !File.Exists(Path.Combine(Path.GetDirectoryName(processPath)!, "Commander4K.dll"));
+    public static InstallKind DetectInstallKind(string? processPath)
+    {
+        if (processPath is null
+            || !string.Equals(Path.GetFileName(processPath), "Commander4K.exe", StringComparison.OrdinalIgnoreCase)
+            || File.Exists(Path.Combine(Path.GetDirectoryName(processPath)!, "Commander4K.dll")))
+        {
+            return InstallKind.Development;
+        }
+
+        return File.Exists(Path.Combine(Path.GetDirectoryName(processPath)!, MsiMarkerFileName)) ? InstallKind.Msi : InstallKind.Portable;
+    }
+
+    public static bool CanSelfUpdate(string? processPath) => DetectInstallKind(processPath) != InstallKind.Development;
+
+    /// <summary>Extracts <c>Commander4K.exe</c> from a downloaded portable ZIP into <paramref name="stagingDirectory"/>.</summary>
+    public static string ExtractExecutable(string zipPath, string stagingDirectory)
+    {
+        using var archive = System.IO.Compression.ZipFile.OpenRead(zipPath);
+        var entry = archive.Entries.FirstOrDefault(e => string.Equals(e.Name, "Commander4K.exe", StringComparison.OrdinalIgnoreCase))
+            ?? throw new UpdateException("Archiwum aktualizacji nie zawiera Commander4K.exe.");
+        var target = Path.Combine(stagingDirectory, "Commander4K.new.exe");
+        entry.ExtractToFile(target, overwrite: true);
+        return target;
+    }
+
+    /// <summary>Starts the downloaded MSI (it upgrades the installed version in place; UAC prompts as needed).</summary>
+    public static void StartMsiInstall(string msiPath)
+    {
+        var info = new System.Diagnostics.ProcessStartInfo("msiexec.exe") { UseShellExecute = true };
+        info.ArgumentList.Add("/i");
+        info.ArgumentList.Add(msiPath);
+        info.ArgumentList.Add("/passive");
+        using var _ = System.Diagnostics.Process.Start(info);
+    }
 
     /// <summary>Returns the newest release above <paramref name="current"/>, or <c>null</c> when up to date.</summary>
     /// <exception cref="UpdateException">The repository is unreachable, missing, or rate-limited.</exception>
-    public async Task<UpdateInfo?> CheckAsync(string repository, SemanticVersion current, bool includePrereleases, CancellationToken cancellationToken)
+    public async Task<UpdateInfo?> CheckAsync(string repository, SemanticVersion current, bool includePrereleases, CancellationToken cancellationToken, InstallKind kind = InstallKind.Portable)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{ApiBase}/repos/{repository}/releases?per_page=30");
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Commander4K", current.ToString()));
@@ -80,7 +125,7 @@ public sealed class UpdateService(HttpClient http)
 
             await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return SelectNewest(document.RootElement, current, includePrereleases);
+            return SelectNewest(document.RootElement, current, includePrereleases, kind);
         }
     }
 
@@ -186,10 +231,10 @@ public sealed class UpdateService(HttpClient http)
         }
     }
 
-    private static UpdateInfo? SelectNewest(JsonElement releases, SemanticVersion current, bool includePrereleases)
+    private static UpdateInfo? SelectNewest(JsonElement releases, SemanticVersion current, bool includePrereleases, InstallKind kind)
     {
         UpdateInfo? best = null;
-        var assetName = AssetNameFor(RuntimeInformation.ProcessArchitecture);
+        var assetName = AssetNameFor(RuntimeInformation.ProcessArchitecture, kind);
         foreach (var release in releases.EnumerateArray())
         {
             var tag = release.GetProperty("tag_name").GetString();

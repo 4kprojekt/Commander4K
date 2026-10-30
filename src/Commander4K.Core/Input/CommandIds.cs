@@ -3,6 +3,12 @@ namespace Commander4K.Core.Input;
 /// <summary>Built-in command ids referenced from <c>config/keymap.json</c>; names follow Total Commander's <c>cm_</c> style.</summary>
 public static class CommandIds
 {
+    /// <summary><c>panel:&lt;pluginId&gt;</c> opens a panel plugin.</summary>
+    public const string PanelPrefix = "panel:";
+
+    /// <summary><c>plugin:&lt;pluginId&gt;:&lt;commandId&gt;</c> runs a command plugin's command.</summary>
+    public const string PluginPrefix = "plugin:";
+
     public const string Help = "cm_Help";
     public const string CommandPalette = "cm_CommandPalette";
     public const string Settings = "cm_Settings";

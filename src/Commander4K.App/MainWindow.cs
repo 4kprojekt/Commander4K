@@ -10,6 +10,7 @@ using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
 using Commander4K.App.Input;
 using Commander4K.App.Panels;
+using Commander4K.App.PluginPanels;
 using Commander4K.App.Theming;
 using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
@@ -61,6 +62,8 @@ public sealed class MainWindow : Window
     private Grid _keyBar = null!;
     private bool _jobsDirty;
     private UpdateInfo? _pendingUpdate;
+    private PluginHostAdapter? _pluginHost;
+    private Menu _menu = null!;
 
     public MainWindow()
     {
@@ -137,7 +140,17 @@ public sealed class MainWindow : Window
         }
 
         _keyBar = BuildKeyBar();
-        Content = new Grid()
+        _pluginHost = new PluginHostAdapter(
+            () => (_active, Other),
+            Notify,
+            (title, text) => ShowTextWindowAsync(title, text),
+            (title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this),
+            (title, message, initial) => new InputDialog(_skins!.Current, title, message, initial).ShowAsync(this),
+            OpenPanelAsync,
+            async path => await host.Tools.EditAsync(path));
+        host.PowerShell.CommandsChanged += () => Dispatcher.UIThread.Post(RebuildMenu);
+        _menu = new Menu();
+        var shell = new Grid()
             .Rows("*,Auto,Auto,Auto")
             .Children(
                 new Grid()
@@ -163,8 +176,11 @@ public sealed class MainWindow : Window
                         new TextBlock().Ref(out _notification).Col(2).VerticalAlignment(VerticalAlignment.Center).Margin(8, 0)
                             .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis))),
                 _keyBar.Row(3));
+        DockPanel.SetDock(_menu, Dock.Top);
+        Content = new DockPanel().Children(_menu, shell);
 
         RegisterCommands();
+        RebuildMenu();
         host.Jobs.JobChanged += _ => Dispatcher.UIThread.Post(() => _jobsDirty = true);
         host.Remote.HostKeyValidator = ValidateHostKey;
         _jobsTimer.Start();
@@ -194,7 +210,7 @@ public sealed class MainWindow : Window
 
         try
         {
-            var update = await _host.Updates.CheckAsync(settings.UpdateRepository, AppVersion.Current, settings.IncludePrereleases, CancellationToken.None);
+            var update = await _host.Updates.CheckAsync(settings.UpdateRepository, AppVersion.Current, settings.IncludePrereleases, CancellationToken.None, UpdateService.DetectInstallKind(Environment.ProcessPath));
             settings.LastUpdateCheck = DateTimeOffset.UtcNow;
             await _host.SaveSettingsAsync();
             if (update is not null && update.Version.ToString() != settings.SkippedVersion)
@@ -217,7 +233,7 @@ public sealed class MainWindow : Window
         Notify("Sprawdzanie aktualizacji…");
         try
         {
-            var update = await _host.Updates.CheckAsync(settings.UpdateRepository, AppVersion.Current, settings.IncludePrereleases, CancellationToken.None);
+            var update = await _host.Updates.CheckAsync(settings.UpdateRepository, AppVersion.Current, settings.IncludePrereleases, CancellationToken.None, UpdateService.DetectInstallKind(Environment.ProcessPath));
             settings.LastUpdateCheck = DateTimeOffset.UtcNow;
             await _host.SaveSettingsAsync();
             if (update is null)
@@ -235,8 +251,12 @@ public sealed class MainWindow : Window
         }
     }
 
-    private void OpenSettings(string? query = null) =>
-        new SettingsWindow(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, query).Show(this);
+    private void OpenSettings(string? query = null)
+    {
+        var window = new SettingsWindow(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, query);
+        window.Closed += (_, _) => RebuildMenu(); // Key bindings shown in the menu may have changed.
+        window.Show(this);
+    }
 
     private void OnSettingChanged(string key)
     {
@@ -257,7 +277,7 @@ public sealed class MainWindow : Window
     {
         var host = _host!;
         var items = new List<PickerItem>();
-        foreach (var command in host.Commands.Commands.OrderBy(c => c.Description, StringComparer.CurrentCulture))
+        foreach (var command in host.ListCommands().OrderBy(c => c.Description, StringComparer.CurrentCulture))
         {
             var keys = string.Join(", ", host.KeyBindings.Where(b => string.Equals(b.Value, command.Id, StringComparison.OrdinalIgnoreCase)).Select(b => b.Key));
             items.Add(new PickerItem(command.Description, keys.Length > 0 ? keys : null, "cmd:" + command.Id, command.Id));
@@ -332,7 +352,14 @@ public sealed class MainWindow : Window
             return; // Let the text box have ordinary typing, cursor keys, Enter and Backspace.
         }
 
-        if (!inTextBox && _active.HandleNavigationKey(e.Key, e.KeyModifiers))
+        // A plugin panel gets first pick (its actions may reuse Delete/F3/Enter); the rest falls through to the keymap.
+        if (!inTextBox && _active.Plugin is { } plugin && plugin.HandleKey(e))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (!inTextBox && _active.Plugin is null && _active.HandleNavigationKey(e.Key, e.KeyModifiers))
         {
             e.Handled = true;
             return;
@@ -362,6 +389,13 @@ public sealed class MainWindow : Window
     {
         if (_commandLine is null || FocusManager?.GetFocusedElement() is TextBox || string.IsNullOrEmpty(e.Text) || e.Text == " ")
         {
+            return;
+        }
+
+        if (_active.Plugin is { } plugin)
+        {
+            plugin.AppendFilterText(e.Text);
+            e.Handled = true;
             return;
         }
 
@@ -402,6 +436,7 @@ public sealed class MainWindow : Window
         _commandLine.Foreground = b.CommandLineForeground;
         _commandLine.FontFamily = b.FontFamily;
         _notification.Foreground = b.StatusForeground;
+        ApplyMenuSkin(b);
         _keyBar.Background = b.FunctionKeyNumberBackground;
         foreach (var cell in _keyBar.Children.OfType<Border>())
         {
@@ -543,10 +578,44 @@ public sealed class MainWindow : Window
         c.Freeze();
     }
 
+    /// <summary>File operations make no sense while the active panel shows a plugin (they would hit the hidden file list).</summary>
+    private static readonly HashSet<string> FileCommands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        CommandIds.Open, CommandIds.GoToParent, CommandIds.ToggleSelection, CommandIds.CalculateDirSizes, CommandIds.View,
+        CommandIds.Edit, CommandIds.Copy, CommandIds.Move, CommandIds.MakeDirectory, CommandIds.Delete, CommandIds.NewTab, CommandIds.CloseTab,
+    };
+
     private async Task ExecuteAsync(string commandId)
     {
         try
         {
+            if (commandId.StartsWith(CommandIds.PanelPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                await OpenPanelAsync(commandId[CommandIds.PanelPrefix.Length..], null);
+                return;
+            }
+
+            if (commandId.StartsWith(CommandIds.PluginPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = commandId.Split(':', 3);
+                if (parts.Length == 3 && _host!.FindCommandPlugin(parts[1]) is { } plugin)
+                {
+                    await plugin.ExecuteAsync(parts[2], _pluginHost!, CancellationToken.None);
+                }
+                else
+                {
+                    Notify($"Brak wtyczki dla „{commandId}”.", isError: true);
+                }
+
+                return;
+            }
+
+            if (_active.Plugin is not null && FileCommands.Contains(commandId))
+            {
+                Notify("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach.");
+                return;
+            }
+
             if (!await _host!.Commands.ExecuteAsync(commandId))
             {
                 Notify($"Nieznana komenda „{commandId}” w keymap.json.", isError: true);
@@ -563,7 +632,7 @@ public sealed class MainWindow : Window
         var text = new StringBuilder();
         foreach (var (sequence, id) in _host!.Keymap.Bindings.OrderBy(b => b.Value, StringComparer.Ordinal))
         {
-            var description = _host.Commands.Commands.FirstOrDefault(cmd => cmd.Id == id)?.Description ?? id;
+            var description = _host.ListCommands().FirstOrDefault(cmd => cmd.Id == id)?.Description ?? id;
             text.AppendLine($"{sequence,-16} {description}");
         }
 
@@ -801,13 +870,155 @@ public sealed class MainWindow : Window
 
         items.Add(new PickerItem("Sieć", "net:// – hosty w sieci LAN, udziały SMB, SFTP/FTP", NetworkNeighborhoodVfsPlugin.RootPath));
         items.Add(new PickerItem("Rejestr Windows", "reg://", "reg://"));
+        items.AddRange(_host.PanelPlugins.Select(p => new PickerItem("Panel: " + p.Title, p.Description, CommandIds.PanelPrefix + p.Id)));
         items.AddRange(_host.Settings.Connections.Select(c => new PickerItem(c.Name, c.Path, c.Path)));
 
         var choice = await new PickerDialog(_skins!.Current, "Zmień dysk", items).ShowAsync(this);
-        if (choice is not null)
+        if (choice is null)
         {
-            await panel.NavigateAsync(choice.Value);
+            return;
         }
+
+        if (choice.Value.StartsWith(CommandIds.PanelPrefix, StringComparison.Ordinal))
+        {
+            await ExecuteAsync(choice.Value);
+            return;
+        }
+
+        panel.ClosePlugin();
+        await panel.NavigateAsync(choice.Value);
+    }
+
+    /// <summary>
+    /// Opens a panel plugin. File-bound panels (log analysis) open in the other panel with the file under the cursor,
+    /// so the file list stays visible; the others replace the active panel's content.
+    /// </summary>
+    private Task OpenPanelAsync(string pluginId, string? argument)
+    {
+        var host = _host!;
+        if (host.FindPanel(pluginId) is not { } plugin)
+        {
+            Notify($"Nie znaleziono panelu „{pluginId}”.", isError: true);
+            return Task.CompletedTask;
+        }
+
+        var target = _active;
+        if (plugin.RequiresArgument)
+        {
+            if (argument is null && _active.Plugin is null && _active.ActiveTab.CurrentEntry is { Kind: VfsEntryKind.File } file)
+            {
+                argument = file.Path;
+            }
+
+            if (argument is null)
+            {
+                Notify($"{plugin.Title}: ustaw kursor na pliku i spróbuj ponownie.", isError: true);
+                return Task.CompletedTask;
+            }
+
+            target = _active.Plugin is null ? Other : _active;
+        }
+
+        var request = new PanelRequest(argument, null);
+        var services = new PluginPanelServices(
+            (title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this),
+            ShowTextWindowAsync,
+            Notify);
+        target.ShowPlugin(new PluginPanelView(plugin, plugin.CreateSession(request, _pluginHost!), request, _skins!.Current, services));
+        SetActive(target);
+        return Task.CompletedTask;
+    }
+
+    private Task ShowTextWindowAsync(string title, string text)
+    {
+        new TextWindow(_skins!.Current, title, text).Show(this);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Menu bar generated from the command list, so plugins and key bindings show up automatically.</summary>
+    private void RebuildMenu()
+    {
+        var host = _host!;
+        var all = host.ListCommands().ToDictionary(c => c.Id, StringComparer.OrdinalIgnoreCase);
+
+        MenuItem Item(string commandId, string? header = null)
+        {
+            var item = new MenuItem { Header = header ?? all.GetValueOrDefault(commandId)?.Description ?? commandId };
+            var sequence = host.KeyBindings.FirstOrDefault(b => string.Equals(b.Value, commandId, StringComparison.OrdinalIgnoreCase)).Key;
+            if (sequence is not null && !sequence.Contains(' ', StringComparison.Ordinal))
+            {
+                try
+                {
+                    item.InputGesture = KeyGesture.Parse(sequence);
+                }
+                catch (ArgumentException)
+                {
+                    // Not expressible as an Avalonia gesture (e.g. "Ctrl+,"); the binding still works.
+                }
+            }
+
+            item.Click += (_, _) => _ = ExecuteAsync(commandId);
+            return item;
+        }
+
+        MenuItem Group(string header, IEnumerable<object> children)
+        {
+            var group = new MenuItem { Header = header };
+            foreach (var child in children)
+            {
+                group.Items.Add(child);
+            }
+
+            return group;
+        }
+
+        var pluginMenu = new MenuItem { Header = "_Wtyczki" };
+        foreach (var command in all.Values.Where(c => c.Category is not null && c.Id.StartsWith(CommandIds.PluginPrefix, StringComparison.Ordinal)))
+        {
+            // "PowerShell/Sieć" → Wtyczki ▸ PowerShell ▸ Sieć ▸ command.
+            var parent = pluginMenu;
+            foreach (var level in command.Category!.Split('/'))
+            {
+                var existing = parent.Items.OfType<MenuItem>().FirstOrDefault(m => Equals(m.Header, level));
+                if (existing is null)
+                {
+                    existing = new MenuItem { Header = level };
+                    parent.Items.Add(existing);
+                }
+
+                parent = existing;
+            }
+
+            parent.Items.Add(Item(command.Id, command.Description[(command.Description.LastIndexOf(": ", StringComparison.Ordinal) + 2)..]));
+        }
+
+        if (host.PluginErrors.Count > 0)
+        {
+            pluginMenu.Items.Add(new Separator());
+            pluginMenu.Items.Add(new MenuItem { Header = $"⚠ Nie wczytano {host.PluginErrors.Count} wtyczek", IsEnabled = false });
+        }
+
+        _menu.Items.Clear();
+        _menu.Items.Add(Group("_Plik", [Item(CommandIds.Copy), Item(CommandIds.Move), Item(CommandIds.MakeDirectory), Item(CommandIds.Delete), new Separator(),
+            Item(CommandIds.NewTab), Item(CommandIds.CloseTab), new Separator(), Item(CommandIds.Exit)]));
+        _menu.Items.Add(Group("P_olecenia", [Item(CommandIds.SearchAsync), Item(CommandIds.GoToFrecent), Item(CommandIds.CalculateDirSizes), Item(CommandIds.Compare),
+            Item(CommandIds.OpenTerminal), Item(CommandIds.Refresh), Item(CommandIds.ToggleHidden), new Separator(), Item(CommandIds.AddConnection)]));
+        _menu.Items.Add(Group("Pa_nele", [Item(CommandIds.LeftDriveMenu), Item(CommandIds.RightDriveMenu), Item(CommandIds.OpenNetwork), Item(CommandIds.OpenRegistry), new Separator(),
+            .. host.PanelPlugins.Select(p => Item(CommandIds.PanelPrefix + p.Id, p.Title))]));
+        _menu.Items.Add(pluginMenu);
+        _menu.Items.Add(Group("_Konfiguracja", [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.CommandPalette)]));
+        _menu.Items.Add(Group("Pomo_c", [Item(CommandIds.Help), Item(CommandIds.CheckForUpdates), Item(CommandIds.About)]));
+        if (_skins is not null)
+        {
+            ApplyMenuSkin(_skins.Current);
+        }
+    }
+
+    private void ApplyMenuSkin(SkinBrushes b)
+    {
+        _menu.Background = b.HeaderBackground;
+        _menu.Foreground = b.HeaderForeground;
+        _menu.FontFamily = b.FontFamily;
     }
 
     private async ValueTask GoToFrecentAsync(CommandInvocation _)

@@ -114,6 +114,46 @@ public sealed class UpdateTests : IDisposable
         Assert.False(UpdateService.CanSelfUpdate(current));
     }
 
+    [Fact]
+    public void Install_kind_and_zip_extraction()
+    {
+        var exe = Path.Combine(_directory, "Commander4K.exe");
+        File.WriteAllText(exe, "x");
+        Assert.Equal(InstallKind.Portable, UpdateService.DetectInstallKind(exe));
+        File.WriteAllText(Path.Combine(_directory, UpdateService.MsiMarkerFileName), "msi");
+        Assert.Equal(InstallKind.Msi, UpdateService.DetectInstallKind(exe));
+        Assert.Equal(InstallKind.Development, UpdateService.DetectInstallKind(Path.Combine(_directory, "dotnet.exe")));
+        Assert.EndsWith(".msi", UpdateService.AssetNameFor(Architecture.Arm64, InstallKind.Msi), StringComparison.Ordinal);
+        Assert.Equal("Commander4K-win-x64.zip", UpdateService.AssetNameFor(Architecture.X64));
+
+        var zip = Path.Combine(_directory, "release.zip");
+        using (var archive = System.IO.Compression.ZipFile.Open(zip, System.IO.Compression.ZipArchiveMode.Create))
+        {
+            using var writer = new StreamWriter(archive.CreateEntry("Commander4K.exe").Open());
+            writer.Write("new build");
+        }
+
+        var extracted = UpdateService.ExtractExecutable(zip, _directory);
+        Assert.Equal("new build", File.ReadAllText(extracted));
+    }
+
+    [Fact]
+    public void Keymap_merge_adds_new_defaults_but_keeps_user_removals()
+    {
+        var file = new KeymapFile
+        {
+            Bindings = new(StringComparer.OrdinalIgnoreCase) { ["F5"] = "cm_Copy" },
+            KnownCommands = ["cm_Copy", "cm_Move"], // cm_Move was known and deliberately unbound.
+        };
+
+        Assert.True(ConfigStore.MergeNewDefaults(file));
+
+        Assert.DoesNotContain("cm_Move", file.Bindings.Values);
+        Assert.Equal("cm_Settings", file.Bindings["Ctrl+,"]);
+        Assert.Contains("cm_Move", file.KnownCommands!);
+        Assert.False(ConfigStore.MergeNewDefaults(file));
+    }
+
     [Theory]
     [InlineData("ukryte", "showHidden")]
     [InlineData("zrodlo", "updateRepository")]

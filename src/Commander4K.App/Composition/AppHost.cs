@@ -14,9 +14,16 @@ using Commander4K.Plugins.BuiltIn.Network;
 using Commander4K.Plugins.BuiltIn.Registry;
 using Commander4K.Plugins.BuiltIn.Remote;
 using Commander4K.Plugins.BuiltIn.Search;
+using Commander4K.Plugins.BuiltIn.Logs;
+using Commander4K.Plugins.BuiltIn.PowerShell;
+using Commander4K.Plugins.BuiltIn.SystemInfo;
+using Commander4K.Plugins.BuiltIn.TaskManager;
 using Commander4K.Plugins.BuiltIn.Viewers;
 
 namespace Commander4K.App.Composition;
+
+/// <param name="Category">Menu group for plugin commands (slash = submenu); <c>null</c> for built-ins.</param>
+public sealed record CommandInfo(string Id, string Description, string? Category);
 
 /// <summary>
 /// Composition root. Everything is created by <see cref="CreateAsync"/> on background threads, so the window can
@@ -43,7 +50,68 @@ public sealed class AppHost : IAsyncDisposable
         Updates = new UpdateService(Http);
         SettingsCatalog = Core.Configuration.SettingsCatalog.Create(
             () => [.. Skins.Skins.Select(s => new SettingChoice(s.Id, s.DisplayName))]);
+        PowerShell = new PowerShellCatalogPlugin(Path.Combine(config.ConfigDirectory, "powershell.json"));
+        PanelPlugins = [new SystemInfoPanelPlugin(), new TaskManagerPanelPlugin(), new LogAnalyzerPanelPlugin(), PowerShell];
+        CommandPlugins = [PowerShell];
         ApplySettings();
+    }
+
+    public PowerShellCatalogPlugin PowerShell { get; }
+
+    /// <summary>Panel modes (built-in and from the plugins folder).</summary>
+    public IReadOnlyList<IPanelPlugin> PanelPlugins { get; private set; }
+
+    /// <summary>Menu/palette operations (built-in and from the plugins folder).</summary>
+    public IReadOnlyList<ICommandPlugin> CommandPlugins { get; private set; }
+
+    /// <summary>Plugin assemblies that failed to load, for the About/help output.</summary>
+    public IReadOnlyList<string> PluginErrors { get; private set; } = [];
+
+    public IPanelPlugin? FindPanel(string pluginId) =>
+        PanelPlugins.FirstOrDefault(p => string.Equals(p.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+
+    public ICommandPlugin? FindCommandPlugin(string pluginId) =>
+        CommandPlugins.FirstOrDefault(p => string.Equals(p.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Every executable command — built-ins, panel openers (<c>panel:id</c>) and plugin commands (<c>plugin:id:cmd</c>) —
+    /// for the menu, command palette, help and the key-binding editor.
+    /// </summary>
+    public IReadOnlyList<CommandInfo> ListCommands()
+    {
+        var commands = Commands.Commands.Select(c => new CommandInfo(c.Id, c.Description, null)).ToList();
+        commands.AddRange(PanelPlugins.Select(p => new CommandInfo(CommandIds.PanelPrefix + p.Id, "Panel: " + p.Title, "Panele")));
+        foreach (var plugin in CommandPlugins)
+        {
+            commands.AddRange(plugin.Commands.Select(c =>
+                new CommandInfo($"{CommandIds.PluginPrefix}{plugin.Id}:{c.Id}", $"{c.Category.Replace('/', ' ')}: {c.Title}", c.Category)));
+        }
+
+        return commands;
+    }
+
+    /// <summary>Loads plugins/&lt;Name&gt;/&lt;Name&gt;.dll from next to the exe and from the data folder.</summary>
+    private async Task LoadExternalPluginsAsync()
+    {
+        var loader = new Core.Plugins.PluginLoader();
+        var panels = new List<IPanelPlugin>(PanelPlugins);
+        var commands = new List<ICommandPlugin>(CommandPlugins);
+        var errors = new List<string>();
+        foreach (var root in new[] { Path.Combine(AppContext.BaseDirectory, "plugins"), Path.Combine(DataDirectory, "plugins") }.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var (loaded, failed) = await Task.Run(() => loader.LoadFromDirectory(root));
+            errors.AddRange(failed.Select(f => $"{f.Path}: {f.Error.Message}"));
+            foreach (var plugin in loaded.SelectMany(l => l.Instances))
+            {
+                if (plugin is IVfsProviderPlugin vfs) Router.Register(vfs);
+                if (plugin is IPanelPlugin panel) panels.Add(panel);
+                if (plugin is ICommandPlugin command) commands.Add(command);
+            }
+        }
+
+        PanelPlugins = panels;
+        CommandPlugins = commands;
+        PluginErrors = errors;
     }
 
     /// <summary>Shared client for GitHub release checks and downloads.</summary>
@@ -125,6 +193,8 @@ public sealed class AppHost : IAsyncDisposable
                     new ExternalToolsService(toolsTask.Result),
                     indexTask.Result);
                 host.KeyBindings = new Dictionary<string, string>(keymapTask.Result.Bindings, StringComparer.OrdinalIgnoreCase);
+                await host.PowerShell.ReloadAsync(cancellationToken).ConfigureAwait(false);
+                await host.LoadExternalPluginsAsync().ConfigureAwait(false);
                 return host;
             },
             cancellationToken);

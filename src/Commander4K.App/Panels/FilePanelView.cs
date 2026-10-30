@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Commander4K.App.Composition;
+using Commander4K.App.PluginPanels;
 using Commander4K.App.Theming;
 using Commander4K.PluginSdk;
 
@@ -26,6 +27,7 @@ public sealed class FilePanelView : ViewBase
     private Border _pathBorder = null!;
     private TextBox _pathBox = null!;
     private Border _statusBorder = null!;
+    private Panel _content = null!;
     private TextBlock _status = null!;
 
     public FilePanelView(AppHost host, SkinManager skins, string initialPath)
@@ -41,6 +43,40 @@ public sealed class FilePanelView : ViewBase
 
     public FileViewportCanvas Canvas { get; } = new();
 
+    /// <summary>Plugin panel shown over the file list, or <c>null</c> in file mode.</summary>
+    public PluginPanelView? Plugin { get; private set; }
+
+    /// <summary>Replaces the file list with a plugin panel until <see cref="ClosePlugin"/> (Esc / Backspace).</summary>
+    public void ShowPlugin(PluginPanelView view)
+    {
+        ClosePlugin();
+        Plugin = view;
+        view.IsActivePanel = _isActive;
+        view.Activated += () => Activated?.Invoke(this);
+        view.CloseRequested += ClosePlugin;
+        _content.Children.Add(view);
+        Canvas.IsVisible = false;
+        _statusBorder.IsVisible = false;
+        _pathBox.Text = "⚙ " + view.Title;
+        _pathBox.IsReadOnly = true;
+    }
+
+    public void ClosePlugin()
+    {
+        if (Plugin is not { } view)
+        {
+            return;
+        }
+
+        Plugin = null;
+        _content.Children.Remove(view);
+        _ = view.DisposeSessionAsync();
+        Canvas.IsVisible = true;
+        _statusBorder.IsVisible = true;
+        _pathBox.IsReadOnly = false;
+        _pathBox.Text = ActiveTab.Path;
+    }
+
     public PanelTab ActiveTab => _tabs[_activeIndex];
 
     public IReadOnlyList<PanelTab> Tabs => _tabs;
@@ -52,6 +88,10 @@ public sealed class FilePanelView : ViewBase
         {
             _isActive = value;
             Canvas.IsActivePanel = value;
+            if (Plugin is not null)
+            {
+                Plugin.IsActivePanel = value;
+            }
             ApplyChrome();
         }
     }
@@ -92,7 +132,7 @@ public sealed class FilePanelView : ViewBase
                     .Row(1)
                     .Padding(2)
                     .Child(new TextBox().Ref(out _pathBox).BorderThickness(new Thickness(0)).MinHeight(24).Padding(6, 2)),
-                Canvas.Row(2),
+                new Panel().Ref(out _content).Row(2).Children(Canvas),
                 new Border()
                     .Ref(out _statusBorder)
                     .Row(3)
@@ -212,7 +252,7 @@ public sealed class FilePanelView : ViewBase
     private void OnTabChanged()
     {
         var tab = ActiveTab;
-        if (!_pathBox.IsFocused)
+        if (!_pathBox.IsFocused && Plugin is null)
         {
             _pathBox.Text = tab.Path;
         }
@@ -324,6 +364,7 @@ public sealed class FilePanelView : ViewBase
     private void ApplySkin(SkinBrushes b)
     {
         Canvas.Brushes = b;
+        Plugin?.ApplySkin(b);
         if (_pathBox is null)
         {
             return;

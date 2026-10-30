@@ -82,6 +82,43 @@ public sealed class ViewerWindow : Window
     }
 }
 
+/// <summary>Read-only text output (plugin reports, PowerShell results) with copy to clipboard.</summary>
+public sealed class TextWindow : Window
+{
+    public TextWindow(SkinBrushes brushes, string title, string text)
+    {
+        Title = title;
+        Width = 960;
+        Height = 640;
+        Background = brushes.PanelBackground;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        var box = new TextBox()
+            .Text(text)
+            .IsReadOnly(true)
+            .AcceptsReturn(true)
+            .TextWrapping(TextWrapping.NoWrap)
+            .FontFamily(FontFamily.Parse("Cascadia Mono, Consolas, Courier New"))
+            .Background(brushes.PanelBackground)
+            .Foreground(brushes.FileForeground)
+            .BorderThickness(new Avalonia.Thickness(0));
+        Content = new Grid().Rows("*,Auto").Children(
+            new ScrollViewer().Row(0).HorizontalScrollBarVisibility(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto).Content(box),
+            new StackPanel().Row(1).Orientation(Orientation.Horizontal).HorizontalAlignment(HorizontalAlignment.Right).Spacing(8).Margin(8).Children(
+                new Button().Content("Kopiuj").OnClick(async _ => await SkinPickerDialog.CopyToClipboardAsync(this, text)),
+                new Button().Content("Zamknij").OnClick(_ => Close())));
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Key is Key.Escape or Key.F3 or Key.F10)
+        {
+            Close();
+            e.Handled = true;
+        }
+    }
+}
+
 /// <summary>Alt+F7: parallel search with results streamed into the list; Esc stops instantly.</summary>
 public sealed class SearchWindow : Window
 {

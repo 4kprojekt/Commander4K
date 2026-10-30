@@ -105,7 +105,7 @@ public sealed class SettingsWindow : Window
         }
 
         var commands = SettingsCatalog.Search(
-            _host.Commands.Commands.OrderBy(c => c.Description, StringComparer.CurrentCulture).ToList(),
+            _host.ListCommands().OrderBy(c => c.Description, StringComparer.CurrentCulture).ToList(),
             query,
             c => c.Description,
             c => [KeysCategory, "skrót klawisz", c.Id, BindingsText(c.Id)]);
@@ -315,10 +315,13 @@ public sealed class UpdateDialog : DialogWindow<bool>
     {
         _host = host;
         _update = update;
-        var canInstall = UpdateService.CanSelfUpdate(Environment.ProcessPath) && update.AssetUrl is not null;
+        var kind = UpdateService.DetectInstallKind(Environment.ProcessPath);
+        var canInstall = kind != InstallKind.Development && update.AssetUrl is not null;
         _progress = new ProgressBar().Minimum(0).Maximum(1).IsVisible(false).Margin(0, 8, 0, 0).Foreground(brushes.Progress);
         _status = new TextBlock().TextWrapping(TextWrapping.Wrap).Margin(0, 6, 0, 0).Text(canInstall
-            ? "Plik zostanie pobrany z GitHuba i sprawdzony sumą SHA-256 przed instalacją."
+            ? (kind == InstallKind.Msi
+                ? "Instalator MSI zostanie pobrany z GitHuba, sprawdzony sumą SHA-256 i uruchomiony (Windows może poprosić o zgodę administratora)."
+                : "Wersja przenośna: archiwum ZIP zostanie pobrane z GitHuba, sprawdzone sumą SHA-256 i podmienione.")
             : "Ta kopia nie jest pojedynczym plikiem z wydania (np. uruchomiona przez dotnet run), więc pobierz nową wersję ze strony wydania.");
         _install = new Button().Content("Pobierz i zainstaluj").IsVisible(canInstall).OnClick(async _ => await InstallAsync());
 
@@ -356,13 +359,20 @@ public sealed class UpdateDialog : DialogWindow<bool>
                 _status.Text = $"Pobieranie… {FileViewportCanvas.FormatSize(p.Done)} z {FileViewportCanvas.FormatSize(p.Total)}";
             });
             var staging = Path.Combine(_host.DataDirectory, "data", "update");
-            var staged = await _host.Updates.DownloadAsync(_update, staging, progress, _download.Token);
+            var downloaded = await _host.Updates.DownloadAsync(_update, staging, progress, _download.Token);
             _status.Text = "Instalowanie…";
-            await Task.Run(() => UpdateService.Install(staged, current));
-            _status.Text = $"Zainstalowano {_update.Version}. Uruchamianie nowej wersji…";
-
-            using (Process.Start(new ProcessStartInfo(current) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(current)! }))
+            if (UpdateService.DetectInstallKind(current) == InstallKind.Msi)
             {
+                // The MSI replaces files in Program Files itself; it needs this process gone, so start it and exit.
+                UpdateService.StartMsiInstall(downloaded);
+            }
+            else
+            {
+                await Task.Run(() => UpdateService.Install(UpdateService.ExtractExecutable(downloaded, staging), current));
+                _status.Text = $"Zainstalowano {_update.Version}. Uruchamianie nowej wersji…";
+                using (Process.Start(new ProcessStartInfo(current) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(current)! }))
+                {
+                }
             }
 
             Complete(true);

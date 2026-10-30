@@ -7,6 +7,10 @@ public static class DefaultKeymap
     {
         ["F1"] = CommandIds.Help,
         ["Ctrl+Shift+P"] = CommandIds.CommandPalette,
+        ["Ctrl+Alt+I"] = CommandIds.PanelPrefix + "builtin.sysinfo",
+        ["Ctrl+Alt+T"] = CommandIds.PanelPrefix + "builtin.taskmanager",
+        ["Ctrl+Alt+L"] = CommandIds.PanelPrefix + "builtin.logs",
+        ["Ctrl+Alt+P"] = CommandIds.PanelPrefix + "builtin.powershell",
         ["Ctrl+,"] = CommandIds.Settings,
         ["F2"] = CommandIds.SelectSkin,
         ["F10"] = CommandIds.Exit,
