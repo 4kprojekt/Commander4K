@@ -65,6 +65,8 @@ def show_text(title, text):          call("ui.showText", title=title, text=text)
 def confirm(title, message):         return call("ui.confirm", title=title, message=message)
 def prompt(title, message, initial=""): return call("ui.prompt", title=title, message=message, initial=initial)
 def navigate(path, focus=None):      call("ui.navigate", path=path, focus=focus)
+def open_url(url):                   call("ui.openUrl", url=url)                              # internal browser, http(s) only
+def search(query, engine=None):      call("ui.search", query=query, engine=engine)            # engine: None, "assistant", "google", "chatgpt"…
 def list_dir(path):                  return call("fs.list", path=path)                       # fs.read
 def read_text(path, max_bytes=1048576): return call("fs.readText", path=path, maxBytes=max_bytes)  # fs.read
 def write_text(path, content):       call("fs.writeText", path=path, content=content)        # fs.write

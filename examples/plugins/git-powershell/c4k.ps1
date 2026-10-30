@@ -49,6 +49,8 @@ function Show-C4KNotification([string] $Message, [switch] $IsError) { [void](Inv
 function Show-C4KText([string] $Title, [string] $Text) { [void](Invoke-C4K 'ui.showText' @{ title = $Title; text = $Text }) }
 function Confirm-C4K([string] $Title, [string] $Message) { Invoke-C4K 'ui.confirm' @{ title = $Title; message = $Message } }
 function Read-C4KInput([string] $Title, [string] $Message, [string] $Initial = '') { Invoke-C4K 'ui.prompt' @{ title = $Title; message = $Message; initial = $Initial } }
+function Open-C4KUrl([string] $Url) { [void](Invoke-C4K 'ui.openUrl' @{ url = $Url }) }                            # internal browser, http(s) only
+function Search-C4KWeb([string] $Query, [string] $Engine) { [void](Invoke-C4K 'ui.search' @{ query = $Query; engine = $(if ($Engine) { $Engine } else { $null }) }) }  # engine: assistant, google, chatgpt…
 function Get-C4KChildItem([string] $Path) { Invoke-C4K 'fs.list' @{ path = $Path } }                                # fs.read
 function Get-C4KText([string] $Path, [int] $MaxBytes = 1048576) { Invoke-C4K 'fs.readText' @{ path = $Path; maxBytes = $MaxBytes } }  # fs.read
 function Set-C4KText([string] $Path, [string] $Content) { [void](Invoke-C4K 'fs.writeText' @{ path = $Path; content = $Content }) }   # fs.write

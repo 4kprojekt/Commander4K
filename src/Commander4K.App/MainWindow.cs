@@ -7,6 +7,7 @@ using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Commander4K.App.Browser;
 using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
 using Commander4K.App.Input;
@@ -20,6 +21,7 @@ using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
 using Commander4K.Core.Security;
 using Commander4K.Core.Updates;
+using Commander4K.Core.Web;
 using Commander4K.Plugins.BuiltIn.Local;
 using Commander4K.Plugins.BuiltIn.Network;
 using Commander4K.PluginSdk;
@@ -158,7 +160,13 @@ public sealed class MainWindow : Window, IShell
             (title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this),
             (title, message, initial) => new InputDialog(_skins!.Current, title, message, initial).ShowAsync(this),
             OpenPanelAsync,
-            async path => await host.Tools.EditAsync(path));
+            async path => await host.Tools.EditAsync(path),
+            url =>
+            {
+                OpenBrowser(url);
+                return Task.CompletedTask;
+            },
+            SearchWebAsync);
         host.PluginUi.Target = _pluginHost;
         host.PowerShell.CommandsChanged += () => Dispatcher.UIThread.Post(RebuildMenu);
         host.PluginsChanged += () => Dispatcher.UIThread.Post(() =>
@@ -435,12 +443,79 @@ public sealed class MainWindow : Window, IShell
         RightMode = ModeId(_right),
     };
 
+    private const string BrowserModePrefix = "browser:";
+
     private static string? ModeId(FilePanelView panel) => panel.Mode switch
     {
         PreviewPanelView => "preview",
         PluginPanelView view => CommandIds.PanelPrefix + view.Plugin.Id,
+        BrowserPanelView browser => BrowserModePrefix + browser.CurrentUrl,
         _ => null,
     };
+
+    /// <summary>
+    /// Shows the browser in the mode target (the opposite panel), reusing one that is already open there;
+    /// <paramref name="url"/> <c>null</c> keeps the current page (or the start page for a new browser).
+    /// </summary>
+    private BrowserPanelView OpenBrowser(string? url, FilePanelView? target = null)
+    {
+        target ??= ModeTarget().Target;
+        if (target.Mode is BrowserPanelView existing)
+        {
+            if (url is not null)
+            {
+                existing.Navigate(url);
+            }
+
+            return existing;
+        }
+
+        var browser = new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut);
+        target.ShowMode(browser);
+        SetActive(target);
+        return browser;
+    }
+
+    /// <summary><see cref="IPluginHost.SearchWebAsync"/>: <c>null</c> = search engine, <c>assistant</c> = AI assistant, else an engine id.</summary>
+    private Task SearchWebAsync(string query, string? engine)
+    {
+        var settings = _host!.Settings;
+        var resolved = engine switch
+        {
+            null or "" => SearchEngines.Get(settings.SearchEngine),
+            "assistant" => SearchEngines.Get(settings.AssistantEngine, SearchEngines.DefaultAssistant),
+            _ => SearchEngines.Get(engine),
+        };
+        return OpenBrowser(null).SearchAsync(query, resolved);
+    }
+
+    private async Task AskAiAsync()
+    {
+        var assistant = SearchEngines.Get(_host!.Settings.AssistantEngine, SearchEngines.DefaultAssistant);
+        var question = await new InputDialog(_skins!.Current, $"Zapytaj AI ({assistant.Name})",
+            "Pytanie (asystenta zmienisz w ustawieniach: „Asystent AI”):", string.Empty).ShowAsync(this);
+        if (!string.IsNullOrWhiteSpace(question))
+        {
+            await SearchWebAsync(question, "assistant");
+        }
+    }
+
+    /// <summary>App shortcuts pressed while a web page has focus (the page reports them; Avalonia never sees them).</summary>
+    private bool RunShortcut(KeyStroke stroke)
+    {
+        var result = _host!.Keymap.Process(stroke);
+        switch (result.Kind)
+        {
+            case KeymapResultKind.Command:
+                _ = ExecuteAsync(result.CommandId!);
+                return true;
+            case KeymapResultKind.ChordPending:
+                Notify(stroke + " …");
+                return true;
+            default:
+                return false;
+        }
+    }
 
     /// <summary>Applies a saved view: modes switch at once, both panels navigate in parallel.</summary>
     public async Task RestoreViewAsync(ViewSetting view)
@@ -480,6 +555,9 @@ public sealed class MainWindow : Window, IShell
                 break;
             case "preview":
                 target.ShowMode(new PreviewPanelView(_host!, source, _skins!.Current, Notify));
+                break;
+            case var browser when browser.StartsWith(BrowserModePrefix, StringComparison.Ordinal):
+                OpenBrowser(browser[BrowserModePrefix.Length..] is { Length: > 0 } url ? url : null, target);
                 break;
             case var panel when panel.StartsWith(CommandIds.PanelPrefix, StringComparison.OrdinalIgnoreCase):
                 await OpenPanelInAsync(panel[CommandIds.PanelPrefix.Length..], null, target);
@@ -807,6 +885,8 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.View, "Podgląd", ViewCurrent)
          .Register(CommandIds.QuickView, "Szybki podgląd", TogglePreview)
          .Register(CommandIds.PanelModes, "Tryb panelu (pliki, podgląd, panele wtyczek)", ShowPanelModesAsync)
+         .Register(CommandIds.Browser, "Przeglądarka (WWW, wyszukiwarki, asystenci AI)", () => OpenBrowser(null))
+         .Register(CommandIds.AskAi, "Zapytaj AI (ChatGPT, Gemini, Claude…) w przeglądarce", _ => new ValueTask(AskAiAsync()))
          .Register(CommandIds.TogglePalettes, "Palety: pokaż / ukryj", _ => new ValueTask(TogglePalettesAsync()))
          .Register(CommandIds.Palettes, "Palety: położenie (szybkie akcje, ulubione, widoki, wtyczki)", () => OpenSettings("paleta"))
          .Register(CommandIds.AddFavorite, "Dodaj bieżący folder do ulubionych", _ => new ValueTask(AddFavoriteAsync()))
@@ -1215,6 +1295,7 @@ public sealed class MainWindow : Window, IShell
         {
             new("Pliki", "lista plików (zamyka tryb panelu)", "files", "lista katalog"),
             new("Podgląd (Ctrl+Q)", "markdown z edycją, tekst, obrazy, rozmiary folderów — dla pliku pod kursorem", "preview", "quick view markdown"),
+            new("Przeglądarka (Ctrl+Alt+W)", "strony WWW, wyszukiwarki, ChatGPT / Gemini / Claude — logowanie jest zapamiętywane", "browser", "www internet web ai"),
         };
         items.AddRange(host.PanelPlugins.Select(p => new PickerItem(p.Title, p.Description, CommandIds.PanelPrefix + p.Id, p.Manifest.Name)));
 
@@ -1233,6 +1314,9 @@ public sealed class MainWindow : Window, IShell
                     TogglePreview();
                 }
 
+                break;
+            case "browser":
+                OpenBrowser(null, target);
                 break;
             default:
                 await ExecuteAsync(choice.Value);

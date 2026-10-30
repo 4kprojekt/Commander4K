@@ -42,6 +42,7 @@ public static class SettingsCatalog
     public const string Network = "Sieć";
     public const string Preview = "Podgląd";
     public const string Updates = "Aktualizacje";
+    public const string Browser = "Przeglądarka";
 
     public static IReadOnlyList<SettingDescriptor> Create(Func<IReadOnlyList<SettingChoice>> skinChoices) =>
     [
@@ -66,6 +67,13 @@ public static class SettingsCatalog
 
         new("lanDiscovery", Network, "Wykrywaj hosty w sieci LAN", "Przy otwarciu net:// skanuje lokalną podsieć (porty 445, 22, 21) i pokazuje znalezione maszyny.",
             SettingKind.Toggle, s => s.LanDiscovery, (s, v) => s.LanDiscovery = (bool)v!, ["skan", "lan", "smb", "ssh", "otoczenie"]),
+
+        new("searchEngine", Browser, "Wyszukiwarka w przeglądarce", "Co dzieje się z tekstem wpisanym w pasek adresu wewnętrznej przeglądarki (Ctrl+Alt+W), gdy nie jest adresem.",
+            SettingKind.Choice, s => s.SearchEngine, (s, v) => s.SearchEngine = (string)v!, ["google", "bing", "duckduckgo", "szukaj", "www", "internet"])
+        { Choices = () => [.. Web.SearchEngines.All.Select(e => new SettingChoice(e.Id, e.Name))] },
+        new("assistantEngine", Browser, "Asystent AI do szukania rozwiązań", "Kogo pyta „Szukaj rozwiązania” (menedżer wtyczek) i komenda „Zapytaj AI” (Ctrl+Alt+A). Zaloguj się raz w przeglądarce — sesja zostaje zapamiętana.",
+            SettingKind.Choice, s => s.AssistantEngine, (s, v) => s.AssistantEngine = (string)v!, ["ai", "chatgpt", "gemini", "claude", "perplexity", "asystent", "pomoc"])
+        { Choices = () => [.. Web.SearchEngines.All.OrderBy(e => !e.IsAssistant).Select(e => new SettingChoice(e.Id, e.IsAssistant ? e.Name : e.Name + " (wyszukiwarka)"))] },
 
         new("checkForUpdates", Updates, "Sprawdzaj aktualizacje automatycznie", "Raz na dobę sprawdza wydania na GitHubie i informuje o nowej wersji.",
             SettingKind.Toggle, s => s.CheckForUpdates, (s, v) => s.CheckForUpdates = (bool)v!, ["update", "wersja", "nowa"]),

@@ -63,6 +63,16 @@ public interface IPluginHost
     /// <summary>Opens one of the host's panel plugins by <see cref="IPlugin.Id"/> in the active panel.</summary>
     Task OpenPanelAsync(string panelPluginId, string? argument = null);
 
+    /// <summary>Opens an http(s) page in the internal browser, in the panel next to the file list.</summary>
+    Task OpenUrlAsync(string url);
+
+    /// <summary>
+    /// Searches the web or asks an AI assistant in the internal browser. <paramref name="engine"/>: <c>null</c> = the
+    /// user's search engine, <c>"assistant"</c> = the user's AI assistant, or an id (<c>google</c>, <c>chatgpt</c>,
+    /// <c>gemini</c>, <c>claude</c>, <c>perplexity</c>, <c>bing</c>, <c>duckduckgo</c>).
+    /// </summary>
+    Task SearchWebAsync(string query, string? engine = null);
+
     /// <summary>Writes to the plugin's section of the audit log.</summary>
     void Log(string message);
 

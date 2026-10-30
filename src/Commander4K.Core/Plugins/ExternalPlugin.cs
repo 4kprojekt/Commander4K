@@ -142,6 +142,12 @@ public sealed class ExternalPlugin : IAsyncDisposable
             case "ui.navigate":
                 await _host.NavigateAsync(Str("path"), OptStr("focus")).ConfigureAwait(false);
                 return null;
+            case "ui.openUrl":
+                await _host.OpenUrlAsync(Str("url")).ConfigureAwait(false);
+                return null;
+            case "ui.search":
+                await _host.SearchWebAsync(Str("query"), OptStr("engine")).ConfigureAwait(false);
+                return null;
             case "fs.list":
                 return (await _host.ListAsync(Str("path"), cancellationToken).ConfigureAwait(false)).Select(EntryDto).ToList();
             case "fs.readText":

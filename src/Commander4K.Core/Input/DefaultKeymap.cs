@@ -24,6 +24,8 @@ public static class DefaultKeymap
         ["Ctrl+,"] = CommandIds.Settings,
         ["F2"] = CommandIds.PanelModes,
         ["Ctrl+B"] = CommandIds.TogglePalettes,
+        ["Ctrl+Alt+W"] = CommandIds.Browser,
+        ["Ctrl+Alt+A"] = CommandIds.AskAi,
         ["Ctrl+D"] = CommandIds.AddFavorite,
         ["F10"] = CommandIds.Exit,
         ["Ctrl+H"] = CommandIds.ToggleHidden,

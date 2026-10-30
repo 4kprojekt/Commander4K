@@ -133,6 +133,22 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Browser_calls_allow_only_http_and_are_audited()
+    {
+        var host = HostFor(new PluginManifest("acme.web", "Web", "1.0.0", "a", "d", []));
+
+        await host.OpenUrlAsync("https://example.com/a");
+        Assert.Equal("https://example.com/a", _ui.LastUrl);
+        await Assert.ThrowsAsync<ArgumentException>(() => host.OpenUrlAsync("file:///C:/Windows/win.ini"));
+        await host.SearchWebAsync("błąd 0x80070005", "assistant");
+
+        Assert.Equal("search:assistant:błąd 0x80070005", _ui.LastUrl);
+        var audit = _audit.Recent("acme.web");
+        Assert.Contains(audit, e => e.Operation == "ui.openUrl" && e.Outcome == AuditOutcome.Denied && e.Detail.StartsWith("file:", StringComparison.Ordinal));
+        Assert.Contains(audit, e => e.Operation == "ui.search" && e.Detail.Contains("0x80070005", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PowerShell_plugin_runs_git_through_host()
     {
         Assert.SkipWhen(!(Environment.GetEnvironmentVariable("PATH") ?? "").Split(';').Any(d => File.Exists(Path.Combine(d.Trim(), "git.exe"))), "git is not installed");
@@ -261,6 +277,20 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         public Task EditFileAsync(string path) => Task.CompletedTask;
 
         public Task OpenPanelAsync(string panelPluginId, string? argument) => Task.CompletedTask;
+
+        public string? LastUrl { get; private set; }
+
+        public Task OpenUrlAsync(string url)
+        {
+            LastUrl = url;
+            return Task.CompletedTask;
+        }
+
+        public Task SearchWebAsync(string query, string? engine)
+        {
+            LastUrl = $"search:{engine}:{query}";
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class LocalHttpServer : IDisposable

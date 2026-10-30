@@ -57,6 +57,12 @@ public sealed class AppSettings
     /// <summary>Probe the local subnet for SMB/SSH/FTP hosts when opening <c>net://</c>.</summary>
     public bool LanDiscovery { get; set; } = true;
 
+    /// <summary><see cref="Web.SearchEngines"/> id used by the browser's address bar.</summary>
+    public string SearchEngine { get; set; } = Web.SearchEngines.DefaultSearch;
+
+    /// <summary>AI assistant asked by "find a solution" actions (plugin manager, <c>cm_AskAi</c>).</summary>
+    public string AssistantEngine { get; set; } = Web.SearchEngines.DefaultAssistant;
+
     public bool CheckForUpdates { get; set; } = true;
 
     public bool IncludePrereleases { get; set; }

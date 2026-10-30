@@ -9,3 +9,7 @@ dist/
 *.db-shm
 *.db-wal
 TestResults/
+
+# Python bytecode (the example plugins run in tests)
+__pycache__/
+*.pyc

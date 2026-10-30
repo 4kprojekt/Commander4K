@@ -16,6 +16,12 @@ public static class CommandIds
     /// <summary>Switches a panel's mode: files, quick preview or any plugin panel (F2).</summary>
     public const string PanelModes = "cm_PanelModes";
 
+    /// <summary>Internal WebView2 browser in the opposite panel (Ctrl+Alt+W).</summary>
+    public const string Browser = "cm_Browser";
+
+    /// <summary>Asks the configured AI assistant (ChatGPT, Gemini, Claude…) in the internal browser (Ctrl+Alt+A).</summary>
+    public const string AskAi = "cm_AskAi";
+
     /// <summary>Shows or hides all docked palettes (Ctrl+B).</summary>
     public const string TogglePalettes = "cm_TogglePalettes";
 

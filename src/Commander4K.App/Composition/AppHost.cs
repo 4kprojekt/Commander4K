@@ -49,6 +49,10 @@ public sealed class PluginUiProxy : IPluginUi
     public Task EditFileAsync(string path) => Target?.EditFileAsync(path) ?? Task.CompletedTask;
 
     public Task OpenPanelAsync(string panelPluginId, string? argument) => Target?.OpenPanelAsync(panelPluginId, argument) ?? Task.CompletedTask;
+
+    public Task OpenUrlAsync(string url) => Target?.OpenUrlAsync(url) ?? Task.CompletedTask;
+
+    public Task SearchWebAsync(string query, string? engine) => Target?.SearchWebAsync(query, engine) ?? Task.CompletedTask;
 }
 
 /// <param name="Category">Menu group for plugin commands (slash = submenu); <c>null</c> for built-ins.</param>

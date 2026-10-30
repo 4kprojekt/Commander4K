@@ -59,6 +59,16 @@ public sealed class FilePanelView : ViewBase
         _statusBorder.IsVisible = false;
         _pathBox.Text = "⚙ " + view.Title;
         _pathBox.IsReadOnly = true;
+        if (view is ITitledModeView titled)
+        {
+            titled.TitleChanged += () =>
+            {
+                if (Mode == view)
+                {
+                    _pathBox.Text = "⚙ " + view.Title;
+                }
+            };
+        }
     }
 
     public void CloseMode()

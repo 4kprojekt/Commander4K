@@ -137,6 +137,8 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `ui.confirm` | `{ title, message }` | `true`/`false` | — |
 | `ui.prompt` | `{ title, message, initial? }` | string or `null` | — |
 | `ui.navigate` | `{ path, focus? }` | `null` | — |
+| `ui.openUrl` | `{ url }` | `null` | — (http/https only; opens the app's built-in browser panel, audited) |
+| `ui.search` | `{ query, engine? }` | `null` | — (`engine`: omitted = the user's search engine, `"assistant"` = the user's AI assistant, or `google`, `bing`, `duckduckgo`, `chatgpt`, `claude`, `perplexity`, `gemini`; use it e.g. to let the user look up an error) |
 | `fs.list` | `{ path }` | `[entry]` | `fs.read` |
 | `fs.readText` | `{ path, maxBytes? }` (default 1 MB, max 16 MB) | string | `fs.read` |
 | `fs.writeText` | `{ path, content }` | `null` | `fs.write` |

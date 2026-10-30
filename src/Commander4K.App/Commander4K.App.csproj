@@ -5,22 +5,25 @@
     <AssemblyName>Commander4K</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <!-- [LibraryImport] (browser key state) generates unsafe stubs. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
-  <!-- SkiaSharp/HarfBuzz packages ship ~100 MB of native .pdb symbols; keep them out of published builds. -->
+  <!-- SkiaSharp/HarfBuzz packages ship ~100 MB of native .pdb symbols and WebView2 an IntelliSense .xml (which would
+       land next to the single-file exe); keep both out of published builds. -->
   <Target Name="DropSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
     <ItemGroup>
-      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb' Or '%(Extension)' == '.xml'" />
     </ItemGroup>
   </Target>
   <!-- The single-file bundler collects its own list (SDK-internal item name); filter it the same way. -->
   <Target Name="DropSymbolsFromBundle" AfterTargets="_ComputeFilesToBundle" BeforeTargets="GenerateSingleFileBundle">
     <ItemGroup>
-      <_FilesToBundle Remove="@(_FilesToBundle)" Condition="'%(Extension)' == '.pdb'" />
+      <_FilesToBundle Remove="@(_FilesToBundle)" Condition="'%(Extension)' == '.pdb' Or '%(Extension)' == '.xml'" />
     </ItemGroup>
   </Target>
   <!-- Example plugins ship inside the app as templates ("Nowa wtyczka z przykładu" in the plugin manager). -->
   <ItemGroup>
-    <EmbeddedResource Include="..\..\examples\plugins\**\*" LogicalName="examples/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\examples\plugins\**\*" Exclude="..\..\examples\plugins\**\__pycache__\**" LogicalName="examples/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Commander4K.PluginSdk\Commander4K.PluginSdk.csproj" />
@@ -34,5 +37,14 @@
     <PackageReference Include="Avalonia.Markup.Declarative" />
     <PackageReference Include="Anthropic" />
     <PackageReference Include="Markdig" />
+    <!-- Only Microsoft.Web.WebView2.Core is used (hosted in a NativeControlHost). -->
+    <PackageReference Include="Microsoft.Web.WebView2" />
   </ItemGroup>
+  <!-- The WebView2 package's targets also reference its WinForms/WPF wrappers, whose WindowsBase 5.0 dependency
+       conflicts with the shared framework (MSB3277, fatal with warnings-as-errors) and would bloat the bundle. -->
+  <Target Name="DropWebView2UiWrappers" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf' Or '%(Filename)' == 'Microsoft.Web.WebView2.WinForms'" />
+    </ItemGroup>
+  </Target>
 </Project>

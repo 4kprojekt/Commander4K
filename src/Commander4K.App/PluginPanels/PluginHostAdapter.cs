@@ -17,8 +17,14 @@ public sealed class PluginHostAdapter(
     Func<string, string, Task<bool>> confirm,
     Func<string, string, string, Task<string?>> prompt,
     Func<string, string?, Task> openPanel,
-    Func<string, Task> editFile) : IPluginUi
+    Func<string, Task> editFile,
+    Func<string, Task> openUrl,
+    Func<string, string?, Task> searchWeb) : IPluginUi
 {
+    public Task OpenUrlAsync(string url) => Dispatcher.UIThread.InvokeAsync(() => openUrl(url));
+
+    public Task SearchWebAsync(string query, string? engine) => Dispatcher.UIThread.InvokeAsync(() => searchWeb(query, engine));
+
     public string? ActivePath => OnUi(() => FilePanel().ActiveTab.Path);
 
     public string? OtherPath => OnUi(() =>

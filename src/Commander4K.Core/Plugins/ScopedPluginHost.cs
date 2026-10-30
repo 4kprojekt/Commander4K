@@ -28,6 +28,10 @@ public interface IPluginUi
     Task EditFileAsync(string path);
 
     Task OpenPanelAsync(string panelPluginId, string? argument);
+
+    Task OpenUrlAsync(string url);
+
+    Task SearchWebAsync(string query, string? engine);
 }
 
 /// <summary>
@@ -68,6 +72,25 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
     }
 
     public Task OpenPanelAsync(string panelPluginId, string? argument = null) => ui.OpenPanelAsync(panelPluginId, argument);
+
+    /// <remarks>Not gated: the page opens visibly in the app's browser, not inside the plugin. Only http(s) is allowed.</remarks>
+    public Task OpenUrlAsync(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        {
+            audit.Record(Manifest.Id, "ui.openUrl", url, AuditOutcome.Denied);
+            throw new ArgumentException("Dozwolone są tylko adresy http i https.", nameof(url));
+        }
+
+        audit.Record(Manifest.Id, "ui.openUrl", uri.ToString(), AuditOutcome.Info);
+        return ui.OpenUrlAsync(uri.ToString());
+    }
+
+    public Task SearchWebAsync(string query, string? engine = null)
+    {
+        audit.Record(Manifest.Id, "ui.search", $"{engine ?? "default"}: {query}", AuditOutcome.Info);
+        return ui.SearchWebAsync(query, engine);
+    }
 
     public void Log(string message) => audit.Record(Manifest.Id, "log", message, AuditOutcome.Info);
 

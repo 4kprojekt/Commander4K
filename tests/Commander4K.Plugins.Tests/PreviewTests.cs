@@ -125,5 +125,9 @@ public sealed class PreviewTests : IAsyncDisposable
         public Task EditFileAsync(string path) => Task.CompletedTask;
 
         public Task OpenPanelAsync(string panelPluginId, string? argument) => Task.CompletedTask;
+
+        public Task OpenUrlAsync(string url) => Task.CompletedTask;
+
+        public Task SearchWebAsync(string query, string? engine) => Task.CompletedTask;
     }
 }

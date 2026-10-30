@@ -78,6 +78,8 @@ module.exports = {
   confirm: (title, message) => call('ui.confirm', { title, message }),
   prompt: (title, message, initial = '') => call('ui.prompt', { title, message, initial }),
   navigate: (path, focus = null) => call('ui.navigate', { path, focus }),
+  openUrl: url => call('ui.openUrl', { url }),                                   // internal browser, http(s) only
+  search: (query, engine = null) => call('ui.search', { query, engine }),        // engine: null, 'assistant', 'google', 'chatgpt'…
   listDir: path => call('fs.list', { path }),                                  // fs.read
   readText: (path, maxBytes = 1048576) => call('fs.readText', { path, maxBytes }), // fs.read
   writeText: (path, content) => call('fs.writeText', { path, content }),       // fs.write

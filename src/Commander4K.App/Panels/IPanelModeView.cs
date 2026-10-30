@@ -31,3 +31,9 @@ public interface IPanelModeView
 
     event Action? Activated;
 }
+
+/// <summary>A mode whose <see cref="IPanelModeView.Title"/> changes while it is shown (the browser's page title).</summary>
+public interface ITitledModeView
+{
+    event Action? TitleChanged;
+}

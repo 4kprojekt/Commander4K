@@ -186,7 +186,9 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                         return "Wybierz wtyczkę lub środowisko z problemem.";
                     }
 
-                    OpenUrl("https://www.google.com/search?q=" + Uri.EscapeDataString(problem));
+                    // The question goes to the user's AI assistant in the internal browser (sign-in is remembered there).
+                    var subject = plugin?.Manifest is { } broken ? $"wtyczka Commander4K „{broken.Name}” ({broken.Runtime.Type} {broken.Runtime.Version})" : "środowisko wtyczek";
+                    await host.SearchWebAsync($"Windows 11, {subject}: {problem} Jak to naprawić krok po kroku?", "assistant");
                     return null;
 
                 case "template":
@@ -224,6 +226,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                 .Concat(app.BuiltInPanels)
                 .Concat([app.FileSearch, app.Viewer])
                 .Concat(app.BuiltInPreviews)
+                .Append(Browser.BrowserPlugin.Instance)
                 .DistinctBy(p => p.Id)
                 .OrderBy(p => p.Manifest.Name, StringComparer.CurrentCulture);
 

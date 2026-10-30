@@ -19,7 +19,10 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - SMB shares, with offline cached browsing;
   - `sftp://` and `ftp://` servers;
   - `reg://`, the Windows Registry.
-- **Panel modes (`F2`):** either panel can show files, a quick preview or any plugin panel.
+- **Panel modes (`F2`):** either panel can show files, a quick preview, the built-in browser or any plugin panel.
+- **Built-in browser (`Ctrl+Alt+W`):** a web panel based on Microsoft Edge WebView2. The address bar also searches (Google, Bing, DuckDuckGo).
+  - `Ctrl+Alt+A` asks an AI assistant: ChatGPT, Claude, Perplexity or Gemini. Sign in once and the session is remembered.
+  - The plugin manager's "Szukaj rozwiązania" sends a plugin's problem to that assistant, and plugins can open pages or searches here too.
 - **Quick view (`Ctrl+Q`):** previews the entry under the cursor in the opposite panel:
   - Markdown is rendered with formatting, and `F4` switches to side-by-side editing with a live preview;
   - text files are editable;
@@ -112,6 +115,7 @@ Commander4K to szybki, dwupanelowy menedżer plików dla Windows 11 w stylu Nort
 
 - **Interfejs:** po polsku.
 - **Konfiguracja:** `Ctrl+,` otwiera ustawienia z wyszukiwarką, a `Ctrl+Shift+P` paletę komend.
+- **Przeglądarka:** `Ctrl+Alt+W` otwiera stronę w panelu, a `Ctrl+Alt+A` pyta asystenta AI (ChatGPT, Gemini, Claude, Perplexity).
 - **Palety:** szybkie akcje, ulubione foldery, zapisane widoki i palety wtyczek, dokowane na dole, po bokach albo między panelami (`Ctrl+B` pokazuje i ukrywa).
 - **Skórki:** są w `config/skins`. Możesz też wygenerować je z pomocą AI.
 - **Aktualizacje:** pobierane z GitHub Releases.
