@@ -226,6 +226,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                 .Concat(app.BuiltInPanels)
                 .Concat([app.FileSearch, app.Viewer])
                 .Concat(app.BuiltInPreviews)
+                .Concat(app.ColumnPlugins)
                 .Append(Browser.BrowserPlugin.Instance)
                 .DistinctBy(p => p.Id)
                 .OrderBy(p => p.Manifest.Name, StringComparer.CurrentCulture);

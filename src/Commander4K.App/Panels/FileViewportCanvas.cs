@@ -52,12 +52,14 @@ public sealed class FileViewportCanvas : Control
             if (_tab is not null)
             {
                 _tab.Changed -= OnTabChanged;
+                _tab.ColumnData.Updated -= InvalidateVisual;
             }
 
             _tab = value;
             if (_tab is not null)
             {
                 _tab.Changed += OnTabChanged;
+                _tab.ColumnData.Updated += InvalidateVisual;
             }
 
             OnTabChanged();
@@ -179,7 +181,11 @@ public sealed class FileViewportCanvas : Control
         var layout = Layout();
         if (layout.HeaderArea.Contains(point))
         {
-            HeaderClicked?.Invoke(point.X >= layout.DateX ? SortColumn.Date : point.X >= layout.SizeX ? SortColumn.Size : SortColumn.Name);
+            if (point.X < layout.NameRight || point.X >= layout.SizeX)
+            {
+                HeaderClicked?.Invoke(point.X >= layout.DateX ? SortColumn.Date : point.X >= layout.SizeX ? SortColumn.Size : SortColumn.Name);
+            }
+
             return;
         }
 
@@ -282,7 +288,31 @@ public sealed class FileViewportCanvas : Control
         var sizeWidth = inner.Width > 260 ? charWidth * 11 : 0;
         var dateX = inner.Right - dateWidth - 6;
         var sizeX = dateX - sizeWidth - 6;
-        return new CanvasLayout(inner, header, rows, sizeX, sizeWidth, dateX, dateWidth);
+
+        // Plugin columns sit between name and size, in settings order, as long as the name keeps ~140 px.
+        var scale = b.FontSize / 13.0;
+        var room = sizeX - inner.X - 140 * scale;
+        var extras = new List<ExtraColumnLayout>();
+        var right = sizeX;
+        foreach (var column in _tab?.ColumnData.Columns ?? [])
+        {
+            var width = column.Definition.DefaultWidth * scale;
+            if (room - width - 6 < 0)
+            {
+                break;
+            }
+
+            room -= width + 6;
+            extras.Add(new ExtraColumnLayout(column, 0, width));
+        }
+
+        for (var i = extras.Count - 1; i >= 0; i--)
+        {
+            right -= extras[i].Width + 6;
+            extras[i] = extras[i] with { X = right };
+        }
+
+        return new CanvasLayout(inner, header, rows, sizeX, sizeWidth, dateX, dateWidth, extras, right);
     }
 
     private static void DrawFrame(DrawingContext context, SkinBrushes b, Rect bounds)
@@ -306,7 +336,12 @@ public sealed class FileViewportCanvas : Control
         var arrow = sort.Descending ? " ▼" : " ▲";
         var y = layout.HeaderArea.Y;
         DrawText(context, b, "Nazwa" + (sort.Column is SortColumn.Name or SortColumn.Extension ? arrow : ""), b.HeaderForeground,
-            layout.Inner.X + 6, y, layout.SizeX - layout.Inner.X - 12, b.BoldTypeface);
+            layout.Inner.X + 6, y, layout.NameRight - layout.Inner.X - 12, b.BoldTypeface);
+        foreach (var extra in layout.Extras)
+        {
+            DrawText(context, b, extra.Column.Definition.Header, b.HeaderForeground, extra.X, y, extra.Width, b.BoldTypeface,
+                Align(extra.Column.Definition.Alignment));
+        }
         if (layout.SizeWidth > 0)
         {
             DrawText(context, b, "Rozmiar" + (sort.Column == SortColumn.Size ? arrow : ""), b.HeaderForeground,
@@ -358,7 +393,15 @@ public sealed class FileViewportCanvas : Control
         }
 
         var typeface = entry.IsContainer ? b.BoldTypeface : b.Typeface;
-        DrawText(context, b, name, foreground, x, y, layout.SizeX - x - 6, typeface);
+        DrawText(context, b, name, foreground, x, y, layout.NameRight - x - 6, typeface);
+        foreach (var extra in layout.Extras)
+        {
+            if (tab.ColumnData.Get(extra.Column, entry) is { Text.Length: > 0 } value)
+            {
+                DrawText(context, b, value.Text, value.Text.StartsWith('⚠') ? b.Error : foreground, extra.X, y, extra.Width, b.Typeface,
+                    Align(extra.Column.Definition.Alignment));
+            }
+        }
 
         if (layout.SizeWidth > 0)
         {
@@ -532,5 +575,16 @@ public sealed class FileViewportCanvas : Control
         double SizeX,
         double SizeWidth,
         double DateX,
-        double DateWidth);
+        double DateWidth,
+        IReadOnlyList<ExtraColumnLayout> Extras,
+        double NameRight);
+
+    private readonly record struct ExtraColumnLayout(ActiveColumn Column, double X, double Width);
+
+    private static TextAlignment Align(ColumnAlignment alignment) => alignment switch
+    {
+        ColumnAlignment.Right => TextAlignment.Right,
+        ColumnAlignment.Center => TextAlignment.Center,
+        _ => TextAlignment.Left,
+    };
 }

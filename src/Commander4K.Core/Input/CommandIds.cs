@@ -16,6 +16,9 @@ public static class CommandIds
     /// <summary>Switches a panel's mode: files, quick preview or any plugin panel (F2).</summary>
     public const string PanelModes = "cm_PanelModes";
 
+    /// <summary>Settings filtered to plugin columns (Git, EXIF, SHA-256).</summary>
+    public const string Columns = "cm_Columns";
+
     /// <summary>Packs the selection into a new archive in the other panel (Alt+F5).</summary>
     public const string Pack = "cm_Pack";
 

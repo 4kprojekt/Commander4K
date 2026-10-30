@@ -231,6 +231,7 @@ public sealed class MainWindow : Window, IShell
         ApplySkin(skins.Current);
         SetActive(_left);
         RebuildPalettes();
+        ApplyColumns();
 
         _notification.PointerPressed += async (_, _) =>
         {
@@ -317,6 +318,9 @@ public sealed class MainWindow : Window, IShell
             case var palette when palette.StartsWith(PaletteSettingPrefix, StringComparison.Ordinal):
                 RebuildPalettes();
                 break;
+            case var column when column.StartsWith(ColumnSettingPrefix, StringComparison.Ordinal):
+                ApplyColumns();
+                break;
         }
     }
 
@@ -349,10 +353,46 @@ public sealed class MainWindow : Window, IShell
             _ => palette.DefaultDock,
         } : palette.DefaultDock;
 
-    /// <summary>One "position" setting per palette (built-in and from plugins), so they are searchable like the rest.</summary>
+    private const string ColumnSettingPrefix = "column:";
+
+    /// <summary>Columns from the settings, in the order they were switched on; unknown ids (removed plugins) are skipped.</summary>
+    private IReadOnlyList<ActiveColumn> ActiveColumns()
+    {
+        var all = _host!.ColumnPlugins.SelectMany(p => p.Columns.Select(c => new ActiveColumn(p, c))).ToDictionary(c => c.Key, StringComparer.OrdinalIgnoreCase);
+        return [.. _host.Settings.Columns.Select(key => all.GetValueOrDefault(key)).OfType<ActiveColumn>()];
+    }
+
+    private void ApplyColumns()
+    {
+        var columns = ActiveColumns();
+        _left.Columns = columns;
+        _right.Columns = columns;
+    }
+
+    /// <summary>
+    /// Settings created at runtime: one on/off switch per plugin column and one position per palette (built-in and
+    /// from plugins), so they are searchable like the rest.
+    /// </summary>
     private void RegisterPaletteSettings()
     {
-        _host!.ExtraSettings = [.. AllPalettes.Select(p => new SettingDescriptor(
+        var columnSettings = _host!.ColumnPlugins.SelectMany(p => p.Columns.Select(c => new ActiveColumn(p, c))).Select(column => new SettingDescriptor(
+            ColumnSettingPrefix + column.Key,
+            SettingsCatalog.Columns,
+            $"Kolumna „{column.Definition.Header}”",
+            $"{column.Plugin.Manifest.Description} Wartości wczytują się w tle, najpierw dla widocznych wierszy.",
+            SettingKind.Toggle,
+            s => s.Columns.Contains(column.Key, StringComparer.OrdinalIgnoreCase),
+            (s, v) =>
+            {
+                s.Columns.RemoveAll(k => string.Equals(k, column.Key, StringComparison.OrdinalIgnoreCase));
+                if (v is true)
+                {
+                    s.Columns.Add(column.Key);
+                }
+            },
+            ["kolumna", "kolumny", "wdx", column.Definition.Header, column.Plugin.DisplayName]));
+
+        _host.ExtraSettings = [.. columnSettings, .. AllPalettes.Select(p => new SettingDescriptor(
             PaletteSettingPrefix + p.Id,
             SettingsCatalog.Palettes,
             $"Paleta „{p.Title}”",
@@ -894,7 +934,8 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.Edit, "Edycja", EditCurrentAsync)
          .Register(CommandIds.Copy, "Kopiuj", _ => TransferAsync(TransferMode.Copy))
          .Register(CommandIds.Move, "Przenieś", _ => TransferAsync(TransferMode.Move))
-         .Register(CommandIds.Pack, "Spakuj do archiwum (ZIP, TAR, TAR.GZ)", PackAsync)
+         .Register(CommandIds.Columns, "Kolumny: Git, zdjęcia (EXIF), SHA-256", () => OpenSettings("kolumna"))
+         .Register(CommandIds.Pack,"Spakuj do archiwum (ZIP, TAR, TAR.GZ)", PackAsync)
          .Register(CommandIds.Unpack, "Rozpakuj archiwum", UnpackAsync)
          .Register(CommandIds.MakeDirectory, "Nowy katalog", MakeDirectoryAsync)
          .Register(CommandIds.Delete, "Usuń", DeleteAsync)

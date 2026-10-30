@@ -17,7 +17,9 @@ public readonly record struct ColumnValue(string Text, long? SortKey = null)
 
 /// <summary>
 /// Extra columns (Total Commander WDX equivalent) such as Git status, EXIF or hashes. Values are requested on
-/// background threads after the listing is visible and patched into rows as they arrive.
+/// background threads after the listing is visible (rows in view first, several in parallel) and patched into rows
+/// as they arrive; leaving the folder cancels the requests. Like every plugin, a column reads files and runs
+/// programs only through <paramref name="host"/>, so its manifest permissions apply and calls are audited.
 /// </summary>
 public interface IColumnMetadataPlugin : IPlugin
 {
@@ -25,5 +27,5 @@ public interface IColumnMetadataPlugin : IPlugin
 
     bool Supports(in VfsEntry entry);
 
-    ValueTask<ColumnValue> GetValueAsync(VfsEntry entry, string columnId, CancellationToken cancellationToken);
+    ValueTask<ColumnValue> GetValueAsync(VfsEntry entry, string columnId, IPluginHost host, CancellationToken cancellationToken);
 }

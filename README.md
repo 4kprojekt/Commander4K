@@ -41,6 +41,7 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - `F3` viewer, `F4` your editor, `F7` new folder, `F8` delete;
   - `Alt+F7` parallel search that also looks inside files;
   - `Space` shows folder sizes, `Ctrl+T` opens a tab, `Ctrl+G` jumps to a recently used folder.
+- **Extra columns:** Git status, image size, date taken and camera (EXIF), and SHA-256. Each one is switched on in the settings ("Kolumny"). Values fill in the background, rows on screen first.
 - **Plugin panels:**
   - system information (hardware, OS, security, hot-fixes, start-up, environment);
   - task manager, with a process tree, live CPU and memory, and per-process resources and loaded DLLs;

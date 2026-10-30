@@ -160,9 +160,28 @@ public sealed class FilePanelView : ViewBase
         _pathBox.SelectAll();
     }
 
+    private IReadOnlyList<ActiveColumn> _columns = [];
+
+    /// <summary>Plugin columns shown in every tab of this panel (from the settings).</summary>
+    public IReadOnlyList<ActiveColumn> Columns
+    {
+        get => _columns;
+        set
+        {
+            _columns = value;
+            foreach (var tab in _tabs)
+            {
+                tab.SetColumns(value);
+            }
+
+            Canvas.InvalidateVisual();
+        }
+    }
+
     public void AddTab(string path)
     {
         var tab = new PanelTab(_host, path);
+        tab.ColumnData.SetColumns(_columns);
         tab.Changed += OnAnyTabChanged;
         tab.AuthenticationRequired += (t, ex) => AuthenticationRequired?.Invoke(new AuthenticationRequest(t, ex));
         _tabs.Add(tab);

@@ -39,6 +39,7 @@ public static class SettingsCatalog
     public const string Appearance = "Wygląd";
     public const string Panels = "Panele";
     public const string Palettes = "Palety";
+    public const string Columns = "Kolumny";
     public const string Network = "Sieć";
     public const string Preview = "Podgląd";
     public const string Updates = "Aktualizacje";

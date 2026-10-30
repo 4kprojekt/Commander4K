@@ -12,6 +12,7 @@ using Commander4K.Core.Vfs;
 using Commander4K.App.PluginPanels;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Archives;
+using Commander4K.Plugins.BuiltIn.Columns;
 using Commander4K.Plugins.BuiltIn.Local;
 using Commander4K.Plugins.BuiltIn.Network;
 using Commander4K.Plugins.BuiltIn.Registry;
@@ -273,6 +274,10 @@ public sealed class AppHost : IAsyncDisposable
     public RemoteTransferVfsPlugin Remote { get; } = new();
 
     public ArchiveVfsPlugin Archives { get; } = new();
+
+    /// <summary>Extra file-list columns (WDX), switched on per column in the settings.</summary>
+    public IReadOnlyList<IColumnMetadataPlugin> ColumnPlugins { get; } =
+        [new GitStatusColumnPlugin(), new ImageInfoColumnPlugin(), new HashColumnPlugin()];
 
     public LocalFileSearchPlugin FileSearch { get; } = new();
 

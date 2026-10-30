@@ -77,6 +77,9 @@ public sealed class AppSettings
 
     public List<ConnectionSetting> Connections { get; set; } = [];
 
+    /// <summary>Plugin columns shown in the file lists, as <c>pluginId/columnId</c>, in display order.</summary>
+    public List<string> Columns { get; set; } = [];
+
     /// <summary>Docked palettes (quick actions, favourites, views, plugin palettes) are visible.</summary>
     public bool ShowPalettes { get; set; } = true;
 

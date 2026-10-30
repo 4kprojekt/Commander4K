@@ -21,6 +21,20 @@ public sealed class PanelTab
     {
         _host = host;
         Path = path;
+        ColumnData = new ColumnLoader(host.HostFor);
+    }
+
+    /// <summary>Plugin columns (Git, EXIF, hashes) of this tab's rows, loaded after each listing.</summary>
+    public ColumnLoader ColumnData { get; }
+
+    /// <summary>Switches plugin columns on or off and loads the values for the current rows.</summary>
+    public void SetColumns(IReadOnlyList<ActiveColumn> columns)
+    {
+        ColumnData.SetColumns(columns);
+        if (!IsLoading)
+        {
+            ColumnData.Start(Entries, TopIndex, clear: false);
+        }
     }
 
     public string Path { get; private set; }
@@ -162,6 +176,7 @@ public sealed class PanelTab
 
     public void Detach()
     {
+        ColumnData.Cancel();
         _listing?.Cancel();
         StopWatching();
     }
@@ -194,6 +209,7 @@ public sealed class PanelTab
         IsLoading = true;
         if (!preserveState)
         {
+            ColumnData.Start([], 0, clear: true); // Cancels the previous folder's column work.
             Entries = parent is null ? [] : [ParentRow(parent)];
             Marked.Clear();
             DirectorySizes.Clear();
@@ -241,6 +257,7 @@ public sealed class PanelTab
 
             FocusBy(focusPath, focusName);
             IsLoading = false;
+            ColumnData.Start(Entries, TopIndex, clear: false);
             Remember(path, all);
             StartWatching(path, generation);
         }
