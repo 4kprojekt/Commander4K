@@ -11,6 +11,7 @@ using Commander4K.Core.Updates;
 using Commander4K.Core.Vfs;
 using Commander4K.App.PluginPanels;
 using Commander4K.PluginSdk;
+using Commander4K.Plugins.BuiltIn.Archives;
 using Commander4K.Plugins.BuiltIn.Local;
 using Commander4K.Plugins.BuiltIn.Network;
 using Commander4K.Plugins.BuiltIn.Registry;
@@ -77,7 +78,8 @@ public sealed class AppHost : IAsyncDisposable
         KnownHosts = new KnownHostsStore(Path.Combine(config.ConfigDirectory, "known_hosts.json"));
 
         Network = new NetworkNeighborhoodVfsPlugin(index);
-        Router = new VfsRouter(Executor, [Local, Network, Registry, Remote]);
+        Router = new VfsRouter(Executor, [Local, Network, Registry, Remote, Archives]);
+        Archives.Router = Router; // Archives open their container file through the router (any VFS).
         DirectorySizes = new DirectorySizeCalculator(Router);
         SearchProviders = [Registry, FileSearch];
         Updates = new UpdateService(Http);
@@ -269,6 +271,8 @@ public sealed class AppHost : IAsyncDisposable
     public WindowsRegistryVfsPlugin Registry { get; } = new();
 
     public RemoteTransferVfsPlugin Remote { get; } = new();
+
+    public ArchiveVfsPlugin Archives { get; } = new();
 
     public LocalFileSearchPlugin FileSearch { get; } = new();
 

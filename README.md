@@ -18,7 +18,8 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - `net://` network neighbourhood: finds SMB, SSH and FTP hosts on your LAN by itself;
   - SMB shares, with offline cached browsing;
   - `sftp://` and `ftp://` servers;
-  - `reg://`, the Windows Registry.
+  - `reg://`, the Windows Registry;
+  - archives (ZIP, 7z, TAR with gz/bz2/xz, RAR, GZ), opened with `Enter` like folders, even when they sit on a share or an SFTP server. `Alt+F5` packs to ZIP or TAR, and `Alt+F9` extracts.
 - **Panel modes (`F2`):** either panel can show files, a quick preview, the built-in browser or any plugin panel.
 - **Built-in browser (`Ctrl+Alt+W`):** a web panel based on Microsoft Edge WebView2. The address bar also searches (Google, Bing, DuckDuckGo).
   - `Ctrl+Alt+A` asks an AI assistant: ChatGPT, Claude, Perplexity or Gemini. Sign in once and the session is remembered.

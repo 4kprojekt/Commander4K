@@ -264,6 +264,18 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         try
         {
             var result = await Task.Run(() => plugin.LoadAsync(target, host, progress, cts.Token), cts.Token);
+
+            // Files on read-only locations (inside archives, net://) cannot be saved back, so they are view-only.
+            if (!_app.Router.TryResolve(target.Path, out var provider) || (provider.Capabilities & VfsCapabilities.Write) == 0)
+            {
+                result = result switch
+                {
+                    MarkdownPreview markdown => markdown with { CanEdit = false },
+                    TextPreview text => text with { CanEdit = false },
+                    _ => result,
+                };
+            }
+
             if (_loading == cts)
             {
                 _pendingRender = null;

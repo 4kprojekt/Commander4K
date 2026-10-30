@@ -16,6 +16,12 @@ public static class CommandIds
     /// <summary>Switches a panel's mode: files, quick preview or any plugin panel (F2).</summary>
     public const string PanelModes = "cm_PanelModes";
 
+    /// <summary>Packs the selection into a new archive in the other panel (Alt+F5).</summary>
+    public const string Pack = "cm_Pack";
+
+    /// <summary>Extracts the archive under the cursor into the other panel (Alt+F9).</summary>
+    public const string Unpack = "cm_Unpack";
+
     /// <summary>Internal WebView2 browser in the opposite panel (Ctrl+Alt+W).</summary>
     public const string Browser = "cm_Browser";
 

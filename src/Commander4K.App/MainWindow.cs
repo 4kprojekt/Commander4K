@@ -22,6 +22,7 @@ using Commander4K.Core.Jobs;
 using Commander4K.Core.Security;
 using Commander4K.Core.Updates;
 using Commander4K.Core.Web;
+using Commander4K.Plugins.BuiltIn.Archives;
 using Commander4K.Plugins.BuiltIn.Local;
 using Commander4K.Plugins.BuiltIn.Network;
 using Commander4K.PluginSdk;
@@ -893,6 +894,8 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.Edit, "Edycja", EditCurrentAsync)
          .Register(CommandIds.Copy, "Kopiuj", _ => TransferAsync(TransferMode.Copy))
          .Register(CommandIds.Move, "Przenieś", _ => TransferAsync(TransferMode.Move))
+         .Register(CommandIds.Pack, "Spakuj do archiwum (ZIP, TAR, TAR.GZ)", PackAsync)
+         .Register(CommandIds.Unpack, "Rozpakuj archiwum", UnpackAsync)
          .Register(CommandIds.MakeDirectory, "Nowy katalog", MakeDirectoryAsync)
          .Register(CommandIds.Delete, "Usuń", DeleteAsync)
          .Register(CommandIds.SearchAsync, "Szukaj", OpenSearch)
@@ -990,6 +993,13 @@ public sealed class MainWindow : Window, IShell
 
     private void OpenFile(FilePanelView panel, VfsEntry entry)
     {
+        // Enter on an archive opens it like a folder (Total Commander); Alt+F9 extracts, the shell is one F3/F4 away.
+        if (ArchiveVfsPlugin.IsArchiveName(entry.Name))
+        {
+            _ = panel.NavigateAsync(ArchiveVfsPlugin.RootPath(entry.Path));
+            return;
+        }
+
         if (VfsPath.GetScheme(entry.Path) is VfsPath.FileScheme or VfsPath.SmbScheme)
         {
             _ = Task.Run(() =>
@@ -1115,6 +1125,80 @@ public sealed class MainWindow : Window, IShell
         var job = new VfsTransferJob(_host!.Router, sources, request.Target, mode, request.Overwrite);
         RunJob(job, request.Queue ? JobQueueManager.DefaultQueue : null, refreshBoth: true);
         _active.ActiveTab.Marked.Clear();
+    }
+
+    /// <summary>Alt+F5: the format follows the name typed (.zip, .tar, .tar.gz/.tgz); the archive goes to the other panel.</summary>
+    private async ValueTask PackAsync(CommandInvocation _)
+    {
+        var sources = _active.ActiveTab.MarkedOrCurrent();
+        if (sources.Count == 0)
+        {
+            return;
+        }
+
+        var router = _host!.Router;
+        var defaultName = (sources.Count == 1 ? Path.GetFileNameWithoutExtension(sources[0].Name) : _active.ActiveTab.Title) + ".zip";
+        var target = await new InputDialog(_skins!.Current, "Spakuj",
+            $"Spakuj {DescribeSelection(sources)} do (rozszerzenie wybiera format: .zip, .tar, .tar.gz):",
+            router.Combine(Other.ActiveTab.Path, defaultName)).ShowAsync(this);
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return;
+        }
+
+        var archives = _host.Archives;
+        var name = target;
+        RunJob(new VfsPackJob(router, (output, inputs, progress, ct) => archives.PackAsync(output, inputs, progress, ct, name), sources, target), queue: null, refreshBoth: true);
+        _active.ActiveTab.Marked.Clear();
+    }
+
+    /// <summary>Alt+F9: extracts the whole archive into a folder named after it in the other panel.</summary>
+    private async ValueTask UnpackAsync(CommandInvocation _)
+    {
+        if (_active.ActiveTab.CurrentEntry is not { Kind: VfsEntryKind.File } archive || !ArchiveVfsPlugin.IsArchiveName(archive.Name))
+        {
+            Notify("Ustaw kursor na archiwum (.zip, .7z, .tar.gz, .rar…).", isError: true);
+            return;
+        }
+
+        var router = _host!.Router;
+        var folderName = archive.Name[..^(ArchiveExtensionLength(archive.Name))];
+        var target = await new InputDialog(_skins!.Current, "Rozpakuj", $"Rozpakuj „{archive.Name}” do:",
+            router.Combine(Other.ActiveTab.Path, folderName)).ShowAsync(this);
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return;
+        }
+
+        var root = ArchiveVfsPlugin.RootPath(archive.Path);
+        RunJob(new DelegateJob($"Rozpakowywanie „{archive.Name}” → {target}", async (progress, ct) =>
+        {
+            var entries = new List<VfsEntry>();
+            await foreach (var entry in router.EnumerateAsync(root, ct))
+            {
+                entries.Add(entry);
+            }
+
+            if (await router.GetEntryAsync(target, ct) is null)
+            {
+                await router.CreateDirectoryAsync(target, ct);
+            }
+
+            await new VfsTransferJob(router, entries, target, TransferMode.Copy, OverwritePolicy.Skip).ExecuteAsync(progress, ct);
+        }), queue: null, refreshBoth: true);
+    }
+
+    private static int ArchiveExtensionLength(string name)
+    {
+        foreach (var extension in new[] { ".tar.gz", ".tar.bz2", ".tar.xz" })
+        {
+            if (name.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+            {
+                return extension.Length;
+            }
+        }
+
+        return Path.GetExtension(name).Length;
     }
 
     private async ValueTask MakeDirectoryAsync(CommandInvocation _)

@@ -8,7 +8,8 @@ public readonly record struct ArchiveEntryInfo(
     DateTimeOffset LastWriteTime);
 
 /// <param name="EntryPath">Path inside the archive, using <c>/</c> separators.</param>
-public sealed record ArchiveInput(string EntryPath, Func<CancellationToken, ValueTask<Stream>> OpenAsync);
+/// <param name="LastWriteTime">Stored as the entry's date; <c>null</c> = now.</param>
+public sealed record ArchiveInput(string EntryPath, Func<CancellationToken, ValueTask<Stream>> OpenAsync, DateTimeOffset? LastWriteTime = null);
 
 /// <summary>Archive handler (Total Commander WCX equivalent).</summary>
 public interface IArchivePlugin : IPlugin
