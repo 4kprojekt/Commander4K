@@ -52,6 +52,9 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
     public VfsCapabilities Capabilities => VfsCapabilities.Read | VfsCapabilities.Write | VfsCapabilities.CreateDirectory
         | VfsCapabilities.Delete | VfsCapabilities.Move | VfsCapabilities.Watch;
 
+    /// <summary>When off, <c>net://</c> shows saved and cached hosts only, without probing the subnet.</summary>
+    public bool LanDiscoveryEnabled { get; set; } = true;
+
     /// <summary>Favourite servers and shares shown at the top of <c>net://</c>.</summary>
     public IReadOnlyList<SavedConnection> SavedConnections { get; set; } = [];
 
@@ -255,6 +258,11 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
 
     private async Task EmitScanAsync(HostSink emit, CancellationToken cancellationToken)
     {
+        if (!LanDiscoveryEnabled)
+        {
+            return;
+        }
+
         try
         {
             await foreach (var host in _scanner.ScanAsync(cancellationToken).ConfigureAwait(false))

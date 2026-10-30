@@ -6,6 +6,8 @@ public static class DefaultKeymap
     public static IReadOnlyDictionary<string, string> Bindings { get; } = new Dictionary<string, string>
     {
         ["F1"] = CommandIds.Help,
+        ["Ctrl+Shift+P"] = CommandIds.CommandPalette,
+        ["Ctrl+,"] = CommandIds.Settings,
         ["F2"] = CommandIds.SelectSkin,
         ["F10"] = CommandIds.Exit,
         ["Ctrl+H"] = CommandIds.ToggleHidden,

@@ -6,6 +6,7 @@ using Commander4K.Core.Jobs;
 using Commander4K.Core.Security;
 using Commander4K.Core.Theming;
 using Commander4K.Core.Tools;
+using Commander4K.Core.Updates;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Local;
@@ -39,8 +40,18 @@ public sealed class AppHost : IAsyncDisposable
         Router = new VfsRouter(Executor, [Local, Network, Registry, Remote]);
         DirectorySizes = new DirectorySizeCalculator(Router);
         SearchProviders = [Registry, FileSearch];
-        ApplyConnections();
+        Updates = new UpdateService(Http);
+        SettingsCatalog = Core.Configuration.SettingsCatalog.Create(
+            () => [.. Skins.Skins.Select(s => new SettingChoice(s.Id, s.DisplayName))]);
+        ApplySettings();
     }
+
+    /// <summary>Shared client for GitHub release checks and downloads.</summary>
+    public HttpClient Http { get; } = new() { Timeout = TimeSpan.FromMinutes(10) };
+
+    public UpdateService Updates { get; }
+
+    public IReadOnlyList<SettingDescriptor> SettingsCatalog { get; }
 
     public string DataDirectory { get; }
 
@@ -50,7 +61,10 @@ public sealed class AppHost : IAsyncDisposable
 
     public SkinCatalog Skins { get; private set; }
 
-    public KeymapEngine Keymap { get; }
+    public KeymapEngine Keymap { get; private set; }
+
+    /// <summary>Key sequence → command id as stored in <c>keymap.json</c> (the editable form of <see cref="Keymap"/>).</summary>
+    public Dictionary<string, string> KeyBindings { get; private set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public CommandRegistry Commands { get; } = new();
 
@@ -102,7 +116,7 @@ public sealed class AppHost : IAsyncDisposable
                 await File.WriteAllTextAsync(Path.Combine(config.SkinsDirectory, SkinSchema.FileName), SkinSchema.CreateJson(), cancellationToken)
                     .ConfigureAwait(false);
 
-                return new AppHost(
+                var host = new AppHost(
                     dataDirectory,
                     config,
                     settingsTask.Result,
@@ -110,6 +124,8 @@ public sealed class AppHost : IAsyncDisposable
                     new KeymapEngine(keymapTask.Result.Bindings),
                     new ExternalToolsService(toolsTask.Result),
                     indexTask.Result);
+                host.KeyBindings = new Dictionary<string, string>(keymapTask.Result.Bindings, StringComparer.OrdinalIgnoreCase);
+                return host;
             },
             cancellationToken);
 
@@ -118,9 +134,21 @@ public sealed class AppHost : IAsyncDisposable
 
     public Task SaveSettingsAsync() => Config.SaveSettingsAsync(Settings);
 
-    /// <summary>Pushes <see cref="AppSettings.Connections"/> to the network root listing.</summary>
-    public void ApplyConnections() =>
+    /// <summary>Pushes settings that live inside plugins (saved connections, LAN discovery).</summary>
+    public void ApplySettings()
+    {
         Network.SavedConnections = [.. Settings.Connections.Select(c => new SavedConnection(c.Name, c.Path))];
+        Network.LanDiscoveryEnabled = Settings.LanDiscovery;
+    }
+
+    /// <summary>Validates, persists and activates new key bindings; throws <see cref="FormatException"/> on a bad sequence.</summary>
+    public async Task SaveKeyBindingsAsync(Dictionary<string, string> bindings)
+    {
+        var engine = new KeymapEngine(bindings);
+        await Config.SaveKeymapAsync(new KeymapFile { Bindings = bindings });
+        KeyBindings = bindings;
+        Keymap = engine;
+    }
 
     public ISearchProviderPlugin? FindSearchProvider(string rootPath) =>
         SearchProviders.FirstOrDefault(p => p.CanSearch(rootPath));
@@ -129,6 +157,7 @@ public sealed class AppHost : IAsyncDisposable
     {
         await Jobs.DisposeAsync();
         await Remote.DisposeAsync();
+        Http.Dispose();
         if (Index is not null)
         {
             await Index.DisposeAsync();

@@ -14,6 +14,7 @@ using Commander4K.App.Theming;
 using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
 using Commander4K.Core.Security;
+using Commander4K.Core.Updates;
 using Commander4K.Plugins.BuiltIn.Local;
 using Commander4K.Plugins.BuiltIn.Network;
 using Commander4K.PluginSdk;
@@ -59,10 +60,11 @@ public sealed class MainWindow : Window
     private TextBlock _notification = null!;
     private Grid _keyBar = null!;
     private bool _jobsDirty;
+    private UpdateInfo? _pendingUpdate;
 
     public MainWindow()
     {
-        Title = "Commander4K";
+        Title = $"Commander4K {AppVersion.Display}";
         Width = 1360;
         Height = 860;
         MinWidth = 720;
@@ -169,6 +171,114 @@ public sealed class MainWindow : Window
         skins.Changed += ApplySkin;
         ApplySkin(skins.Current);
         SetActive(_left);
+
+        _notification.PointerPressed += async (_, _) =>
+        {
+            if (_pendingUpdate is { } update)
+            {
+                await new UpdateDialog(host, skins.Current, update).ShowAsync(this);
+            }
+        };
+        UpdateService.CleanupPreviousVersion(Environment.ProcessPath);
+        _ = CheckForUpdatesInBackgroundAsync();
+    }
+
+    /// <summary>Daily, silent check; a found release is announced in the status area and opened by clicking it.</summary>
+    private async Task CheckForUpdatesInBackgroundAsync()
+    {
+        var settings = _host!.Settings;
+        if (!settings.CheckForUpdates || settings.LastUpdateCheck > DateTimeOffset.UtcNow.AddHours(-24))
+        {
+            return;
+        }
+
+        try
+        {
+            var update = await _host.Updates.CheckAsync(settings.UpdateRepository, AppVersion.Current, settings.IncludePrereleases, CancellationToken.None);
+            settings.LastUpdateCheck = DateTimeOffset.UtcNow;
+            await _host.SaveSettingsAsync();
+            if (update is not null && update.Version.ToString() != settings.SkippedVersion)
+            {
+                _pendingUpdate = update;
+                Notify($"⬆ Dostępna wersja {update.Version} — kliknij, aby zaktualizować");
+                _notificationTimer.Stop(); // Keep it visible until acted upon.
+            }
+        }
+        catch (UpdateException ex)
+        {
+            System.Diagnostics.Trace.TraceWarning($"Update check failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Manual check (command palette, settings): always reports the outcome.</summary>
+    private async Task CheckForUpdatesNowAsync()
+    {
+        var settings = _host!.Settings;
+        Notify("Sprawdzanie aktualizacji…");
+        try
+        {
+            var update = await _host.Updates.CheckAsync(settings.UpdateRepository, AppVersion.Current, settings.IncludePrereleases, CancellationToken.None);
+            settings.LastUpdateCheck = DateTimeOffset.UtcNow;
+            await _host.SaveSettingsAsync();
+            if (update is null)
+            {
+                Notify($"Masz najnowszą wersję ({AppVersion.Display}).");
+                return;
+            }
+
+            _pendingUpdate = update;
+            await new UpdateDialog(_host, _skins!.Current, update).ShowAsync(this);
+        }
+        catch (UpdateException ex)
+        {
+            Notify(ex.Message, isError: true);
+        }
+    }
+
+    private void OpenSettings(string? query = null) =>
+        new SettingsWindow(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, query).Show(this);
+
+    private void OnSettingChanged(string key)
+    {
+        switch (key)
+        {
+            case "skin":
+                _skins!.Apply(_host!.Skins.Get(_host.Settings.Skin));
+                break;
+            case "showHidden":
+                _ = _left.ActiveTab.RefreshAsync();
+                _ = _right.ActiveTab.RefreshAsync();
+                break;
+        }
+    }
+
+    /// <summary>Ctrl+Shift+P: every command, skin and setting in one searchable list.</summary>
+    private async ValueTask ShowCommandPaletteAsync(CommandInvocation _)
+    {
+        var host = _host!;
+        var items = new List<PickerItem>();
+        foreach (var command in host.Commands.Commands.OrderBy(c => c.Description, StringComparer.CurrentCulture))
+        {
+            var keys = string.Join(", ", host.KeyBindings.Where(b => string.Equals(b.Value, command.Id, StringComparison.OrdinalIgnoreCase)).Select(b => b.Key));
+            items.Add(new PickerItem(command.Description, keys.Length > 0 ? keys : null, "cmd:" + command.Id, command.Id));
+        }
+
+        items.AddRange(host.Skins.Skins.Select(s => new PickerItem($"Skórka: {s.DisplayName}", null, "skin:" + s.Id, "motyw kolory theme")));
+        items.AddRange(host.SettingsCatalog.Select(s => new PickerItem($"Ustawienia: {s.Title}", s.Category, "set:" + s.Title, string.Join(' ', s.Keywords ?? []))));
+
+        var choice = await new PickerDialog(_skins!.Current, "Paleta komend (Ctrl+Shift+P)", items, "Wpisz, czego szukasz — komendy, skórki, ustawienia:").ShowAsync(this);
+        switch (choice?.Value.Split(':', 2))
+        {
+            case ["cmd", var id]:
+                await ExecuteAsync(id);
+                break;
+            case ["skin", var id]:
+                _skins.Apply(host.Skins.Get(id));
+                break;
+            case ["set", var title]:
+                OpenSettings(title);
+                break;
+        }
     }
 
     private void SetActive(FilePanelView panel)
@@ -425,6 +535,10 @@ public sealed class MainWindow : Window
          .Register(CommandIds.SelectSkin, "Wybór skórki", _ => new SkinPickerDialog(_host, _skins!).ShowAsync(this).ContinueWith(_ => { }, TaskScheduler.Default).AsValueTask())
          .Register(CommandIds.NextSkin, "Następna skórka", NextSkin)
          .Register(CommandIds.ToggleHidden, "Pokaż / ukryj pliki ukryte", ToggleHiddenAsync)
+         .Register(CommandIds.CommandPalette, "Paleta komend", ShowCommandPaletteAsync)
+         .Register(CommandIds.Settings, "Ustawienia", () => OpenSettings())
+         .Register(CommandIds.CheckForUpdates, "Sprawdź aktualizacje", _ => new ValueTask(CheckForUpdatesNowAsync()))
+         .Register(CommandIds.About, "O programie", _ => new ValueTask(new AboutDialog(_skins!.Current).ShowAsync(this)))
          .Register(CommandIds.Exit, "Wyjście", Close);
         c.Freeze();
     }
@@ -627,7 +741,7 @@ public sealed class MainWindow : Window
             return;
         }
 
-        if (!await new ConfirmDialog(_skins!.Current, "Usuń", $"Usunąć {DescribeSelection(targets)}? Tej operacji nie można cofnąć.", "Usuń").ShowAsync(this))
+        if (_host!.Settings.ConfirmDelete && !await new ConfirmDialog(_skins!.Current, "Usuń", $"Usunąć {DescribeSelection(targets)}? Tej operacji nie można cofnąć.", "Usuń").ShowAsync(this))
         {
             return;
         }
@@ -722,7 +836,7 @@ public sealed class MainWindow : Window
         }
 
         _host!.Settings.Connections.Add(connection);
-        _host.ApplyConnections();
+        _host.ApplySettings();
         await _host.SaveSettingsAsync();
         if (_active.ActiveTab.Path.StartsWith(NetworkNeighborhoodVfsPlugin.RootPath, StringComparison.OrdinalIgnoreCase))
         {

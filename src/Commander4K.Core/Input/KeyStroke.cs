@@ -37,6 +37,8 @@ public readonly record struct KeyStroke
         ["SUBTRACT"] = "MINUS",
         ["-"] = "MINUS",
         ["MULTIPLY"] = "*",
+        [","] = "OEMCOMMA",
+        ["."] = "OEMPERIOD",
     }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     public KeyStroke(string key, KeyModifiers modifiers = KeyModifiers.None)

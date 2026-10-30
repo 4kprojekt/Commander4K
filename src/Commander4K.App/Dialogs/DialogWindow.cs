@@ -205,7 +205,8 @@ public sealed class HostKeyDialog : DialogWindow<bool>
     }
 }
 
-public sealed record PickerItem(string Label, string? Detail, string Value);
+/// <param name="Keywords">Extra searchable text that is not displayed (command ids, synonyms).</param>
+public sealed record PickerItem(string Label, string? Detail, string Value, string? Keywords = null);
 
 /// <summary>Filterable list (drive menu, frecency jump list, skin list).</summary>
 public sealed class PickerDialog : DialogWindow<PickerItem?>
@@ -244,11 +245,9 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
 
     private void ApplyFilter()
     {
-        var filter = _filter.Text?.Trim() ?? string.Empty;
-        var visible = _items
-            .Where(i => filter.Length == 0 || i.Label.Contains(filter, StringComparison.CurrentCultureIgnoreCase)
-                || (i.Detail?.Contains(filter, StringComparison.CurrentCultureIgnoreCase) ?? false))
-            .ToList();
+        // Word-based, case- and accent-insensitive: "skor norton" finds "Skórka: Norton Commander".
+        var visible = Core.Configuration.SettingsCatalog.Search(
+            _items, _filter.Text, i => i.Label, i => [i.Detail ?? string.Empty, i.Keywords ?? string.Empty]);
         _list.ItemsSource = visible.Select(i => new ListBoxItem
         {
             Tag = i,

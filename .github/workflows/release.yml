@@ -1,0 +1,37 @@
+name: Release
+
+# Push a tag such as v0.2.0 (or v0.3.0-beta.1 for a pre-release) to build, test and publish a GitHub release.
+# The in-app updater looks for Commander4K-win-x64.exe / Commander4K-win-arm64.exe and SHA256SUMS.txt.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Test
+        run: dotnet test --solution Commander4K.sln --configuration Release
+
+      - name: Publish win-x64 and win-arm64
+        shell: pwsh
+        run: ./build-release.ps1 -Version "${{ github.ref_name }}" -Package
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $flags = @('--title', "Commander4K $($tag.TrimStart('v'))", '--generate-notes')
+          if ($tag.Contains('-')) { $flags += '--prerelease' }
+          gh release create $tag (Get-ChildItem dist/release).FullName @flags

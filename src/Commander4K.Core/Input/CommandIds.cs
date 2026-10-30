@@ -4,6 +4,10 @@ namespace Commander4K.Core.Input;
 public static class CommandIds
 {
     public const string Help = "cm_Help";
+    public const string CommandPalette = "cm_CommandPalette";
+    public const string Settings = "cm_Settings";
+    public const string CheckForUpdates = "cm_CheckForUpdates";
+    public const string About = "cm_About";
     public const string AddConnection = "cm_AddConnection";
     public const string ToggleHidden = "cm_ToggleHidden";
     public const string SwitchPanel = "cm_SwitchPanel";

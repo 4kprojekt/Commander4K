@@ -36,21 +36,30 @@ public sealed class ConfigStore(string configDirectory)
 
     /// <summary>Writes via a temporary file and a rename, so a crash mid-write never leaves a truncated file.</summary>
     public Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken = default) =>
+        SaveAtomicallyAsync(SettingsFileName, settings, ConfigJsonContext.Default.AppSettings, cancellationToken);
+
+    private Task SaveAtomicallyAsync<T>(string fileName, T value, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken) =>
         Task.Run(
             async () =>
             {
                 Directory.CreateDirectory(ConfigDirectory);
-                var path = Path.Combine(ConfigDirectory, SettingsFileName);
+                var path = Path.Combine(ConfigDirectory, fileName);
                 var temporary = path + ".tmp";
                 await using (var output = File.Create(temporary))
                 {
-                    await JsonSerializer.SerializeAsync(output, settings, ConfigJsonContext.Default.AppSettings, cancellationToken)
-                        .ConfigureAwait(false);
+                    await JsonSerializer.SerializeAsync(output, value, typeInfo, cancellationToken).ConfigureAwait(false);
                 }
 
                 File.Move(temporary, path, overwrite: true);
             },
             cancellationToken);
+
+    public string KeymapPath => Path.Combine(ConfigDirectory, KeymapFileName);
+
+    public string ToolsPath => Path.Combine(ConfigDirectory, ToolsFileName);
+
+    public Task SaveKeymapAsync(KeymapFile keymap, CancellationToken cancellationToken = default) =>
+        SaveAtomicallyAsync(KeymapFileName, keymap, ConfigJsonContext.Default.KeymapFile, cancellationToken);
 
     public Task<SkinCatalog> LoadSkinsAsync(CancellationToken cancellationToken = default) =>
         SkinCatalog.LoadAsync(SkinsDirectory, cancellationToken);
