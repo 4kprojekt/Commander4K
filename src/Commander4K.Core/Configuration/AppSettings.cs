@@ -83,8 +83,14 @@ public sealed class AppSettings
     /// <summary>Plugin columns shown in the file lists, as <c>pluginId/columnId</c>, in display order.</summary>
     public List<string> Columns { get; set; } = [];
 
-    /// <summary>Docked palettes (quick actions, favourites, views, plugin palettes) are visible.</summary>
-    public bool ShowPalettes { get; set; } = true;
+    /// <summary>Docked palettes (quick actions, favourites, views, plugin palettes) are visible; off by default (Ctrl+B).</summary>
+    public bool ShowPalettes { get; set; }
+
+    /// <summary>Palette id → width (side docks) or height (bottom) dragged by the user.</summary>
+    public Dictionary<string, double> PaletteSizes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Right click opens the Windows (Explorer) context menu; off = right click marks, as in Total Commander.</summary>
+    public bool ShellContextMenu { get; set; } = true;
 
     public List<FavoriteSetting> Favorites { get; set; } = [];
 

@@ -71,6 +71,10 @@ public static class SettingsCatalog
         new("rightPath", Panels, Loc.T("Folder startowy prawego panelu"), Loc.T("Ścieżka otwierana przy starcie; zapisywana automatycznie przy zamknięciu."),
             SettingKind.Text, s => s.RightPath ?? string.Empty, (s, v) => s.RightPath = NullIfEmpty(v), ["start", Loc.T("ścieżka"), "katalog"]),
 
+        new("shellContextMenu", Panels, Loc.T("Prawy przycisk: menu Windows"),
+            Loc.T("Prawy przycisk myszy pokazuje menu kontekstowe Eksploratora (Otwórz za pomocą, Wyślij do, Właściwości…). Wyłączone: prawy przycisk zaznacza pliki jak w Total Commanderze. Z klawiatury: Shift+F10 lub klawisz menu."),
+            SettingKind.Toggle, s => s.ShellContextMenu, (s, v) => s.ShellContextMenu = (bool)v!, ["kontekstowe", "context", "explorer", "eksplorator", "mysz", "mouse", "prawy"]),
+
         new("showPalettes", Palettes, Loc.T("Pokazuj palety"), Loc.T("Palety z szybkimi akcjami, ulubionymi folderami, zapisanymi widokami i palety wtyczek (Ctrl+B). Położenie każdej palety ustawisz poniżej."),
             SettingKind.Toggle, s => s.ShowPalettes, (s, v) => s.ShowPalettes = (bool)v!, [Loc.T("paleta"), "pasek", "przyciski", "ulubione", "widoki", "toolbar"]),
 

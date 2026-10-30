@@ -150,6 +150,7 @@ public sealed class MainWindow : Window, IShell
             var p = panel;
             p.Activated += SetActive;
             p.FileActivated += entry => OpenFile(p, entry);
+            p.ContextMenuRequested += entry => ShowContextMenu(p, entry, fromKeyboard: false);
             p.AddConnectionRequested += sender => _ = ExecuteAsync(CommandIds.AddConnection);
             p.AuthenticationRequired += request => _ = LoginAndRetryAsync(request);
         }
@@ -432,7 +433,15 @@ public sealed class MainWindow : Window, IShell
                     continue;
                 }
 
-                var view = new PaletteView(palette, _host.HostFor(palette.Manifest), position, _skins!.Current, Notify);
+                var id = palette.Id;
+                var view = new PaletteView(palette, _host.HostFor(palette.Manifest), position, _skins!.Current, Notify,
+                    _host.Settings.PaletteSizes.TryGetValue(id, out var size) ? size : null,
+                    resized: newSize =>
+                    {
+                        _host.Settings.PaletteSizes[id] = Math.Round(newSize);
+                        _ = _host.SaveSettingsAsync();
+                    },
+                    close: () => _ = HidePaletteAsync(palette));
                 _paletteViews.Add(view);
                 (position switch
                 {
@@ -454,6 +463,70 @@ public sealed class MainWindow : Window, IShell
                 Grid.SetRow(grid.Children[i], i);
             }
         }
+    }
+
+    /// <summary>
+    /// Right click / Shift+F10: the Windows Explorer menu for files on disks and shares (marked set if the row is
+    /// marked, else the row), or the app's own menu for other locations (archives, SFTP, registry).
+    /// </summary>
+    private void ShowContextMenu(FilePanelView panel, VfsEntry? clicked, bool fromKeyboard)
+    {
+        var tab = panel.ActiveTab;
+        IReadOnlyList<VfsEntry> entries = clicked is { } row && !tab.Marked.Contains(row.Path) ? [row] : tab.MarkedOrCurrent();
+        entries = [.. entries.Where(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action))];
+        if (entries.Count == 0 || panel.Mode is not null)
+        {
+            return;
+        }
+
+        int x, y;
+        if (fromKeyboard && panel.Canvas.CursorRowScreenPoint() is { } point)
+        {
+            (x, y) = (point.X, point.Y);
+        }
+        else
+        {
+            Shell.ShellContextMenu.GetCursorPos(out var cursor);
+            (x, y) = (cursor.X, cursor.Y);
+        }
+
+        var paths = entries.Select(e => e.Path).ToList();
+        var oneFolder = paths.Select(p => Path.GetDirectoryName(p.TrimEnd('\\'))).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1;
+        if (OperatingSystem.IsWindows() && oneFolder && paths.All(Shell.ShellContextMenu.Supports) && TryGetPlatformHandle() is { } handle)
+        {
+            if (Shell.ShellContextMenu.Show(handle.Handle, paths, x, y, extendedVerbs: Browser.WebView2Host.IsKeyDown(0x10)))
+            {
+                // Rename, delete, "Send to"… may have changed the folder; the watcher usually catches it, this is a safety net.
+                DispatcherTimer.RunOnce(() =>
+                {
+                    _ = _left.ActiveTab.RefreshAsync();
+                    _ = _right.ActiveTab.RefreshAsync();
+                }, TimeSpan.FromMilliseconds(600));
+            }
+
+            return;
+        }
+
+        // Archives, SFTP/FTP, registry: Explorer knows nothing about them, so offer the app's own operations.
+        var menu = new ContextMenu();
+        foreach (var commandId in new[] { CommandIds.View, CommandIds.QuickView, CommandIds.Edit, CommandIds.Copy, CommandIds.Move, CommandIds.Delete, CommandIds.Pack })
+        {
+            var id = commandId;
+            var item = new MenuItem { Header = _host!.ListCommands().FirstOrDefault(c => c.Id == id)?.Description ?? id };
+            item.Click += async (_, _) => await ExecuteAsync(id);
+            menu.Items.Add(item);
+        }
+
+        menu.Open(panel.Canvas);
+    }
+
+    /// <summary>✕ on a palette: only that one is hidden (its position becomes "hidden"); the settings bring it back.</summary>
+    private async Task HidePaletteAsync(IPalettePlugin palette)
+    {
+        _host!.Settings.PaletteDocks[palette.Id] = "hidden";
+        RebuildPalettes();
+        Notify(Loc.T("Paleta „{0}” ukryta — przywrócisz ją w ustawieniach (F1 → Palety).", palette.Title));
+        await _host.SaveSettingsAsync();
     }
 
     private async Task TogglePalettesAsync()
@@ -935,7 +1008,8 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.Edit, Loc.T("Edycja"), EditCurrentAsync)
          .Register(CommandIds.Copy, Loc.T("Kopiuj"), _ => TransferAsync(TransferMode.Copy))
          .Register(CommandIds.Move, Loc.T("Przenieś"), _ => TransferAsync(TransferMode.Move))
-         .Register(CommandIds.Columns, Loc.T("Kolumny: Git, zdjęcia (EXIF), SHA-256"), () => OpenSettings(Loc.T("kolumna")))
+         .Register(CommandIds.ContextMenu, Loc.T("Menu kontekstowe Windows dla zaznaczonych plików"), () => ShowContextMenu(_active, null, fromKeyboard: true))
+         .Register(CommandIds.Columns,Loc.T("Kolumny: Git, zdjęcia (EXIF), SHA-256"), () => OpenSettings(Loc.T("kolumna")))
          .Register(CommandIds.Translate, Loc.T("Przetłumacz interfejs z AI (nowy język)"), _ => new ValueTask(new TranslationDialog(_host!, _skins!.Current).ShowAsync(this)))
          .Register(CommandIds.Pack,Loc.T("Spakuj do archiwum (ZIP, TAR, TAR.GZ)"), PackAsync)
          .Register(CommandIds.Unpack, Loc.T("Rozpakuj archiwum"), UnpackAsync)

@@ -24,6 +24,8 @@ public static class DefaultKeymap
         ["Ctrl+,"] = CommandIds.Settings,
         ["F2"] = CommandIds.PanelModes,
         ["Ctrl+B"] = CommandIds.TogglePalettes,
+        ["Shift+F10"] = CommandIds.ContextMenu,
+        ["Apps"] = CommandIds.ContextMenu,
         ["Alt+F5"] = CommandIds.Pack,
         ["Alt+F9"] = CommandIds.Unpack,
         ["Ctrl+Alt+W"] = CommandIds.Browser,

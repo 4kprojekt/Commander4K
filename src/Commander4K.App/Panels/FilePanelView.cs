@@ -38,6 +38,18 @@ public sealed class FilePanelView : ViewBase
         Canvas.Activated += () => Activated?.Invoke(this);
         Canvas.RowActivated += Open;
         Canvas.HeaderClicked += column => ActiveTab.SetSort(ActiveTab.Sort.Toggle(column));
+        Canvas.RightClicked += entry =>
+        {
+            Activated?.Invoke(this);
+            if (_host.Settings.ShellContextMenu)
+            {
+                ContextMenuRequested?.Invoke(entry);
+            }
+            else
+            {
+                ActiveTab.ToggleMark(entry); // Total Commander: right click marks.
+            }
+        };
         AddTab(initialPath);
         skins.Changed += ApplySkin;
     }
@@ -116,6 +128,9 @@ public sealed class FilePanelView : ViewBase
 
     /// <summary>Enter / double-click on a file (as opposed to a container).</summary>
     public event Action<VfsEntry>? FileActivated;
+
+    /// <summary>Right click with the Windows context menu enabled; the window shows the menu for this entry (or the marked set).</summary>
+    public event Action<VfsEntry>? ContextMenuRequested;
 
     /// <summary>Enter on the "+ Add network connection" row.</summary>
     public event Action<FilePanelView>? AddConnectionRequested;

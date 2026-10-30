@@ -45,6 +45,22 @@ public sealed class FileViewportCanvas : Control
 
     public event Action<SortColumn>? HeaderClicked;
 
+    /// <summary>Right click on a row (the cursor has moved there unless the row is part of the marked set).</summary>
+    public event Action<VfsEntry>? RightClicked;
+
+    /// <summary>Screen position just below the cursor row (for the context menu opened from the keyboard).</summary>
+    public PixelPoint? CursorRowScreenPoint()
+    {
+        if (_tab is null || _brushes is null)
+        {
+            return null;
+        }
+
+        var layout = Layout();
+        var y = layout.RowsArea.Y + ((_tab.Cursor - _tab.TopIndex + 1) * _brushes.RowHeight);
+        return this.PointToScreen(new Point(layout.Inner.X + 40, Math.Min(y, layout.RowsArea.Bottom)));
+    }
+
     public PanelTab? Tab
     {
         get => _tab;
@@ -204,7 +220,16 @@ public sealed class FileViewportCanvas : Control
         var properties = e.GetCurrentPoint(this).Properties;
         if (properties.IsRightButtonPressed)
         {
-            _tab.ToggleMark(_tab.Entries[index]); // Total Commander: right click marks.
+            // The panel decides: Windows context menu (default) or marking, as in Total Commander.
+            var clicked = _tab.Entries[index];
+            if (!_tab.Marked.Contains(clicked.Path))
+            {
+                _tab.MoveCursor(index);
+            }
+
+            e.Handled = true;
+            Dispatcher.UIThread.Post(() => RightClicked?.Invoke(clicked)); // After the press, so no pointer capture is held.
+            return;
         }
 
         _tab.MoveCursor(index);

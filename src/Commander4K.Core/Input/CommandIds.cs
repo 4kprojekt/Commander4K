@@ -16,6 +16,9 @@ public static class CommandIds
     /// <summary>Switches a panel's mode: files, quick preview or any plugin panel (F2).</summary>
     public const string PanelModes = "cm_PanelModes";
 
+    /// <summary>Windows Explorer context menu for the selection (Shift+F10, Menu key).</summary>
+    public const string ContextMenu = "cm_ContextMenu";
+
     /// <summary>Prompt and checks for translating the UI into a new language with an AI chat.</summary>
     public const string Translate = "cm_Translate";
 

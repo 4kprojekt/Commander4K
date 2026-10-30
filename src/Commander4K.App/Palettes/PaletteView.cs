@@ -29,13 +29,24 @@ public sealed class PaletteView : Border
     private SkinBrushes _brushes;
     private int _generation;
 
-    public PaletteView(IPalettePlugin palette, IPluginHost host, PaletteDock dock, SkinBrushes brushes, Action<string, bool> notify)
+    private const double GripSize = 5;
+
+    private readonly Border _grip;
+    private Point? _dragStart;
+    private double _dragStartSize;
+
+    /// <param name="size">Width (side docks) or height (bottom) the user dragged it to last time; <c>null</c> = default.</param>
+    /// <param name="resized">Called once a drag ends, with the new width or height.</param>
+    /// <param name="close">Called by the ✕ button (the window hides this palette).</param>
+    public PaletteView(IPalettePlugin palette, IPluginHost host, PaletteDock dock, SkinBrushes brushes, Action<string, bool> notify,
+        double? size = null, Action<double>? resized = null, Action? close = null)
     {
         _palette = palette;
         _host = host;
         Dock = dock;
         _brushes = brushes;
         _notify = notify;
+        _grip = new Border { Background = Brushes.Transparent };
 
         var vertical = dock != PaletteDock.Bottom;
         _items = vertical ? new StackPanel { Spacing = 2 } : new WrapPanel { Orientation = Orientation.Horizontal };
@@ -60,17 +71,89 @@ public sealed class PaletteView : Border
             _header.Children.Add(button);
         }
 
-        var layout = new DockPanel();
+        if (close is not null)
+        {
+            var closeButton = SmallButton("✕", Loc.T("Zamknij paletę (przywrócisz ją w ustawieniach: Palety)"));
+            closeButton.Click += (_, _) => close();
+            _header.Children.Add(closeButton);
+        }
+
+        var layout = new DockPanel { Margin = new Thickness(4) };
         DockPanel.SetDock(_header, Avalonia.Controls.Dock.Top);
         layout.Children.Add(_header);
-        layout.Children.Add(vertical ? new ScrollViewer { Content = _items, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto } : _items);
-        Child = layout;
-        Padding = new Thickness(4);
-        Width = dock switch
+        layout.Children.Add(vertical || size is not null
+            ? new ScrollViewer { Content = _items, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto }
+            : _items);
+
+        // A grip on the edge facing the panels: drag to widen (sides) or heighten (bottom).
+        var horizontal = dock != PaletteDock.Bottom;
+        var root = new Grid();
+        if (horizontal)
         {
-            PaletteDock.BetweenPanels => BetweenWidth,
-            PaletteDock.Left or PaletteDock.Right => SideWidth,
-            _ => double.NaN,
+            _grip.Width = GripSize;
+            _grip.Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.SizeWestEast);
+            root.ColumnDefinitions = dock == PaletteDock.Right ? new ColumnDefinitions($"{GripSize},*") : new ColumnDefinitions($"*,{GripSize}");
+            Grid.SetColumn(layout, dock == PaletteDock.Right ? 1 : 0);
+            Grid.SetColumn(_grip, dock == PaletteDock.Right ? 0 : 1);
+        }
+        else
+        {
+            _grip.Height = GripSize;
+            _grip.Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.SizeNorthSouth);
+            root.RowDefinitions = new RowDefinitions($"{GripSize},*");
+            Grid.SetRow(layout, 1);
+        }
+
+        ToolTip.SetTip(_grip, Loc.T("Przeciągnij, aby zmienić rozmiar"));
+        root.Children.Add(layout);
+        root.Children.Add(_grip);
+        Child = root;
+        if (horizontal)
+        {
+            Width = size ?? (dock == PaletteDock.BetweenPanels ? BetweenWidth : SideWidth);
+        }
+        else if (size is not null)
+        {
+            Height = size.Value;
+        }
+
+        _grip.PointerPressed += (_, e) =>
+        {
+            _dragStart = e.GetPosition(TopLevel.GetTopLevel(this));
+            _dragStartSize = horizontal ? Bounds.Width : Bounds.Height;
+            e.Pointer.Capture(_grip);
+            e.Handled = true;
+        };
+        _grip.PointerMoved += (_, e) =>
+        {
+            if (_dragStart is not { } start)
+            {
+                return;
+            }
+
+            var point = e.GetPosition(TopLevel.GetTopLevel(this));
+            var delta = horizontal ? point.X - start.X : point.Y - start.Y;
+            var grows = dock is PaletteDock.Left or PaletteDock.BetweenPanels ? delta : -delta; // Right and bottom grow towards the panels.
+            var value = Math.Clamp(_dragStartSize + grows, horizontal ? 56 : 40, horizontal ? 640 : 480);
+            if (horizontal)
+            {
+                Width = value;
+            }
+            else
+            {
+                Height = value;
+            }
+        };
+        _grip.PointerReleased += (_, e) =>
+        {
+            if (_dragStart is null)
+            {
+                return;
+            }
+
+            _dragStart = null;
+            e.Pointer.Capture(null);
+            resized?.Invoke(horizontal ? Width : Height);
         };
 
         _itemsChanged = () => Dispatcher.UIThread.Post(Refresh);
@@ -97,6 +180,8 @@ public sealed class PaletteView : Border
         _brushes = brushes;
         Background = brushes.StatusBackground;
         BorderBrush = brushes.PanelBorder;
+        _grip.Background = brushes.PanelBorder; // A visible line, so the handle can be found.
+        _grip.Opacity = 0.35;
         BorderThickness = Dock switch
         {
             PaletteDock.Bottom => new Thickness(0, 1, 0, 0),
