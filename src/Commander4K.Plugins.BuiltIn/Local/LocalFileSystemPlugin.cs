@@ -16,6 +16,8 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
 
     public string DisplayName => "Local disks";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.local", "Dyski lokalne", "Przeglądanie i operacje na dyskach lokalnych.", PluginPermissions.FileRead, PluginPermissions.FileWrite);
+
     public IReadOnlyList<string> Schemes { get; } = [VfsPath.FileScheme, "local"];
 
     public VfsCapabilities Capabilities => VfsCapabilities.Read | VfsCapabilities.Write | VfsCapabilities.CreateDirectory

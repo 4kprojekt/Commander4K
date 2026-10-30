@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "examples.site-check",
+  "name": "Sprawdzanie stron (Node.js)",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Przykład: dostępność stron WWW z listy sites.json, odświeżana co minutę.",
+  "runtime": { "type": "node", "entry": "main.js", "version": ">=18" },
+  "permissions": ["net"],
+  "contributes": {
+    "commands": [
+      { "id": "check-url", "title": "Sprawdź adres URL", "category": "Przykłady", "description": "Pobiera stronę i pokazuje tytuł oraz rozmiar." }
+    ],
+    "panels": [
+      { "id": "sites", "title": "Stan stron", "description": "Strony z sites.json.", "refreshSeconds": 60 }
+    ]
+  }
+}

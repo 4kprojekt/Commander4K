@@ -12,6 +12,8 @@ internal sealed class FakeVfsProvider : IVfsProviderPlugin
 
     public string DisplayName => "Memory";
 
+    public PluginManifest Manifest { get; } = new("test.mem", "Memory", "1.0.0", "tests", "In-memory VFS", [PluginPermissions.FileRead]);
+
     public IReadOnlyList<string> Schemes { get; } = ["mem"];
 
     public VfsCapabilities Capabilities => VfsCapabilities.Read;

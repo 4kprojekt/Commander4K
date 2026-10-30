@@ -24,6 +24,8 @@ public sealed class WindowsRegistryVfsPlugin : IVfsProviderPlugin, ISearchProvid
 
     public string DisplayName => "Windows Registry";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.registry", "Rejestr Windows", "Przeglądanie, edycja i przeszukiwanie rejestru.", PluginPermissions.SystemInfo, PluginPermissions.FileWrite);
+
     public IReadOnlyList<string> Schemes { get; } = [RegistryPath.Scheme];
 
     public VfsCapabilities Capabilities => VfsCapabilities.Read | VfsCapabilities.CreateDirectory | VfsCapabilities.Delete;

@@ -19,6 +19,8 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
 
     public string DisplayName => "SFTP / FTP";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.remote", "SFTP / FTP", "Serwery SFTP i FTP.", PluginPermissions.Network, PluginPermissions.FileRead, PluginPermissions.FileWrite);
+
     public IReadOnlyList<string> Schemes { get; } = [RemoteEndpoint.Sftp, RemoteEndpoint.Ftp];
 
     public VfsCapabilities Capabilities => VfsCapabilities.Read | VfsCapabilities.CreateDirectory | VfsCapabilities.Delete;

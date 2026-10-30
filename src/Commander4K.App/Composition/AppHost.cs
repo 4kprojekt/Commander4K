@@ -3,11 +3,13 @@ using Commander4K.Core.Execution;
 using Commander4K.Core.Indexing;
 using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
+using Commander4K.Core.Plugins;
 using Commander4K.Core.Security;
 using Commander4K.Core.Theming;
 using Commander4K.Core.Tools;
 using Commander4K.Core.Updates;
 using Commander4K.Core.Vfs;
+using Commander4K.App.PluginPanels;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Local;
 using Commander4K.Plugins.BuiltIn.Network;
@@ -21,6 +23,32 @@ using Commander4K.Plugins.BuiltIn.TaskManager;
 using Commander4K.Plugins.BuiltIn.Viewers;
 
 namespace Commander4K.App.Composition;
+
+/// <summary>Forwards plugin UI calls to the window once it is attached; before that, calls are no-ops.</summary>
+public sealed class PluginUiProxy : IPluginUi
+{
+    public IPluginUi? Target { get; set; }
+
+    public string? ActivePath => Target?.ActivePath;
+
+    public string? OtherPath => Target?.OtherPath;
+
+    public IReadOnlyList<VfsEntry> SelectedEntries => Target?.SelectedEntries ?? [];
+
+    public Task NavigateAsync(string path, string? focusName) => Target?.NavigateAsync(path, focusName) ?? Task.CompletedTask;
+
+    public void Notify(string message, bool isError) => Target?.Notify(message, isError);
+
+    public Task ShowTextAsync(string title, string text) => Target?.ShowTextAsync(title, text) ?? Task.CompletedTask;
+
+    public Task<bool> ConfirmAsync(string title, string message) => Target?.ConfirmAsync(title, message) ?? Task.FromResult(false);
+
+    public Task<string?> PromptAsync(string title, string message, string initial) => Target?.PromptAsync(title, message, initial) ?? Task.FromResult<string?>(null);
+
+    public Task EditFileAsync(string path) => Target?.EditFileAsync(path) ?? Task.CompletedTask;
+
+    public Task OpenPanelAsync(string panelPluginId, string? argument) => Target?.OpenPanelAsync(panelPluginId, argument) ?? Task.CompletedTask;
+}
 
 /// <param name="Category">Menu group for plugin commands (slash = submenu); <c>null</c> for built-ins.</param>
 public sealed record CommandInfo(string Id, string Description, string? Category);
@@ -51,10 +79,97 @@ public sealed class AppHost : IAsyncDisposable
         SettingsCatalog = Core.Configuration.SettingsCatalog.Create(
             () => [.. Skins.Skins.Select(s => new SettingChoice(s.Id, s.DisplayName))]);
         PowerShell = new PowerShellCatalogPlugin(Path.Combine(config.ConfigDirectory, "powershell.json"));
-        PanelPlugins = [new SystemInfoPanelPlugin(), new TaskManagerPanelPlugin(), new LogAnalyzerPanelPlugin(), PowerShell];
+        Audit = new AuditLog(Path.Combine(dataDirectory, "data", "logs"));
+        Approvals = new PluginApprovalStore(Path.Combine(config.ConfigDirectory, "plugin-approvals.json"));
+        BuiltInPanels = [new SystemInfoPanelPlugin(), new TaskManagerPanelPlugin(), new LogAnalyzerPanelPlugin(), PowerShell, new PluginManagerPanel(this)];
+        PanelPlugins = BuiltInPanels;
         CommandPlugins = [PowerShell];
         ApplySettings();
     }
+
+    /// <summary>Receives plugin UI calls; the window plugs itself in once it exists.</summary>
+    public PluginUiProxy PluginUi { get; } = new();
+
+    public AuditLog Audit { get; }
+
+    public PluginApprovalStore Approvals { get; }
+
+    /// <summary>Installed plugin runtimes (Node, Python, PowerShell, .NET) detected at start-up.</summary>
+    public IReadOnlyList<RuntimeInfo> Runtimes { get; private set; } = [];
+
+    /// <summary>Every <c>plugin.json</c> found, enabled or not, valid or not (for the plugin manager).</summary>
+    public IReadOnlyList<DiscoveredPlugin> DiscoveredPlugins { get; private set; } = [];
+
+    /// <summary>Running external plugins (approved, valid, runtime available).</summary>
+    public IReadOnlyList<ExternalPlugin> ExternalPlugins { get; private set; } = [];
+
+    public IReadOnlyList<IPanelPlugin> BuiltInPanels { get; }
+
+    /// <summary>Folders searched for external plugins: next to the exe and in the data folder.</summary>
+    public IReadOnlyList<string> PluginRoots =>
+        [.. new[] { Path.Combine(AppContext.BaseDirectory, "plugins"), Path.Combine(DataDirectory, "plugins") }.Distinct(StringComparer.OrdinalIgnoreCase)];
+
+    private readonly Dictionary<string, ScopedPluginHost> _hosts = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The API instance for one plugin: permission checks against its manifest and audit entries under its id. The only
+    /// way the window hands a host to plugin code.
+    /// </summary>
+    public IPluginHost HostFor(PluginManifest manifest)
+    {
+        lock (_hosts)
+        {
+            if (!_hosts.TryGetValue(manifest.Id, out var host))
+            {
+                host = new ScopedPluginHost(manifest, PluginUi, Router, Http, Audit);
+                _hosts[manifest.Id] = host;
+            }
+
+            return host;
+        }
+    }
+
+    /// <summary>Why a discovered plugin is not running, or <c>null</c> when it is.</summary>
+    public string? PluginBlocker(DiscoveredPlugin plugin)
+    {
+        if (!plugin.IsValid)
+        {
+            return string.Join(" ", plugin.Errors);
+        }
+
+        if (RuntimeCatalog.CheckRequirement(plugin.Manifest!.Runtime, Runtimes) is { } missing)
+        {
+            return missing;
+        }
+
+        return Approvals.IsApproved(plugin.Manifest) ? null : "Wyłączona — wymaga zgody na uprawnienia.";
+    }
+
+    /// <summary>Re-scans plugin folders and (re)starts approved plugins; call after enabling or installing one.</summary>
+    public async Task ReloadExternalPluginsAsync()
+    {
+        foreach (var running in ExternalPlugins)
+        {
+            await running.DisposeAsync();
+        }
+
+        var discovered = await Task.Run(() => ManifestReader.Discover(PluginRoots));
+        var external = new List<ExternalPlugin>();
+        foreach (var plugin in discovered.Where(p => PluginBlocker(p) is null))
+        {
+            var runtime = Runtimes.First(r => string.Equals(r.Type, plugin.Manifest!.Runtime.Type, StringComparison.OrdinalIgnoreCase));
+            external.Add(new ExternalPlugin(plugin, runtime, (ScopedPluginHost)HostFor(plugin.Manifest!), Audit));
+        }
+
+        DiscoveredPlugins = discovered;
+        ExternalPlugins = external;
+        PanelPlugins = [.. BuiltInPanels, .. external.SelectMany(e => (e.Manifest.Contributes?.Panels ?? []).Select(p => (IPanelPlugin)new ExternalPanelPlugin(e, p)))];
+        CommandPlugins = [PowerShell, .. external.Where(e => e.Manifest.Contributes?.Commands is { Count: > 0 }).Select(e => (ICommandPlugin)new ExternalCommandPlugin(e))];
+        PluginsChanged?.Invoke();
+    }
+
+    /// <summary>Raised (on a background thread) after <see cref="ReloadExternalPluginsAsync"/>.</summary>
+    public event Action? PluginsChanged;
 
     public PowerShellCatalogPlugin PowerShell { get; }
 
@@ -63,9 +178,6 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>Menu/palette operations (built-in and from the plugins folder).</summary>
     public IReadOnlyList<ICommandPlugin> CommandPlugins { get; private set; }
-
-    /// <summary>Plugin assemblies that failed to load, for the About/help output.</summary>
-    public IReadOnlyList<string> PluginErrors { get; private set; } = [];
 
     public IPanelPlugin? FindPanel(string pluginId) =>
         PanelPlugins.FirstOrDefault(p => string.Equals(p.Id, pluginId, StringComparison.OrdinalIgnoreCase));
@@ -88,30 +200,6 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         return commands;
-    }
-
-    /// <summary>Loads plugins/&lt;Name&gt;/&lt;Name&gt;.dll from next to the exe and from the data folder.</summary>
-    private async Task LoadExternalPluginsAsync()
-    {
-        var loader = new Core.Plugins.PluginLoader();
-        var panels = new List<IPanelPlugin>(PanelPlugins);
-        var commands = new List<ICommandPlugin>(CommandPlugins);
-        var errors = new List<string>();
-        foreach (var root in new[] { Path.Combine(AppContext.BaseDirectory, "plugins"), Path.Combine(DataDirectory, "plugins") }.Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            var (loaded, failed) = await Task.Run(() => loader.LoadFromDirectory(root));
-            errors.AddRange(failed.Select(f => $"{f.Path}: {f.Error.Message}"));
-            foreach (var plugin in loaded.SelectMany(l => l.Instances))
-            {
-                if (plugin is IVfsProviderPlugin vfs) Router.Register(vfs);
-                if (plugin is IPanelPlugin panel) panels.Add(panel);
-                if (plugin is ICommandPlugin command) commands.Add(command);
-            }
-        }
-
-        PanelPlugins = panels;
-        CommandPlugins = commands;
-        PluginErrors = errors;
     }
 
     /// <summary>Shared client for GitHub release checks and downloads.</summary>
@@ -194,7 +282,8 @@ public sealed class AppHost : IAsyncDisposable
                     indexTask.Result);
                 host.KeyBindings = new Dictionary<string, string>(keymapTask.Result.Bindings, StringComparer.OrdinalIgnoreCase);
                 await host.PowerShell.ReloadAsync(cancellationToken).ConfigureAwait(false);
-                await host.LoadExternalPluginsAsync().ConfigureAwait(false);
+                host.Runtimes = await RuntimeCatalog.DetectAsync(cancellationToken).ConfigureAwait(false);
+                await host.ReloadExternalPluginsAsync().ConfigureAwait(false);
                 return host;
             },
             cancellationToken);
@@ -225,8 +314,14 @@ public sealed class AppHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        foreach (var plugin in ExternalPlugins)
+        {
+            await plugin.DisposeAsync();
+        }
+
         await Jobs.DisposeAsync();
         await Remote.DisposeAsync();
+        await Audit.DisposeAsync();
         Http.Dispose();
         if (Index is not null)
         {

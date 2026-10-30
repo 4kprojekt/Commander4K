@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "title": "Commander4K plugin manifest (plugin.json)",
+  "type": "object",
+  "required": ["id", "name", "version", "author", "description", "runtime", "permissions", "contributes"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$", "description": "Unique id; the builtin. prefix is reserved." },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "description": "Semantic version, e.g. 1.0.0" },
+    "author": { "type": "string" },
+    "description": { "type": "string" },
+    "protocol": { "type": "integer", "minimum": 1, "maximum": 1, "default": 1 },
+    "runtime": {
+      "type": "object",
+      "required": ["type", "entry"],
+      "properties": {
+        "type": { "enum": ["python", "node", "powershell", "dotnet", "exe"] },
+        "entry": { "type": "string", "description": "Start file inside the plugin folder." },
+        "version": { "type": "string", "description": "Required range: >=3.10, >18 <25, ^7 or a bare 3.10 (meaning >=)." }
+      },
+      "additionalProperties": false
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["fs.read", "fs.write", "process.read", "process.kill", "shell.run", "net", "system.info"] }
+    },
+    "contributes": {
+      "type": "object",
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "category"],
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "category": { "type": "string", "description": "Menu path under Wtyczki; '/' makes a submenu." },
+              "description": { "type": "string" },
+              "shortcut": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "panels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title"],
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "description": { "type": "string" },
+              "requiresArgument": { "type": "boolean", "description": "Opened for the file under the cursor (in the other panel)." },
+              "refreshSeconds": { "type": "integer", "minimum": 1 },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "title"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "title": { "type": "string" },
+                    "shortcut": { "type": "string" },
+                    "confirm": { "type": "boolean" },
+                    "appliesToRows": { "type": "boolean", "default": true }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

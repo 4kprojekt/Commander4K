@@ -30,7 +30,11 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - log analyzer, which groups messages into patterns and shows a per-hour timeline;
   - a catalogue of PowerShell commands you can run on the current folder or the selected files.
 
-  Panels, menu commands and key bindings can come from plugins in `plugins/`.
+- **Plugins in any language:** Python, Node.js, PowerShell, .NET or any executable. Each runs as a separate process and speaks a small JSON-RPC protocol.
+  - A plugin declares its permissions in `plugin.json`, and the app checks every call against them.
+  - Every call is written to an audit log, and the user approves a plugin before it runs.
+  - The plugin manager shows installed runtimes and their versions, with install hints for missing ones.
+  - It can also create a new plugin from an example. See [docs/plugins.md](docs/plugins.md), which is written so an AI assistant can build plugins from it too.
 - **Skins:** Modern dark/light, Norton Commander, Midnight Commander and Total Commander classic. You can also make your own as JSON, or let AI design one (see below).
 - **Easy to configure:**
   - `Ctrl+,` opens a settings window that searches settings, shortcuts and config files;

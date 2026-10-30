@@ -14,15 +14,17 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
 
     public string DisplayName => "Log analyzer";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.logs", "Analiza logów", "Grupowanie wpisów logu we wzorce wg poziomu i czasu.", PluginPermissions.FileRead);
+
     public string Title => "Analiza logów";
 
     public string Description => "Grupuje wpisy pliku logu we wzorce wg poziomu (błędy, ostrzeżenia…), z liczbą wystąpień i osią czasu.";
 
     public bool RequiresArgument => true;
 
-    public IPanelSession CreateSession(PanelRequest request, IPluginHost host) => new Session();
+    public IPanelSession CreateSession(PanelRequest request, IPluginHost host) => new Session(host);
 
-    private sealed class Session : IPanelSession
+    private sealed class Session(IPluginHost host) : IPanelSession
     {
         private static readonly ColumnDefinition[] Columns =
         [
@@ -44,13 +46,13 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
 
         public async Task<PanelSnapshot> LoadAsync(PanelRequest request, IProgress<string>? progress, CancellationToken cancellationToken)
         {
-            var path = request.Argument is null ? null : LocalFileSystemPlugin.ToLocalPath(request.Argument);
-            if (path is null || !File.Exists(path))
-            {
-                throw new FileNotFoundException("Ustaw kursor na pliku logu (np. *.log) i otwórz analizę ponownie.", path);
-            }
+            var path = request.Argument ?? throw new FileNotFoundException("Ustaw kursor na pliku logu (np. *.log) i otwórz analizę ponownie.");
 
-            _analysis = await LogAnalyzer.AnalyzeAsync(path, progress, cancellationToken).ConfigureAwait(false);
+            // Any VFS (local, share, SFTP); the host checks fs.read and audits the read.
+            await using (var stream = await host.OpenReadAsync(path, cancellationToken).ConfigureAwait(false))
+            {
+                _analysis = await LogAnalyzer.AnalyzeAsync(stream, path, progress, cancellationToken).ConfigureAwait(false);
+            }
             var rows = new List<PanelRow>();
             foreach (var group in _analysis.Patterns.GroupBy(p => p.Level))
             {
@@ -79,7 +81,7 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
                 }
             }
 
-            var status = $"{Path.GetFileName(path)}: {_analysis.Lines:N0} linii{(_analysis.Truncated ? " (obcięto)" : "")} · " +
+            var status = $"{Path.GetFileName(path.Replace('/', '\\'))}: {_analysis.Lines:N0} linii{(_analysis.Truncated ? " (obcięto)" : "")} · " +
                 $"błędy {_analysis.Count(LogLevel.Error) + _analysis.Count(LogLevel.Fatal):N0} · ostrzeżenia {_analysis.Count(LogLevel.Warning):N0} · wzorce {_analysis.Patterns.Count:N0}";
             return new PanelSnapshot(Columns, rows, status);
         }

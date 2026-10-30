@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "examples.folder-stats",
+  "name": "Statystyki folderu (Python)",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Przykład: rozkład rozszerzeń i rozmiarów w bieżącym folderze. Tylko odczyt.",
+  "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+  "permissions": ["fs.read"],
+  "contributes": {
+    "commands": [
+      { "id": "summary", "title": "Podsumowanie folderu", "category": "Przykłady", "description": "Liczba plików i rozmiar wg rozszerzenia." },
+      { "id": "try-write", "title": "Test uprawnień: próba zapisu", "category": "Przykłady", "description": "Pokazuje, że wtyczka bez fs.write nie może zapisać pliku." }
+    ],
+    "panels": [
+      {
+        "id": "extensions",
+        "title": "Rozszerzenia w folderze",
+        "description": "Pliki bieżącego folderu pogrupowane wg rozszerzenia.",
+        "actions": [ { "id": "list", "title": "Lista plików", "shortcut": "F3" } ]
+      }
+    ]
+  }
+}

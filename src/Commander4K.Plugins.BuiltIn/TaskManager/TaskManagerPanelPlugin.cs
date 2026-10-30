@@ -21,6 +21,8 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
 
     public string DisplayName => "Task manager";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.taskmanager", "Menedżer zadań", "Drzewo procesów, zasoby i biblioteki; zamykanie procesów.", PluginPermissions.ProcessRead, PluginPermissions.ProcessControl);
+
     public string Title => "Menedżer zadań";
 
     public string Description => "Drzewo procesów z podprocesami, CPU, pamięć, zasoby i powiązane biblioteki DLL.";
@@ -190,12 +192,12 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
                     var failures = new List<string>();
                     foreach (var pid in pids)
                     {
-                        using var process = TryGetProcess(pid);
                         try
                         {
-                            process?.Kill(entireProcessTree: actionId == "killTree");
+                            // Through the host: checks process.kill and records the PID in the audit log.
+                            await host.KillProcessAsync(pid, entireTree: actionId == "killTree", cancellationToken).ConfigureAwait(false);
                         }
-                        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or NotSupportedException)
+                        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or NotSupportedException or UnauthorizedAccessException)
                         {
                             failures.Add($"{pid}: {ex.Message}");
                         }

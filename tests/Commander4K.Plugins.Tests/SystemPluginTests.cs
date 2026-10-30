@@ -60,7 +60,8 @@ public sealed class SystemPluginTests : IDisposable
         var hostile = "x'; Remove-Item C:\\ -Recurse; '";
         var quoted = PowerShellCatalogPlugin.Quote(hostile);
 
-        var output = await PowerShellCatalogPlugin.CaptureAsync(PowerShellCatalogPlugin.FindShell(), $"Write-Output {quoted}; 'zażółć'", null, TestToken);
+        var output = PowerShellCatalogPlugin.FormatResult(await Commander4K.Core.Execution.ProcessRunner.RunAsync(
+            PowerShellCatalogPlugin.BuildRequest(PowerShellCatalogPlugin.FindShell(), $"Write-Output {quoted}; 'zażółć'", null), TestToken));
 
         Assert.Contains(hostile, output, StringComparison.Ordinal);
         Assert.Contains("zażółć", output, StringComparison.Ordinal);

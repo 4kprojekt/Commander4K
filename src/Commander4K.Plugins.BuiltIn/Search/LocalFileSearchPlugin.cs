@@ -21,6 +21,8 @@ public sealed class LocalFileSearchPlugin : ISearchProviderPlugin
 
     public string DisplayName => "File search";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.search.files", "Wyszukiwanie plików", "Równoległe wyszukiwanie nazw i treści plików.", PluginPermissions.FileRead);
+
     public bool CanSearch(string rootPath) =>
         VfsPath.GetScheme(rootPath) is VfsPath.FileScheme or VfsPath.SmbScheme
         && LocalFileSystemPlugin.ToLocalPath(rootPath) is not null;

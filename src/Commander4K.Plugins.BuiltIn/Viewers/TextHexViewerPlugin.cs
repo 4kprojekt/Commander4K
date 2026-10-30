@@ -15,6 +15,8 @@ public sealed class TextHexViewerPlugin : IViewerPlugin
 
     public string DisplayName => "Text / Hex";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.viewer.texthex", "Podgląd tekst/hex", "Podgląd plików jako tekst lub zrzut szesnastkowy.", PluginPermissions.FileRead);
+
     public int Priority => 0;
 
     public bool CanView(in VfsEntry entry) => entry.Kind is VfsEntryKind.File or VfsEntryKind.RegistryValue;

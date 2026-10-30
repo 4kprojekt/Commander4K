@@ -56,6 +56,13 @@ public static partial class LogAnalyzer
 
     public static async Task<LogAnalysis> AnalyzeAsync(string path, IProgress<string>? progress, CancellationToken cancellationToken)
     {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan | FileOptions.Asynchronous);
+        return await AnalyzeAsync(stream, path, progress, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <param name="stream">Log content; the panel obtains it from the host so the read is permission-checked and audited.</param>
+    public static async Task<LogAnalysis> AnalyzeAsync(Stream stream, string path, IProgress<string>? progress, CancellationToken cancellationToken)
+    {
         var patterns = new Dictionary<(LogLevel, string), LogPattern>();
         var hourly = new SortedDictionary<DateTime, (int Errors, int Warnings, int Total)>();
         var lineNumber = 0;
@@ -63,7 +70,6 @@ public static partial class LogAnalyzer
         LogPattern? current = null;
         LogOccurrence? currentOccurrence = null;
 
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan | FileOptions.Asynchronous);
         using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
         while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {

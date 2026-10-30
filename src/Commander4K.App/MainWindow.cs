@@ -148,7 +148,9 @@ public sealed class MainWindow : Window
             (title, message, initial) => new InputDialog(_skins!.Current, title, message, initial).ShowAsync(this),
             OpenPanelAsync,
             async path => await host.Tools.EditAsync(path));
+        host.PluginUi.Target = _pluginHost;
         host.PowerShell.CommandsChanged += () => Dispatcher.UIThread.Post(RebuildMenu);
+        host.PluginsChanged += () => Dispatcher.UIThread.Post(RebuildMenu);
         _menu = new Menu();
         var shell = new Grid()
             .Rows("*,Auto,Auto,Auto")
@@ -585,6 +587,9 @@ public sealed class MainWindow : Window
         CommandIds.Edit, CommandIds.Copy, CommandIds.Move, CommandIds.MakeDirectory, CommandIds.Delete, CommandIds.NewTab, CommandIds.CloseTab,
     };
 
+    /// <summary>Runs any command id (built-in, <c>panel:</c>, <c>plugin:</c>) as if invoked from the keymap; for automation and tests.</summary>
+    public Task ExecuteCommandAsync(string commandId) => ExecuteAsync(commandId);
+
     private async Task ExecuteAsync(string commandId)
     {
         try
@@ -600,7 +605,7 @@ public sealed class MainWindow : Window
                 var parts = commandId.Split(':', 3);
                 if (parts.Length == 3 && _host!.FindCommandPlugin(parts[1]) is { } plugin)
                 {
-                    await plugin.ExecuteAsync(parts[2], _pluginHost!, CancellationToken.None);
+                    await plugin.ExecuteAsync(parts[2], _host.HostFor(plugin.Manifest), CancellationToken.None);
                 }
                 else
                 {
@@ -890,8 +895,9 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
-    /// Opens a panel plugin. File-bound panels (log analysis) open in the other panel with the file under the cursor,
-    /// so the file list stays visible; the others replace the active panel's content.
+    /// Opens a panel plugin in the opposite panel (like Total Commander's quick view), so the file list the user is in
+    /// stays visible and remains the plugin's context; a panel already showing a plugin is reused.
+    /// File-bound panels (log analysis) get the file under the cursor as their argument.
     /// </summary>
     private Task OpenPanelAsync(string pluginId, string? argument)
     {
@@ -902,7 +908,7 @@ public sealed class MainWindow : Window
             return Task.CompletedTask;
         }
 
-        var target = _active;
+        var target = _active.Plugin is null ? Other : _active;
         if (plugin.RequiresArgument)
         {
             if (argument is null && _active.Plugin is null && _active.ActiveTab.CurrentEntry is { Kind: VfsEntryKind.File } file)
@@ -915,8 +921,6 @@ public sealed class MainWindow : Window
                 Notify($"{plugin.Title}: ustaw kursor na pliku i spróbuj ponownie.", isError: true);
                 return Task.CompletedTask;
             }
-
-            target = _active.Plugin is null ? Other : _active;
         }
 
         var request = new PanelRequest(argument, null);
@@ -924,7 +928,7 @@ public sealed class MainWindow : Window
             (title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this),
             ShowTextWindowAsync,
             Notify);
-        target.ShowPlugin(new PluginPanelView(plugin, plugin.CreateSession(request, _pluginHost!), request, _skins!.Current, services));
+        target.ShowPlugin(new PluginPanelView(plugin, plugin.CreateSession(request, host.HostFor(plugin.Manifest)), request, _skins!.Current, services));
         SetActive(target);
         return Task.CompletedTask;
     }
@@ -992,11 +996,10 @@ public sealed class MainWindow : Window
             parent.Items.Add(Item(command.Id, command.Description[(command.Description.LastIndexOf(": ", StringComparison.Ordinal) + 2)..]));
         }
 
-        if (host.PluginErrors.Count > 0)
-        {
-            pluginMenu.Items.Add(new Separator());
-            pluginMenu.Items.Add(new MenuItem { Header = $"⚠ Nie wczytano {host.PluginErrors.Count} wtyczek", IsEnabled = false });
-        }
+        pluginMenu.Items.Add(new Separator());
+        var blocked = host.DiscoveredPlugins.Count(p => host.PluginBlocker(p) is not null);
+        pluginMenu.Items.Add(Item(CommandIds.PanelPrefix + PluginManagerPanel.PluginId,
+            blocked > 0 ? $"Menedżer wtyczek… ({blocked} nieaktywnych)" : "Menedżer wtyczek…"));
 
         _menu.Items.Clear();
         _menu.Items.Add(Group("_Plik", [Item(CommandIds.Copy), Item(CommandIds.Move), Item(CommandIds.MakeDirectory), Item(CommandIds.Delete), new Separator(),

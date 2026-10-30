@@ -20,6 +20,8 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
 
     public string DisplayName => "PowerShell";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.powershell", "Polecenia PowerShell", "Katalog poleceń PowerShell uruchamianych na folderach i plikach.", PluginPermissions.ShellRun, PluginPermissions.FileRead);
+
     public string Title => "Polecenia PowerShell";
 
     public string Description => "Katalog gotowych poleceń PowerShell (config/powershell.json) do uruchamiania na bieżącym folderze i zaznaczonych plikach.";
@@ -110,67 +112,36 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
             return;
         }
 
-        var shell = FindShell();
         var directory = host.ActivePath is { } active ? LocalFileSystemPlugin.ToLocalPath(active) : null;
-        if (command.RequiresAdmin)
-        {
-            var elevated = new ProcessStartInfo(shell) { UseShellExecute = true, Verb = "runas", WorkingDirectory = directory ?? string.Empty };
-            elevated.ArgumentList.Add("-NoProfile");
-            elevated.ArgumentList.Add("-NoExit");
-            elevated.ArgumentList.Add("-Command");
-            elevated.ArgumentList.Add(script);
-            try
-            {
-                using var _ = Process.Start(elevated);
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-                host.Notify("Anulowano podniesienie uprawnień.", isError: true);
-            }
-
-            return;
-        }
-
-        host.Notify($"PowerShell: {command.Title}…");
-        var output = await CaptureAsync(shell, script, directory, cancellationToken).ConfigureAwait(false);
-        await host.ShowTextAsync($"PowerShell — {command.Title}", $"PS> {script}\n\n{output}").ConfigureAwait(false);
-    }
-
-    internal static async Task<string> CaptureAsync(string shell, string script, string? directory, CancellationToken cancellationToken)
-    {
-        var info = new ProcessStartInfo(shell)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            WorkingDirectory = directory is not null && Directory.Exists(directory) ? directory : string.Empty,
-        };
-        foreach (var argument in (string[])["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
-            "[Console]::OutputEncoding = [Text.Encoding]::UTF8; & { " + script + " } | Out-String -Width 220"])
-        {
-            info.ArgumentList.Add(argument);
-        }
-
-        using var process = Process.Start(info) ?? throw new InvalidOperationException("Nie udało się uruchomić PowerShell.");
-        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
         try
         {
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            // Everything runs through the host, which checks the shell.run permission and audits the command line.
+            var result = await host.RunProcessAsync(BuildRequest(FindShell(), script, directory, command.RequiresAdmin), cancellationToken).ConfigureAwait(false);
+            if (!command.RequiresAdmin)
+            {
+                await host.ShowTextAsync($"PowerShell — {command.Title}", $"PS> {script}\n\n{FormatResult(result)}").ConfigureAwait(false);
+            }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            process.Kill(entireProcessTree: true);
-            throw;
+            host.Notify(ex.Message, isError: true);
         }
+    }
 
-        var errors = await stderr.ConfigureAwait(false);
-        var text = (await stdout.ConfigureAwait(false)).TrimEnd();
-        return (string.IsNullOrWhiteSpace(errors) ? text : $"{text}\n\n[stderr]\n{errors.TrimEnd()}")
-            + $"\n\n[kod wyjścia {process.ExitCode}]";
+    /// <summary>Command line for a script: UTF-8 output, no profile, formatted to a wide text table.</summary>
+    internal static ProcessRunRequest BuildRequest(string shell, string script, string? directory, bool elevated = false) =>
+        elevated
+            ? new ProcessRunRequest(shell, ["-NoProfile", "-NoExit", "-Command", script], directory, Elevated: true)
+            : new ProcessRunRequest(shell,
+                ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+                 "[Console]::OutputEncoding = [Text.Encoding]::UTF8; & { " + script + " } | Out-String -Width 220"],
+                directory);
+
+    internal static string FormatResult(ProcessRunResult result)
+    {
+        var text = result.Output.TrimEnd();
+        return (string.IsNullOrWhiteSpace(result.Error) ? text : $"{text}\n\n[stderr]\n{result.Error.TrimEnd()}")
+            + $"\n\n[kod wyjścia {result.ExitCode}]";
     }
 
     /// <summary>PowerShell 7 when installed, otherwise the Windows PowerShell 5.1 that ships with Windows.</summary>

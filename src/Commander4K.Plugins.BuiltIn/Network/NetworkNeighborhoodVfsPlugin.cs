@@ -47,6 +47,8 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
 
     public string DisplayName => "Network";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.network", "Sieć", "Otoczenie sieciowe, wykrywanie hostów w LAN i udziały SMB.", PluginPermissions.FileRead, PluginPermissions.FileWrite, PluginPermissions.Network);
+
     public IReadOnlyList<string> Schemes { get; } = ["net", VfsPath.SmbScheme];
 
     public VfsCapabilities Capabilities => VfsCapabilities.Read | VfsCapabilities.Write | VfsCapabilities.CreateDirectory

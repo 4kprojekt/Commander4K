@@ -26,6 +26,8 @@ public sealed class SystemInfoPanelPlugin : IPanelPlugin
 
     public string DisplayName => "System information";
 
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.sysinfo", "Informacje o systemie", "System, sprzęt, sieć, bezpieczeństwo, aktualizacje, autostart.", PluginPermissions.SystemInfo);
+
     public string Title => "Informacje o systemie";
 
     public string Description => "System operacyjny, sprzęt, procesor, pamięć, dyski, sieć, bezpieczeństwo, aktualizacje, autostart.";

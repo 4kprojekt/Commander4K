@@ -18,6 +18,10 @@
       <_FilesToBundle Remove="@(_FilesToBundle)" Condition="'%(Extension)' == '.pdb'" />
     </ItemGroup>
   </Target>
+  <!-- Example plugins ship inside the app as templates ("Nowa wtyczka z przykładu" in the plugin manager). -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\examples\plugins\**\*" LogicalName="examples/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Commander4K.PluginSdk\Commander4K.PluginSdk.csproj" />
     <ProjectReference Include="..\Commander4K.Core\Commander4K.Core.csproj" />
