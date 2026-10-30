@@ -74,6 +74,20 @@
             },
             "additionalProperties": false
           }
+        },
+        "previews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "extensions"],
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "extensions": { "type": "array", "items": { "type": "string" }, "description": "With the dot, e.g. \".csv\"; \"/\" means folders." },
+              "priority": { "type": "integer", "default": 10, "description": "Highest wins; built-ins: markdown 50, images 40, folders 10, text 0." }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

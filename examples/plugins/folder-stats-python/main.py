@@ -77,4 +77,36 @@ def action(params):
     return {"text": "\n".join(sorted(names))}
 
 
+@c4k.handler("preview.render")
+def preview(params):
+    """Quick view (Ctrl+Q) of .csv files as a Markdown table; the app renders the Markdown."""
+    import csv
+    import io
+
+    text = c4k.read_text(params["entry"]["path"], max_bytes=512 * 1024)
+    sample = text[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    rows = list(csv.reader(io.StringIO(text), dialect))[:200]
+    if not rows:
+        return {"kind": "text", "content": "(pusty plik)"}
+
+    def cell(value):
+        return value.replace("|", "\\|").replace("\n", " ")
+
+    width = max(len(r) for r in rows)
+    header = rows[0] + [""] * (width - len(rows[0]))
+    lines = [f"### {params['entry']['name']}", "",
+             "| " + " | ".join(cell(h) for h in header) + " |",
+             "|" + "---|" * width]
+    for row in rows[1:]:
+        row = row + [""] * (width - len(row))
+        lines.append("| " + " | ".join(cell(v) for v in row) + " |")
+    lines.append("")
+    lines.append(f"*{len(rows) - 1} wierszy, {width} kolumn (separator `{dialect.delimiter}`)*")
+    return {"kind": "markdown", "content": "\n".join(lines), "editable": False}
+
+
 c4k.serve()

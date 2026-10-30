@@ -18,6 +18,7 @@ using Commander4K.Plugins.BuiltIn.Remote;
 using Commander4K.Plugins.BuiltIn.Search;
 using Commander4K.Plugins.BuiltIn.Logs;
 using Commander4K.Plugins.BuiltIn.PowerShell;
+using Commander4K.Plugins.BuiltIn.Previews;
 using Commander4K.Plugins.BuiltIn.SystemInfo;
 using Commander4K.Plugins.BuiltIn.TaskManager;
 using Commander4K.Plugins.BuiltIn.Viewers;
@@ -84,6 +85,8 @@ public sealed class AppHost : IAsyncDisposable
         BuiltInPanels = [new SystemInfoPanelPlugin(), new TaskManagerPanelPlugin(), new LogAnalyzerPanelPlugin(), PowerShell, new PluginManagerPanel(this)];
         PanelPlugins = BuiltInPanels;
         CommandPlugins = [PowerShell];
+        BuiltInPreviews = [new MarkdownPreviewPlugin(), new ImagePreviewPlugin(), new FolderPreviewPlugin(), new TextPreviewPlugin()];
+        PreviewPlugins = BuiltInPreviews;
         ApplySettings();
     }
 
@@ -104,6 +107,11 @@ public sealed class AppHost : IAsyncDisposable
     public IReadOnlyList<ExternalPlugin> ExternalPlugins { get; private set; } = [];
 
     public IReadOnlyList<IPanelPlugin> BuiltInPanels { get; }
+
+    public IReadOnlyList<IPreviewPlugin> BuiltInPreviews { get; }
+
+    /// <summary>Quick-view renderers (built-in and external); the preview picks the highest priority that accepts an entry.</summary>
+    public IReadOnlyList<IPreviewPlugin> PreviewPlugins { get; private set; }
 
     /// <summary>Folders searched for external plugins: next to the exe and in the data folder.</summary>
     public IReadOnlyList<string> PluginRoots =>
@@ -165,6 +173,7 @@ public sealed class AppHost : IAsyncDisposable
         ExternalPlugins = external;
         PanelPlugins = [.. BuiltInPanels, .. external.SelectMany(e => (e.Manifest.Contributes?.Panels ?? []).Select(p => (IPanelPlugin)new ExternalPanelPlugin(e, p)))];
         CommandPlugins = [PowerShell, .. external.Where(e => e.Manifest.Contributes?.Commands is { Count: > 0 }).Select(e => (ICommandPlugin)new ExternalCommandPlugin(e))];
+        PreviewPlugins = [.. BuiltInPreviews, .. external.SelectMany(e => (e.Manifest.Contributes?.Previews ?? []).Select(p => (IPreviewPlugin)new ExternalPreviewPlugin(e, p)))];
         PluginsChanged?.Invoke();
     }
 

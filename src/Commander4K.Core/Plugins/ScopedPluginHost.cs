@@ -83,6 +83,14 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
             return (IReadOnlyList<VfsEntry>)entries;
         });
 
+    public Task<DirectorySizeInfo> CalculateSizeAsync(string path, IProgress<DirectorySizeInfo>? progress = null, CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.FileRead, "fs.size", path, async () =>
+        {
+            var forward = progress is null ? null : new Progress<DirectorySize>(s => progress.Report(new DirectorySizeInfo(s.Bytes, s.Files, s.Directories, s.InaccessibleDirectories)));
+            var size = await new DirectorySizeCalculator(router).CalculateAsync(path, forward, cancellationToken).ConfigureAwait(false);
+            return new DirectorySizeInfo(size.Bytes, size.Files, size.Directories, size.InaccessibleDirectories);
+        });
+
     public Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken = default) =>
         Gate(PluginPermissions.FileRead, "fs.read", path, () => router.OpenReadAsync(path, cancellationToken));
 

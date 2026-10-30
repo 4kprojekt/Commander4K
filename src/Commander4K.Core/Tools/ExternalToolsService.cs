@@ -98,6 +98,10 @@ public sealed class ExternalToolsService(ExternalToolsConfig config)
                 startInfo.ArgumentList.Add(Substitute(token, arguments));
             }
 
+            // Inherited when Commander4K itself was started from VS Code's terminal: it would make Code.exe run the
+            // file as a Node script instead of opening it.
+            startInfo.Environment.Remove("ELECTRON_RUN_AS_NODE");
+
             try
             {
                 using var process = Process.Start(startInfo);

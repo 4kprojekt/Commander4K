@@ -10,4 +10,7 @@ public sealed class KeymapFile
     /// listed here, so new features get shortcuts while bindings the user removed stay removed.
     /// </summary>
     public List<string>? KnownCommands { get; set; }
+
+    /// <summary>Ids of <see cref="Input.DefaultKeymap.ChangedDefaults"/> already applied (each runs once).</summary>
+    public List<string>? AppliedMigrations { get; set; }
 }

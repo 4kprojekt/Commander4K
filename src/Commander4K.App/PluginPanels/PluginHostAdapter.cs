@@ -24,7 +24,7 @@ public sealed class PluginHostAdapter(
     public string? OtherPath => OnUi(() =>
     {
         var (active, other) = panels();
-        return (active.Plugin is null ? other : active).ActiveTab.Path;
+        return (active.Mode is null ? other : active).ActiveTab.Path;
     });
 
     public IReadOnlyList<VfsEntry> SelectedEntries => OnUi(() => FilePanel().ActiveTab.MarkedOrCurrent());
@@ -49,7 +49,7 @@ public sealed class PluginHostAdapter(
     private FilePanelView FilePanel()
     {
         var (active, other) = panels();
-        return active.Plugin is null ? active : other;
+        return active.Mode is null ? active : other;
     }
 
     private static T OnUi<T>(Func<T> read) => Dispatcher.UIThread.CheckAccess() ? read() : Dispatcher.UIThread.Invoke(read);

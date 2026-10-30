@@ -39,6 +39,7 @@ public static class SettingsCatalog
     public const string Appearance = "Wygląd";
     public const string Panels = "Panele";
     public const string Network = "Sieć";
+    public const string Preview = "Podgląd";
     public const string Updates = "Aktualizacje";
 
     public static IReadOnlyList<SettingDescriptor> Create(Func<IReadOnlyList<SettingChoice>> skinChoices) =>
@@ -55,6 +56,9 @@ public static class SettingsCatalog
             SettingKind.Text, s => s.LeftPath ?? string.Empty, (s, v) => s.LeftPath = NullIfEmpty(v), ["start", "ścieżka", "katalog"]),
         new("rightPath", Panels, "Folder startowy prawego panelu", "Ścieżka otwierana przy starcie; zapisywana automatycznie przy zamknięciu.",
             SettingKind.Text, s => s.RightPath ?? string.Empty, (s, v) => s.RightPath = NullIfEmpty(v), ["start", "ścieżka", "katalog"]),
+
+        new("markdownEdit", Preview, "Markdown: od razu edycja", "Podgląd (Ctrl+Q) otwiera pliki .md w edycji z podglądem na żywo obok, zamiast samego widoku sformatowanego (F4 przełącza).",
+            SettingKind.Toggle, s => s.MarkdownEditByDefault, (s, v) => s.MarkdownEditByDefault = (bool)v!, ["markdown", "md", "edytor", "podgląd", "quick view"]),
 
         new("lanDiscovery", Network, "Wykrywaj hosty w sieci LAN", "Przy otwarciu net:// skanuje lokalną podsieć (porty 445, 22, 21) i pokazuje znalezione maszyny.",
             SettingKind.Toggle, s => s.LanDiscovery, (s, v) => s.LanDiscovery = (bool)v!, ["skan", "lan", "smb", "ssh", "otoczenie"]),

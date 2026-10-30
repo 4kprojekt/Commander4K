@@ -12,6 +12,9 @@ public static class CommandIds
     public const string Help = "cm_Help";
     public const string CommandPalette = "cm_CommandPalette";
     public const string Settings = "cm_Settings";
+
+    /// <summary>Switches a panel's mode: files, quick preview or any plugin panel (F2).</summary>
+    public const string PanelModes = "cm_PanelModes";
     public const string CheckForUpdates = "cm_CheckForUpdates";
     public const string About = "cm_About";
     public const string AddConnection = "cm_AddConnection";

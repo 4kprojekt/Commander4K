@@ -67,6 +67,24 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Python_plugin_renders_csv_quick_view_as_markdown()
+    {
+        await using var plugin = Start("folder-stats-python");
+        var csvPath = Path.Combine(_folder, "dane.csv");
+        await File.WriteAllTextAsync(csvPath, "miasto;ludność\nKraków;800000\nGdańsk;470000\n", TestToken);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var entry = new VfsEntry("dane.csv", csvPath, VfsEntryKind.File, 40);
+
+        Assert.True(preview.CanPreview(entry));
+        Assert.False(preview.CanPreview(entry with { Name = "x.txt" }));
+        var result = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, HostFor(plugin), null, TestToken));
+
+        Assert.Contains("| miasto | ludność |", result.Markdown, StringComparison.Ordinal);
+        Assert.Contains("| Gdańsk | 470000 |", result.Markdown, StringComparison.Ordinal);
+        Assert.False(result.CanEdit);
+    }
+
+    [Fact]
     public async Task Node_plugin_uses_net_permission_against_local_server()
     {
         await using var plugin = Start("site-check-node");

@@ -74,6 +74,12 @@ public interface IPluginHost
     /// <summary>Opens a file for reading on any VFS. Requires <see cref="PluginPermissions.FileRead"/>.</summary>
     Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Recursive size of a folder on any VFS, computed by the app on all cores (one audit entry per call). Requires
+    /// <see cref="PluginPermissions.FileRead"/>.
+    /// </summary>
+    Task<DirectorySizeInfo> CalculateSizeAsync(string path, IProgress<DirectorySizeInfo>? progress = null, CancellationToken cancellationToken = default);
+
     /// <summary>Creates or replaces a text file (UTF-8). Requires <see cref="PluginPermissions.FileWrite"/>.</summary>
     Task WriteTextAsync(string path, string content, CancellationToken cancellationToken = default);
 

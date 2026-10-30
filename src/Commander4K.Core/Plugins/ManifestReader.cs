@@ -123,6 +123,7 @@ public static partial class ManifestReader
 
         var ids = (manifest.Contributes?.Commands?.Select(c => "command:" + c.Id) ?? [])
             .Concat(manifest.Contributes?.Panels?.Select(p => "panel:" + p.Id) ?? [])
+            .Concat(manifest.Contributes?.Previews?.Select(p => "preview:" + p.Id) ?? [])
             .ToList();
         foreach (var duplicate in ids.GroupBy(i => i, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))
         {
@@ -131,7 +132,7 @@ public static partial class ManifestReader
 
         if (ids.Count == 0)
         {
-            errors.Add("Wtyczka nic nie dodaje (contributes.commands / contributes.panels są puste).");
+            errors.Add("Wtyczka nic nie dodaje (contributes.commands / panels / previews są puste).");
         }
 
         return errors;

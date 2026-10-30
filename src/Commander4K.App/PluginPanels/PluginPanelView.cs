@@ -8,6 +8,7 @@ using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Commander4K.App.Input;
+using Commander4K.App.Panels;
 using Commander4K.App.Theming;
 using Commander4K.Core.Configuration;
 using Commander4K.Core.Input;
@@ -25,7 +26,7 @@ public sealed record PluginPanelServices(
 /// Renders an <see cref="IPanelPlugin"/> session inside a file panel: filter box, actions, the tree table, a details
 /// pane for the row under the cursor and a status line. Loading always runs on the thread pool and can be cancelled.
 /// </summary>
-public sealed class PluginPanelView : Grid
+public sealed class PluginPanelView : Grid, IPanelModeView
 {
     private readonly IPanelPlugin _plugin;
     private readonly IPanelSession _session;
@@ -243,14 +244,16 @@ public sealed class PluginPanelView : Grid
     }
 
     /// <summary>Typing on the panel narrows it (like the command line for file panels).</summary>
-    public void AppendFilterText(string text)
+    public Control View => this;
+
+    public void AppendText(string text)
     {
         _filter.Text += text;
         _filter.CaretIndex = _filter.Text.Length;
         _filter.Focus();
     }
 
-    public async ValueTask DisposeSessionAsync()
+    public async ValueTask DisposeModeAsync()
     {
         _loading?.Cancel();
         _detailsLoading?.Cancel();

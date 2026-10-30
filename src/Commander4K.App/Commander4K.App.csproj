@@ -33,5 +33,6 @@
     <PackageReference Include="Avalonia.Themes.Fluent" />
     <PackageReference Include="Avalonia.Markup.Declarative" />
     <PackageReference Include="Anthropic" />
+    <PackageReference Include="Markdig" />
   </ItemGroup>
 </Project>

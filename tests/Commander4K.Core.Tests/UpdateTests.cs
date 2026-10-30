@@ -154,6 +154,34 @@ public sealed class UpdateTests : IDisposable
         Assert.False(ConfigStore.MergeNewDefaults(file));
     }
 
+    [Fact]
+    public void Keymap_migration_moves_old_f1_f2_defaults_but_keeps_user_choices()
+    {
+        var untouched = new KeymapFile
+        {
+            Bindings = new(StringComparer.OrdinalIgnoreCase) { ["F1"] = "cm_Help", ["F2"] = "cm_SelectSkin" },
+            KnownCommands = ["cm_Help", "cm_SelectSkin"],
+        };
+        var customised = new KeymapFile
+        {
+            Bindings = new(StringComparer.OrdinalIgnoreCase) { ["F1"] = "cm_Copy", ["F2"] = "cm_SelectSkin" },
+            KnownCommands = ["cm_Help", "cm_SelectSkin", "cm_Copy"],
+        };
+
+        ConfigStore.MergeNewDefaults(untouched);
+        ConfigStore.MergeNewDefaults(customised);
+
+        Assert.Equal("cm_Settings", untouched.Bindings["F1"]);
+        Assert.Equal("cm_PanelModes", untouched.Bindings["F2"]);
+        Assert.Equal("cm_Copy", customised.Bindings["F1"]);
+        Assert.Equal("cm_PanelModes", customised.Bindings["F2"]);
+
+        // Once applied, a user who puts F1 back to help keeps it.
+        untouched.Bindings["F1"] = "cm_Help";
+        Assert.False(ConfigStore.MergeNewDefaults(untouched));
+        Assert.Equal("cm_Help", untouched.Bindings["F1"]);
+    }
+
     [Theory]
     [InlineData("ukryte", "showHidden")]
     [InlineData("zrodlo", "updateRepository")]

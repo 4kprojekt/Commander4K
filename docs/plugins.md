@@ -1,6 +1,6 @@
 # Commander4K plugins
 
-A plugin adds **commands** (menu bar, command palette, key bindings) and **panels** (a tree/table shown inside a file panel, with a details pane and actions). You can write one in **Python, Node.js, PowerShell 7, .NET or any executable**. Each plugin runs as a separate process and talks to Commander4K over a small JSON-RPC protocol.
+A plugin adds **commands** (menu bar, command palette, key bindings), **panels** (a tree/table shown inside a file panel, with a details pane and actions) and **previews** (the quick view, `Ctrl+Q`, for chosen file types). You can write one in **Python, Node.js, PowerShell 7, .NET or any executable**. Each plugin runs as a separate process and talks to Commander4K over a small JSON-RPC protocol.
 
 The protocol is deliberately small and explicit so that both people and AI assistants can write plugins from this document alone. The quickest start is the plugin manager (*Wtyczki ▸ Menedżer wtyczek…*, `Ctrl+N`), which copies a working example in your language into the plugins folder.
 
@@ -49,6 +49,9 @@ The schema is in [`plugin.schema.json`](plugin.schema.json).
         "requiresArgument": false, "refreshSeconds": 30,
         "actions": [ { "id": "open", "title": "Open", "shortcut": "Enter", "confirm": false, "appliesToRows": true } ]
       }
+    ],
+    "previews": [
+      { "id": "csv", "title": "CSV table", "extensions": [".csv"], "priority": 60 }
     ]
   }
 }
@@ -103,6 +106,7 @@ The UI and context calls (`ui.*`, `context.get`, `log.write`) need no permission
 | `panel.load` | `{ panel, argument, filter, context }` | `{ columns: [{ id, header, align?: "left"\|"right"\|"center", width? }], rows: [{ id, parentId?, cells: [string], severity?: "normal"\|"muted"\|"highlight"\|"warning"\|"error", sortKeys?: [number\|null], expanded? }], status? }` |
 | `panel.details` | `{ panel, rowId }` | `{ sections: [{ title, items: [[key, value]] }] }` or `null` |
 | `panel.action` | `{ panel, action, rowIds, context }` | `{ text?: string }`. Text is shown in a viewer, and the panel reloads afterwards. |
+| `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context }` | `{ kind: "markdown"\|"text", content, editable? }`. Quick view (`Ctrl+Q`) of the entry under the cursor. Markdown is rendered with formatting. The highest `priority` wins among previews that accept the extension (`"/"` in `extensions` means folders). |
 | `shutdown` | — | `null`, then exit |
 
 `context` = `{ activePath, otherPath, selection: [{ name, path, kind, size, modified, hidden }] }`:
@@ -154,7 +158,7 @@ For .NET, write the ~100-line loop yourself with `System.Text.Json`, following [
 
 These are in [`examples/plugins`](../examples/plugins), and the app embeds them as templates:
 
-- **`folder-stats-python`** (`fs.read`): a command, and a panel of file extensions with details and an action. It also has a command that tries to write a file, to show how the app refuses.
+- **`folder-stats-python`** (`fs.read`): a command, a panel of file extensions with details and an action, and a quick view rendering `.csv` files as a table. It also has a command that tries to write a file, to show how the app refuses.
 - **`site-check-node`** (`net`): a command, and a panel that refreshes itself every 60 s.
 - **`git-powershell`** (`shell.run`): `git status`, and a commit history panel. `git` runs through the app, so each command line is audited.
 

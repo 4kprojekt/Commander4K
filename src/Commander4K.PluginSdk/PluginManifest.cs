@@ -57,10 +57,14 @@ public sealed record PanelContribution(
     int? RefreshSeconds = null,
     IReadOnlyList<PanelActionContribution>? Actions = null);
 
+/// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
+public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10);
+
 /// <summary>What a plugin adds to the application. In-process plugins describe it by implementing interfaces instead.</summary>
 public sealed record PluginContributions(
     IReadOnlyList<CommandContribution>? Commands = null,
-    IReadOnlyList<PanelContribution>? Panels = null);
+    IReadOnlyList<PanelContribution>? Panels = null,
+    IReadOnlyList<PreviewContribution>? Previews = null);
 
 /// <summary>
 /// Identity and declared capabilities of a plugin: <c>plugin.json</c> for external plugins, a property for built-in

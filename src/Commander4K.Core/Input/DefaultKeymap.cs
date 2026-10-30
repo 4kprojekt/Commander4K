@@ -3,16 +3,26 @@ namespace Commander4K.Core.Input;
 /// <summary>Total Commander-style defaults, written to <c>config/keymap.json</c> on first run.</summary>
 public static class DefaultKeymap
 {
+    /// <summary>
+    /// Defaults that changed between versions: (sequence, old command, new command). Applied to existing keymap.json
+    /// files only while the sequence still has the old default, so a user's own choice is never overwritten.
+    /// </summary>
+    public static IReadOnlyList<(string Sequence, string OldCommand, string NewCommand)> ChangedDefaults { get; } =
+    [
+        ("F1", CommandIds.Help, CommandIds.Settings),
+        ("F2", CommandIds.SelectSkin, CommandIds.PanelModes),
+    ];
+
     public static IReadOnlyDictionary<string, string> Bindings { get; } = new Dictionary<string, string>
     {
-        ["F1"] = CommandIds.Help,
+        ["F1"] = CommandIds.Settings,
         ["Ctrl+Shift+P"] = CommandIds.CommandPalette,
         ["Ctrl+Alt+I"] = CommandIds.PanelPrefix + "builtin.sysinfo",
         ["Ctrl+Alt+T"] = CommandIds.PanelPrefix + "builtin.taskmanager",
         ["Ctrl+Alt+L"] = CommandIds.PanelPrefix + "builtin.logs",
         ["Ctrl+Alt+P"] = CommandIds.PanelPrefix + "builtin.powershell",
         ["Ctrl+,"] = CommandIds.Settings,
-        ["F2"] = CommandIds.SelectSkin,
+        ["F2"] = CommandIds.PanelModes,
         ["F10"] = CommandIds.Exit,
         ["Ctrl+H"] = CommandIds.ToggleHidden,
         ["Tab"] = CommandIds.SwitchPanel,

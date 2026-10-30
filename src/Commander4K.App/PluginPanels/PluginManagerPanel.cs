@@ -221,6 +221,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
             app.Router.Providers.Cast<IPlugin>()
                 .Concat(app.BuiltInPanels)
                 .Concat([app.FileSearch, app.Viewer])
+                .Concat(app.BuiltInPreviews)
                 .DistinctBy(p => p.Id)
                 .OrderBy(p => p.Manifest.Name, StringComparer.CurrentCulture);
 

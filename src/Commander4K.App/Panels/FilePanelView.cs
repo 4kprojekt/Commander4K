@@ -43,34 +43,34 @@ public sealed class FilePanelView : ViewBase
 
     public FileViewportCanvas Canvas { get; } = new();
 
-    /// <summary>Plugin panel shown over the file list, or <c>null</c> in file mode.</summary>
-    public PluginPanelView? Plugin { get; private set; }
+    /// <summary>Mode shown over the file list (plugin panel, preview…), or <c>null</c> in file mode.</summary>
+    public IPanelModeView? Mode { get; private set; }
 
-    /// <summary>Replaces the file list with a plugin panel until <see cref="ClosePlugin"/> (Esc / Backspace).</summary>
-    public void ShowPlugin(PluginPanelView view)
+    /// <summary>Replaces the file list with a mode until <see cref="CloseMode"/> (Esc / Backspace).</summary>
+    public void ShowMode(IPanelModeView view)
     {
-        ClosePlugin();
-        Plugin = view;
+        CloseMode();
+        Mode = view;
         view.IsActivePanel = _isActive;
         view.Activated += () => Activated?.Invoke(this);
-        view.CloseRequested += ClosePlugin;
-        _content.Children.Add(view);
+        view.CloseRequested += CloseMode;
+        _content.Children.Add(view.View);
         Canvas.IsVisible = false;
         _statusBorder.IsVisible = false;
         _pathBox.Text = "⚙ " + view.Title;
         _pathBox.IsReadOnly = true;
     }
 
-    public void ClosePlugin()
+    public void CloseMode()
     {
-        if (Plugin is not { } view)
+        if (Mode is not { } view)
         {
             return;
         }
 
-        Plugin = null;
-        _content.Children.Remove(view);
-        _ = view.DisposeSessionAsync();
+        Mode = null;
+        _content.Children.Remove(view.View);
+        _ = view.DisposeModeAsync();
         Canvas.IsVisible = true;
         _statusBorder.IsVisible = true;
         _pathBox.IsReadOnly = false;
@@ -88,15 +88,18 @@ public sealed class FilePanelView : ViewBase
         {
             _isActive = value;
             Canvas.IsActivePanel = value;
-            if (Plugin is not null)
+            if (Mode is not null)
             {
-                Plugin.IsActivePanel = value;
+                Mode.IsActivePanel = value;
             }
             ApplyChrome();
         }
     }
 
     public event Action<FilePanelView>? Activated;
+
+    /// <summary>Raised when another tab becomes the active one (the quick preview follows it).</summary>
+    public event Action? ActiveTabChanged;
 
     // Single-parameter events: the declarative source generator mis-generates extensions for multi-parameter ones.
 
@@ -175,6 +178,7 @@ public sealed class FilePanelView : ViewBase
     {
         _activeIndex = Math.Clamp(index, 0, _tabs.Count - 1);
         Canvas.Tab = ActiveTab;
+        ActiveTabChanged?.Invoke();
         if (_tabStrip is not null)
         {
             RebuildTabs();
@@ -252,7 +256,7 @@ public sealed class FilePanelView : ViewBase
     private void OnTabChanged()
     {
         var tab = ActiveTab;
-        if (!_pathBox.IsFocused && Plugin is null)
+        if (!_pathBox.IsFocused && Mode is null)
         {
             _pathBox.Text = tab.Path;
         }
@@ -364,7 +368,7 @@ public sealed class FilePanelView : ViewBase
     private void ApplySkin(SkinBrushes b)
     {
         Canvas.Brushes = b;
-        Plugin?.ApplySkin(b);
+        Mode?.ApplySkin(b);
         if (_pathBox is null)
         {
             return;

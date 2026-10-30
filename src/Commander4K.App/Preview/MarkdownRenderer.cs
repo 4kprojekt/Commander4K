@@ -1,0 +1,242 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Documents;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Commander4K.App.Theming;
+using Markdig;
+using Markdig.Extensions.Tables;
+using Markdig.Extensions.TaskLists;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
+using MdTable = Markdig.Extensions.Tables.Table;
+
+namespace Commander4K.App.Preview;
+
+/// <summary>
+/// Markdown → Avalonia controls (no HTML, no browser): headings, paragraphs with emphasis/code/links, nested lists
+/// with task boxes, quotes, code blocks, tables and rules, all coloured from the active skin.
+/// </summary>
+public static class MarkdownRenderer
+{
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
+    private static readonly FontFamily Monospace = FontFamily.Parse("Cascadia Mono, Consolas, Courier New");
+
+    public static Control Render(string markdown, SkinBrushes brushes)
+    {
+        var document = Markdig.Markdown.Parse(markdown, Pipeline);
+        var root = new StackPanel { Spacing = 8, Margin = new Thickness(16, 12) };
+        foreach (var block in document)
+        {
+            root.Children.Add(RenderBlock(block, brushes));
+        }
+
+        return root;
+    }
+
+    private static Control RenderBlock(Block block, SkinBrushes b) => block switch
+    {
+        HeadingBlock heading => Text(heading.Inline, b, size: b.FontSize * heading.Level switch { 1 => 2.0, 2 => 1.6, 3 => 1.3, 4 => 1.15, _ => 1.05 },
+            weight: FontWeight.Bold, foreground: heading.Level <= 2 ? b.DirectoryForeground : b.FileForeground, margin: new Thickness(0, heading.Level <= 2 ? 10 : 6, 0, 0)),
+        ParagraphBlock paragraph => Text(paragraph.Inline, b),
+        ListBlock list => RenderList(list, b),
+        QuoteBlock quote => new Border
+        {
+            BorderBrush = b.Accent,
+            BorderThickness = new Thickness(3, 0, 0, 0),
+            Padding = new Thickness(12, 2, 0, 2),
+            Child = Container(quote, b, foreground: b.HiddenForeground),
+        },
+        FencedCodeBlock or CodeBlock => new Border
+        {
+            Background = b.HeaderBackground,
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(10, 8),
+            Child = new SelectableTextBlock
+            {
+                Text = ((LeafBlock)block).Lines.ToString().TrimEnd(),
+                FontFamily = Monospace,
+                FontSize = b.FontSize - 1,
+                Foreground = b.FileForeground,
+                TextWrapping = TextWrapping.Wrap,
+            },
+        },
+        ThematicBreakBlock => new Border { Height = 1, Background = b.PanelBorder, Margin = new Thickness(0, 6) },
+        MdTable table => RenderTable(table, b),
+        HtmlBlock html => new SelectableTextBlock { Text = html.Lines.ToString(), Foreground = b.HiddenForeground, FontFamily = Monospace, TextWrapping = TextWrapping.Wrap },
+        ContainerBlock container => Container(container, b),
+        LeafBlock leaf => new SelectableTextBlock { Text = leaf.Lines.ToString(), Foreground = b.FileForeground, TextWrapping = TextWrapping.Wrap },
+        _ => new Panel(),
+    };
+
+    private static StackPanel Container(ContainerBlock container, SkinBrushes b, IBrush? foreground = null)
+    {
+        var panel = new StackPanel { Spacing = 6 };
+        foreach (var child in container)
+        {
+            var control = RenderBlock(child, b);
+            if (foreground is not null && control is SelectableTextBlock text)
+            {
+                text.Foreground = foreground;
+            }
+
+            panel.Children.Add(control);
+        }
+
+        return panel;
+    }
+
+    private static StackPanel RenderList(ListBlock list, SkinBrushes b)
+    {
+        var panel = new StackPanel { Spacing = 3 };
+        var number = int.TryParse(list.OrderedStart, out var start) ? start : 1;
+        foreach (var item in list.OfType<ListItemBlock>())
+        {
+            var task = item.Descendants<TaskList>().FirstOrDefault();
+            var marker = task is not null ? (task.Checked ? "☑" : "☐") : list.IsOrdered ? $"{number++}." : "•";
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+            row.Children.Add(new TextBlock { Text = marker, Foreground = b.Accent, FontSize = b.FontSize, Margin = new Thickness(4, 0, 8, 0), MinWidth = 18 });
+            var content = Container(item, b);
+            Grid.SetColumn(content, 1);
+            row.Children.Add(content);
+            panel.Children.Add(row);
+        }
+
+        return panel;
+    }
+
+    private static Border RenderTable(MdTable table, SkinBrushes b)
+    {
+        var grid = new Grid();
+        var columns = table.OfType<TableRow>().Select(r => r.Count).DefaultIfEmpty(0).Max();
+        for (var c = 0; c < columns; c++)
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        }
+
+        var rowIndex = 0;
+        foreach (var row in table.OfType<TableRow>())
+        {
+            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            var col = 0;
+            foreach (var cell in row.OfType<TableCell>())
+            {
+                var inline = cell.OfType<ParagraphBlock>().FirstOrDefault()?.Inline;
+                var text = Text(inline, b, weight: row.IsHeader ? FontWeight.Bold : FontWeight.Normal);
+                var border = new Border
+                {
+                    BorderBrush = b.PanelBorder,
+                    BorderThickness = new Thickness(0, 0, 1, 1),
+                    Padding = new Thickness(8, 4),
+                    Background = row.IsHeader ? b.HeaderBackground : null,
+                    Child = text,
+                };
+                Grid.SetRow(border, rowIndex);
+                Grid.SetColumn(border, col++);
+                grid.Children.Add(border);
+            }
+
+            rowIndex++;
+        }
+
+        return new Border
+        {
+            BorderBrush = b.PanelBorder,
+            BorderThickness = new Thickness(1, 1, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Child = grid,
+        };
+    }
+
+    private static SelectableTextBlock Text(ContainerInline? inline, SkinBrushes b, double? size = null, FontWeight? weight = null, IBrush? foreground = null, Thickness? margin = null)
+    {
+        var block = new SelectableTextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = foreground ?? b.FileForeground,
+            FontSize = size ?? b.FontSize,
+            FontWeight = weight ?? FontWeight.Normal,
+            Margin = margin ?? default,
+        };
+        if (inline is not null)
+        {
+            block.Inlines ??= [];
+            foreach (var child in inline)
+            {
+                AddInline(block.Inlines, child, b);
+            }
+        }
+
+        return block;
+    }
+
+    private static void AddInline(InlineCollection target, Markdig.Syntax.Inlines.Inline inline, SkinBrushes b)
+    {
+        switch (inline)
+        {
+            case LiteralInline literal:
+                target.Add(new Run(literal.Content.ToString()));
+                break;
+            case EmphasisInline emphasis:
+                var span = new Span();
+                if (emphasis.DelimiterChar == '~')
+                {
+                    span.TextDecorations = TextDecorations.Strikethrough;
+                }
+                else if (emphasis.DelimiterCount >= 2)
+                {
+                    span.FontWeight = FontWeight.Bold;
+                }
+                else
+                {
+                    span.FontStyle = FontStyle.Italic;
+                }
+
+                foreach (var child in emphasis)
+                {
+                    AddInline(span.Inlines, child, b);
+                }
+
+                target.Add(span);
+                break;
+            case CodeInline code:
+                target.Add(new Run(code.Content) { FontFamily = Monospace, Background = b.HeaderBackground, Foreground = b.ArchiveForeground });
+                break;
+            case LinkInline { IsImage: true } image:
+                target.Add(new Run($"[obraz: {image.Url}]") { Foreground = b.HiddenForeground, FontStyle = FontStyle.Italic });
+                break;
+            case LinkInline link:
+                var linkSpan = new Span { Foreground = b.Accent, TextDecorations = TextDecorations.Underline };
+                foreach (var child in link)
+                {
+                    AddInline(linkSpan.Inlines, child, b);
+                }
+
+                if (linkSpan.Inlines.Count == 0)
+                {
+                    linkSpan.Inlines.Add(new Run(link.Url ?? string.Empty));
+                }
+
+                target.Add(linkSpan);
+                break;
+            case AutolinkInline autolink:
+                target.Add(new Run(autolink.Url) { Foreground = b.Accent, TextDecorations = TextDecorations.Underline });
+                break;
+            case LineBreakInline lineBreak:
+                target.Add(lineBreak.IsHard ? new LineBreak() : new Run(" "));
+                break;
+            case TaskList:
+                break; // Rendered as the list marker.
+            case HtmlInline html:
+                target.Add(new Run(html.Tag) { Foreground = b.HiddenForeground });
+                break;
+            case ContainerInline container:
+                foreach (var child in container)
+                {
+                    AddInline(target, child, b);
+                }
+
+                break;
+        }
+    }
+}

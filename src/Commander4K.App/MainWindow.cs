@@ -6,11 +6,13 @@ using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
 using Commander4K.App.Input;
 using Commander4K.App.Panels;
 using Commander4K.App.PluginPanels;
+using Commander4K.App.Preview;
 using Commander4K.App.Theming;
 using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
@@ -33,8 +35,8 @@ public sealed class MainWindow : Window
 {
     private static readonly (string Key, string Label, string Command)[] FunctionKeys =
     [
-        ("1", "Pomoc", CommandIds.Help),
-        ("2", "Skórka", CommandIds.SelectSkin),
+        ("1", "Ustawienia", CommandIds.Settings),
+        ("2", "Panele", CommandIds.PanelModes),
         ("3", "Podgląd", CommandIds.View),
         ("4", "Edycja", CommandIds.Edit),
         ("5", "Kopiuj", CommandIds.Copy),
@@ -317,7 +319,8 @@ public sealed class MainWindow : Window
     {
         if (_prompt is not null && _active is not null)
         {
-            _prompt.Text = _active.ActiveTab.Path + ">";
+            // The command line works on the visible file list, which is the other panel while this one shows a mode.
+            _prompt.Text = (_active.Mode is null ? _active : Other).ActiveTab.Path + ">";
         }
     }
 
@@ -348,6 +351,17 @@ public sealed class MainWindow : Window
         }
 
         var inTextBox = focused is TextBox;
+
+        // Inside a mode (preview editor, plugin filter) its own shortcuts — F-keys, Ctrl/Alt combos, Esc — come
+        // first; plain typing keys stay with the text box.
+        if (inTextBox && _active.Mode is { } focusedMode && focused is Visual visual && focusedMode.View.IsVisualAncestorOf(visual)
+            && (KeyMapping.IsFunctionKey(e.Key) || e.Key == Key.Escape
+                || (e.KeyModifiers & (Avalonia.Input.KeyModifiers.Control | Avalonia.Input.KeyModifiers.Alt)) != 0)
+            && focusedMode.HandleKey(e))
+        {
+            e.Handled = true;
+            return;
+        }
         var hasCommandModifier = (e.KeyModifiers & (Avalonia.Input.KeyModifiers.Control | Avalonia.Input.KeyModifiers.Alt)) != 0;
         if (inTextBox && !hasCommandModifier && !KeyMapping.IsFunctionKey(e.Key) && e.Key != Key.Tab)
         {
@@ -355,13 +369,13 @@ public sealed class MainWindow : Window
         }
 
         // A plugin panel gets first pick (its actions may reuse Delete/F3/Enter); the rest falls through to the keymap.
-        if (!inTextBox && _active.Plugin is { } plugin && plugin.HandleKey(e))
+        if (!inTextBox && _active.Mode is { } plugin && plugin.HandleKey(e))
         {
             e.Handled = true;
             return;
         }
 
-        if (!inTextBox && _active.Plugin is null && _active.HandleNavigationKey(e.Key, e.KeyModifiers))
+        if (!inTextBox && _active.Mode is null && _active.HandleNavigationKey(e.Key, e.KeyModifiers))
         {
             e.Handled = true;
             return;
@@ -394,9 +408,9 @@ public sealed class MainWindow : Window
             return;
         }
 
-        if (_active.Plugin is { } plugin)
+        if (_active.Mode is { } plugin)
         {
-            plugin.AppendFilterText(e.Text);
+            plugin.AppendText(e.Text);
             e.Handled = true;
             return;
         }
@@ -559,7 +573,8 @@ public sealed class MainWindow : Window
          .Register(CommandIds.ToggleSelection, "Zaznacz", ToggleMarkAndAdvance)
          .Register(CommandIds.CalculateDirSizes, "Rozmiar katalogu / zaznacz", CalculateSize)
          .Register(CommandIds.View, "Podgląd", ViewCurrent)
-         .Register(CommandIds.QuickView, "Szybki podgląd", () => Notify("Szybki podgląd (Ctrl+Q) pojawi się w kolejnej wersji."))
+         .Register(CommandIds.QuickView, "Szybki podgląd", TogglePreview)
+         .Register(CommandIds.PanelModes, "Tryb panelu (pliki, podgląd, panele wtyczek)", ShowPanelModesAsync)
          .Register(CommandIds.Edit, "Edycja", EditCurrentAsync)
          .Register(CommandIds.Copy, "Kopiuj", _ => TransferAsync(TransferMode.Copy))
          .Register(CommandIds.Move, "Przenieś", _ => TransferAsync(TransferMode.Move))
@@ -615,7 +630,7 @@ public sealed class MainWindow : Window
                 return;
             }
 
-            if (_active.Plugin is not null && FileCommands.Contains(commandId))
+            if (_active.Mode is not null && FileCommands.Contains(commandId))
             {
                 Notify("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach.");
                 return;
@@ -890,7 +905,7 @@ public sealed class MainWindow : Window
             return;
         }
 
-        panel.ClosePlugin();
+        panel.CloseMode();
         await panel.NavigateAsync(choice.Value);
     }
 
@@ -908,10 +923,10 @@ public sealed class MainWindow : Window
             return Task.CompletedTask;
         }
 
-        var target = _active.Plugin is null ? Other : _active;
+        var target = _active.Mode is null ? Other : _active;
         if (plugin.RequiresArgument)
         {
-            if (argument is null && _active.Plugin is null && _active.ActiveTab.CurrentEntry is { Kind: VfsEntryKind.File } file)
+            if (argument is null && _active.Mode is null && _active.ActiveTab.CurrentEntry is { Kind: VfsEntryKind.File } file)
             {
                 argument = file.Path;
             }
@@ -928,9 +943,62 @@ public sealed class MainWindow : Window
             (title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this),
             ShowTextWindowAsync,
             Notify);
-        target.ShowPlugin(new PluginPanelView(plugin, plugin.CreateSession(request, host.HostFor(plugin.Manifest)), request, _skins!.Current, services));
+        target.ShowMode(new PluginPanelView(plugin, plugin.CreateSession(request, host.HostFor(plugin.Manifest)), request, _skins!.Current, services));
         SetActive(target);
         return Task.CompletedTask;
+    }
+
+    /// <summary>The panel a mode goes to: the opposite one, or the active one if it already shows a mode.</summary>
+    private (FilePanelView Target, FilePanelView Source) ModeTarget() =>
+        _active.Mode is null ? (Other, _active) : (_active, Other);
+
+    /// <summary>Ctrl+Q: quick view of the entry under the cursor, in the opposite panel; focus stays on the file list.</summary>
+    private void TogglePreview()
+    {
+        var (target, source) = ModeTarget();
+        if (target.Mode is PreviewPanelView)
+        {
+            target.CloseMode();
+            return;
+        }
+
+        target.ShowMode(new PreviewPanelView(_host!, source, _skins!.Current, Notify));
+        SetActive(source);
+    }
+
+    /// <summary>F2: choose what the opposite panel shows — files, quick view or any plugin panel.</summary>
+    private async ValueTask ShowPanelModesAsync(CommandInvocation _)
+    {
+        var host = _host!;
+        var (target, _) = ModeTarget();
+        var side = target == _left ? "lewy" : "prawy";
+        var items = new List<PickerItem>
+        {
+            new("Pliki", "lista plików (zamyka tryb panelu)", "files", "lista katalog"),
+            new("Podgląd (Ctrl+Q)", "markdown z edycją, tekst, obrazy, rozmiary folderów — dla pliku pod kursorem", "preview", "quick view markdown"),
+        };
+        items.AddRange(host.PanelPlugins.Select(p => new PickerItem(p.Title, p.Description, CommandIds.PanelPrefix + p.Id, p.Manifest.Name)));
+
+        var choice = await new PickerDialog(_skins!.Current, $"Tryb panelu ({side})", items, $"Co ma pokazywać {side} panel?").ShowAsync(this);
+        switch (choice?.Value)
+        {
+            case null:
+                return;
+            case "files":
+                target.CloseMode();
+                SetActive(target);
+                break;
+            case "preview":
+                if (target.Mode is not PreviewPanelView)
+                {
+                    TogglePreview();
+                }
+
+                break;
+            default:
+                await ExecuteAsync(choice.Value);
+                break;
+        }
     }
 
     private Task ShowTextWindowAsync(string title, string text)

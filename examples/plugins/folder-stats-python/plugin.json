@@ -19,6 +19,9 @@
         "description": "Pliki bieżącego folderu pogrupowane wg rozszerzenia.",
         "actions": [ { "id": "list", "title": "Lista plików", "shortcut": "F3" } ]
       }
+    ],
+    "previews": [
+      { "id": "csv", "title": "Tabela CSV", "extensions": [".csv"], "priority": 60 }
     ]
   }
 }

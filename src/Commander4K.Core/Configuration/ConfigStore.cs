@@ -72,6 +72,7 @@ public sealed class ConfigStore(string configDirectory)
             {
                 Bindings = new(DefaultKeymap.Bindings, StringComparer.OrdinalIgnoreCase),
                 KnownCommands = [.. DefaultKeymap.Bindings.Values.Distinct()],
+                AppliedMigrations = [.. DefaultKeymap.ChangedDefaults.Select(m => $"{m.Sequence}->{m.NewCommand}")],
             },
             ConfigJsonContext.Default.KeymapFile,
             cancellationToken).ConfigureAwait(false);
@@ -90,6 +91,24 @@ public sealed class ConfigStore(string configDirectory)
         var known = new HashSet<string>((IEnumerable<string>?)file.KnownCommands ?? file.Bindings.Values, StringComparer.OrdinalIgnoreCase);
         var bound = new HashSet<string>(file.Bindings.Keys, StringComparer.OrdinalIgnoreCase);
         var changed = file.KnownCommands is null;
+        var applied = new HashSet<string>(file.AppliedMigrations ?? [], StringComparer.OrdinalIgnoreCase);
+        foreach (var (sequence, oldCommand, newCommand) in DefaultKeymap.ChangedDefaults)
+        {
+            // Each migration runs once: later choices of the user (even going back to the old command) are kept.
+            if (!applied.Add($"{sequence}->{newCommand}"))
+            {
+                continue;
+            }
+
+            changed = true;
+            if (file.Bindings.TryGetValue(sequence, out var current) && string.Equals(current, oldCommand, StringComparison.OrdinalIgnoreCase))
+            {
+                file.Bindings[sequence] = newCommand;
+            }
+        }
+
+        file.AppliedMigrations = [.. applied.Order(StringComparer.Ordinal)];
+
         foreach (var (sequence, command) in DefaultKeymap.Bindings)
         {
             if (!known.Contains(command) && !bound.Contains(sequence))

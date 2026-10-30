@@ -19,6 +19,14 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - SMB shares, with offline cached browsing;
   - `sftp://` and `ftp://` servers;
   - `reg://`, the Windows Registry.
+- **Panel modes (`F2`):** either panel can show files, a quick preview or any plugin panel.
+- **Quick view (`Ctrl+Q`):** previews the entry under the cursor in the opposite panel:
+  - Markdown is rendered with formatting, and `F4` switches to side-by-side editing with a live preview;
+  - text files are editable;
+  - images are shown;
+  - folders show their total size and per-subfolder bars, filled in as they are computed.
+
+  Moving the cursor cancels the running load at once. Plugins can add previews too.
 - **Total Commander-style workflow:**
   - `F5`/`F6` copy and move in the background, with an `F2` queue;
   - `F3` viewer, `F4` your editor, `F7` new folder, `F8` delete;
@@ -37,7 +45,7 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - It can also create a new plugin from an example. See [docs/plugins.md](docs/plugins.md), which is written so an AI assistant can build plugins from it too.
 - **Skins:** Modern dark/light, Norton Commander, Midnight Commander and Total Commander classic. You can also make your own as JSON, or let AI design one (see below).
 - **Easy to configure:**
-  - `Ctrl+,` opens a settings window that searches settings, shortcuts and config files;
+  - `F1` (or `Ctrl+,`) opens a settings window that searches settings, shortcuts and config files;
   - `Ctrl+Shift+P` opens a command palette for every command, skin and setting;
   - every setting stays in plain JSON, so you can still edit the files by hand.
 - **Self-updating:** checks GitHub Releases once a day. Before installing, it checks the download against the SHA-256 checksum published with the release.

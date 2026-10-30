@@ -30,6 +30,9 @@ public sealed class AppSettings
 
     public bool ConfirmDelete { get; set; } = true;
 
+    /// <summary>Quick view opens Markdown files in side-by-side editing instead of the formatted view.</summary>
+    public bool MarkdownEditByDefault { get; set; }
+
     /// <summary>Probe the local subnet for SMB/SSH/FTP hosts when opening <c>net://</c>.</summary>
     public bool LanDiscovery { get; set; } = true;
 

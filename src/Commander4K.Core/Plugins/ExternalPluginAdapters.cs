@@ -131,6 +131,37 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
     };
 }
 
+/// <summary>One <c>contributes.previews</c> entry: quick view rendered by the plugin (<c>preview.render</c>).</summary>
+public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewPlugin
+{
+    public string Id => $"{plugin.Manifest.Id}/{preview.Id}";
+
+    public string DisplayName => preview.Title;
+
+    public PluginManifest Manifest => plugin.Manifest;
+
+    public int Priority => preview.Priority;
+
+    public bool CanPreview(VfsEntry entry) =>
+        entry.IsContainer
+            ? entry.Kind != VfsEntryKind.ParentLink && preview.Extensions.Contains("/")
+            : preview.Extensions.Contains(Path.GetExtension(entry.Name), StringComparer.OrdinalIgnoreCase);
+
+    /// <remarks>Result: <c>{ "kind": "markdown" | "text", "content": "...", "editable": false }</c>.</remarks>
+    public async Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
+    {
+        var result = await plugin.CallAsync("preview.render",
+            new { preview = preview.Id, entry = ExternalPlugin.EntryDto(entry), context = ExternalPlugin.Context(host) },
+            cancellationToken).ConfigureAwait(false);
+        var kind = result.TryGetProperty("kind", out var k) ? k.GetString() : "text";
+        var content = result.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty;
+        var editable = result.TryGetProperty("editable", out var e) && e.ValueKind == JsonValueKind.True;
+        return string.Equals(kind, "markdown", StringComparison.OrdinalIgnoreCase)
+            ? new MarkdownPreview(content, editable)
+            : new TextPreview(content, editable);
+    }
+}
+
 /// <summary>
 /// The user's consent per external plugin (<c>config/plugin-approvals.json</c>). A plugin runs only when enabled and its
 /// manifest asks for no permission beyond those the user approved; a manifest that asks for more needs new consent.
