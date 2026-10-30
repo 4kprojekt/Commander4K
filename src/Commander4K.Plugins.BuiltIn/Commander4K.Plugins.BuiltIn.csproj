@@ -5,6 +5,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Commander4K.Plugins.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Commander4K.PluginSdk\Commander4K.PluginSdk.csproj" />
     <ProjectReference Include="..\Commander4K.Core\Commander4K.Core.csproj" />
   </ItemGroup>

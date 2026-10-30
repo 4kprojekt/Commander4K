@@ -27,5 +27,9 @@ public static class CommandIds
     public const string Compare = "cm_Compare";
     public const string OpenTerminal = "cm_OpenTerminal";
     public const string CancelCurrentOperation = "cm_CancelCurrentOperation";
+    /// <summary>Opens the skin picker (Norton Commander, Midnight Commander, modern...).</summary>
+    public const string SelectSkin = "cm_SelectSkin";
+    /// <summary>Switches straight to the next skin, for quick previewing.</summary>
+    public const string NextSkin = "cm_NextSkin";
     public const string Exit = "cm_Exit";
 }

@@ -32,6 +32,8 @@ public static class DefaultKeymap
         ["Ctrl+O"] = CommandIds.OpenTerminal,
         ["F9"] = CommandIds.OpenTerminal,
         ["Escape"] = CommandIds.CancelCurrentOperation,
+        ["Ctrl+Shift+K"] = CommandIds.SelectSkin,
+        ["Ctrl+Alt+K"] = CommandIds.NextSkin,
         ["Alt+F4"] = CommandIds.Exit,
     };
 }

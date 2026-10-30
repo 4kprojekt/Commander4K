@@ -28,7 +28,10 @@ public interface IVfsProviderPlugin : IPlugin
 
     VfsCapabilities Capabilities { get; }
 
-    /// <summary>Streams the children of a container. The first entry should arrive as soon as it is known.</summary>
+    /// <summary>
+    /// Streams the children of a container. The first entry should arrive as soon as it is known. Providers do not
+    /// emit a <see cref="VfsEntryKind.ParentLink"/> row; the host adds ".." from <see cref="GetParentPath"/>.
+    /// </summary>
     IAsyncEnumerable<VfsEntry> EnumerateAsync(string path, CancellationToken cancellationToken);
 
     ValueTask<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken);
