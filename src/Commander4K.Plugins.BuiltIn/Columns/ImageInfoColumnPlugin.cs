@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.Plugins.BuiltIn.Columns;
@@ -28,14 +29,14 @@ public sealed class ImageInfoColumnPlugin : IColumnMetadataPlugin
 
     public string DisplayName => "Image info";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.columns.image", "Kolumny zdjęć",
-        "Wymiary obrazów oraz data wykonania i aparat z EXIF (JPEG).", PluginPermissions.FileRead);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.columns.image", Loc.T("Kolumny zdjęć"),
+        Loc.T("Wymiary obrazów oraz data wykonania i aparat z EXIF (JPEG)."), PluginPermissions.FileRead);
 
     public IReadOnlyList<ColumnDefinition> Columns { get; } =
     [
-        new(SizeColumn, "Wymiary", ColumnAlignment.Right, 92),
-        new(TakenColumn, "Zrobione", ColumnAlignment.Left, 120),
-        new(CameraColumn, "Aparat", ColumnAlignment.Left, 130),
+        new(SizeColumn, Loc.T("Wymiary"), ColumnAlignment.Right, 92),
+        new(TakenColumn, Loc.T("Zrobione"), ColumnAlignment.Left, 120),
+        new(CameraColumn, Loc.T("Aparat"), ColumnAlignment.Left, 130),
     ];
 
     public bool Supports(in VfsEntry entry) =>

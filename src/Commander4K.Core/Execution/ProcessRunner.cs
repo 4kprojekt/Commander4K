@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.Core.Execution;
@@ -27,11 +28,11 @@ public static class ProcessRunner
             try
             {
                 using var _ = Process.Start(elevated);
-                return new ProcessRunResult(0, "(uruchomiono jako administrator w osobnym oknie)", string.Empty);
+                return new ProcessRunResult(0, Loc.T("(uruchomiono jako administrator w osobnym oknie)"), string.Empty);
             }
             catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
             {
-                throw new OperationCanceledException("Anulowano podniesienie uprawnień.", ex);
+                throw new OperationCanceledException(Loc.T("Anulowano podniesienie uprawnień."), ex);
             }
         }
 
@@ -50,7 +51,7 @@ public static class ProcessRunner
             info.ArgumentList.Add(argument);
         }
 
-        using var process = Process.Start(info) ?? throw new InvalidOperationException($"Nie udało się uruchomić {request.FileName}.");
+        using var process = Process.Start(info) ?? throw new InvalidOperationException(Loc.T("Nie udało się uruchomić {0}.", request.FileName));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(request.Timeout ?? DefaultTimeout);
         var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
@@ -73,7 +74,7 @@ public static class ProcessRunner
 
             if (!cancellationToken.IsCancellationRequested)
             {
-                throw new TimeoutException($"{Path.GetFileName(request.FileName)} nie zakończył się w czasie {request.Timeout ?? DefaultTimeout}.");
+                throw new TimeoutException(Loc.T("{0} nie zakończył się w czasie {1}.", Path.GetFileName(request.FileName), request.Timeout ?? DefaultTimeout));
             }
 
             throw;

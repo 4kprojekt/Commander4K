@@ -9,6 +9,7 @@ using Avalonia.Threading;
 using Commander4K.App.Composition;
 using Commander4K.App.Panels;
 using Commander4K.App.Theming;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Viewers;
 
@@ -58,13 +59,13 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _notify = notify;
 
         _title = new TextBlock().FontWeight(FontWeight.SemiBold).VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
-        _editButton = new Button().Content("Edytuj (F4)").Padding(8, 2).FontSize(12).IsVisible(false).OnClick(_ => ToggleEdit());
-        _saveButton = new Button().Content("Zapisz (Ctrl+S)").Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).IsVisible(false).OnClick(async _ => await SaveAsync());
+        _editButton = new Button().Content(Loc.T("Edytuj (F4)")).Padding(8, 2).FontSize(12).IsVisible(false).OnClick(_ => ToggleEdit());
+        _saveButton = new Button().Content(Loc.T("Zapisz (Ctrl+S)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).IsVisible(false).OnClick(async _ => await SaveAsync());
         _header = new Border().Padding(8, 4).Child(new Grid().Cols("*,Auto,Auto,Auto").Children(
             _title,
             _editButton.Col(1),
             _saveButton.Col(2),
-            new Button().Col(3).Content("Zamknij (Esc)").Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
+            new Button().Col(3).Content(Loc.T("Zamknij (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
         _status = new TextBlock().Margin(8, 2).TextTrimming(TextTrimming.CharacterEllipsis);
 
         RowDefinitions = new RowDefinitions("Auto,*,Auto");
@@ -83,7 +84,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     public event Action? Activated;
 
-    public string Title => "Podgląd";
+    public string Title => Loc.T("Podgląd");
 
     public Control View => this;
 
@@ -124,7 +125,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             if (_dirty && !_escapeArmed)
             {
                 _escapeArmed = true;
-                _notify("Niezapisane zmiany: Ctrl+S zapisuje, ponowne Esc je odrzuca.", false);
+                _notify(Loc.T("Niezapisane zmiany: Ctrl+S zapisuje, ponowne Esc je odrzuca."), false);
                 return true;
             }
 
@@ -232,7 +233,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _entry = entry;
         if (entry is not { } target)
         {
-            Show(new MessagePreview("Brak elementu pod kursorem."));
+            Show(new MessagePreview(Loc.T("Brak elementu pod kursorem.")));
             return;
         }
 
@@ -241,7 +242,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _title.Text = target.Name;
         if (plugin is null)
         {
-            Show(new MessagePreview($"Brak podglądu dla „{target.Name}”."));
+            Show(new MessagePreview(Loc.T("Brak podglądu dla „{0}”.", target.Name)));
             return;
         }
 
@@ -303,7 +304,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _livePreview = null;
         var editable = content is MarkdownPreview { CanEdit: true } or TextPreview { CanEdit: true };
         _editButton.IsVisible = editable;
-        _editButton.Content = _editing ? "Podgląd (F4)" : "Edytuj (F4)";
+        _editButton.Content = _editing ? Loc.T("Podgląd (F4)") : Loc.T("Edytuj (F4)");
         _saveButton.IsVisible = _editing;
         _status.Text = _plugin is null ? string.Empty : $"{_plugin.DisplayName} · {_entry?.Path}";
 
@@ -313,7 +314,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             MarkdownPreview markdown => Scroll(MarkdownRenderer.Render(markdown.Markdown, _brushes)),
             TextPreview text => TextView(text),
             ImagePreview image => ImageView(image),
-            HexPreview hex => Monospace(TextHexViewerPlugin.FormatHex(hex.Data.Span), $"Hex · pokazano {hex.Data.Length:N0} z {hex.TotalLength:N0} B"),
+            HexPreview hex => Monospace(TextHexViewerPlugin.FormatHex(hex.Data.Span), Loc.T("Hex · pokazano {0:N0} z {1:N0} B", hex.Data.Length, hex.TotalLength)),
             FolderPreview folder => FolderView(folder),
             MessagePreview message => new TextBlock { Text = message.Message, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap },
             _ => null,
@@ -357,12 +358,12 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             _savedText = _editor.Text ?? string.Empty;
             _dirty = false;
             _escapeArmed = false;
-            _saveButton.Content = "Zapisz (Ctrl+S)";
-            _notify($"Zapisano {entry.Name}.", false);
+            _saveButton.Content = Loc.T("Zapisz (Ctrl+S)");
+            _notify(Loc.T("Zapisano {0}.", entry.Name), false);
         }
         catch (Exception ex)
         {
-            _notify($"Nie zapisano: {ex.Message}", true);
+            _notify(Loc.T("Nie zapisano: {0}", ex.Message), true);
         }
     }
 
@@ -399,7 +400,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             return CreateEditor(text.Text);
         }
 
-        return Monospace(text.Text, text.Truncated ? "Pokazano początek pliku (2 MB)." : null);
+        return Monospace(text.Text, text.Truncated ? Loc.T("Pokazano początek pliku (2 MB).") : null);
     }
 
     private TextBox CreateEditor(string text)
@@ -424,7 +425,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             _dirty = !string.Equals(editor.Text ?? string.Empty, _savedText, StringComparison.Ordinal);
             _escapeArmed = false;
-            _saveButton.Content = _dirty ? "● Zapisz (Ctrl+S)" : "Zapisz (Ctrl+S)";
+            _saveButton.Content = _dirty ? Loc.T("● Zapisz (Ctrl+S)") : Loc.T("Zapisz (Ctrl+S)");
         };
         editor.KeyDown += (_, e) =>
         {
@@ -476,7 +477,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException)
         {
-            return new TextBlock { Text = "Nie można odczytać obrazu: " + ex.Message, Foreground = _brushes.Error, Margin = new Thickness(16) };
+            return new TextBlock { Text = Loc.T("Nie można odczytać obrazu: ") + ex.Message, Foreground = _brushes.Error, Margin = new Thickness(16) };
         }
     }
 
@@ -490,8 +491,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         var list = new StackPanel { Spacing = 1, Margin = new Thickness(12, 4) };
         list.Children.Add(new TextBlock
         {
-            Text = $"Razem: {FileViewportCanvas.FormatSize(known)}" + (folder.Complete ? string.Empty : $"  (liczenie… {pending} folderów)") +
-                $"   ·   {folder.Files:N0} plików, {folder.Folders:N0} folderów",
+            Text = $"Razem: {FileViewportCanvas.FormatSize(known)}" + (folder.Complete ? string.Empty : Loc.T("  (liczenie… {0} folderów)", pending)) +
+                "   ·   " + Loc.P(folder.Files, "{0:N0} plik|{0:N0} pliki|{0:N0} plików") + ", " + Loc.P(folder.Folders, "{0:N0} folder|{0:N0} foldery|{0:N0} folderów"),
             FontSize = _brushes.FontSize + 2,
             FontWeight = FontWeight.Bold,
             Foreground = _brushes.DirectoryForeground,
@@ -540,7 +541,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             list.Children.Add(new TextBlock { Text = $"… i {ordered.Count - MaxFolderRows} mniejszych", Foreground = _brushes.HiddenForeground, Margin = new Thickness(0, 6) });
         }
 
-        _status.Text = folder.Complete ? $"Gotowe · {folder.Path}" : $"⏳ Liczenie rozmiarów… · {folder.Path}";
+        _status.Text = folder.Complete ? Loc.T("Gotowe · {0}", folder.Path) : Loc.T("⏳ Liczenie rozmiarów… · {0}", folder.Path);
         return Scroll(list);
     }
 

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Updates;
 using Commander4K.PluginSdk;
 
@@ -55,11 +56,11 @@ public static partial class ManifestReader
         }
         catch (Exception ex) when (ex is JsonException or IOException or NotSupportedException)
         {
-            return new DiscoveredPlugin(folder, null, [$"Nieprawidłowy {FileName}: {ex.Message}"]);
+            return new DiscoveredPlugin(folder, null, [Loc.T("Nieprawidłowy {0}: {1}", FileName, ex.Message)]);
         }
 
         return manifest is null
-            ? new DiscoveredPlugin(folder, null, [$"Pusty {FileName}."])
+            ? new DiscoveredPlugin(folder, null, [Loc.T("Pusty {0}.", FileName)])
             : new DiscoveredPlugin(folder, manifest, Validate(manifest, folder));
     }
 
@@ -68,36 +69,36 @@ public static partial class ManifestReader
         var errors = new List<string>();
         if (string.IsNullOrWhiteSpace(manifest.Id) || !IdRegex().IsMatch(manifest.Id))
         {
-            errors.Add($"Id „{manifest.Id}” musi składać się z małych liter, cyfr, kropek, myślników i podkreśleń (np. „acme.log-tools”).");
+            errors.Add(Loc.T("Id „{0}” musi składać się z małych liter, cyfr, kropek, myślników i podkreśleń (np. „acme.log-tools”).", manifest.Id));
         }
 
         if (manifest.Id?.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase) == true)
         {
-            errors.Add("Prefiks „builtin.” jest zarezerwowany dla wtyczek wbudowanych.");
+            errors.Add(Loc.T("Prefiks „builtin.” jest zarezerwowany dla wtyczek wbudowanych."));
         }
 
         if (string.IsNullOrWhiteSpace(manifest.Name))
         {
-            errors.Add("Brak nazwy (name).");
+            errors.Add(Loc.T("Brak nazwy (name)."));
         }
 
         if (!SemanticVersion.TryParse(manifest.Version, out _))
         {
-            errors.Add($"Wersja „{manifest.Version}” nie jest wersją semantyczną (np. 1.0.0).");
+            errors.Add(Loc.T("Wersja „{0}” nie jest wersją semantyczną (np. 1.0.0).", manifest.Version));
         }
 
         if (manifest.Protocol > ProtocolVersion)
         {
-            errors.Add($"Wtyczka wymaga protokołu {manifest.Protocol}, aplikacja obsługuje {ProtocolVersion}.");
+            errors.Add(Loc.T("Wtyczka wymaga protokołu {0}, aplikacja obsługuje {1}.", manifest.Protocol, ProtocolVersion));
         }
 
         if (manifest.Runtime is null || !RuntimeTypes.Contains(manifest.Runtime.Type, StringComparer.OrdinalIgnoreCase))
         {
-            errors.Add($"runtime.type musi być jednym z: {string.Join(", ", RuntimeTypes)}.");
+            errors.Add(Loc.T("runtime.type musi być jednym z: {0}.", string.Join(", ", RuntimeTypes)));
         }
         else if (string.IsNullOrWhiteSpace(manifest.Runtime.Entry))
         {
-            errors.Add("Brak runtime.entry (plik startowy).");
+            errors.Add(Loc.T("Brak runtime.entry (plik startowy)."));
         }
         else
         {
@@ -105,11 +106,11 @@ public static partial class ManifestReader
             var entry = Path.GetFullPath(Path.Combine(folder, manifest.Runtime.Entry));
             if (!entry.StartsWith(root, StringComparison.OrdinalIgnoreCase))
             {
-                errors.Add("runtime.entry musi wskazywać plik wewnątrz folderu wtyczki.");
+                errors.Add(Loc.T("runtime.entry musi wskazywać plik wewnątrz folderu wtyczki."));
             }
             else if (!File.Exists(entry))
             {
-                errors.Add($"Nie znaleziono pliku startowego {manifest.Runtime.Entry}.");
+                errors.Add(Loc.T("Nie znaleziono pliku startowego {0}.", manifest.Runtime.Entry));
             }
         }
 
@@ -117,7 +118,7 @@ public static partial class ManifestReader
         {
             if (!PluginPermissions.All.Contains(permission, StringComparer.OrdinalIgnoreCase))
             {
-                errors.Add($"Nieznane uprawnienie „{permission}”. Dozwolone: {string.Join(", ", PluginPermissions.All)}.");
+                errors.Add(Loc.T("Nieznane uprawnienie „{0}”. Dozwolone: {1}.", permission, string.Join(", ", PluginPermissions.All)));
             }
         }
 
@@ -128,12 +129,12 @@ public static partial class ManifestReader
             .ToList();
         foreach (var duplicate in ids.GroupBy(i => i, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))
         {
-            errors.Add($"Powtórzony identyfikator {duplicate.Key}.");
+            errors.Add(Loc.T("Powtórzony identyfikator {0}.", duplicate.Key));
         }
 
         if (ids.Count == 0)
         {
-            errors.Add("Wtyczka nic nie dodaje (contributes.commands / panels / previews / palettes są puste).");
+            errors.Add(Loc.T("Wtyczka nic nie dodaje (contributes.commands / panels / previews / palettes są puste)."));
         }
 
         return errors;

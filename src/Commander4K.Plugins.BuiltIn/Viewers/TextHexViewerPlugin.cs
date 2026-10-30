@@ -1,4 +1,5 @@
 using System.Text;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.Plugins.BuiltIn.Viewers;
@@ -15,7 +16,7 @@ public sealed class TextHexViewerPlugin : IViewerPlugin
 
     public string DisplayName => "Text / Hex";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.viewer.texthex", "Podgląd tekst/hex", "Podgląd plików jako tekst lub zrzut szesnastkowy.", PluginPermissions.FileRead);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.viewer.texthex", Loc.T("Podgląd tekst/hex"), Loc.T("Podgląd plików jako tekst lub zrzut szesnastkowy."), PluginPermissions.FileRead);
 
     public int Priority => 0;
 

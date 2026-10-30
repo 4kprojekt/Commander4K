@@ -53,6 +53,9 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - Every call is written to an audit log, and the user approves a plugin before it runs.
   - The plugin manager shows installed runtimes and their versions, with install hints for missing ones.
   - It can also create a new plugin from an example. See [docs/plugins.md](docs/plugins.md), which is written so an AI assistant can build plugins from it too.
+- **Languages:** Polish and English built in, chosen automatically from Windows.
+  - Any other language is one JSON file in `config/i18n/`.
+  - "Translate the interface with AI" copies a ready prompt for Claude, ChatGPT or Gemini and checks the file you get back.
 - **Skins:** Modern dark/light, Norton Commander, Midnight Commander and Total Commander classic. You can also make your own as JSON, or let AI design one (see below).
 - **Easy to configure:**
   - `F1` (or `Ctrl+,`) opens a settings window that searches settings, shortcuts and config files;

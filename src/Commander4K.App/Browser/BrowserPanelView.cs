@@ -9,6 +9,7 @@ using Commander4K.App.Composition;
 using Commander4K.App.Panels;
 using Commander4K.App.Theming;
 using Commander4K.Core.Input;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Web;
 using Commander4K.PluginSdk;
 using Microsoft.Web.WebView2.Core;
@@ -27,8 +28,8 @@ public sealed class BrowserPlugin : IPlugin
 
     public string DisplayName => "Browser";
 
-    public PluginManifest Manifest { get; } = new(PluginId, "Przeglądarka", "1.0.0", "4Kprojekt",
-        "Panel przeglądarki (Microsoft Edge WebView2): strony, wyszukiwarki i asystenci AI. Logowania są zapamiętywane w profilu aplikacji.",
+    public PluginManifest Manifest { get; } = new(PluginId, Loc.T("Przeglądarka"), "1.0.0", "4Kprojekt",
+        Loc.T("Panel przeglądarki (Microsoft Edge WebView2): strony, wyszukiwarki i asystenci AI. Logowania są zapamiętywane w profilu aplikacji."),
         [PluginPermissions.Network]);
 }
 
@@ -68,7 +69,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
 
         _back = ToolButton("←", "Wstecz (Alt+←)", () => Core?.GoBack());
         _forward = ToolButton("→", "Dalej (Alt+→)", () => Core?.GoForward());
-        _address = new TextBox().PlaceholderText("Adres albo szukane słowa (Ctrl+L)").Padding(6, 2).MinHeight(24).VerticalContentAlignment(VerticalAlignment.Center);
+        _address = new TextBox().PlaceholderText(Loc.T("Adres albo szukane słowa (Ctrl+L)")).Padding(6, 2).MinHeight(24).VerticalContentAlignment(VerticalAlignment.Center);
         _address.KeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter)
@@ -87,17 +88,17 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
                 await _app.SaveSettingsAsync();
             }
         };
-        ToolTip.SetTip(_engine, "Wyszukiwarka dla tekstu wpisanego w pasek adresu");
+        ToolTip.SetTip(_engine, Loc.T("Wyszukiwarka dla tekstu wpisanego w pasek adresu"));
 
         var toolbar = new Grid().Cols("Auto,Auto,Auto,*,Auto,Auto,Auto,Auto").Children(
             _back.Col(0),
             _forward.Col(1),
-            ToolButton("⟳", "Odśwież (F5)", () => Core?.Reload()).Col(2),
+            ToolButton("⟳", Loc.T("Odśwież (F5)"), () => Core?.Reload()).Col(2),
             _address.Col(3).Margin(4, 0, 0, 0),
             _engine.Col(4),
-            ToolButton("✨ Zapytaj AI", "Zadaj pytanie z paska adresu asystentowi AI (ustawienia: „Asystent AI”)", () => _ = AskAssistantAsync()).Col(5).Margin(4, 0, 0, 0),
-            ToolButton("↗", "Otwórz w przeglądarce systemowej", OpenExternally).Col(6).Margin(4, 0, 0, 0),
-            ToolButton("✕", "Zamknij przeglądarkę (Esc)", () => CloseRequested?.Invoke()).Col(7).Margin(4, 0, 0, 0));
+            ToolButton(Loc.T("✨ Zapytaj AI"), Loc.T("Zadaj pytanie z paska adresu asystentowi AI (ustawienia: „Asystent AI”)"), () => _ = AskAssistantAsync()).Col(5).Margin(4, 0, 0, 0),
+            ToolButton("↗", Loc.T("Otwórz w przeglądarce systemowej"), OpenExternally).Col(6).Margin(4, 0, 0, 0),
+            ToolButton("✕", Loc.T("Zamknij przeglądarkę (Esc)"), () => CloseRequested?.Invoke()).Col(7).Margin(4, 0, 0, 0));
         _toolbar = new Border().Padding(4).Child(toolbar);
         _toolbar.PointerPressed += (_, _) => Activated?.Invoke();
 
@@ -105,7 +106,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         _messageText = new TextBlock().TextWrapping(TextWrapping.Wrap).MaxWidth(520);
         _message = new Border().IsVisible(false).Padding(24).Child(new StackPanel().Spacing(12).VerticalAlignment(VerticalAlignment.Center).Children(
             _messageText,
-            new Button().Content("Otwórz w przeglądarce systemowej").OnClick(_ => OpenExternally())));
+            new Button().Content(Loc.T("Otwórz w przeglądarce systemowej")).OnClick(_ => OpenExternally())));
 
         _web = new WebView2Host(Path.Combine(app.DataDirectory, "data", "webview2"));
         _web.Ready += OnReady;
@@ -119,14 +120,13 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
 
         if (WebView2Host.RuntimeVersion() is null)
         {
-            ShowMessage("Brak środowiska Microsoft Edge WebView2, którego używa wbudowana przeglądarka.\n\n" +
-                "Zainstaluj je poleceniem:\n    winget install Microsoft.EdgeWebView2Runtime\nalbo ze strony Microsoftu, a potem otwórz przeglądarkę ponownie.");
+            ShowMessage(Loc.T("Brak środowiska Microsoft Edge WebView2, którego używa wbudowana przeglądarka.\n\nZainstaluj je poleceniem:\n    winget install Microsoft.EdgeWebView2Runtime\nalbo ze strony Microsoftu, a potem otwórz przeglądarkę ponownie."));
         }
 
         ApplySkin(brushes);
     }
 
-    public string Title => "🌐 " + (Core?.DocumentTitle is { Length: > 0 } title ? title : CurrentUrl ?? "Przeglądarka");
+    public string Title => "🌐 " + (Core?.DocumentTitle is { Length: > 0 } title ? title : CurrentUrl ?? Loc.T("Przeglądarka"));
 
     public Control View => this;
 
@@ -166,7 +166,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         if (!engine.AcceptsQuery && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
         {
             await clipboard.SetTextAsync(query);
-            _notify($"{engine.Name}: pytanie skopiowane do schowka — wklej je (Ctrl+V) w polu czatu.", false);
+            _notify(Loc.T("{0}: pytanie skopiowane do schowka — wklej je (Ctrl+V) w polu czatu.", engine.Name), false);
         }
     }
 
@@ -234,7 +234,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         core.Settings.IsStatusBarEnabled = false;
         core.NavigationStarting += (_, e) =>
         {
-            _status.Text = "Ładowanie… " + e.Uri;
+            _status.Text = Loc.T("Ładowanie… ") + e.Uri;
             if (!e.IsRedirected)
             {
                 _host.Log("navigate " + e.Uri);
@@ -242,7 +242,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         };
         core.NavigationCompleted += (_, e) =>
         {
-            _status.Text = e.IsSuccess ? string.Empty : $"Nie udało się otworzyć strony ({e.WebErrorStatus}).";
+            _status.Text = e.IsSuccess ? string.Empty : Loc.T("Nie udało się otworzyć strony ({0}).", e.WebErrorStatus);
             UpdateButtons();
         };
         core.SourceChanged += (_, _) =>
@@ -278,8 +278,8 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
 
     private void OnFailed(Exception error) =>
         ShowMessage(error is WebView2RuntimeNotFoundException
-            ? "Brak środowiska Microsoft Edge WebView2. Zainstaluj je: winget install Microsoft.EdgeWebView2Runtime"
-            : "Nie udało się uruchomić przeglądarki: " + error.Message);
+            ? Loc.T("Brak środowiska Microsoft Edge WebView2. Zainstaluj je: winget install Microsoft.EdgeWebView2Runtime")
+            : Loc.T("Nie udało się uruchomić przeglądarki: ") + error.Message);
 
     private void ShowMessage(string text)
     {
@@ -343,7 +343,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         var question = _address.Text?.Trim();
         if (string.IsNullOrEmpty(question) || question == CurrentUrl)
         {
-            _notify("Wpisz pytanie w pasek adresu, a potem kliknij „Zapytaj AI”.", false);
+            _notify(Loc.T("Wpisz pytanie w pasek adresu, a potem kliknij „Zapytaj AI”."), false);
             FocusAddress();
             return;
         }

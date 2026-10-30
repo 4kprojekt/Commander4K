@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Runtime.CompilerServices;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Network;
 
@@ -20,7 +21,7 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
 
     public string DisplayName => "SFTP / FTP";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.remote", "SFTP / FTP", "Serwery SFTP i FTP.", PluginPermissions.Network, PluginPermissions.FileRead, PluginPermissions.FileWrite);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.remote", "SFTP / FTP", Loc.T("Serwery SFTP i FTP."), PluginPermissions.Network, PluginPermissions.FileRead, PluginPermissions.FileWrite);
 
     public IReadOnlyList<string> Schemes { get; } = [RemoteEndpoint.Sftp, RemoteEndpoint.Ftp];
 
@@ -115,7 +116,7 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
         {
             await foreach (var _ in session.ListAsync(endpoint, cancellationToken).ConfigureAwait(false))
             {
-                throw new IOException($"Folder „{entry.Name}” nie jest pusty.");
+                throw new IOException(Loc.T("Folder „{0}” nie jest pusty.", entry.Name));
             }
         }
 
@@ -129,12 +130,12 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
         var destination = RemoteEndpoint.Parse(destinationPath);
         if (!string.Equals(source.SessionKey, destination.SessionKey, StringComparison.OrdinalIgnoreCase))
         {
-            throw new NotSupportedException("Przenoszenie między serwerami odbywa się przez kopiowanie.");
+            throw new NotSupportedException(Loc.T("Przenoszenie między serwerami odbywa się przez kopiowanie."));
         }
 
         var session = await GetSessionAsync(source, cancellationToken).ConfigureAwait(false);
         var entry = await session.GetEntryAsync(source, cancellationToken).ConfigureAwait(false)
-            ?? throw new FileNotFoundException($"Nie ma „{sourcePath}”.", sourcePath);
+            ?? throw new FileNotFoundException(Loc.T("Nie ma „{0}”.", sourcePath), sourcePath);
         await session.MoveAsync(source.RemotePath, destination.RemotePath, entry.Kind == VfsEntryKind.Directory, overwrite, cancellationToken).ConfigureAwait(false);
     }
 

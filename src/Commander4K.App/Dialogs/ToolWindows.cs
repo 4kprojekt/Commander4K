@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Commander4K.App.Composition;
 using Commander4K.App.Panels;
 using Commander4K.App.Theming;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Streaming;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Viewers;
@@ -21,13 +22,13 @@ public sealed class ViewerWindow : Window
 
     public ViewerWindow(AppHost host, SkinBrushes brushes, VfsEntry entry)
     {
-        Title = $"Podgląd – {entry.Name}";
+        Title = Loc.T("Podgląd – {0}", entry.Name);
         Width = 960;
         Height = 680;
         Background = brushes.PanelBackground;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        var status = new TextBlock().Text("Wczytywanie…").Margin(8, 4).Foreground(brushes.StatusForeground);
+        var status = new TextBlock().Text(Loc.T("Wczytywanie…")).Margin(8, 4).Foreground(brushes.StatusForeground);
         var text = new TextBox()
             .IsReadOnly(true)
             .AcceptsReturn(true)
@@ -56,8 +57,8 @@ public sealed class ViewerWindow : Window
                 {
                     TextViewerContent t => (t.Text, $"Tekst · {FileViewportCanvas.FormatSize(entry.Size)}"),
                     HexViewerContent h => (await Task.Run(() => TextHexViewerPlugin.FormatHex(h.Data.Span), token),
-                        $"Hex · pokazano {FileViewportCanvas.FormatSize(h.Data.Length)} z {FileViewportCanvas.FormatSize(h.TotalLength)}"),
-                    _ => (string.Empty, "Nieobsługiwany typ podglądu"),
+                        Loc.T("Hex · pokazano {0} z {1}", FileViewportCanvas.FormatSize(h.Data.Length), FileViewportCanvas.FormatSize(h.TotalLength))),
+                    _ => (string.Empty, Loc.T("Nieobsługiwany typ podglądu")),
                 };
             }
             catch (OperationCanceledException)
@@ -104,8 +105,8 @@ public sealed class TextWindow : Window
         Content = new Grid().Rows("*,Auto").Children(
             new ScrollViewer().Row(0).HorizontalScrollBarVisibility(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto).Content(box),
             new StackPanel().Row(1).Orientation(Orientation.Horizontal).HorizontalAlignment(HorizontalAlignment.Right).Spacing(8).Margin(8).Children(
-                new Button().Content("Kopiuj").OnClick(async _ => await SkinPickerDialog.CopyToClipboardAsync(this, text)),
-                new Button().Content("Zamknij").OnClick(_ => Close())));
+                new Button().Content(Loc.T("Kopiuj")).OnClick(async _ => await SkinPickerDialog.CopyToClipboardAsync(this, text)),
+                new Button().Content(Loc.T("Zamknij")).OnClick(_ => Close())));
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -140,7 +141,7 @@ public sealed class SearchWindow : Window
         _host = host;
         _brushes = brushes;
         _goTo = goTo;
-        Title = "Szukaj (Alt+F7)";
+        Title = Loc.T("Szukaj (Alt+F7)");
         Width = 820;
         Height = 620;
         Background = brushes.WindowBackground;
@@ -148,17 +149,17 @@ public sealed class SearchWindow : Window
 
         _root = new TextBox().Text(rootPath);
         _pattern = new TextBox().Text("*").PlaceholderText("Nazwa, np. *.log");
-        _text = new TextBox().PlaceholderText("Zawiera tekst (opcjonalnie)");
-        _caseSensitive = new CheckBox().Content("Rozróżniaj wielkość liter");
-        _start = new Button().Content("Szukaj").IsDefault(true).OnClick(async _ => await ToggleAsync());
+        _text = new TextBox().PlaceholderText(Loc.T("Zawiera tekst (opcjonalnie)"));
+        _caseSensitive = new CheckBox().Content(Loc.T("Rozróżniaj wielkość liter"));
+        _start = new Button().Content(Loc.T("Szukaj")).IsDefault(true).OnClick(async _ => await ToggleAsync());
         _status = new TextBlock().Margin(0, 6).Foreground(brushes.StatusForeground);
         _list = new ListBox().ItemsSource(_results);
         _list.DoubleTapped += (_, _) => GoToSelected();
 
         Content = new Grid().Rows("Auto,Auto,Auto,Auto,*").Margin(14).Children(
             Row(0, "W:", _root),
-            Row(1, "Nazwa:", _pattern),
-            Row(2, "Tekst:", _text),
+            Row(1, Loc.T("Nazwa:"), _pattern),
+            Row(2, Loc.T("Tekst:"), _text),
             new StackPanel().Row(3).Orientation(Orientation.Horizontal).Spacing(12).Children(_caseSensitive, _start, _status),
             _list.Row(4).Margin(0, 8, 0, 0));
         Opened += (_, _) => _pattern.Focus();
@@ -205,7 +206,7 @@ public sealed class SearchWindow : Window
         var provider = _host.FindSearchProvider(root);
         if (provider is null)
         {
-            _status.Text = "⚠ Wyszukiwanie nie jest dostępne dla tej lokalizacji.";
+            _status.Text = Loc.T("⚠ Wyszukiwanie nie jest dostępne dla tej lokalizacji.");
             return;
         }
 
@@ -218,7 +219,7 @@ public sealed class SearchWindow : Window
         _results.Clear();
         _running = new CancellationTokenSource();
         var token = _running.Token;
-        _start.Content = "Stop (Esc)";
+        _start.Content = Loc.T("Stop (Esc)");
         var started = System.Diagnostics.Stopwatch.StartNew();
         try
         {
@@ -247,15 +248,15 @@ public sealed class SearchWindow : Window
                     _results.Add(new SearchResultItem(hit));
                 }
 
-                _status.Text = $"Szukanie… {_results.Count:N0} wyników";
+                _status.Text = Loc.T("Szukanie… {0:N0} wyników", _results.Count);
             }
 
             await producer;
-            _status.Text = $"Gotowe: {_results.Count:N0} wyników w {started.Elapsed.TotalSeconds:0.0} s";
+            _status.Text = Loc.T("Gotowe: {0:N0} wyników w {1:0.0} s", _results.Count, started.Elapsed.TotalSeconds);
         }
         catch (OperationCanceledException)
         {
-            _status.Text = $"Zatrzymano: {_results.Count:N0} wyników";
+            _status.Text = Loc.T("Zatrzymano: {0:N0} wyników", _results.Count);
         }
         catch (Exception ex)
         {
@@ -266,7 +267,7 @@ public sealed class SearchWindow : Window
         {
             _running?.Dispose();
             _running = null;
-            _start.Content = "Szukaj";
+            _start.Content = Loc.T("Szukaj");
         }
     }
 

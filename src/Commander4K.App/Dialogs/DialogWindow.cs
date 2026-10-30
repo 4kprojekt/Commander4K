@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Commander4K.App.Theming;
+using Commander4K.Core.Localization;
 
 namespace Commander4K.App.Dialogs;
 
@@ -76,7 +77,7 @@ public sealed class InputDialog : DialogWindow<string?>
     public InputDialog(SkinBrushes brushes, string title, string prompt, string initial = "") : base(title, brushes)
     {
         _input = new TextBox().Text(initial);
-        SetBody(Label(prompt), _input, ButtonRow(("OK", Accept, true), ("Anuluj", () => Complete(null), false)));
+        SetBody(Label(prompt), _input, ButtonRow(("OK", Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
         Opened += (_, _) =>
         {
             _input.Focus();
@@ -93,9 +94,9 @@ public sealed class InputDialog : DialogWindow<string?>
 
 public sealed class ConfirmDialog : DialogWindow<bool>
 {
-    public ConfirmDialog(SkinBrushes brushes, string title, string message, string confirmText = "Tak") : base(title, brushes)
+    public ConfirmDialog(SkinBrushes brushes, string title, string message, string? confirmText = null) : base(title, brushes)
     {
-        SetBody(Label(message), ButtonRow((confirmText, () => Complete(true), true), ("Anuluj", () => Complete(false), false)));
+        SetBody(Label(message), ButtonRow((confirmText ?? Loc.T("Tak"), () => Complete(true), true), (Loc.T("Anuluj"), () => Complete(false), false)));
     }
 }
 
@@ -122,18 +123,18 @@ public sealed class TransferDialog : DialogWindow<TransferRequest?>
     private readonly CheckBox _overwrite;
 
     public TransferDialog(SkinBrushes brushes, bool move, string description, string target)
-        : base(move ? "Przenieś" : "Kopiuj", brushes, 560)
+        : base(move ? Loc.T("Przenieś") : Loc.T("Kopiuj"), brushes, 560)
     {
         _target = new TextBox().Text(target);
-        _overwrite = new CheckBox().Content("Nadpisuj istniejące pliki");
+        _overwrite = new CheckBox().Content(Loc.T("Nadpisuj istniejące pliki"));
         SetBody(
-            Label($"{(move ? "Przenieś" : "Kopiuj")} {description} do:"),
+            Label($"{(move ? Loc.T("Przenieś") : Loc.T("Kopiuj"))} {description} do:"),
             _target,
             _overwrite.Margin(0, 8, 0, 0),
             ButtonRow(
                 ("OK", () => Accept(queue: false), true),
-                ("Do kolejki (F2)", () => Accept(queue: true), false),
-                ("Anuluj", () => Complete(null), false)));
+                (Loc.T("Do kolejki (F2)"), () => Accept(queue: true), false),
+                (Loc.T("Anuluj"), () => Complete(null), false)));
         Opened += (_, _) => _target.Focus();
     }
 
@@ -164,15 +165,15 @@ public sealed class LoginDialog : DialogWindow<System.Net.NetworkCredential?>
     private readonly TextBox _user;
     private readonly TextBox _password;
 
-    public LoginDialog(SkinBrushes brushes, string realm, string? userName = null) : base("Logowanie", brushes)
+    public LoginDialog(SkinBrushes brushes, string realm, string? userName = null) : base(Loc.T("Logowanie"), brushes)
     {
-        _user = new TextBox().Text(userName ?? string.Empty).PlaceholderText("użytkownik (np. DOMENA\\jan)");
-        _password = new TextBox().PasswordChar('•').PlaceholderText("hasło");
+        _user = new TextBox().Text(userName ?? string.Empty).PlaceholderText(Loc.T("użytkownik (np. DOMENA\\jan)"));
+        _password = new TextBox().PasswordChar('•').PlaceholderText(Loc.T("hasło"));
         SetBody(
-            Label($"„{realm}” wymaga zalogowania."),
+            Label(Loc.T("„{0}” wymaga zalogowania.", realm)),
             _user,
             _password.Margin(0, 6, 0, 0),
-            ButtonRow(("Zaloguj", Accept, true), ("Anuluj", () => Complete(null), false)));
+            ButtonRow((Loc.T("Zaloguj"), Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
         Opened += (_, _) => (string.IsNullOrEmpty(_user.Text) ? _user : _password).Focus();
     }
 
@@ -188,12 +189,12 @@ public sealed class LoginDialog : DialogWindow<System.Net.NetworkCredential?>
 public sealed class HostKeyDialog : DialogWindow<bool>
 {
     public HostKeyDialog(SkinBrushes brushes, string host, int port, string fingerprint, bool mismatch)
-        : base(mismatch ? "UWAGA: zmieniony klucz hosta" : "Nieznany host SSH", brushes, 560)
+        : base(mismatch ? "UWAGA: zmieniony klucz hosta" : Loc.T("Nieznany host SSH"), brushes, 560)
     {
         var message = mismatch
-            ? $"Serwer {host}:{port} przedstawił INNY klucz niż poprzednio. Może to oznaczać atak typu man-in-the-middle " +
-              "albo reinstalację serwera. Połącz się tylko, jeśli wiesz, dlaczego klucz się zmienił."
-            : $"Łączysz się z {host}:{port} po raz pierwszy. Sprawdź odcisk klucza z administratorem serwera, zanim mu zaufasz.";
+            ? Loc.T("Serwer {0}:{1} przedstawił INNY klucz niż poprzednio. Może to oznaczać atak typu man-in-the-middle ", host, port) +
+              Loc.T("albo reinstalację serwera. Połącz się tylko, jeśli wiesz, dlaczego klucz się zmienił.")
+            : Loc.T("Łączysz się z {0}:{1} po raz pierwszy. Sprawdź odcisk klucza z administratorem serwera, zanim mu zaufasz.", host, port);
         var print = new SelectableTextBlock().Text("SHA256:" + fingerprint).FontFamily(FontFamily.Parse("Cascadia Mono, Consolas")).Margin(0, 4, 0, 0);
         if (mismatch)
         {
@@ -201,7 +202,7 @@ public sealed class HostKeyDialog : DialogWindow<bool>
         }
 
         SetBody(Label(message), print,
-            ButtonRow((mismatch ? "Zaufaj nowemu kluczowi" : "Zaufaj i połącz", () => Complete(true), !mismatch), ("Anuluj", () => Complete(false), mismatch)));
+            ButtonRow((mismatch ? Loc.T("Zaufaj nowemu kluczowi") : Loc.T("Zaufaj i połącz"), () => Complete(true), !mismatch), (Loc.T("Anuluj"), () => Complete(false), mismatch)));
     }
 }
 
@@ -218,7 +219,7 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
     public PickerDialog(SkinBrushes brushes, string title, IReadOnlyList<PickerItem> items, string? hint = null) : base(title, brushes, 560)
     {
         _items = items;
-        _filter = new TextBox().PlaceholderText("Filtruj…");
+        _filter = new TextBox().PlaceholderText(Loc.T("Filtruj…"));
         _filter.TextChanged += (_, _) => ApplyFilter();
         _list = new ListBox().MaxHeight(420).Margin(0, 6, 0, 0);
         _list.DoubleTapped += (_, _) => Accept();
@@ -226,7 +227,7 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
             hint is null ? new Panel() : Label(hint),
             _filter,
             _list,
-            ButtonRow(("OK", Accept, true), ("Anuluj", () => Complete(null), false)));
+            ButtonRow(("OK", Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
         ApplyFilter();
         Opened += (_, _) => _filter.Focus();
     }
@@ -272,14 +273,14 @@ public sealed class AddConnectionDialog : DialogWindow<Core.Configuration.Connec
     private readonly TextBox _name;
     private readonly TextBox _path;
 
-    public AddConnectionDialog(SkinBrushes brushes) : base("Dodaj połączenie sieciowe", brushes, 520)
+    public AddConnectionDialog(SkinBrushes brushes) : base(Loc.T("Dodaj połączenie sieciowe"), brushes, 520)
     {
         _name = new TextBox().PlaceholderText("Nazwa, np. NAS – filmy");
         _path = new TextBox().PlaceholderText(@"\\nas\media   lub   sftp://jan@serwer/   lub   ftp://serwer/");
         SetBody(
-            Label("Nazwa:"), _name,
-            Label("Adres:").Margin(0, 10, 0, 6), _path,
-            ButtonRow(("Dodaj", Accept, true), ("Anuluj", () => Complete(null), false)));
+            Label(Loc.T("Nazwa:")), _name,
+            Label(Loc.T("Adres:")).Margin(0, 10, 0, 6), _path,
+            ButtonRow((Loc.T("Dodaj"), Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
         Opened += (_, _) => _name.Focus();
     }
 

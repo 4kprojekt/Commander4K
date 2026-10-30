@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.Plugins.BuiltIn.Columns;
@@ -19,8 +20,8 @@ public sealed class GitStatusColumnPlugin : IColumnMetadataPlugin
 
     public string DisplayName => "Git";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.columns.git", "Kolumna Git",
-        "Status plików w repozytorium Git (zmieniony, nowy, dodany, ignorowany, konflikt).", PluginPermissions.ShellRun);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.columns.git", Loc.T("Kolumna Git"),
+        Loc.T("Status plików w repozytorium Git (zmieniony, nowy, dodany, ignorowany, konflikt)."), PluginPermissions.ShellRun);
 
     public IReadOnlyList<ColumnDefinition> Columns { get; } = [new(StatusColumn, "Git", ColumnAlignment.Left, 78)];
 
@@ -91,15 +92,15 @@ public sealed class GitStatusColumnPlugin : IColumnMetadataPlugin
     {
         var text = code switch
         {
-            "??" => "nowy",
-            "!!" => "ignorowany",
-            _ when code.Contains('U', StringComparison.Ordinal) || code is "AA" or "DD" => "konflikt",
-            _ when code[1] == 'M' || code[1] == 'T' => "zmieniony",
-            _ when code[1] == 'D' => "usunięty",
-            _ when code[0] == 'A' => "dodany",
-            _ when code[0] == 'R' => "przeniesiony",
-            _ when code[0] is 'M' or 'T' => "w indeksie",
-            _ when code[0] == 'D' => "usunięty",
+            "??" => Loc.T("nowy"),
+            "!!" => Loc.T("ignorowany"),
+            _ when code.Contains('U', StringComparison.Ordinal) || code is "AA" or "DD" => Loc.T("konflikt"),
+            _ when code[1] == 'M' || code[1] == 'T' => Loc.T("zmieniony"),
+            _ when code[1] == 'D' => Loc.T("usunięty"),
+            _ when code[0] == 'A' => Loc.T("dodany"),
+            _ when code[0] == 'R' => Loc.T("przeniesiony"),
+            _ when code[0] is 'M' or 'T' => Loc.T("w indeksie"),
+            _ when code[0] == 'D' => Loc.T("usunięty"),
             _ => code.Trim(),
         };
         return new ColumnValue(folder && code != "!!" ? "● " + text : text, Rank(code));

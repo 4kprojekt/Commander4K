@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Commander4K.App.Composition;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Plugins;
 using Commander4K.PluginSdk;
 
@@ -26,12 +27,12 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
 
     public string DisplayName => "Plugin manager";
 
-    public PluginManifest Manifest { get; } = new(PluginId, "Menedżer wtyczek", "1.0.0", "4Kprojekt",
-        "Zarządzanie wtyczkami, zgodami na uprawnienia i dziennikiem audytu.", [PluginPermissions.FileRead]);
+    public PluginManifest Manifest { get; } = new(PluginId, Loc.T("Menedżer wtyczek"), "1.0.0", "4Kprojekt",
+        Loc.T("Zarządzanie wtyczkami, zgodami na uprawnienia i dziennikiem audytu."), [PluginPermissions.FileRead]);
 
-    public string Title => "Menedżer wtyczek";
+    public string Title => Loc.T("Menedżer wtyczek");
 
-    public string Description => "Wtyczki, środowiska (Node, Python, PowerShell, .NET), uprawnienia, zgody i dziennik audytu.";
+    public string Description => Loc.T("Wtyczki, środowiska (Node, Python, PowerShell, .NET), uprawnienia, zgody i dziennik audytu.");
 
     public IPanelSession CreateSession(PanelRequest request, IPluginHost host) => new Session(app, host);
 
@@ -39,29 +40,29 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
     {
         private static readonly ColumnDefinition[] Columns =
         [
-            new("name", "Nazwa", ColumnAlignment.Left, 300),
-            new("version", "Wersja", ColumnAlignment.Left, 90),
-            new("kind", "Rodzaj", ColumnAlignment.Left, 120),
-            new("status", "Stan", ColumnAlignment.Left, 420),
+            new("name", Loc.T("Nazwa"), ColumnAlignment.Left, 300),
+            new("version", Loc.T("Wersja"), ColumnAlignment.Left, 90),
+            new("kind", Loc.T("Rodzaj"), ColumnAlignment.Left, 120),
+            new("status", Loc.T("Stan"), ColumnAlignment.Left, 420),
         ];
 
         public TimeSpan? RefreshInterval => null;
 
         public IReadOnlyList<PanelAction> Actions { get; } =
         [
-            new("enable", "Włącz (zgoda)", "Ctrl+E"),
-            new("disable", "Wyłącz", "Ctrl+D"),
-            new("log", "Dziennik audytu", "F3", AppliesToRows: false),
-            new("search", "Szukaj rozwiązania", "Ctrl+F"),
-            new("template", "Nowa wtyczka z przykładu", "Ctrl+N", AppliesToRows: false),
-            new("folder", "Folder wtyczek", "F7", AppliesToRows: false),
+            new("enable", Loc.T("Włącz (zgoda)"), "Ctrl+E"),
+            new("disable", Loc.T("Wyłącz"), "Ctrl+D"),
+            new("log", Loc.T("Dziennik audytu"), "F3", AppliesToRows: false),
+            new("search", Loc.T("Szukaj rozwiązania"), "Ctrl+F"),
+            new("template", Loc.T("Nowa wtyczka z przykładu"), "Ctrl+N", AppliesToRows: false),
+            new("folder", Loc.T("Folder wtyczek"), "F7", AppliesToRows: false),
         ];
 
         public Task<PanelSnapshot> LoadAsync(PanelRequest request, IProgress<string>? progress, CancellationToken cancellationToken)
         {
             var rows = new List<PanelRow>
             {
-                new("runtimes", null, ["Środowiska wtyczek", "", "", "Node.js, Python, PowerShell, .NET"], RowSeverity.Highlight, ExpandedByDefault: true),
+                new("runtimes", null, [Loc.T("Środowiska wtyczek"), "", "", "Node.js, Python, PowerShell, .NET"], RowSeverity.Highlight, ExpandedByDefault: true),
             };
             foreach (var runtime in app.Runtimes.Where(r => r.Type != "exe"))
             {
@@ -71,7 +72,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                     runtime.IsInstalled ? RowSeverity.Normal : RowSeverity.Warning));
             }
 
-            rows.Add(new PanelRow("external", null, ["Wtyczki zewnętrzne", "", "", string.Join(" · ", app.PluginRoots)], RowSeverity.Highlight, ExpandedByDefault: true));
+            rows.Add(new PanelRow("external", null, [Loc.T("Wtyczki zewnętrzne"), "", "", string.Join(" · ", app.PluginRoots)], RowSeverity.Highlight, ExpandedByDefault: true));
             foreach (var plugin in app.DiscoveredPlugins)
             {
                 var blocker = app.PluginBlocker(plugin);
@@ -83,19 +84,19 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
 
             if (app.DiscoveredPlugins.Count == 0)
             {
-                rows.Add(new PanelRow("external:none", "external", ["(brak — Ctrl+N tworzy wtyczkę z przykładu)", "", "", ""], RowSeverity.Muted));
+                rows.Add(new PanelRow("external:none", "external", [Loc.T("(brak — Ctrl+N tworzy wtyczkę z przykładu)"), "", "", ""], RowSeverity.Muted));
             }
 
-            rows.Add(new PanelRow("builtin", null, ["Wtyczki wbudowane", "", "", "w procesie aplikacji"], RowSeverity.Highlight));
+            rows.Add(new PanelRow("builtin", null, [Loc.T("Wtyczki wbudowane"), "", "", Loc.T("w procesie aplikacji")], RowSeverity.Highlight));
             foreach (var plugin in BuiltIns())
             {
                 rows.Add(new PanelRow("builtin:" + plugin.Id, "builtin",
-                    [plugin.Manifest.Name, plugin.Manifest.Version, "wbudowana", Permissions(plugin.Manifest)], RowSeverity.Normal));
+                    [plugin.Manifest.Name, plugin.Manifest.Version, Loc.T("wbudowana"), Permissions(plugin.Manifest)], RowSeverity.Normal));
             }
 
             var active = app.ExternalPlugins.Count;
             return Task.FromResult(new PanelSnapshot(Columns, rows,
-                $"{active} aktywnych wtyczek zewnętrznych z {app.DiscoveredPlugins.Count} · dziennik: {Path.Combine(app.DataDirectory, "data", "logs")}"));
+                Loc.T("{0} aktywnych wtyczek zewnętrznych z {1} · dziennik: {2}", active, app.DiscoveredPlugins.Count, Path.Combine(app.DataDirectory, "data", "logs"))));
         }
 
         public Task<PanelDetails?> GetDetailsAsync(string rowId, CancellationToken cancellationToken)
@@ -105,38 +106,38 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                 var info = new List<KeyValuePair<string, string>>
                 {
                     new("Id", manifest.Id),
-                    new("Autor", manifest.Author),
-                    new("Opis", manifest.Description),
-                    new("Środowisko", $"{manifest.Runtime.Type} {manifest.Runtime.Version} ({manifest.Runtime.Entry})"),
+                    new(Loc.T("Autor"), manifest.Author),
+                    new(Loc.T("Opis"), manifest.Description),
+                    new(Loc.T("Środowisko"), $"{manifest.Runtime.Type} {manifest.Runtime.Version} ({manifest.Runtime.Entry})"),
                     new("Folder", plugin.Folder),
-                    new("Stan", app.PluginBlocker(plugin) ?? "aktywna"),
+                    new(Loc.T("Stan"), app.PluginBlocker(plugin) ?? Loc.T("aktywna")),
                 };
-                var permissions = manifest.Permissions.Select(p => new KeyValuePair<string, string>(p, PluginPermissions.Describe(p))).ToList();
-                var contributions = (manifest.Contributes?.Commands ?? []).Select(c => new KeyValuePair<string, string>("komenda", $"{c.Category}: {c.Title}"))
-                    .Concat((manifest.Contributes?.Panels ?? []).Select(p => new KeyValuePair<string, string>("panel", p.Title)))
-                    .Concat((manifest.Contributes?.Previews ?? []).Select(p => new KeyValuePair<string, string>("podgląd", $"{p.Title} ({string.Join(", ", p.Extensions)})")))
-                    .Concat((manifest.Contributes?.Palettes ?? []).Select(p => new KeyValuePair<string, string>("paleta", $"{p.Title} ({p.Dock})"))).ToList();
+                var permissions = manifest.Permissions.Select(p => new KeyValuePair<string, string>(p, Loc.T(PluginPermissions.Describe(p)))).ToList();
+                var contributions = (manifest.Contributes?.Commands ?? []).Select(c => new KeyValuePair<string, string>(Loc.T("komenda"), $"{c.Category}: {c.Title}"))
+                    .Concat((manifest.Contributes?.Panels ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("panel"), p.Title)))
+                    .Concat((manifest.Contributes?.Previews ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("podgląd"), $"{p.Title} ({string.Join(", ", p.Extensions)})")))
+                    .Concat((manifest.Contributes?.Palettes ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("paleta"), $"{p.Title} ({p.Dock})"))).ToList();
                 return Task.FromResult<PanelDetails?>(new PanelDetails(
                 [
-                    new("Wtyczka", info),
-                    new("Uprawnienia", permissions.Count > 0 ? permissions : [new("—", "brak (tylko interfejs)")]),
-                    new("Dodaje", contributions),
-                    new("Ostatnie wpisy dziennika", Audit(manifest.Id, 20)),
+                    new(Loc.T("Wtyczka"), info),
+                    new(Loc.T("Uprawnienia"), permissions.Count > 0 ? permissions : [new("—", "brak (tylko interfejs)")]),
+                    new(Loc.T("Dodaje"), contributions),
+                    new(Loc.T("Ostatnie wpisy dziennika"), Audit(manifest.Id, 20)),
                 ]));
             }
 
             if (Find(rowId) is { } invalid)
             {
-                return Task.FromResult<PanelDetails?>(new PanelDetails([new("Błędy manifestu", [.. invalid.Errors.Select(e => new KeyValuePair<string, string>("•", e))])]));
+                return Task.FromResult<PanelDetails?>(new PanelDetails([new(Loc.T("Błędy manifestu"), [.. invalid.Errors.Select(e => new KeyValuePair<string, string>("•", e))])]));
             }
 
             if (rowId.StartsWith("builtin:", StringComparison.Ordinal) && BuiltIns().FirstOrDefault(p => "builtin:" + p.Id == rowId) is { } builtIn)
             {
                 return Task.FromResult<PanelDetails?>(new PanelDetails(
                 [
-                    new(builtIn.Manifest.Name, [new("Id", builtIn.Id), new("Opis", builtIn.Manifest.Description)]),
-                    new("Uprawnienia", [.. builtIn.Manifest.Permissions.Select(p => new KeyValuePair<string, string>(p, PluginPermissions.Describe(p)))]),
-                    new("Ostatnie wpisy dziennika", Audit(builtIn.Id, 20)),
+                    new(builtIn.Manifest.Name, [new("Id", builtIn.Id), new(Loc.T("Opis"), builtIn.Manifest.Description)]),
+                    new(Loc.T("Uprawnienia"), [.. builtIn.Manifest.Permissions.Select(p => new KeyValuePair<string, string>(p, Loc.T(PluginPermissions.Describe(p))))]),
+                    new(Loc.T("Ostatnie wpisy dziennika"), Audit(builtIn.Id, 20)),
                 ]));
             }
 
@@ -150,11 +151,11 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
             {
                 case "enable" when plugin is { IsValid: true, Manifest: { } manifest }:
                     var permissions = manifest.Permissions.Count == 0
-                        ? "żadnych (tylko interfejs)"
-                        : string.Join("\n", manifest.Permissions.Select(p => $"  • {p} — {PluginPermissions.Describe(p)}"));
-                    if (!await host.ConfirmAsync("Włącz wtyczkę",
-                            $"„{manifest.Name}” {manifest.Version} ({manifest.Author})\nŚrodowisko: {manifest.Runtime.Type}\n\nUprawnienia:\n{permissions}\n\n" +
-                            "Wtyczka działa jako osobny proces i wszystko robi przez API aplikacji, która sprawdza te uprawnienia i zapisuje każde wywołanie w dzienniku."))
+                        ? Loc.T("żadnych (tylko interfejs)")
+                        : string.Join("\n", manifest.Permissions.Select(p => $"  • {p} — {Loc.T(PluginPermissions.Describe(p))}"));
+                    if (!await host.ConfirmAsync(Loc.T("Włącz wtyczkę"),
+                            Loc.T("„{0}” {1} ({2})\nŚrodowisko: {3}\n\nUprawnienia:\n{4}\n\n", manifest.Name, manifest.Version, manifest.Author, manifest.Runtime.Type, permissions) +
+                            Loc.T("Wtyczka działa jako osobny proces i wszystko robi przez API aplikacji, która sprawdza te uprawnienia i zapisuje każde wywołanie w dzienniku.")))
                     {
                         return null;
                     }
@@ -162,7 +163,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                     app.Approvals.Approve(manifest);
                     app.Audit.Record(manifest.Id, "approve", string.Join(",", manifest.Permissions), AuditOutcome.Info);
                     await app.ReloadExternalPluginsAsync();
-                    return app.PluginBlocker(plugin) is { } still ? $"Zgoda zapisana, ale wtyczka nie może się uruchomić: {still}" : null;
+                    return app.PluginBlocker(plugin) is { } still ? Loc.T("Zgoda zapisana, ale wtyczka nie może się uruchomić: {0}", still) : null;
 
                 case "disable" when plugin?.Manifest is { } manifest:
                     app.Approvals.Disable(manifest.Id);
@@ -174,8 +175,8 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                     var id = plugin?.Manifest?.Id ?? (rowIds.FirstOrDefault()?.StartsWith("builtin:", StringComparison.Ordinal) == true ? rowIds[0][8..] : null);
                     var entries = app.Audit.Recent(id);
                     return entries.Count == 0
-                        ? "Dziennik jest pusty."
-                        : $"Dziennik audytu{(id is null ? "" : $" — {id}")} ({entries.Count} wpisów, najnowsze na dole):\n\n" + string.Join('\n', entries);
+                        ? Loc.T("Dziennik jest pusty.")
+                        : Loc.T("Dziennik audytu{0} ({1} wpisów, najnowsze na dole):\n\n", (id is null ? "" : $" — {id}"), entries.Count) + string.Join('\n', entries);
 
                 case "search":
                     var problem = plugin is not null ? app.PluginBlocker(plugin) : rowIds.FirstOrDefault()?.StartsWith("runtime:", StringComparison.Ordinal) == true
@@ -183,27 +184,27 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                         : null;
                     if (string.IsNullOrWhiteSpace(problem))
                     {
-                        return "Wybierz wtyczkę lub środowisko z problemem.";
+                        return Loc.T("Wybierz wtyczkę lub środowisko z problemem.");
                     }
 
                     // The question goes to the user's AI assistant in the internal browser (sign-in is remembered there).
-                    var subject = plugin?.Manifest is { } broken ? $"wtyczka Commander4K „{broken.Name}” ({broken.Runtime.Type} {broken.Runtime.Version})" : "środowisko wtyczek";
-                    await host.SearchWebAsync($"Windows 11, {subject}: {problem} Jak to naprawić krok po kroku?", "assistant");
+                    var subject = plugin?.Manifest is { } broken ? Loc.T("wtyczka Commander4K „{0}” ({1} {2})", broken.Name, broken.Runtime.Type, broken.Runtime.Version) : Loc.T("środowisko wtyczek");
+                    await host.SearchWebAsync(Loc.T("Windows 11, {0}: {1} Jak to naprawić krok po kroku?", subject, problem), "assistant");
                     return null;
 
                 case "template":
-                    var choice = await host.PromptAsync("Nowa wtyczka z przykładu", "Język przykładu: python, node albo powershell", "python");
+                    var choice = await host.PromptAsync(Loc.T("Nowa wtyczka z przykładu"), Loc.T("Język przykładu: python, node albo powershell"), "python");
                     if (choice is null || !Templates.TryGetValue(choice.Trim(), out var template))
                     {
-                        return choice is null ? null : "Dostępne przykłady: python, node, powershell.";
+                        return choice is null ? null : Loc.T("Dostępne przykłady: python, node, powershell.");
                     }
 
                     var target = Path.Combine(app.DataDirectory, "plugins", template);
                     var written = ExtractTemplate(template, target);
                     await app.ReloadExternalPluginsAsync();
                     OpenUrl(target);
-                    return $"Utworzono {target} ({written} plików). Wtyczka jest wyłączona — zaznacz ją i włącz (Ctrl+E). " +
-                        "Opis protokołu: docs/plugins.md w repozytorium.";
+                    return Loc.T("Utworzono {0} ({1} plików). Wtyczka jest wyłączona — zaznacz ją i włącz (Ctrl+E). ", target, written) +
+                        Loc.T("Opis protokołu: docs/plugins.md w repozytorium.");
 
                 case "folder":
                     var folder = Path.Combine(app.DataDirectory, "plugins");
@@ -236,7 +237,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                 $"{e.Time.ToLocalTime():HH:mm:ss} {e.Outcome}", $"{e.Operation} {e.Detail}"))];
 
         private static string Permissions(PluginManifest manifest) =>
-            manifest.Permissions.Count == 0 ? "bez uprawnień" : string.Join(", ", manifest.Permissions);
+            manifest.Permissions.Count == 0 ? Loc.T("bez uprawnień") : string.Join(", ", manifest.Permissions);
 
         private static void OpenUrl(string target)
         {
@@ -262,7 +263,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
 
             if (count == 0)
             {
-                throw new InvalidOperationException($"Brak osadzonego przykładu {template}.");
+                throw new InvalidOperationException(Loc.T("Brak osadzonego przykładu {0}.", template));
             }
 
             return count;

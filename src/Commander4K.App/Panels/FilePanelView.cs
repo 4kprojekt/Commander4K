@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Commander4K.App.Composition;
 using Commander4K.App.PluginPanels;
 using Commander4K.App.Theming;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.App.Panels;
@@ -336,9 +337,10 @@ public sealed class FilePanelView : ViewBase
             }
         }
 
-        var text = $"{files:N0} plików ({FileViewportCanvas.FormatSize(bytes)}), {containers:N0} katalogów";
+        var text = Loc.P(files, "{0:N0} plik ({1})|{0:N0} pliki ({1})|{0:N0} plików ({1})", FileViewportCanvas.FormatSize(bytes))
+            + ", " + Loc.P(containers, "{0:N0} katalog|{0:N0} katalogi|{0:N0} katalogów");
         return tab.Marked.Count > 0
-            ? $"Zaznaczono {tab.Marked.Count:N0} ({FileViewportCanvas.FormatSize(markedBytes)}) · {text}"
+            ? Loc.T("Zaznaczono {0:N0} ({1}) · {2}", tab.Marked.Count, FileViewportCanvas.FormatSize(markedBytes), text)
             : text;
     }
 

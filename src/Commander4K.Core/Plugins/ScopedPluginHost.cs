@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Commander4K.Core.Execution;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
 
@@ -79,7 +80,7 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
         {
             audit.Record(Manifest.Id, "ui.openUrl", url, AuditOutcome.Denied);
-            throw new ArgumentException("Dozwolone są tylko adresy http i https.", nameof(url));
+            throw new ArgumentException(Loc.T("Dozwolone są tylko adresy http i https."), nameof(url));
         }
 
         audit.Record(Manifest.Id, "ui.openUrl", uri.ToString(), AuditOutcome.Info);
@@ -118,7 +119,7 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
         Gate(PluginPermissions.FileRead, "fs.read", path, () => router.OpenReadAsync(path, cancellationToken));
 
     public Task WriteTextAsync(string path, string content, CancellationToken cancellationToken = default) =>
-        Gate(PluginPermissions.FileWrite, "fs.write", $"{path} ({content.Length} znaków)", async () =>
+        Gate(PluginPermissions.FileWrite, "fs.write", Loc.T("{0} ({1} znaków)", path, content.Length), async () =>
         {
             await using var stream = await router.OpenWriteAsync(path, overwrite: true, cancellationToken).ConfigureAwait(false);
             var bytes = Encoding.UTF8.GetBytes(content);
@@ -127,7 +128,7 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
         });
 
     public Task KillProcessAsync(int processId, bool entireTree, CancellationToken cancellationToken = default) =>
-        Gate(PluginPermissions.ProcessControl, "process.kill", $"PID {processId}{(entireTree ? " (z podprocesami)" : "")}", () =>
+        Gate(PluginPermissions.ProcessControl, "process.kill", $"PID {processId}{(entireTree ? Loc.T(" (z podprocesami)") : "")}", () =>
         {
             using var process = Process.GetProcessById(processId);
             process.Kill(entireTree);
@@ -138,9 +139,9 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
         Gate(PluginPermissions.ShellRun, request.Elevated ? "shell.run (admin)" : "shell.run", DescribeCommand(request), async () =>
         {
             if (request.Elevated
-                && !await ui.ConfirmAsync("Uprawnienia administratora", $"Wtyczka „{Manifest.Name}” chce uruchomić jako administrator:\n\n{DescribeCommand(request)}").ConfigureAwait(false))
+                && !await ui.ConfirmAsync(Loc.T("Uprawnienia administratora"), Loc.T("Wtyczka „{0}” chce uruchomić jako administrator:\n\n{1}", Manifest.Name, DescribeCommand(request))).ConfigureAwait(false))
             {
-                throw new OperationCanceledException("Odmówiono uruchomienia jako administrator.");
+                throw new OperationCanceledException(Loc.T("Odmówiono uruchomienia jako administrator."));
             }
 
             return await ProcessRunner.RunAsync(request, cancellationToken).ConfigureAwait(false);
@@ -151,7 +152,7 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
         {
             if (url.Scheme is not ("http" or "https"))
             {
-                throw new ArgumentException("Dozwolone są tylko adresy http i https.", nameof(url));
+                throw new ArgumentException(Loc.T("Dozwolone są tylko adresy http i https."), nameof(url));
             }
 
             using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
@@ -164,7 +165,7 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
             {
                 if (limited.Length + read > MaxHttpBytes)
                 {
-                    throw new InvalidDataException("Odpowiedź przekracza 5 MB.");
+                    throw new InvalidDataException(Loc.T("Odpowiedź przekracza 5 MB."));
                 }
 
                 limited.Write(buffer, 0, read);

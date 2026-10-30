@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Updates;
 using Commander4K.PluginSdk;
 
@@ -49,7 +50,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException($"Wtyczka „{Manifest.Name}” nie odpowiedziała na „{method}” w ciągu {(timeout ?? DefaultTimeout).TotalSeconds:0} s.");
+            throw new TimeoutException(Loc.T("Wtyczka „{0}” nie odpowiedziała na „{1}” w ciągu {2:0} s.", Manifest.Name, method, (timeout ?? DefaultTimeout).TotalSeconds));
         }
     }
 
@@ -88,7 +89,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
             StopProcess();
             var info = RuntimeCatalog.BuildStartInfo(_runtime, _discovered.EntryPath, Folder);
             _audit.Record(Manifest.Id, "start", $"{info.FileName} {string.Join(' ', info.ArgumentList)}", AuditOutcome.Info);
-            var process = Process.Start(info) ?? throw new InvalidOperationException($"Nie udało się uruchomić wtyczki {Manifest.Name}.");
+            var process = Process.Start(info) ?? throw new InvalidOperationException(Loc.T("Nie udało się uruchomić wtyczki {0}.", Manifest.Name));
             _process = process;
             _ = PumpStandardErrorAsync(process);
 
@@ -118,7 +119,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
     {
         string Str(string name) => p?.TryGetProperty(name, out var v) == true && v.ValueKind == JsonValueKind.String
             ? v.GetString()!
-            : throw new ArgumentException($"Brak parametru „{name}”.");
+            : throw new ArgumentException(Loc.T("Brak parametru „{0}”.", name));
         string? OptStr(string name) => p?.TryGetProperty(name, out var v) == true && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         bool Bool(string name) => p?.TryGetProperty(name, out var v) == true && v.ValueKind == JsonValueKind.True;
 
@@ -163,7 +164,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
                 await _host.WriteTextAsync(Str("path"), Str("content"), cancellationToken).ConfigureAwait(false);
                 return null;
             case "process.kill":
-                var pid = p?.TryGetProperty("pid", out var pidElement) == true ? pidElement.GetInt32() : throw new ArgumentException("Brak parametru „pid”.");
+                var pid = p?.TryGetProperty("pid", out var pidElement) == true ? pidElement.GetInt32() : throw new ArgumentException(Loc.T("Brak parametru „pid”."));
                 await _host.KillProcessAsync(pid, Bool("tree"), cancellationToken).ConfigureAwait(false);
                 return null;
             case "shell.run":
@@ -174,7 +175,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
                 return await _host.HttpGetTextAsync(new Uri(Str("url")), cancellationToken).ConfigureAwait(false);
             default:
                 _audit.Record(Manifest.Id, method, "nieznana metoda", AuditOutcome.Denied);
-                throw new JsonRpcException(JsonRpcException.MethodNotFound, $"Nieznana metoda „{method}”.");
+                throw new JsonRpcException(JsonRpcException.MethodNotFound, Loc.T("Nieznana metoda „{0}”.", method));
         }
     }
 

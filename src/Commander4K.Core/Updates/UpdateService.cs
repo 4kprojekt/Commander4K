@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Commander4K.Core.Localization;
 
 namespace Commander4K.Core.Updates;
 
@@ -72,7 +73,7 @@ public sealed class UpdateService(HttpClient http)
     {
         using var archive = System.IO.Compression.ZipFile.OpenRead(zipPath);
         var entry = archive.Entries.FirstOrDefault(e => string.Equals(e.Name, "Commander4K.exe", StringComparison.OrdinalIgnoreCase))
-            ?? throw new UpdateException("Archiwum aktualizacji nie zawiera Commander4K.exe.");
+            ?? throw new UpdateException(Loc.T("Archiwum aktualizacji nie zawiera Commander4K.exe."));
         var target = Path.Combine(stagingDirectory, "Commander4K.new.exe");
         entry.ExtractToFile(target, overwrite: true);
         return target;
@@ -103,24 +104,24 @@ public sealed class UpdateService(HttpClient http)
         }
         catch (HttpRequestException ex)
         {
-            throw new UpdateException($"Brak połączenia z GitHubem: {ex.Message}", ex);
+            throw new UpdateException(Loc.T("Brak połączenia z GitHubem: {0}", ex.Message), ex);
         }
 
         using (response)
         {
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                throw new UpdateException($"Repozytorium „{repository}” nie istnieje albo nie jest publiczne.");
+                throw new UpdateException(Loc.T("Repozytorium „{0}” nie istnieje albo nie jest publiczne.", repository));
             }
 
             if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
             {
-                throw new UpdateException("GitHub ograniczył liczbę zapytań. Spróbuj ponownie później.");
+                throw new UpdateException(Loc.T("GitHub ograniczył liczbę zapytań. Spróbuj ponownie później."));
             }
 
             if (!response.IsSuccessStatusCode)
             {
-                throw new UpdateException($"GitHub zwrócił błąd {(int)response.StatusCode}.");
+                throw new UpdateException(Loc.T("GitHub zwrócił błąd {0}.", (int)response.StatusCode));
             }
 
             await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -135,12 +136,12 @@ public sealed class UpdateService(HttpClient http)
     {
         if (update.AssetUrl is null || update.AssetName is null)
         {
-            throw new UpdateException($"Wydanie {update.Tag} nie zawiera pliku dla tej architektury.");
+            throw new UpdateException(Loc.T("Wydanie {0} nie zawiera pliku dla tej architektury.", update.Tag));
         }
 
         if (update.ChecksumsUrl is null)
         {
-            throw new UpdateException($"Wydanie {update.Tag} nie zawiera {ChecksumsAssetName}; aktualizacja bez weryfikacji jest zablokowana.");
+            throw new UpdateException(Loc.T("Wydanie {0} nie zawiera {1}; aktualizacja bez weryfikacji jest zablokowana.", update.Tag, ChecksumsAssetName));
         }
 
         var expected = await FetchExpectedHashAsync(update.ChecksumsUrl, update.AssetName, cancellationToken).ConfigureAwait(false);
@@ -173,7 +174,7 @@ public sealed class UpdateService(HttpClient http)
             var actual = Convert.ToHexStringLower(hash.GetHashAndReset());
             if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
             {
-                throw new UpdateException($"Suma kontrolna pobranego pliku się nie zgadza (oczekiwano {expected}, jest {actual}). Plik odrzucono.");
+                throw new UpdateException(Loc.T("Suma kontrolna pobranego pliku się nie zgadza (oczekiwano {0}, jest {1}). Plik odrzucono.", expected, actual));
             }
 
             File.Move(partial, target, overwrite: true);
@@ -181,7 +182,7 @@ public sealed class UpdateService(HttpClient http)
         }
         catch (HttpRequestException ex)
         {
-            throw new UpdateException($"Pobieranie nie powiodło się: {ex.Message}", ex);
+            throw new UpdateException(Loc.T("Pobieranie nie powiodło się: {0}", ex.Message), ex);
         }
         finally
         {
@@ -294,6 +295,6 @@ public sealed class UpdateService(HttpClient http)
             }
         }
 
-        throw new UpdateException($"{ChecksumsAssetName} nie zawiera sumy dla {assetName}.");
+        throw new UpdateException(Loc.T("{0} nie zawiera sumy dla {1}.", ChecksumsAssetName, assetName));
     }
 }

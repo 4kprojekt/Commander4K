@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.Plugins.BuiltIn.Columns;
@@ -12,8 +13,8 @@ public sealed class HashColumnPlugin : IColumnMetadataPlugin
 
     public string DisplayName => "SHA-256";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.columns.hash", "Kolumna SHA-256",
-        "Skrót SHA-256 plików (pierwsze 16 znaków) — do szukania duplikatów i sprawdzania pobranych plików.", PluginPermissions.FileRead);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.columns.hash", Loc.T("Kolumna SHA-256"),
+        Loc.T("Skrót SHA-256 plików (pierwsze 16 znaków) — do szukania duplikatów i sprawdzania pobranych plików."), PluginPermissions.FileRead);
 
     public IReadOnlyList<ColumnDefinition> Columns { get; } = [new(Sha256Column, "SHA-256", ColumnAlignment.Left, 150)];
 

@@ -11,4 +11,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Commander4K.Core.Tests" />
   </ItemGroup>
+  <!-- Built-in UI translations (Loc): Localization/i18n/<code>.json → resource "i18n/<code>.json". -->
+  <ItemGroup>
+    <EmbeddedResource Include="Localization\i18n\*.json" LogicalName="i18n/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

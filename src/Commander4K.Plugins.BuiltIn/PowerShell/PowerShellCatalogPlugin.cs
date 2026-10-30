@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Local;
 
@@ -20,11 +21,11 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
 
     public string DisplayName => "PowerShell";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.powershell", "Polecenia PowerShell", "Katalog poleceń PowerShell uruchamianych na folderach i plikach.", PluginPermissions.ShellRun, PluginPermissions.FileRead);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.powershell", Loc.T("Polecenia PowerShell"), Loc.T("Katalog poleceń PowerShell uruchamianych na folderach i plikach."), PluginPermissions.ShellRun, PluginPermissions.FileRead);
 
-    public string Title => "Polecenia PowerShell";
+    public string Title => Loc.T("Polecenia PowerShell");
 
-    public string Description => "Katalog gotowych poleceń PowerShell (config/powershell.json) do uruchamiania na bieżącym folderze i zaznaczonych plikach.";
+    public string Description => Loc.T("Katalog gotowych poleceń PowerShell (config/powershell.json) do uruchamiania na bieżącym folderze i zaznaczonych plikach.");
 
     public string CatalogPath { get; } = catalogPath;
 
@@ -64,9 +65,9 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
             string? value = name switch
             {
                 "path" => Quote(folder ?? Environment.CurrentDirectory),
-                "file" => Quote(selected.FirstOrDefault() ?? throw new InvalidOperationException("To polecenie wymaga pliku pod kursorem.")),
+                "file" => Quote(selected.FirstOrDefault() ?? throw new InvalidOperationException(Loc.T("To polecenie wymaga pliku pod kursorem."))),
                 "files" => selected.Count == 0
-                    ? throw new InvalidOperationException("To polecenie wymaga zaznaczonych plików.")
+                    ? throw new InvalidOperationException(Loc.T("To polecenie wymaga zaznaczonych plików."))
                     : string.Join(',', selected.Select(Quote)),
                 _ when name.StartsWith("input:", StringComparison.Ordinal) =>
                     await host.PromptAsync("PowerShell", name[6..]).ConfigureAwait(false) is { } answer ? Quote(answer) : null,
@@ -107,7 +108,7 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
         }
 
         if ((command.Confirm || command.RequiresAdmin)
-            && !await host.ConfirmAsync(command.Title, $"Uruchomić{(command.RequiresAdmin ? " jako administrator" : "")}?\n\n{script}").ConfigureAwait(false))
+            && !await host.ConfirmAsync(command.Title, Loc.T("Uruchomić{0}?\n\n{1}", (command.RequiresAdmin ? " jako administrator" : ""), script)).ConfigureAwait(false))
         {
             return;
         }
@@ -141,7 +142,7 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
     {
         var text = result.Output.TrimEnd();
         return (string.IsNullOrWhiteSpace(result.Error) ? text : $"{text}\n\n[stderr]\n{result.Error.TrimEnd()}")
-            + $"\n\n[kod wyjścia {result.ExitCode}]";
+            + Loc.T("\n\n[kod wyjścia {0}]", result.ExitCode);
     }
 
     /// <summary>PowerShell 7 when installed, otherwise the Windows PowerShell 5.1 that ships with Windows.</summary>
@@ -173,18 +174,18 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
     {
         private static readonly ColumnDefinition[] Columns =
         [
-            new("title", "Polecenie", ColumnAlignment.Left, 320),
-            new("description", "Opis", ColumnAlignment.Left, 480),
-            new("flags", "Uwagi", ColumnAlignment.Left, 140),
+            new("title", Loc.T("Polecenie"), ColumnAlignment.Left, 320),
+            new("description", Loc.T("Opis"), ColumnAlignment.Left, 480),
+            new("flags", Loc.T("Uwagi"), ColumnAlignment.Left, 140),
         ];
 
         public TimeSpan? RefreshInterval => null;
 
         public IReadOnlyList<PanelAction> Actions { get; } =
         [
-            new("run", "Uruchom", "Enter"),
-            new("edit", "Edytuj katalog (powershell.json)", "F4", AppliesToRows: false),
-            new("reload", "Przeładuj katalog", "Ctrl+R", AppliesToRows: false),
+            new("run", Loc.T("Uruchom"), "Enter"),
+            new("edit", Loc.T("Edytuj katalog (powershell.json)"), "F4", AppliesToRows: false),
+            new("reload", Loc.T("Przeładuj katalog"), "Ctrl+R", AppliesToRows: false),
         ];
 
         public async Task<PanelSnapshot> LoadAsync(PanelRequest request, IProgress<string>? progress, CancellationToken cancellationToken)
@@ -193,7 +194,7 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
             var rows = new List<PanelRow>();
             foreach (var category in plugin._commands.GroupBy(c => c.Category))
             {
-                rows.Add(new PanelRow("cat:" + category.Key, null, [category.Key, $"{category.Count()} poleceń", ""], RowSeverity.Highlight, ExpandedByDefault: true));
+                rows.Add(new PanelRow("cat:" + category.Key, null, [category.Key, Loc.T("{0} poleceń", category.Count()), ""], RowSeverity.Highlight, ExpandedByDefault: true));
                 foreach (var command in category)
                 {
                     var flags = string.Join(", ", new[] { command.RequiresAdmin ? "administrator" : null, command.Confirm ? "potwierdzenie" : null }.OfType<string>());
@@ -202,17 +203,17 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
                 }
             }
 
-            return new PanelSnapshot(Columns, rows, $"{plugin._commands.Count} poleceń · {plugin.CatalogPath} · powłoka: {Path.GetFileName(FindShell())}");
+            return new PanelSnapshot(Columns, rows, Loc.T("{0} poleceń · {1} · powłoka: {2}", plugin._commands.Count, plugin.CatalogPath, Path.GetFileName(FindShell())));
         }
 
         public Task<PanelDetails?> GetDetailsAsync(string rowId, CancellationToken cancellationToken) =>
             Task.FromResult(plugin._commands.FirstOrDefault(c => c.Id == rowId) is { } command
                 ? new PanelDetails([new PanelDetailSection(command.Title,
                 [
-                    new("Opis", command.Description),
-                    new("Skrypt", command.Script),
-                    new("Uprawnienia", command.RequiresAdmin ? "administrator (osobne okno)" : "zwykłe (wynik w podglądzie)"),
-                    new("Id (do keymap.json)", $"plugin:{PluginId}:{command.Id}"),
+                    new(Loc.T("Opis"), command.Description),
+                    new(Loc.T("Skrypt"), command.Script),
+                    new(Loc.T("Uprawnienia"), command.RequiresAdmin ? "administrator (osobne okno)" : Loc.T("zwykłe (wynik w podglądzie)")),
+                    new(Loc.T("Id (do keymap.json)"), $"plugin:{PluginId}:{command.Id}"),
                 ])])
                 : (PanelDetails?)null);
 

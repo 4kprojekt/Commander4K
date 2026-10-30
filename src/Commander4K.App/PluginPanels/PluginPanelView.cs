@@ -12,6 +12,7 @@ using Commander4K.App.Panels;
 using Commander4K.App.Theming;
 using Commander4K.Core.Configuration;
 using Commander4K.Core.Input;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.App.PluginPanels;
@@ -59,7 +60,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         _services = services;
         _brushes = brushes;
 
-        _filter = new TextBox().PlaceholderText("Filtruj… (pisz, aby zawęzić)").MinWidth(220).Padding(6, 2);
+        _filter = new TextBox().PlaceholderText(Loc.T("Filtruj… (pisz, aby zawęzić)")).MinWidth(220).Padding(6, 2);
         _filter.TextChanged += (_, _) => Rebuild(keepCursorId: CurrentRow?.Row.Id);
         _filter.KeyDown += OnFilterKeyDown;
         _actions = new WrapPanel().Orientation(Orientation.Horizontal);
@@ -72,8 +73,8 @@ public sealed class PluginPanelView : Grid, IPanelModeView
                 .OnClick(async _ => await ExecuteActionAsync(a)));
         }
 
-        _actions.Children.Add(new Button().Content("Odśwież (Ctrl+R)").Padding(8, 2).FontSize(12).OnClick(_ => Reload()));
-        _actions.Children.Add(new Button().Content("Zamknij (Esc)").Padding(8, 2).Margin(4, 0, 0, 0).FontSize(12).OnClick(_ => CloseRequested?.Invoke()));
+        _actions.Children.Add(new Button().Content(Loc.T("Odśwież (Ctrl+R)")).Padding(8, 2).FontSize(12).OnClick(_ => Reload()));
+        _actions.Children.Add(new Button().Content(Loc.T("Zamknij (Esc)")).Padding(8, 2).Margin(4, 0, 0, 0).FontSize(12).OnClick(_ => CloseRequested?.Invoke()));
 
         // The title is already in the panel's path bar; the header holds the filter and the actions only.
         _filter.Width = 220;
@@ -271,7 +272,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         _loading = cts;
         if (!quiet)
         {
-            _status.Text = "⏳ Ładowanie… (Esc – anuluj)";
+            _status.Text = Loc.T("⏳ Ładowanie… (Esc – anuluj)");
         }
 
         var progress = new Progress<string>(message => _status.Text = "⏳ " + message);
@@ -287,7 +288,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
                 _loading = null;
                 if (task.IsCanceled || (task.Exception?.InnerException is OperationCanceledException))
                 {
-                    _status.Text = "Przerwano.";
+                    _status.Text = Loc.T("Przerwano.");
                     return;
                 }
 

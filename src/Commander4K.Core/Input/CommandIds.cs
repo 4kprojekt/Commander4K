@@ -16,6 +16,9 @@ public static class CommandIds
     /// <summary>Switches a panel's mode: files, quick preview or any plugin panel (F2).</summary>
     public const string PanelModes = "cm_PanelModes";
 
+    /// <summary>Prompt and checks for translating the UI into a new language with an AI chat.</summary>
+    public const string Translate = "cm_Translate";
+
     /// <summary>Settings filtered to plugin columns (Git, EXIF, SHA-256).</summary>
     public const string Columns = "cm_Columns";
 

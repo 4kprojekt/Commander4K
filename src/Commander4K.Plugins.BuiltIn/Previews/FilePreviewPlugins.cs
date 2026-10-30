@@ -1,4 +1,5 @@
 using System.Text;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Viewers;
 
@@ -33,8 +34,8 @@ public sealed class MarkdownPreviewPlugin : IPreviewPlugin
 
     public string DisplayName => "Markdown";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.preview.markdown", "Podgląd Markdown",
-        "Sformatowany podgląd i edycja plików Markdown.", PluginPermissions.FileRead, PluginPermissions.FileWrite);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.preview.markdown", Loc.T("Podgląd Markdown"),
+        Loc.T("Sformatowany podgląd i edycja plików Markdown."), PluginPermissions.FileRead, PluginPermissions.FileWrite);
 
     public int Priority => 50;
 
@@ -54,10 +55,10 @@ public sealed class TextPreviewPlugin : IPreviewPlugin
 
     public string Id => "builtin.preview.text";
 
-    public string DisplayName => "Tekst / hex";
+    public string DisplayName => Loc.T("Tekst / hex");
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.preview.text", "Podgląd tekstu",
-        "Podgląd i edycja plików tekstowych, zrzut szesnastkowy dla binarnych.", PluginPermissions.FileRead, PluginPermissions.FileWrite);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.preview.text", Loc.T("Podgląd tekstu"),
+        Loc.T("Podgląd i edycja plików tekstowych, zrzut szesnastkowy dla binarnych."), PluginPermissions.FileRead, PluginPermissions.FileWrite);
 
     public int Priority => 0;
 
@@ -83,10 +84,10 @@ public sealed class ImagePreviewPlugin : IPreviewPlugin
 
     public string Id => "builtin.preview.image";
 
-    public string DisplayName => "Obrazy";
+    public string DisplayName => Loc.T("Obrazy");
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.preview.image", "Podgląd obrazów",
-        "Podgląd plików graficznych.", PluginPermissions.FileRead);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.preview.image", Loc.T("Podgląd obrazów"),
+        Loc.T("Podgląd plików graficznych."), PluginPermissions.FileRead);
 
     public int Priority => 40;
 
@@ -95,7 +96,7 @@ public sealed class ImagePreviewPlugin : IPreviewPlugin
     public async Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
     {
         var (data, length, truncated) = await PreviewReading.ReadHeadAsync(host, entry.Path, MaxBytes, cancellationToken).ConfigureAwait(false);
-        return truncated ? new MessagePreview("Obraz jest większy niż 64 MB.") : new ImagePreview(data.AsMemory(0, length));
+        return truncated ? new MessagePreview(Loc.T("Obraz jest większy niż 64 MB.")) : new ImagePreview(data.AsMemory(0, length));
     }
 }
 
@@ -112,8 +113,8 @@ public sealed class FolderPreviewPlugin : IPreviewPlugin
 
     public string DisplayName => "Folder";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.preview.folder", "Podgląd folderu",
-        "Objętość folderu i podfolderów, doczytywana rekurencyjnie.", PluginPermissions.FileRead);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.preview.folder", Loc.T("Podgląd folderu"),
+        Loc.T("Objętość folderu i podfolderów, doczytywana rekurencyjnie."), PluginPermissions.FileRead);
 
     public int Priority => 10;
 

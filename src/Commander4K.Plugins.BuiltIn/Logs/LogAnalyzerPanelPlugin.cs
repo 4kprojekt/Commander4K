@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Local;
 
@@ -14,11 +15,11 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
 
     public string DisplayName => "Log analyzer";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.logs", "Analiza logów", "Grupowanie wpisów logu we wzorce wg poziomu i czasu.", PluginPermissions.FileRead);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.logs", Loc.T("Analiza logów"), Loc.T("Grupowanie wpisów logu we wzorce wg poziomu i czasu."), PluginPermissions.FileRead);
 
-    public string Title => "Analiza logów";
+    public string Title => Loc.T("Analiza logów");
 
-    public string Description => "Grupuje wpisy pliku logu we wzorce wg poziomu (błędy, ostrzeżenia…), z liczbą wystąpień i osią czasu.";
+    public string Description => Loc.T("Grupuje wpisy pliku logu we wzorce wg poziomu (błędy, ostrzeżenia…), z liczbą wystąpień i osią czasu.");
 
     public bool RequiresArgument => true;
 
@@ -28,10 +29,10 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
     {
         private static readonly ColumnDefinition[] Columns =
         [
-            new("pattern", "Wzorzec komunikatu", ColumnAlignment.Left, 560),
-            new("count", "Liczba", ColumnAlignment.Right, 80),
-            new("first", "Pierwszy", ColumnAlignment.Left, 140),
-            new("last", "Ostatni", ColumnAlignment.Left, 140),
+            new("pattern", Loc.T("Wzorzec komunikatu"), ColumnAlignment.Left, 560),
+            new("count", Loc.T("Liczba"), ColumnAlignment.Right, 80),
+            new("first", Loc.T("Pierwszy"), ColumnAlignment.Left, 140),
+            new("last", Loc.T("Ostatni"), ColumnAlignment.Left, 140),
         ];
 
         private LogAnalysis? _analysis;
@@ -40,13 +41,13 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
 
         public IReadOnlyList<PanelAction> Actions { get; } =
         [
-            new("occurrences", "Pokaż wystąpienia", "F3"),
-            new("report", "Raport podsumowania", "Ctrl+R", AppliesToRows: false),
+            new("occurrences", Loc.T("Pokaż wystąpienia"), "F3"),
+            new("report", Loc.T("Raport podsumowania"), "Ctrl+R", AppliesToRows: false),
         ];
 
         public async Task<PanelSnapshot> LoadAsync(PanelRequest request, IProgress<string>? progress, CancellationToken cancellationToken)
         {
-            var path = request.Argument ?? throw new FileNotFoundException("Ustaw kursor na pliku logu (np. *.log) i otwórz analizę ponownie.");
+            var path = request.Argument ?? throw new FileNotFoundException(Loc.T("Ustaw kursor na pliku logu (np. *.log) i otwórz analizę ponownie."));
 
             // Any VFS (local, share, SFTP); the host checks fs.read and audits the read.
             await using (var stream = await host.OpenReadAsync(path, cancellationToken).ConfigureAwait(false))
@@ -70,19 +71,19 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
 
             if (_analysis.Hourly.Count > 0)
             {
-                rows.Add(new PanelRow("timeline", null, ["Oś czasu (godziny)", _analysis.Hourly.Count.ToString(CultureInfo.CurrentCulture), Format(_analysis.Hourly.Keys.First()), Format(_analysis.Hourly.Keys.Last())], RowSeverity.Highlight));
+                rows.Add(new PanelRow("timeline", null, [Loc.T("Oś czasu (godziny)"), _analysis.Hourly.Count.ToString(CultureInfo.CurrentCulture), Format(_analysis.Hourly.Keys.First()), Format(_analysis.Hourly.Keys.Last())], RowSeverity.Highlight));
                 foreach (var (hour, counts) in _analysis.Hourly)
                 {
                     var bar = new string('█', Math.Min(40, (int)Math.Ceiling(counts.Total * 40.0 / _analysis.Hourly.Values.Max(v => v.Total))));
                     rows.Add(new PanelRow("hour:" + hour.Ticks, "timeline",
-                        [$"{hour:yyyy-MM-dd HH}:00  {bar}", counts.Total.ToString("N0", CultureInfo.CurrentCulture), $"błędy: {counts.Errors}", $"ostrz.: {counts.Warnings}"],
+                        [$"{hour:yyyy-MM-dd HH}:00  {bar}", counts.Total.ToString("N0", CultureInfo.CurrentCulture), Loc.T("błędy: {0}", counts.Errors), $"ostrz.: {counts.Warnings}"],
                         counts.Errors > 0 ? RowSeverity.Error : counts.Warnings > 0 ? RowSeverity.Warning : RowSeverity.Normal,
                         [hour.Ticks, counts.Total, counts.Errors, counts.Warnings]));
                 }
             }
 
-            var status = $"{Path.GetFileName(path.Replace('/', '\\'))}: {_analysis.Lines:N0} linii{(_analysis.Truncated ? " (obcięto)" : "")} · " +
-                $"błędy {_analysis.Count(LogLevel.Error) + _analysis.Count(LogLevel.Fatal):N0} · ostrzeżenia {_analysis.Count(LogLevel.Warning):N0} · wzorce {_analysis.Patterns.Count:N0}";
+            var status = $"{Path.GetFileName(path.Replace('/', '\\'))}: {_analysis.Lines:N0} linii{(_analysis.Truncated ? Loc.T(" (obcięto)") : "")} · " +
+                Loc.T("błędy {0:N0} · ostrzeżenia {1:N0} · wzorce {2:N0}", _analysis.Count(LogLevel.Error) + _analysis.Count(LogLevel.Fatal), _analysis.Count(LogLevel.Warning), _analysis.Patterns.Count);
             return new PanelSnapshot(Columns, rows, status);
         }
 
@@ -104,14 +105,14 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
 
             var summary = new List<KeyValuePair<string, string>>
             {
-                new("Poziom", LevelName(pattern.Level)),
-                new("Wystąpienia", pattern.Count.ToString("N0", CultureInfo.CurrentCulture)),
-                new("Pierwsza linia", pattern.FirstLine.ToString("N0", CultureInfo.CurrentCulture)),
-                new("Zakres czasu", $"{Format(pattern.First)} – {Format(pattern.Last)}"),
-                new("Wzorzec", pattern.Template),
+                new(Loc.T("Poziom"), LevelName(pattern.Level)),
+                new(Loc.T("Wystąpienia"), pattern.Count.ToString("N0", CultureInfo.CurrentCulture)),
+                new(Loc.T("Pierwsza linia"), pattern.FirstLine.ToString("N0", CultureInfo.CurrentCulture)),
+                new(Loc.T("Zakres czasu"), $"{Format(pattern.First)} – {Format(pattern.Last)}"),
+                new(Loc.T("Wzorzec"), pattern.Template),
             };
             var samples = pattern.Samples.Take(10).Select(s => new KeyValuePair<string, string>($"linia {s.LineNumber}", s.Text)).ToList();
-            return Task.FromResult<PanelDetails?>(new PanelDetails([new("Wzorzec", summary), new("Przykłady", samples)]));
+            return Task.FromResult<PanelDetails?>(new PanelDetails([new(Loc.T("Wzorzec"), summary), new(Loc.T("Przykłady"), samples)]));
         }
 
         public Task<string?> ExecuteActionAsync(string actionId, IReadOnlyList<string> rowIds, CancellationToken cancellationToken)
@@ -135,11 +136,11 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
                     text.AppendLine();
                 }
 
-                return Task.FromResult<string?>(text.Length == 0 ? "Wybierz wzorzec (nie nagłówek poziomu)." : text.ToString());
+                return Task.FromResult<string?>(text.Length == 0 ? Loc.T("Wybierz wzorzec (nie nagłówek poziomu).") : text.ToString());
             }
 
             text.AppendLine(CultureInfo.InvariantCulture, $"Analiza: {_analysis.Path}");
-            text.AppendLine(CultureInfo.InvariantCulture, $"Linie: {_analysis.Lines:N0}{(_analysis.Truncated ? " (obcięto)" : "")}");
+            text.AppendLine(CultureInfo.InvariantCulture, $"Linie: {_analysis.Lines:N0}{(_analysis.Truncated ? Loc.T(" (obcięto)") : "")}");
             foreach (var level in Enum.GetValues<LogLevel>().Reverse())
             {
                 var count = _analysis.Count(level);
@@ -149,7 +150,7 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
                 }
             }
 
-            text.AppendLine().AppendLine("Najczęstsze błędy:");
+            text.AppendLine().AppendLine(Loc.T("Najczęstsze błędy:"));
             foreach (var pattern in _analysis.Patterns.Where(p => p.Level >= LogLevel.Error).Take(20))
             {
                 text.AppendLine(CultureInfo.InvariantCulture, $"{pattern.Count,8:N0}×  {pattern.Template}");
@@ -178,13 +179,13 @@ public sealed class LogAnalyzerPanelPlugin : IPanelPlugin
 
     private static string LevelName(LogLevel level) => level switch
     {
-        LogLevel.Fatal => "Krytyczne",
-        LogLevel.Error => "Błędy",
-        LogLevel.Warning => "Ostrzeżenia",
-        LogLevel.Info => "Informacje",
+        LogLevel.Fatal => Loc.T("Krytyczne"),
+        LogLevel.Error => Loc.T("Błędy"),
+        LogLevel.Warning => Loc.T("Ostrzeżenia"),
+        LogLevel.Info => Loc.T("Informacje"),
         LogLevel.Debug => "Debug",
         LogLevel.Trace => "Trace",
-        _ => "Bez poziomu",
+        _ => Loc.T("Bez poziomu"),
     };
 
     private static RowSeverity Severity(LogLevel level) => level switch

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Commander4K.Core.Localization;
 
 namespace Commander4K.Core.Plugins;
 
@@ -64,7 +65,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
                 _ = NotifyAsync("$/cancelRequest", new { id });
                 pending.TrySetCanceled(cancellationToken);
             });
-            using var closed = _closed.Token.Register(() => pending.TrySetException(new IOException("Wtyczka zakończyła działanie.")));
+            using var closed = _closed.Token.Register(() => pending.TrySetException(new IOException(Loc.T("Wtyczka zakończyła działanie."))));
             return await pending.Task.ConfigureAwait(false);
         }
         finally
@@ -105,7 +106,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
 
                 if (line.Length > MaxMessageLength)
                 {
-                    throw new InvalidDataException("Wiadomość wtyczki przekracza 16 MB.");
+                    throw new InvalidDataException(Loc.T("Wiadomość wtyczki przekracza 16 MB."));
                 }
 
                 Dispatch(JsonDocument.Parse(line).RootElement.Clone());
@@ -119,7 +120,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
             _closed.Cancel();
             foreach (var pending in _pending.Values)
             {
-                pending.TrySetException(new IOException("Wtyczka zakończyła działanie."));
+                pending.TrySetException(new IOException(Loc.T("Wtyczka zakończyła działanie.")));
             }
         }
     }
@@ -158,8 +159,8 @@ public sealed class JsonRpcConnection : IAsyncDisposable
             if (message.TryGetProperty("error", out var error))
             {
                 var code = error.TryGetProperty("code", out var c) ? c.GetInt32() : JsonRpcException.ServerError;
-                var text = error.TryGetProperty("message", out var m) ? m.GetString() : "Błąd wtyczki";
-                waiting.TrySetException(new JsonRpcException(code, text ?? "Błąd wtyczki"));
+                var text = error.TryGetProperty("message", out var m) ? m.GetString() : Loc.T("Błąd wtyczki");
+                waiting.TrySetException(new JsonRpcException(code, text ?? Loc.T("Błąd wtyczki")));
             }
             else
             {

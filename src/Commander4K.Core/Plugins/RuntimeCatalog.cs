@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Commander4K.Core.Execution;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Tools;
 using Commander4K.Core.Updates;
 using Commander4K.PluginSdk;
@@ -30,7 +31,7 @@ public static partial class RuntimeCatalog
             DetectDotnetAsync(cancellationToken),
         };
         var results = await Task.WhenAll(detections).ConfigureAwait(false);
-        return [.. results, new RuntimeInfo("exe", "Program Windows (exe)", "(system)", null)];
+        return [.. results, new RuntimeInfo("exe", Loc.T("Program Windows (exe)"), Loc.T("(system)"), null)];
     }
 
     /// <summary>Supports space-separated <c>&gt;=</c>, <c>&gt;</c>, <c>&lt;=</c>, <c>&lt;</c>, <c>=</c>, <c>^X</c> and a bare <c>X.Y</c> (meaning &gt;=).</summary>
@@ -77,12 +78,12 @@ public static partial class RuntimeCatalog
         var runtime = runtimes.FirstOrDefault(r => string.Equals(r.Type, requirement.Type, StringComparison.OrdinalIgnoreCase));
         if (runtime is null || !runtime.IsInstalled)
         {
-            return $"Brak środowiska {runtime?.DisplayName ?? requirement.Type}. {InstallHint(requirement.Type)}";
+            return Loc.T("Brak środowiska {0}. {1}", runtime?.DisplayName ?? requirement.Type, InstallHint(requirement.Type));
         }
 
         if (runtime.Version is { } version && !Satisfies(version, requirement.Version))
         {
-            return $"{runtime.DisplayName} {version} nie spełnia wymagania „{requirement.Version}”. {InstallHint(requirement.Type)}";
+            return Loc.T("{0} {1} nie spełnia wymagania „{2}”. {3}", runtime.DisplayName, version, requirement.Version, InstallHint(requirement.Type));
         }
 
         return null;

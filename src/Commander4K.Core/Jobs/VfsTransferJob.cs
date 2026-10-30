@@ -1,4 +1,5 @@
 using System.Buffers;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
 
@@ -29,7 +30,7 @@ public sealed class VfsTransferJob(
 {
     private const int BufferSize = 1024 * 1024;
 
-    public string Title { get; } = $"{(mode == TransferMode.Copy ? "Kopiowanie" : "Przenoszenie")} {Describe(sources)} → {destinationDirectory}";
+    public string Title { get; } = $"{(mode == TransferMode.Copy ? Loc.T("Kopiowanie") : Loc.T("Przenoszenie"))} {Describe(sources)} → {destinationDirectory}";
 
     public int SkippedFiles { get; private set; }
 
@@ -41,7 +42,7 @@ public sealed class VfsTransferJob(
             if (string.Equals(Normalize(target), Normalize(source.Path), StringComparison.OrdinalIgnoreCase)
                 || (source.IsContainer && Normalize(target).StartsWith(Normalize(source.Path) + "\\", StringComparison.OrdinalIgnoreCase)))
             {
-                throw new IOException($"Nie można skopiować '{source.Path}' do samego siebie.");
+                throw new IOException(Loc.T("Nie można skopiować '{0}' do samego siebie.", source.Path));
             }
         }
 
@@ -142,7 +143,7 @@ public sealed class VfsTransferJob(
                 {
                     SkippedFiles++;
                     done += Math.Max(0, source.Size);
-                    progress.Report(new JobMetrics(done, plan.TotalBytes, ++files, plan.Files.Count, "Pominięto: " + source.Name));
+                    progress.Report(new JobMetrics(done, plan.TotalBytes, ++files, plan.Files.Count, Loc.T("Pominięto: ") + source.Name));
                     continue;
                 }
 
@@ -170,7 +171,7 @@ public sealed class VfsTransferJob(
     private static string Normalize(string path) => path.Replace('/', '\\').TrimEnd('\\');
 
     internal static string Describe(IReadOnlyList<VfsEntry> entries) =>
-        entries.Count == 1 ? $"„{entries[0].Name}”" : $"{entries.Count} elementów";
+        entries.Count == 1 ? Loc.T("„{0}”", entries[0].Name) : Loc.P(entries.Count, "{0} element|{0} elementy|{0} elementów");
 
     private sealed class TransferPlan
     {

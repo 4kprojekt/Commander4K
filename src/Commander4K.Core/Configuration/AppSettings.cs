@@ -40,6 +40,9 @@ public sealed class AppSettings
 {
     public const string DefaultUpdateRepository = "4kprojekt/Commander4K";
 
+    /// <summary>UI language code (<c>pl</c>, <c>en</c>, or a file in <c>config/i18n</c>); <c>auto</c> follows Windows.</summary>
+    public string Language { get; set; } = Localization.Loc.Auto;
+
     /// <summary>Id of the active skin (built-in or from <c>config/skins</c>).</summary>
     public string Skin { get; set; } = BuiltInSkins.ModernDarkId;
 

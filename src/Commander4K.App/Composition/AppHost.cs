@@ -3,6 +3,7 @@ using Commander4K.Core.Execution;
 using Commander4K.Core.Indexing;
 using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Plugins;
 using Commander4K.Core.Security;
 using Commander4K.Core.Theming;
@@ -85,7 +86,8 @@ public sealed class AppHost : IAsyncDisposable
         SearchProviders = [Registry, FileSearch];
         Updates = new UpdateService(Http);
         _baseSettings = Core.Configuration.SettingsCatalog.Create(
-            () => [.. Skins.Skins.Select(s => new SettingChoice(s.Id, s.DisplayName))]);
+            () => [.. Skins.Skins.Select(s => new SettingChoice(s.Id, s.DisplayName))],
+            () => [new(Loc.Auto, Loc.T("Automatycznie")), .. Loc.AvailableLanguages(config.ConfigDirectory).Select(code => new SettingChoice(code, LanguageName(code)))]);
         PowerShell = new PowerShellCatalogPlugin(Path.Combine(config.ConfigDirectory, "powershell.json"));
         Audit = new AuditLog(Path.Combine(dataDirectory, "data", "logs"));
         Approvals = new PluginApprovalStore(Path.Combine(config.ConfigDirectory, "plugin-approvals.json"));
@@ -157,7 +159,7 @@ public sealed class AppHost : IAsyncDisposable
             return missing;
         }
 
-        return Approvals.IsApproved(plugin.Manifest) ? null : "Wyłączona — wymaga zgody na uprawnienia.";
+        return Approvals.IsApproved(plugin.Manifest) ? null : Loc.T("Wyłączona — wymaga zgody na uprawnienia.");
     }
 
     /// <summary>Re-scans plugin folders and (re)starts approved plugins; call after enabling or installing one.</summary>
@@ -209,7 +211,7 @@ public sealed class AppHost : IAsyncDisposable
     public IReadOnlyList<CommandInfo> ListCommands()
     {
         var commands = Commands.Commands.Select(c => new CommandInfo(c.Id, c.Description, null)).ToList();
-        commands.AddRange(PanelPlugins.Select(p => new CommandInfo(CommandIds.PanelPrefix + p.Id, "Panel: " + p.Title, "Panele")));
+        commands.AddRange(PanelPlugins.Select(p => new CommandInfo(CommandIds.PanelPrefix + p.Id, "Panel: " + p.Title, Loc.T("Panele"))));
         foreach (var plugin in CommandPlugins)
         {
             commands.AddRange(plugin.Commands.Select(c =>
@@ -299,6 +301,12 @@ public sealed class AppHost : IAsyncDisposable
                 var indexTask = OpenIndexAsync(Path.Combine(dataDirectory, "data", "index.db"), cancellationToken);
                 await Task.WhenAll(settingsTask, keymapTask, toolsTask, skinsTask, indexTask).ConfigureAwait(false);
 
+                // Normally done in Program.Main before the first window; tools and tests that only create a host get it here.
+                if (!Loc.IsInitialized)
+                {
+                    Loc.Initialize(settingsTask.Result.Language, config.ConfigDirectory);
+                }
+
                 // Kept in sync with the model on every start so editors and Claude always see the current schema.
                 Directory.CreateDirectory(config.SkinsDirectory);
                 await File.WriteAllTextAsync(Path.Combine(config.SkinsDirectory, SkinSchema.FileName), SkinSchema.CreateJson(), cancellationToken)
@@ -374,8 +382,25 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
+    /// <summary>Native name of a language code ("de" → "Deutsch"), or the code itself when .NET does not know it.</summary>
+    public static string LanguageName(string code)
+    {
+        try
+        {
+            var culture = System.Globalization.CultureInfo.GetCultureInfo(code);
+            var name = culture.NativeName;
+            return culture.CultureTypes.HasFlag(System.Globalization.CultureTypes.UserCustomCulture) || name == code
+                ? code
+                : char.ToUpper(name[0], culture) + name[1..];
+        }
+        catch (System.Globalization.CultureNotFoundException)
+        {
+            return code;
+        }
+    }
+
     /// <summary>Portable mode next to the executable when writable, otherwise %AppData%\Commander4K.</summary>
-    private static string ResolveDataDirectory()
+    public static string ResolveDataDirectory()
     {
         var portable = AppContext.BaseDirectory;
         try

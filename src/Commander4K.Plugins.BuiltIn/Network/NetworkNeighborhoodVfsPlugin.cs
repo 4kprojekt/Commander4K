@@ -6,6 +6,7 @@ using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using Commander4K.Core.Execution;
 using Commander4K.Core.Indexing;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Interop;
 using Commander4K.Plugins.BuiltIn.Local;
@@ -47,7 +48,7 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
 
     public string DisplayName => "Network";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.network", "Sieć", "Otoczenie sieciowe, wykrywanie hostów w LAN i udziały SMB.", PluginPermissions.FileRead, PluginPermissions.FileWrite, PluginPermissions.Network);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.network", Loc.T("Sieć"), Loc.T("Otoczenie sieciowe, wykrywanie hostów w LAN i udziały SMB."), PluginPermissions.FileRead, PluginPermissions.FileWrite, PluginPermissions.Network);
 
     public IReadOnlyList<string> Schemes { get; } = ["net", VfsPath.SmbScheme];
 
@@ -180,7 +181,7 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
 
     private async IAsyncEnumerable<VfsEntry> EnumerateRootAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        yield return new VfsEntry("+ Dodaj połączenie sieciowe", NetworkPath.AddConnectionPath, VfsEntryKind.Action);
+        yield return new VfsEntry(Loc.T("+ Dodaj połączenie sieciowe"), NetworkPath.AddConnectionPath, VfsEntryKind.Action);
         foreach (var saved in SavedConnections)
         {
             yield return new VfsEntry(saved.Name, saved.Path, VfsEntryKind.Host, Description: saved.Description ?? saved.Path);
@@ -290,12 +291,12 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
         var open = await ResolveAndProbeAsync(host, cancellationToken).ConfigureAwait(false);
         if (open is not null && open.Contains(LanScanner.SshPort))
         {
-            yield return new VfsEntry("SFTP", $"sftp://{host}/", VfsEntryKind.Host, Description: $"SSH na porcie {LanScanner.SshPort}");
+            yield return new VfsEntry("SFTP", $"sftp://{host}/", VfsEntryKind.Host, Description: Loc.T("SSH na porcie {0}", LanScanner.SshPort));
         }
 
         if (open is not null && open.Contains(LanScanner.FtpPort))
         {
-            yield return new VfsEntry("FTP", $"ftp://{host}/", VfsEntryKind.Host, Description: $"FTP na porcie {LanScanner.FtpPort}");
+            yield return new VfsEntry("FTP", $"ftp://{host}/", VfsEntryKind.Host, Description: Loc.T("FTP na porcie {0}", LanScanner.FtpPort));
         }
 
         // Unresolvable by DNS (null) may still be reachable by NetBIOS name, so try SMB in that case too.

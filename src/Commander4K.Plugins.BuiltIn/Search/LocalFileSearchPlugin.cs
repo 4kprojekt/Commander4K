@@ -3,6 +3,7 @@ using System.IO.Enumeration;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Channels;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Local;
 
@@ -21,7 +22,7 @@ public sealed class LocalFileSearchPlugin : ISearchProviderPlugin
 
     public string DisplayName => "File search";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.search.files", "Wyszukiwanie plików", "Równoległe wyszukiwanie nazw i treści plików.", PluginPermissions.FileRead);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.search.files", Loc.T("Wyszukiwanie plików"), Loc.T("Równoległe wyszukiwanie nazw i treści plików."), PluginPermissions.FileRead);
 
     public bool CanSearch(string rootPath) =>
         VfsPath.GetScheme(rootPath) is VfsPath.FileScheme or VfsPath.SmbScheme

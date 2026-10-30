@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.Plugins.BuiltIn.Local;
@@ -16,7 +17,7 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
 
     public string DisplayName => "Local disks";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.local", "Dyski lokalne", "Przeglądanie i operacje na dyskach lokalnych.", PluginPermissions.FileRead, PluginPermissions.FileWrite);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.local", Loc.T("Dyski lokalne"), Loc.T("Przeglądanie i operacje na dyskach lokalnych."), PluginPermissions.FileRead, PluginPermissions.FileWrite);
 
     public IReadOnlyList<string> Schemes { get; } = [VfsPath.FileScheme, "local"];
 
@@ -174,7 +175,7 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
                 {
                     size = drive.TotalSize;
                     var label = string.IsNullOrEmpty(drive.VolumeLabel) ? DescribeType(drive.DriveType) : drive.VolumeLabel;
-                    description = $"{label} — wolne {FormatBytes(drive.AvailableFreeSpace)}";
+                    description = Loc.T("{0} — wolne {1}", label, FormatBytes(drive.AvailableFreeSpace));
                 }
                 else
                 {
@@ -196,12 +197,12 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
 
     private static string DescribeType(DriveType type) => type switch
     {
-        DriveType.Fixed => "Dysk lokalny",
-        DriveType.Removable => "Dysk wymienny",
-        DriveType.Network => "Dysk sieciowy",
-        DriveType.CDRom => "Napęd optyczny",
+        DriveType.Fixed => Loc.T("Dysk lokalny"),
+        DriveType.Removable => Loc.T("Dysk wymienny"),
+        DriveType.Network => Loc.T("Dysk sieciowy"),
+        DriveType.CDRom => Loc.T("Napęd optyczny"),
         DriveType.Ram => "RAM-dysk",
-        _ => "Dysk",
+        _ => Loc.T("Dysk"),
     };
 
     private static string FormatBytes(long bytes)

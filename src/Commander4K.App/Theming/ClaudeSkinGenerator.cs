@@ -2,6 +2,7 @@ using System.Text.Json;
 using Anthropic;
 using Anthropic.Exceptions;
 using Anthropic.Models.Beta.Messages;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Theming;
 
 namespace Commander4K.App.Theming;
@@ -52,31 +53,29 @@ public sealed class ClaudeSkinGenerator
         catch (AnthropicUnauthorizedException)
         {
             return SkinGenerationResult.Failed(
-                "Brak lub nieprawidłowy klucz API Claude. Ustaw zmienną środowiskową ANTHROPIC_API_KEY " +
-                "(albo zaloguj się poleceniem „ant auth login”) i uruchom Commander4K ponownie. " +
-                "Bez klucza możesz użyć przycisku „Kopiuj prompt” i wygenerować skórkę w Claude.ai lub Claude Design.");
+                Loc.T("Brak lub nieprawidłowy klucz API Claude. Ustaw zmienną środowiskową ANTHROPIC_API_KEY (albo zaloguj się poleceniem „ant auth login”) i uruchom Commander4K ponownie. Bez klucza możesz użyć przycisku „Kopiuj prompt” i wygenerować skórkę w Claude.ai lub Claude Design."));
         }
         catch (AnthropicRateLimitException)
         {
-            return SkinGenerationResult.Failed("Przekroczono limit zapytań do Claude API. Spróbuj ponownie za chwilę.");
+            return SkinGenerationResult.Failed(Loc.T("Przekroczono limit zapytań do Claude API. Spróbuj ponownie za chwilę."));
         }
         catch (AnthropicApiException ex)
         {
-            return SkinGenerationResult.Failed($"Claude API zwróciło błąd: {ex.Message}");
+            return SkinGenerationResult.Failed(Loc.T("Claude API zwróciło błąd: {0}", ex.Message));
         }
         catch (HttpRequestException ex)
         {
-            return SkinGenerationResult.Failed($"Brak połączenia z Claude API: {ex.Message}");
+            return SkinGenerationResult.Failed(Loc.T("Brak połączenia z Claude API: {0}", ex.Message));
         }
 
         if (response.StopReason == "refusal")
         {
-            return SkinGenerationResult.Failed("Claude odmówił wygenerowania tej skórki. Spróbuj innego opisu.");
+            return SkinGenerationResult.Failed(Loc.T("Claude odmówił wygenerowania tej skórki. Spróbuj innego opisu."));
         }
 
         if (response.StopReason == "max_tokens")
         {
-            return SkinGenerationResult.Failed("Odpowiedź została ucięta (limit tokenów). Spróbuj krótszego opisu.");
+            return SkinGenerationResult.Failed(Loc.T("Odpowiedź została ucięta (limit tokenów). Spróbuj krótszego opisu."));
         }
 
         var json = string.Concat(response.Content
@@ -89,7 +88,7 @@ public sealed class ClaudeSkinGenerator
         catch (JsonException ex)
         {
             // Colours are validated here rather than by the schema (structured outputs reject "pattern").
-            return new SkinGenerationResult(null, json, $"Wygenerowany JSON jest niepoprawny: {ex.Message}");
+            return new SkinGenerationResult(null, json, Loc.T("Wygenerowany JSON jest niepoprawny: {0}", ex.Message));
         }
     }
 }

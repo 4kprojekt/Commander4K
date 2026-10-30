@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Management;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Interop;
 using Commander4K.Plugins.BuiltIn.SystemInfo;
@@ -21,11 +22,11 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
 
     public string DisplayName => "Task manager";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.taskmanager", "Menedżer zadań", "Drzewo procesów, zasoby i biblioteki; zamykanie procesów.", PluginPermissions.ProcessRead, PluginPermissions.ProcessControl);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.taskmanager", Loc.T("Menedżer zadań"), Loc.T("Drzewo procesów, zasoby i biblioteki; zamykanie procesów."), PluginPermissions.ProcessRead, PluginPermissions.ProcessControl);
 
-    public string Title => "Menedżer zadań";
+    public string Title => Loc.T("Menedżer zadań");
 
-    public string Description => "Drzewo procesów z podprocesami, CPU, pamięć, zasoby i powiązane biblioteki DLL.";
+    public string Description => Loc.T("Drzewo procesów z podprocesami, CPU, pamięć, zasoby i powiązane biblioteki DLL.");
 
     public IPanelSession CreateSession(PanelRequest request, IPluginHost host) => new Session(host);
 
@@ -36,12 +37,12 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
 
         private static readonly ColumnDefinition[] Columns =
         [
-            new("name", "Proces", ColumnAlignment.Left, 280),
+            new("name", Loc.T("Proces"), ColumnAlignment.Left, 280),
             new("pid", "PID", ColumnAlignment.Right, 70),
             new("cpu", "CPU", ColumnAlignment.Right, 70),
-            new("memory", "Pamięć", ColumnAlignment.Right, 100),
-            new("threads", "Wątki", ColumnAlignment.Right, 60),
-            new("handles", "Uchwyty", ColumnAlignment.Right, 70),
+            new("memory", Loc.T("Pamięć"), ColumnAlignment.Right, 100),
+            new("threads", Loc.T("Wątki"), ColumnAlignment.Right, 60),
+            new("handles", Loc.T("Uchwyty"), ColumnAlignment.Right, 70),
         ];
 
         // PID → (CPU time, sample time) from the previous refresh, for CPU %.
@@ -51,10 +52,10 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
 
         public IReadOnlyList<PanelAction> Actions { get; } =
         [
-            new("kill", "Zakończ proces", "Delete", RequiresConfirmation: true),
-            new("killTree", "Zakończ z podprocesami", "Shift+Delete", RequiresConfirmation: true),
-            new("goto", "Pokaż plik w panelu", "Ctrl+Enter"),
-            new("modules", "Lista bibliotek (raport)", "F3"),
+            new("kill", Loc.T("Zakończ proces"), "Delete", RequiresConfirmation: true),
+            new("killTree", Loc.T("Zakończ z podprocesami"), "Shift+Delete", RequiresConfirmation: true),
+            new("goto", Loc.T("Pokaż plik w panelu"), "Ctrl+Enter"),
+            new("modules", Loc.T("Lista bibliotek (raport)"), "F3"),
         ];
 
         public Task<PanelSnapshot> LoadAsync(PanelRequest request, IProgress<string>? progress, CancellationToken cancellationToken)
@@ -113,7 +114,7 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
             }
 
             return Task.FromResult(new PanelSnapshot(Columns, rows,
-                $"{rows.Count} procesów · CPU {totalCpu:0}% · pamięć robocza {SystemInfoPanelPlugin.Bytes(totalMemory)} · odświeżanie co 2 s"));
+                Loc.P(rows.Count, "{0} proces|{0} procesy|{0} procesów") + Loc.T(" · CPU {0:0}% · pamięć robocza {1} · odświeżanie co 2 s", totalCpu, SystemInfoPanelPlugin.Bytes(totalMemory))));
         }
 
         public Task<PanelDetails?> GetDetailsAsync(string rowId, CancellationToken cancellationToken) =>
@@ -123,46 +124,46 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
                 using var process = TryGetProcess(pid);
                 if (process is null)
                 {
-                    return new PanelDetails([new PanelDetailSection("Proces", [new("Stan", "zakończony")])]);
+                    return new PanelDetails([new PanelDetailSection(Loc.T("Proces"), [new(Loc.T("Stan"), Loc.T("zakończony"))])]);
                 }
 
                 var sections = new List<PanelDetailSection>();
                 var path = ProcessNative.GetImagePath(pid);
-                var file = new List<KeyValuePair<string, string>> { new("Ścieżka", path ?? "(brak dostępu)") };
+                var file = new List<KeyValuePair<string, string>> { new(Loc.T("Ścieżka"), path ?? Loc.T("(brak dostępu)")) };
                 if (path is not null && File.Exists(path))
                 {
                     var version = FileVersionInfo.GetVersionInfo(path);
                     var info = new FileInfo(path);
-                    file.Add(new("Opis", version.FileDescription ?? string.Empty));
-                    file.Add(new("Firma", version.CompanyName ?? string.Empty));
-                    file.Add(new("Produkt", $"{version.ProductName} {version.ProductVersion}"));
-                    file.Add(new("Wersja pliku", version.FileVersion ?? string.Empty));
-                    file.Add(new("Rozmiar", SystemInfoPanelPlugin.Bytes(info.Length)));
-                    file.Add(new("Zmodyfikowano", info.LastWriteTime.ToString("g", CultureInfo.CurrentCulture)));
+                    file.Add(new(Loc.T("Opis"), version.FileDescription ?? string.Empty));
+                    file.Add(new(Loc.T("Firma"), version.CompanyName ?? string.Empty));
+                    file.Add(new(Loc.T("Produkt"), $"{version.ProductName} {version.ProductVersion}"));
+                    file.Add(new(Loc.T("Wersja pliku"), version.FileVersion ?? string.Empty));
+                    file.Add(new(Loc.T("Rozmiar"), SystemInfoPanelPlugin.Bytes(info.Length)));
+                    file.Add(new(Loc.T("Zmodyfikowano"), info.LastWriteTime.ToString("g", CultureInfo.CurrentCulture)));
                 }
 
-                file.Add(new("Linia poleceń", CommandLine(pid) ?? "(brak dostępu)"));
-                sections.Add(new PanelDetailSection("Plik wykonywalny", file));
+                file.Add(new(Loc.T("Linia poleceń"), CommandLine(pid) ?? Loc.T("(brak dostępu)")));
+                sections.Add(new PanelDetailSection(Loc.T("Plik wykonywalny"), file));
 
                 var resources = new List<KeyValuePair<string, string>>
                 {
-                    new("Pamięć robocza", SystemInfoPanelPlugin.Bytes(process.WorkingSet64)),
-                    new("Pamięć prywatna", SystemInfoPanelPlugin.Bytes(process.PrivateMemorySize64)),
-                    new("Szczyt pamięci roboczej", SystemInfoPanelPlugin.Bytes(process.PeakWorkingSet64)),
-                    new("Pamięć wirtualna", SystemInfoPanelPlugin.Bytes(process.VirtualMemorySize64)),
-                    new("Uchwyty", process.HandleCount.ToString(CultureInfo.CurrentCulture)),
-                    new("Wątki", process.Threads.Count.ToString(CultureInfo.CurrentCulture)),
-                    new("Sesja", process.SessionId.ToString(CultureInfo.CurrentCulture)),
+                    new(Loc.T("Pamięć robocza"), SystemInfoPanelPlugin.Bytes(process.WorkingSet64)),
+                    new(Loc.T("Pamięć prywatna"), SystemInfoPanelPlugin.Bytes(process.PrivateMemorySize64)),
+                    new(Loc.T("Szczyt pamięci roboczej"), SystemInfoPanelPlugin.Bytes(process.PeakWorkingSet64)),
+                    new(Loc.T("Pamięć wirtualna"), SystemInfoPanelPlugin.Bytes(process.VirtualMemorySize64)),
+                    new(Loc.T("Uchwyty"), process.HandleCount.ToString(CultureInfo.CurrentCulture)),
+                    new(Loc.T("Wątki"), process.Threads.Count.ToString(CultureInfo.CurrentCulture)),
+                    new(Loc.T("Sesja"), process.SessionId.ToString(CultureInfo.CurrentCulture)),
                 };
                 if (ProcessNative.GetGuiObjects(pid) is var (gdi, user))
                 {
-                    resources.Add(new("Obiekty GDI / USER", $"{gdi} / {user}"));
+                    resources.Add(new(Loc.T("Obiekty GDI / USER"), $"{gdi} / {user}"));
                 }
 
-                TryAdd(resources, "Uruchomiono", () => process.StartTime.ToString("g", CultureInfo.CurrentCulture));
-                TryAdd(resources, "Czas procesora", () => process.TotalProcessorTime.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture));
-                TryAdd(resources, "Priorytet", () => process.PriorityClass.ToString());
-                sections.Add(new PanelDetailSection("Zasoby", resources));
+                TryAdd(resources, Loc.T("Uruchomiono"), () => process.StartTime.ToString("g", CultureInfo.CurrentCulture));
+                TryAdd(resources, Loc.T("Czas procesora"), () => process.TotalProcessorTime.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture));
+                TryAdd(resources, Loc.T("Priorytet"), () => process.PriorityClass.ToString());
+                sections.Add(new PanelDetailSection(Loc.T("Zasoby"), resources));
 
                 var threads = new List<KeyValuePair<string, string>>();
                 foreach (ProcessThread thread in process.Threads)
@@ -177,8 +178,8 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
                     threads.Add(new(thread.Id.ToString(CultureInfo.InvariantCulture), $"{state}, priorytet {thread.CurrentPriority}"));
                 }
 
-                sections.Add(new PanelDetailSection($"Wątki ({process.Threads.Count})", threads));
-                sections.Add(new PanelDetailSection("Biblioteki (DLL)", Modules(process)));
+                sections.Add(new PanelDetailSection(Loc.T("Wątki ({0})", process.Threads.Count), threads));
+                sections.Add(new PanelDetailSection(Loc.T("Biblioteki (DLL)"), Modules(process)));
                 return new PanelDetails(sections);
             }, cancellationToken);
 
@@ -203,7 +204,7 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
                         }
                     }
 
-                    return failures.Count == 0 ? null : "Nie udało się zakończyć:\n" + string.Join('\n', failures);
+                    return failures.Count == 0 ? null : Loc.T("Nie udało się zakończyć:\n") + string.Join('\n', failures);
 
                 case "goto":
                     if (ProcessNative.GetImagePath(pids[0]) is { } path)
@@ -212,14 +213,14 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
                         return null;
                     }
 
-                    return "Brak dostępu do ścieżki tego procesu.";
+                    return Loc.T("Brak dostępu do ścieżki tego procesu.");
 
                 case "modules":
                     using (var process = TryGetProcess(pids[0]))
                     {
                         if (process is null)
                         {
-                            return "Proces już nie istnieje.";
+                            return Loc.T("Proces już nie istnieje.");
                         }
 
                         var lines = Modules(process).Select(m => $"{m.Key,-40} {m.Value}");
@@ -242,7 +243,7 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
                 {
                     if (modules.Count >= MaxModules)
                     {
-                        modules.Add(new("…", "lista skrócona"));
+                        modules.Add(new("…", Loc.T("lista skrócona")));
                         break;
                     }
 
@@ -252,7 +253,7 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
             catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or NotSupportedException)
             {
                 // Access denied (elevated / protected process) or a process of another architecture.
-                modules.Add(new("Brak dostępu", ex.Message));
+                modules.Add(new(Loc.T("Brak dostępu"), ex.Message));
             }
 
             return modules;
@@ -292,7 +293,7 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
             }
             catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or NotSupportedException)
             {
-                items.Add(new(key, "(brak dostępu)"));
+                items.Add(new(key, Loc.T("(brak dostępu)")));
             }
         }
 

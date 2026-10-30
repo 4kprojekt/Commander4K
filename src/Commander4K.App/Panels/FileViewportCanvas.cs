@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Commander4K.App.Theming;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Theming;
 using Commander4K.PluginSdk;
 
@@ -335,7 +336,7 @@ public sealed class FileViewportCanvas : Control
         context.FillRectangle(b.HeaderBackground, layout.HeaderArea);
         var arrow = sort.Descending ? " ▼" : " ▲";
         var y = layout.HeaderArea.Y;
-        DrawText(context, b, "Nazwa" + (sort.Column is SortColumn.Name or SortColumn.Extension ? arrow : ""), b.HeaderForeground,
+        DrawText(context, b, Loc.T("Nazwa") + (sort.Column is SortColumn.Name or SortColumn.Extension ? arrow : ""), b.HeaderForeground,
             layout.Inner.X + 6, y, layout.NameRight - layout.Inner.X - 12, b.BoldTypeface);
         foreach (var extra in layout.Extras)
         {
@@ -344,13 +345,13 @@ public sealed class FileViewportCanvas : Control
         }
         if (layout.SizeWidth > 0)
         {
-            DrawText(context, b, "Rozmiar" + (sort.Column == SortColumn.Size ? arrow : ""), b.HeaderForeground,
+            DrawText(context, b, Loc.T("Rozmiar") + (sort.Column == SortColumn.Size ? arrow : ""), b.HeaderForeground,
                 layout.SizeX, y, layout.SizeWidth, b.BoldTypeface, TextAlignment.Right);
         }
 
         if (layout.DateWidth > 0)
         {
-            DrawText(context, b, "Data" + (sort.Column == SortColumn.Date ? arrow : ""), b.HeaderForeground,
+            DrawText(context, b, Loc.T("Data") + (sort.Column == SortColumn.Date ? arrow : ""), b.HeaderForeground,
                 layout.DateX, y, layout.DateWidth, b.BoldTypeface);
         }
 
@@ -421,7 +422,7 @@ public sealed class FileViewportCanvas : Control
     {
         if (entry.Kind == VfsEntryKind.ParentLink)
         {
-            return "<W GÓRĘ>";
+            return Loc.T("<W GÓRĘ>");
         }
 
         if (entry.IsContainer)
@@ -434,10 +435,10 @@ public sealed class FileViewportCanvas : Control
             return entry.Kind switch
             {
                 VfsEntryKind.Drive when entry.Size > 0 => FormatSize(entry.Size),
-                VfsEntryKind.Host => "<HOST>",
-                VfsEntryKind.Share => "<UDZIAŁ>",
-                VfsEntryKind.RegistryKey => "<KLUCZ>",
-                _ => "<KATALOG>",
+                VfsEntryKind.Host => Loc.T("<HOST>"),
+                VfsEntryKind.Share => Loc.T("<UDZIAŁ>"),
+                VfsEntryKind.RegistryKey => Loc.T("<KLUCZ>"),
+                _ => Loc.T("<KATALOG>"),
             };
         }
 

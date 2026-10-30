@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Security;
 using System.Text;
 using System.Threading.Channels;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Microsoft.Win32;
 
@@ -24,7 +25,7 @@ public sealed class WindowsRegistryVfsPlugin : IVfsProviderPlugin, ISearchProvid
 
     public string DisplayName => "Windows Registry";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.registry", "Rejestr Windows", "Przeglądanie, edycja i przeszukiwanie rejestru.", PluginPermissions.SystemInfo, PluginPermissions.FileWrite);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.registry", Loc.T("Rejestr Windows"), Loc.T("Przeglądanie, edycja i przeszukiwanie rejestru."), PluginPermissions.SystemInfo, PluginPermissions.FileWrite);
 
     public IReadOnlyList<string> Schemes { get; } = [RegistryPath.Scheme];
 

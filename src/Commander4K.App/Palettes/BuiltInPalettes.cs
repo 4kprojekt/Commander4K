@@ -2,6 +2,7 @@ using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
 using Commander4K.Core.Configuration;
 using Commander4K.Core.Input;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.App.Palettes;
@@ -60,17 +61,17 @@ public sealed class QuickActionsPalette(IShell shell) : IPalettePlugin
 
     public string DisplayName => Title;
 
-    public PluginManifest Manifest { get; } = PaletteManifest.Create("builtin.palette.quick", "Szybkie akcje", "Przyciski wybranych komend.");
+    public PluginManifest Manifest { get; } = PaletteManifest.Create("builtin.palette.quick", Loc.T("Szybkie akcje"), Loc.T("Przyciski wybranych komend."));
 
-    public string Title => "Szybkie akcje";
+    public string Title => Loc.T("Szybkie akcje");
 
     public PaletteDock DefaultDock => PaletteDock.BetweenPanels;
 
     public IReadOnlyList<PaletteAction> Actions { get; } =
     [
-        new("add", "Dodaj akcję", "+"),
-        new("up", "Przesuń wyżej", "↑", ForItem: true),
-        new("remove", "Usuń z palety", "✕", ForItem: true),
+        new("add", Loc.T("Dodaj akcję"), "+"),
+        new("up", Loc.T("Przesuń wyżej"), "↑", ForItem: true),
+        new("remove", Loc.T("Usuń z palety"), "✕", ForItem: true),
     ];
 
     public event Action? ItemsChanged;
@@ -101,7 +102,7 @@ public sealed class QuickActionsPalette(IShell shell) : IPalettePlugin
                 var choices = shell.App.ListCommands().Where(c => !ids.Contains(c.Id, StringComparer.OrdinalIgnoreCase))
                     .OrderBy(c => c.Description, StringComparer.CurrentCulture)
                     .Select(c => new PickerItem(c.Description, c.Id, c.Id)).ToList();
-                if (await shell.PickAsync("Dodaj akcję do palety", choices) is not { } choice)
+                if (await shell.PickAsync(Loc.T("Dodaj akcję do palety"), choices) is not { } choice)
                 {
                     return;
                 }
@@ -136,17 +137,17 @@ public sealed class FavoritesPalette(IShell shell) : IPalettePlugin
 
     public string DisplayName => Title;
 
-    public PluginManifest Manifest { get; } = PaletteManifest.Create("builtin.palette.favorites", "Ulubione", "Ulubione foldery i lokalizacje.");
+    public PluginManifest Manifest { get; } = PaletteManifest.Create("builtin.palette.favorites", Loc.T("Ulubione"), Loc.T("Ulubione foldery i lokalizacje."));
 
-    public string Title => "Ulubione";
+    public string Title => Loc.T("Ulubione");
 
     public PaletteDock DefaultDock => PaletteDock.Left;
 
     public IReadOnlyList<PaletteAction> Actions { get; } =
     [
-        new("add", "Dodaj bieżący folder", "+"),
-        new("rename", "Zmień nazwę", "✎", ForItem: true),
-        new("remove", "Usuń z ulubionych", "✕", ForItem: true),
+        new("add", Loc.T("Dodaj bieżący folder"), "+"),
+        new("rename", Loc.T("Zmień nazwę"), "✎", ForItem: true),
+        new("remove", Loc.T("Usuń z ulubionych"), "✕", ForItem: true),
     ];
 
     public event Action? ItemsChanged;
@@ -168,14 +169,14 @@ public sealed class FavoritesPalette(IShell shell) : IPalettePlugin
             case "add" when host.ActivePath is { } path:
                 if (favorites.Any(f => string.Equals(f.Path, path, StringComparison.OrdinalIgnoreCase)))
                 {
-                    host.Notify("Ten folder już jest w ulubionych.");
+                    host.Notify(Loc.T("Ten folder już jest w ulubionych."));
                     return;
                 }
 
                 favorites.Add(new FavoriteSetting { Name = PaletteManifest.ShortName(path), Path = path });
                 break;
             case "rename" when Find(itemId) is { } favorite:
-                if (await host.PromptAsync("Zmień nazwę", favorite.Path, favorite.Name) is not { Length: > 0 } newName)
+                if (await host.PromptAsync(Loc.T("Zmień nazwę"), favorite.Path, favorite.Name) is not { Length: > 0 } newName)
                 {
                     return;
                 }
@@ -204,17 +205,17 @@ public sealed class ViewsPalette(IShell shell) : IPalettePlugin
 
     public string DisplayName => Title;
 
-    public PluginManifest Manifest { get; } = PaletteManifest.Create("builtin.palette.views", "Widoki", "Zapisane układy obu paneli.");
+    public PluginManifest Manifest { get; } = PaletteManifest.Create("builtin.palette.views", Loc.T("Widoki"), Loc.T("Zapisane układy obu paneli."));
 
-    public string Title => "Widoki";
+    public string Title => Loc.T("Widoki");
 
     public PaletteDock DefaultDock => PaletteDock.Bottom;
 
     public IReadOnlyList<PaletteAction> Actions { get; } =
     [
-        new("save", "Zapisz bieżący widok", "+"),
-        new("overwrite", "Nadpisz bieżącym układem", "⟲", ForItem: true),
-        new("remove", "Usuń widok", "✕", ForItem: true),
+        new("save", Loc.T("Zapisz bieżący widok"), "+"),
+        new("overwrite", Loc.T("Nadpisz bieżącym układem"), "⟲", ForItem: true),
+        new("remove", Loc.T("Usuń widok"), "✕", ForItem: true),
     ];
 
     public event Action? ItemsChanged;
@@ -236,7 +237,7 @@ public sealed class ViewsPalette(IShell shell) : IPalettePlugin
         switch (actionId)
         {
             case "save":
-                if (await host.PromptAsync("Zapisz widok", "Nazwa widoku (np. „Projekt + logi”):", $"Widok {views.Count + 1}") is not { Length: > 0 } name)
+                if (await host.PromptAsync(Loc.T("Zapisz widok"), Loc.T("Nazwa widoku (np. „Projekt + logi”):"), Loc.T("Widok {0}", views.Count + 1)) is not { Length: > 0 } name)
                 {
                     return;
                 }
@@ -270,9 +271,9 @@ public sealed class RecentPalette(IShell shell) : IPalettePlugin, INavigationAwa
 
     public string DisplayName => Title;
 
-    public PluginManifest Manifest { get; } = PaletteManifest.Create("builtin.palette.recent", "Ostatnie", "Najczęściej i najświeżej odwiedzane foldery.");
+    public PluginManifest Manifest { get; } = PaletteManifest.Create("builtin.palette.recent", Loc.T("Ostatnie"), Loc.T("Najczęściej i najświeżej odwiedzane foldery."));
 
-    public string Title => "Ostatnie";
+    public string Title => Loc.T("Ostatnie");
 
     public PaletteDock DefaultDock => PaletteDock.Hidden;
 

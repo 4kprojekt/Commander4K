@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using System.Net;
 using System.Runtime.CompilerServices;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using FluentFTP;
 using Renci.SshNet;
@@ -139,7 +140,7 @@ internal sealed class SftpSession(SftpClient client) : IRemoteSession
         {
             if (!overwrite || isDirectory)
             {
-                throw new IOException($"„{destinationPath}” już istnieje.");
+                throw new IOException(Loc.T("„{0}” już istnieje.", destinationPath));
             }
 
             await client.DeleteFileAsync(destinationPath, cancellationToken).ConfigureAwait(false);
@@ -252,7 +253,7 @@ internal sealed class FtpSession(AsyncFtpClient client) : IRemoteSession
                 await using var sink = pipe.Writer.AsStream(leaveOpen: true);
                 if (!await client.DownloadStream(sink, remotePath, 0, null, abort.Token, 0).ConfigureAwait(false))
                 {
-                    throw new IOException($"Nie udało się pobrać „{remotePath}”.");
+                    throw new IOException(Loc.T("Nie udało się pobrać „{0}”.", remotePath));
                 }
             }
             catch (Exception ex)
@@ -275,7 +276,7 @@ internal sealed class FtpSession(AsyncFtpClient client) : IRemoteSession
         {
             if (!overwrite && await client.FileExists(remotePath, cancellationToken).ConfigureAwait(false))
             {
-                throw new IOException($"„{remotePath}” już istnieje.");
+                throw new IOException(Loc.T("„{0}” już istnieje.", remotePath));
             }
         }
         catch
@@ -294,7 +295,7 @@ internal sealed class FtpSession(AsyncFtpClient client) : IRemoteSession
                 var status = await client.UploadStream(source, remotePath, FtpRemoteExists.Overwrite, false, null, abort.Token).ConfigureAwait(false);
                 if (status != FtpStatus.Success)
                 {
-                    throw new IOException($"Serwer FTP nie przyjął „{remotePath}” ({status}).");
+                    throw new IOException(Loc.T("Serwer FTP nie przyjął „{0}” ({1}).", remotePath, status));
                 }
 
                 await pipe.Reader.CompleteAsync().ConfigureAwait(false);
@@ -321,7 +322,7 @@ internal sealed class FtpSession(AsyncFtpClient client) : IRemoteSession
             if (!await client.CreateDirectory(remotePath, cancellationToken).ConfigureAwait(false)
                 && !await client.DirectoryExists(remotePath, cancellationToken).ConfigureAwait(false))
             {
-                throw new IOException($"Serwer FTP nie utworzył folderu „{remotePath}” (brak uprawnień?).");
+                throw new IOException(Loc.T("Serwer FTP nie utworzył folderu „{0}” (brak uprawnień?).", remotePath));
             }
         }, cancellationToken);
 
@@ -338,7 +339,7 @@ internal sealed class FtpSession(AsyncFtpClient client) : IRemoteSession
                 : await client.MoveFile(sourcePath, destinationPath, policy, cancellationToken).ConfigureAwait(false);
             if (!moved)
             {
-                throw new IOException($"„{destinationPath}” już istnieje.");
+                throw new IOException(Loc.T("„{0}” już istnieje.", destinationPath));
             }
         }, cancellationToken);
 

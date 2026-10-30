@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using Commander4K.App.Composition;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Streaming;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
@@ -165,7 +166,7 @@ public sealed class PanelTab
         }
         catch (Exception ex)
         {
-            Status = $"Nie udało się policzyć rozmiaru: {ex.Message}";
+            Status = Loc.T("Nie udało się policzyć rozmiaru: {0}", ex.Message);
         }
         finally
         {
@@ -274,7 +275,7 @@ public sealed class PanelTab
             if (generation == _generation)
             {
                 IsLoading = false;
-                Error = "Wymagane logowanie: " + (ex.Realm ?? ex.Path);
+                Error = Loc.T("Wymagane logowanie: ") + (ex.Realm ?? ex.Path);
                 AuthenticationRequired?.Invoke(this, ex);
             }
         }

@@ -1,3 +1,4 @@
+using Commander4K.Core.Localization;
 namespace Commander4K.Core.Theming;
 
 /// <summary>Skins shipped with the application. Colours of the retro skins use the standard 16-colour CGA/VGA palette.</summary>
@@ -29,7 +30,7 @@ public static class BuiltInSkins
     public static Skin ModernDark { get; } = new()
     {
         Id = ModernDarkId,
-        DisplayName = "Nowoczesny (ciemny)",
+        DisplayName = Loc.T("Nowoczesny (ciemny)"),
         Typography = new SkinTypography { FontFamily = "Segoe UI Variable Text, Segoe UI, Inter", FontSize = 13 },
         Chrome = new SkinChrome { BorderStyle = PanelBorderStyle.Single, CornerRadius = 6, ThemeVariant = "Dark" },
         Palette = new SkinPalette
@@ -66,7 +67,7 @@ public static class BuiltInSkins
     public static Skin ModernLight { get; } = new()
     {
         Id = ModernLightId,
-        DisplayName = "Nowoczesny (jasny)",
+        DisplayName = Loc.T("Nowoczesny (jasny)"),
         Typography = new SkinTypography { FontFamily = "Segoe UI Variable Text, Segoe UI, Inter", FontSize = 13 },
         Chrome = new SkinChrome { BorderStyle = PanelBorderStyle.Single, CornerRadius = 6, ThemeVariant = "Light" },
         Palette = new SkinPalette
@@ -186,7 +187,7 @@ public static class BuiltInSkins
     public static Skin TotalCommanderClassic { get; } = new()
     {
         Id = TotalCommanderClassicId,
-        DisplayName = "Total Commander (klasyczny)",
+        DisplayName = Loc.T("Total Commander (klasyczny)"),
         Typography = new SkinTypography { FontFamily = "Segoe UI, Tahoma, MS Sans Serif", FontSize = 12, RowHeightFactor = 1.45 },
         Chrome = new SkinChrome { BorderStyle = PanelBorderStyle.Single, ThemeVariant = "Light" },
         Palette = new SkinPalette

@@ -7,6 +7,7 @@ using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Commander4K.App.Composition;
 using Commander4K.App.Theming;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Theming;
 
 namespace Commander4K.App.Dialogs;
@@ -21,7 +22,7 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
     private readonly TextBlock _warnings;
     private readonly TextBlock _info;
 
-    public SkinPickerDialog(AppHost host, SkinManager skins) : base("Skórki", skins.Current, 640)
+    public SkinPickerDialog(AppHost host, SkinManager skins) : base(Loc.T("Skórki"), skins.Current, 640)
     {
         _host = host;
         _skins = skins;
@@ -30,24 +31,24 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
         _list.SelectionChanged += (_, _) => PreviewSelected();
         _warnings = new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12).Margin(0, 6, 0, 0);
         _info = new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12).Opacity(0.75).Margin(0, 6, 0, 0)
-            .Text($"Własne skórki: pliki JSON w folderze {host.Config.SkinsDirectory} (schemat: {SkinSchema.FileName}).");
+            .Text(Loc.T("Własne skórki: pliki JSON w folderze {0} (schemat: {1}).", host.Config.SkinsDirectory, SkinSchema.FileName));
 
         SetBody(
-            Label("Wybierz skórkę — podgląd działa na żywo:"),
+            Label(Loc.T("Wybierz skórkę — podgląd działa na żywo:")),
             _list,
             _warnings,
             new WrapPanel().Margin(0, 10, 0, 0).Children(
-                Action("✨ Generuj z AI…", GenerateWithAiAsync),
-                Action("📋 Kopiuj prompt dla Claude", CopyPromptAsync),
-                Action("📤 Eksportuj do edycji", ExportSelectedAsync),
-                Action("📂 Otwórz folder skórek", () =>
+                Action(Loc.T("✨ Generuj z AI…"), GenerateWithAiAsync),
+                Action(Loc.T("📋 Kopiuj prompt dla Claude"), CopyPromptAsync),
+                Action(Loc.T("📤 Eksportuj do edycji"), ExportSelectedAsync),
+                Action(Loc.T("📂 Otwórz folder skórek"), () =>
                 {
                     OpenFolder(host.Config.SkinsDirectory);
                     return Task.CompletedTask;
                 }),
-                Action("🔄 Przeładuj", ReloadAsync)),
+                Action(Loc.T("🔄 Przeładuj"), ReloadAsync)),
             _info,
-            ButtonRow(("OK", Accept, true), ("Anuluj", Cancel, false)));
+            ButtonRow(("OK", Accept, true), (Loc.T("Anuluj"), Cancel, false)));
         Fill(_original.Id);
     }
 
@@ -77,7 +78,7 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
             Content = new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Children(
                 Swatch(skin),
                 new TextBlock().Text(skin.DisplayName).VerticalAlignment(VerticalAlignment.Center),
-                new TextBlock().Text(builtIn.Contains(skin.Id) ? "" : "(własna)").Opacity(0.6).VerticalAlignment(VerticalAlignment.Center)),
+                new TextBlock().Text(builtIn.Contains(skin.Id) ? "" : Loc.T("(własna)")).Opacity(0.6).VerticalAlignment(VerticalAlignment.Center)),
         }).ToList();
         _list.ItemsSource = items;
         _list.SelectedItem = items.FirstOrDefault(i => string.Equals(((Skin)i.Tag!).Id, selectId, StringComparison.OrdinalIgnoreCase)) ?? items.FirstOrDefault();
@@ -106,7 +107,7 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
 
         _skins.Preview(skin);
         var warnings = SkinValidator.Validate(skin);
-        _warnings.Text = warnings.Count == 0 ? "✓ Kontrast i czytelność w porządku." : "⚠ " + string.Join("\n⚠ ", warnings);
+        _warnings.Text = warnings.Count == 0 ? Loc.T("✓ Kontrast i czytelność w porządku.") : "⚠ " + string.Join("\n⚠ ", warnings);
     }
 
     private void Accept()
@@ -134,8 +135,8 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
     private async Task CopyPromptAsync()
     {
         await CopyToClipboardAsync(this, SkinPrompt.ForChat(null));
-        _info.Text = "Skopiowano prompt. Wklej go w Claude.ai lub Claude Design, opisz swój pomysł, a gotowy plik JSON " +
-            $"zapisz w {_host.Config.SkinsDirectory} i kliknij „Przeładuj”.";
+        _info.Text = Loc.T("Skopiowano prompt. Wklej go w Claude.ai lub Claude Design, opisz swój pomysł, a gotowy plik JSON ") +
+            Loc.T("zapisz w {0} i kliknij „Przeładuj”.", _host.Config.SkinsDirectory);
     }
 
     private async Task ExportSelectedAsync()
@@ -145,11 +146,11 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
             return;
         }
 
-        var copy = skin with { Id = skin.Id + "-wlasna", DisplayName = skin.DisplayName + " (kopia)" };
+        var copy = skin with { Id = skin.Id + "-wlasna", DisplayName = skin.DisplayName + Loc.T(" (kopia)") };
         var path = Path.Combine(_host.Config.SkinsDirectory, copy.Id + ".json");
         await SkinCatalog.ExportAsync(copy, path);
         await ReloadAsync();
-        _info.Text = $"Zapisano {path}. Edytuj plik i kliknij „Przeładuj”.";
+        _info.Text = Loc.T("Zapisano {0}. Edytuj plik i kliknij „Przeładuj”.", path);
     }
 
     private async Task ReloadAsync()
@@ -188,7 +189,7 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
     private CancellationTokenSource? _running;
     private Skin? _result;
 
-    public AiSkinDialog(AppHost host, SkinManager skins) : base("Generuj skórkę z AI", skins.Current, 600)
+    public AiSkinDialog(AppHost host, SkinManager skins) : base(Loc.T("Generuj skórkę z AI"), skins.Current, 600)
     {
         _host = host;
         _skins = skins;
@@ -197,25 +198,25 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
             .AcceptsReturn(true)
             .TextWrapping(TextWrapping.Wrap)
             .Height(80)
-            .PlaceholderText("np. „cyberpunk: neonowy róż i cyjan na granatowym tle” albo „sepia jak stary terminal”");
+            .PlaceholderText(Loc.T("np. „cyberpunk: neonowy róż i cyjan na granatowym tle” albo „sepia jak stary terminal”"));
         _status = new TextBlock().TextWrapping(TextWrapping.Wrap).Margin(0, 8, 0, 0)
-            .Text($"Model: {ClaudeSkinGenerator.Model}. Wymaga klucza ANTHROPIC_API_KEY (lub „ant auth login”). Generowanie trwa zwykle kilkanaście sekund i jest płatne wg cennika API.");
-        _generate = new Button().Content("✨ Generuj").OnClick(async _ => await GenerateAsync());
-        _save = new Button().Content("💾 Zapisz skórkę").IsEnabled(false).OnClick(async _ => await SaveAsync());
+            .Text(Loc.T("Model: {0}. Wymaga klucza ANTHROPIC_API_KEY (lub „ant auth login”). Generowanie trwa zwykle kilkanaście sekund i jest płatne wg cennika API.", ClaudeSkinGenerator.Model));
+        _generate = new Button().Content(Loc.T("✨ Generuj")).OnClick(async _ => await GenerateAsync());
+        _save = new Button().Content(Loc.T("💾 Zapisz skórkę")).IsEnabled(false).OnClick(async _ => await SaveAsync());
 
         SetBody(
-            Label("Opisz wygląd skórki:"),
+            Label(Loc.T("Opisz wygląd skórki:")),
             _description,
             new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Margin(0, 8, 0, 0).Children(
                 _generate,
-                new Button().Content("📋 Kopiuj prompt (Claude.ai / Claude Design)").OnClick(async _ => await CopyPromptAsync())),
+                new Button().Content(Loc.T("📋 Kopiuj prompt (Claude.ai / Claude Design)")).OnClick(async _ => await CopyPromptAsync())),
             _status,
             new StackPanel()
                 .Orientation(Orientation.Horizontal)
                 .HorizontalAlignment(HorizontalAlignment.Right)
                 .Spacing(8)
                 .Margin(0, 14, 0, 0)
-                .Children(_save, new Button().Content("Zamknij").OnClick(_ => Discard())));
+                .Children(_save, new Button().Content(Loc.T("Zamknij")).OnClick(_ => Discard())));
         Opened += (_, _) => _description.Focus();
         Closed += (_, _) => _running?.Cancel();
     }
@@ -252,7 +253,7 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
         _generate.IsEnabled = false;
         _save.IsEnabled = false;
         _status.Foreground = Brushes.FileForeground;
-        _status.Text = "⏳ Claude projektuje skórkę… (Esc – anuluj)";
+        _status.Text = Loc.T("⏳ Claude projektuje skórkę… (Esc – anuluj)");
         try
         {
             var result = await _generator.GenerateAsync(description, _running.Token);
@@ -261,7 +262,7 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
                 _result = skin;
                 _skins.Preview(skin);
                 var warnings = SkinValidator.Validate(skin);
-                _status.Text = $"✓ „{skin.DisplayName}” — podgląd jest widoczny w głównym oknie." +
+                _status.Text = Loc.T("✓ „{0}” — podgląd jest widoczny w głównym oknie.", skin.DisplayName) +
                     (warnings.Count == 0 ? "" : "\n⚠ " + string.Join("\n⚠ ", warnings));
                 _save.IsEnabled = true;
             }
@@ -273,7 +274,7 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
         }
         catch (OperationCanceledException)
         {
-            _status.Text = "Anulowano.";
+            _status.Text = Loc.T("Anulowano.");
         }
         finally
         {
@@ -305,8 +306,8 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
     private async Task CopyPromptAsync()
     {
         await SkinPickerDialog.CopyToClipboardAsync(this, SkinPrompt.ForChat(_description.Text));
-        _status.Text = $"Skopiowano prompt{(string.IsNullOrWhiteSpace(_description.Text) ? "" : " z Twoim opisem")}. " +
-            $"Wklej go w Claude.ai lub Claude Design; gotowy plik JSON zapisz w {_host.Config.SkinsDirectory}.";
+        _status.Text = (string.IsNullOrWhiteSpace(_description.Text) ? Loc.T("Skopiowano prompt. ") : Loc.T("Skopiowano prompt z Twoim opisem. ")) +
+            Loc.T("Wklej go w Claude.ai lub Claude Design; gotowy plik JSON zapisz w {0}.", _host.Config.SkinsDirectory);
     }
 
     private void Discard()

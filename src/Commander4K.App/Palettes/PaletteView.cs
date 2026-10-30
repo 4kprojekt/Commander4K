@@ -4,6 +4,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Commander4K.App.Theming;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Plugins;
 using Commander4K.PluginSdk;
 
@@ -137,7 +138,7 @@ public sealed class PaletteView : Border
                     var hint = _palette.Actions.FirstOrDefault(a => !a.ForItem);
                     _items.Children.Add(new TextBlock
                     {
-                        Text = hint is null ? "(pusto)" : $"(pusto — „{hint.Icon ?? hint.Title}” {hint.Title.ToLowerInvariant()})",
+                        Text = hint is null ? Loc.T("(pusto)") : Loc.T("(pusto — „{0}” {1})", hint.Icon ?? hint.Title, hint.Title.ToLowerInvariant()),
                         Foreground = _brushes.HiddenForeground,
                         FontSize = 11,
                         TextWrapping = TextWrapping.Wrap,

@@ -19,6 +19,7 @@ using Commander4K.App.Theming;
 using Commander4K.Core.Configuration;
 using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Security;
 using Commander4K.Core.Updates;
 using Commander4K.Core.Web;
@@ -40,16 +41,16 @@ public sealed class MainWindow : Window, IShell
 {
     private static readonly (string Key, string Label, string Command)[] FunctionKeys =
     [
-        ("1", "Ustawienia", CommandIds.Settings),
-        ("2", "Panele", CommandIds.PanelModes),
-        ("3", "Podgląd", CommandIds.View),
-        ("4", "Edycja", CommandIds.Edit),
-        ("5", "Kopiuj", CommandIds.Copy),
-        ("6", "Przenieś", CommandIds.Move),
-        ("7", "Katalog", CommandIds.MakeDirectory),
-        ("8", "Usuń", CommandIds.Delete),
+        ("1", Loc.T("Ustawienia"), CommandIds.Settings),
+        ("2", Loc.T("Panele"), CommandIds.PanelModes),
+        ("3", Loc.T("Podgląd"), CommandIds.View),
+        ("4", Loc.T("Edycja"), CommandIds.Edit),
+        ("5", Loc.T("Kopiuj"), CommandIds.Copy),
+        ("6", Loc.T("Przenieś"), CommandIds.Move),
+        ("7", Loc.T("Katalog"), CommandIds.MakeDirectory),
+        ("8", Loc.T("Usuń"), CommandIds.Delete),
         ("9", "Terminal", CommandIds.OpenTerminal),
-        ("10", "Wyjście", CommandIds.Exit),
+        ("10", Loc.T("Wyjście"), CommandIds.Exit),
     ];
 
     private readonly DispatcherTimer _jobsTimer;
@@ -88,7 +89,7 @@ public sealed class MainWindow : Window, IShell
         MinHeight = 420;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Content = new TextBlock()
-            .Text("Commander4K — uruchamianie…")
+            .Text(Loc.T("Commander4K — uruchamianie…"))
             .HorizontalAlignment(HorizontalAlignment.Center)
             .VerticalAlignment(VerticalAlignment.Center);
 
@@ -133,7 +134,7 @@ public sealed class MainWindow : Window, IShell
         }
         catch (Exception ex)
         {
-            Content = new SelectableTextBlock().Text("Nie udało się uruchomić Commander4K:\n\n" + ex).Margin(20).TextWrapping(TextWrapping.Wrap);
+            Content = new SelectableTextBlock().Text(Loc.T("Nie udało się uruchomić Commander4K:\n\n") + ex).Margin(20).TextWrapping(TextWrapping.Wrap);
         }
     }
 
@@ -261,7 +262,7 @@ public sealed class MainWindow : Window, IShell
             if (update is not null && update.Version.ToString() != settings.SkippedVersion)
             {
                 _pendingUpdate = update;
-                Notify($"⬆ Dostępna wersja {update.Version} — kliknij, aby zaktualizować");
+                Notify(Loc.T("⬆ Dostępna wersja {0} — kliknij, aby zaktualizować", update.Version));
                 _notificationTimer.Stop(); // Keep it visible until acted upon.
             }
         }
@@ -275,7 +276,7 @@ public sealed class MainWindow : Window, IShell
     private async Task CheckForUpdatesNowAsync()
     {
         var settings = _host!.Settings;
-        Notify("Sprawdzanie aktualizacji…");
+        Notify(Loc.T("Sprawdzanie aktualizacji…"));
         try
         {
             var update = await _host.Updates.CheckAsync(settings.UpdateRepository, AppVersion.Current, settings.IncludePrereleases, CancellationToken.None, UpdateService.DetectInstallKind(Environment.ProcessPath));
@@ -283,7 +284,7 @@ public sealed class MainWindow : Window, IShell
             await _host.SaveSettingsAsync();
             if (update is null)
             {
-                Notify($"Masz najnowszą wersję ({AppVersion.Display}).");
+                Notify(Loc.T("Masz najnowszą wersję ({0}).", AppVersion.Display));
                 return;
             }
 
@@ -330,7 +331,7 @@ public sealed class MainWindow : Window, IShell
 
     private static readonly IReadOnlyList<SettingChoice> DockChoices =
     [
-        new("bottom", "Na dole"), new("left", "Po lewej"), new("right", "Po prawej"), new("between", "Między panelami"), new("hidden", "Ukryta"),
+        new("bottom", Loc.T("Na dole")), new("left", Loc.T("Po lewej")), new("right", Loc.T("Po prawej")), new("between", Loc.T("Między panelami")), new("hidden", Loc.T("Ukryta")),
     ];
 
     private static string DockName(PaletteDock dock) => dock switch
@@ -378,8 +379,8 @@ public sealed class MainWindow : Window, IShell
         var columnSettings = _host!.ColumnPlugins.SelectMany(p => p.Columns.Select(c => new ActiveColumn(p, c))).Select(column => new SettingDescriptor(
             ColumnSettingPrefix + column.Key,
             SettingsCatalog.Columns,
-            $"Kolumna „{column.Definition.Header}”",
-            $"{column.Plugin.Manifest.Description} Wartości wczytują się w tle, najpierw dla widocznych wierszy.",
+            Loc.T("Kolumna „{0}”", column.Definition.Header),
+            Loc.T("{0} Wartości wczytują się w tle, najpierw dla widocznych wierszy.", column.Plugin.Manifest.Description),
             SettingKind.Toggle,
             s => s.Columns.Contains(column.Key, StringComparer.OrdinalIgnoreCase),
             (s, v) =>
@@ -395,14 +396,14 @@ public sealed class MainWindow : Window, IShell
         _host.ExtraSettings = [.. columnSettings, .. AllPalettes.Select(p => new SettingDescriptor(
             PaletteSettingPrefix + p.Id,
             SettingsCatalog.Palettes,
-            $"Paleta „{p.Title}”",
+            Loc.T("Paleta „{0}”", p.Title),
             p.Manifest.IsBuiltIn
-                ? $"Gdzie pokazywać paletę: na dole, po bokach, między panelami albo wcale. {p.Manifest.Description}"
-                : $"Paleta wtyczki {p.Manifest.Name} ({p.Manifest.Id}): na dole, po bokach, między panelami albo wcale.",
+                ? Loc.T("Gdzie pokazywać paletę: na dole, po bokach, między panelami albo wcale. {0}", p.Manifest.Description)
+                : Loc.T("Paleta wtyczki {0} ({1}): na dole, po bokach, między panelami albo wcale.", p.Manifest.Name, p.Manifest.Id),
             SettingKind.Choice,
             s => s.PaletteDocks.TryGetValue(p.Id, out var dock) ? dock : DockName(p.DefaultDock),
             (s, v) => s.PaletteDocks[p.Id] = (string)v!,
-            ["paleta", "pasek", "położenie", "dokowanie", "przyciski", p.Title])
+            [Loc.T("paleta"), "pasek", Loc.T("położenie"), "dokowanie", "przyciski", p.Title])
         { Choices = () => DockChoices })];
     }
 
@@ -469,7 +470,7 @@ public sealed class MainWindow : Window, IShell
         await favorites.InvokeActionAsync("add", null, host, CancellationToken.None);
         if (DockOf(favorites) == PaletteDock.Hidden || !_host.Settings.ShowPalettes)
         {
-            Notify($"Dodano do ulubionych: {host.ActivePath} (paleta „Ulubione” jest ukryta — Ctrl+B / ustawienia).");
+            Notify(Loc.T("Dodano do ulubionych: {0} (paleta „Ulubione” jest ukryta — Ctrl+B / ustawienia).", host.ActivePath));
         }
     }
 
@@ -533,8 +534,8 @@ public sealed class MainWindow : Window, IShell
     private async Task AskAiAsync()
     {
         var assistant = SearchEngines.Get(_host!.Settings.AssistantEngine, SearchEngines.DefaultAssistant);
-        var question = await new InputDialog(_skins!.Current, $"Zapytaj AI ({assistant.Name})",
-            "Pytanie (asystenta zmienisz w ustawieniach: „Asystent AI”):", string.Empty).ShowAsync(this);
+        var question = await new InputDialog(_skins!.Current, Loc.T("Zapytaj AI ({0})", assistant.Name),
+            Loc.T("Pytanie (asystenta zmienisz w ustawieniach: „Asystent AI”):"), string.Empty).ShowAsync(this);
         if (!string.IsNullOrWhiteSpace(question))
         {
             await SearchWebAsync(question, "assistant");
@@ -583,7 +584,7 @@ public sealed class MainWindow : Window, IShell
         }
         catch (Exception ex)
         {
-            Notify($"Widok „{view.Name}”: {ex.Message}", isError: true);
+            Notify(Loc.T("Widok „{0}”: {1}", view.Name, ex.Message), isError: true);
         }
     }
 
@@ -607,7 +608,7 @@ public sealed class MainWindow : Window, IShell
     }
 
     public Task<PickerItem?> PickAsync(string title, IReadOnlyList<PickerItem> items) =>
-        new PickerDialog(_skins!.Current, title, items, "Wpisz, aby wyszukać:").ShowAsync(this);
+        new PickerDialog(_skins!.Current, title, items, Loc.T("Wpisz, aby wyszukać:")).ShowAsync(this);
 
     /// <summary>Ctrl+Shift+P: every command, skin and setting in one searchable list.</summary>
     private async ValueTask ShowCommandPaletteAsync(CommandInvocation _)
@@ -620,10 +621,10 @@ public sealed class MainWindow : Window, IShell
             items.Add(new PickerItem(command.Description, keys.Length > 0 ? keys : null, "cmd:" + command.Id, command.Id));
         }
 
-        items.AddRange(host.Skins.Skins.Select(s => new PickerItem($"Skórka: {s.DisplayName}", null, "skin:" + s.Id, "motyw kolory theme")));
+        items.AddRange(host.Skins.Skins.Select(s => new PickerItem(Loc.T("Skórka: {0}", s.DisplayName), null, "skin:" + s.Id, "motyw kolory theme")));
         items.AddRange(host.SettingsCatalog.Select(s => new PickerItem($"Ustawienia: {s.Title}", s.Category, "set:" + s.Title, string.Join(' ', s.Keywords ?? []))));
 
-        var choice = await new PickerDialog(_skins!.Current, "Paleta komend (Ctrl+Shift+P)", items, "Wpisz, czego szukasz — komendy, skórki, ustawienia:").ShowAsync(this);
+        var choice = await new PickerDialog(_skins!.Current, Loc.T("Paleta komend (Ctrl+Shift+P)"), items, Loc.T("Wpisz, czego szukasz — komendy, skórki, ustawienia:")).ShowAsync(this);
         switch (choice?.Value.Split(':', 2))
         {
             case ["cmd", var id]:
@@ -858,8 +859,8 @@ public sealed class MainWindow : Window, IShell
             {
                 JobState.Queued => "w kolejce",
                 JobState.Running => fraction >= 0 ? $"{fraction:P0}{speed}" : "…",
-                JobState.Completed => "✓ gotowe",
-                JobState.Canceled => "anulowano",
+                JobState.Completed => Loc.T("✓ gotowe"),
+                JobState.Canceled => Loc.T("anulowano"),
                 _ => "⚠ " + job.Error?.Message,
             };
             var handle = job;
@@ -908,49 +909,50 @@ public sealed class MainWindow : Window, IShell
     private void RegisterCommands()
     {
         var c = _host!.Commands;
-        c.Register(CommandIds.Help, "Lista skrótów klawiszowych", ShowHelpAsync)
-         .Register(CommandIds.SwitchPanel, "Przełącz panel", () => SetActive(Other))
-         .Register(CommandIds.Open, "Otwórz / wejdź", OpenCurrent)
-         .Register(CommandIds.GoToParent, "Katalog wyżej", () => _active.GoToParent())
-         .Register(CommandIds.Refresh, "Odśwież", () => _ = _active.ActiveTab.RefreshAsync())
-         .Register(CommandIds.NewTab, "Nowa zakładka", () => _active.AddTab(_active.ActiveTab.Path))
-         .Register(CommandIds.CloseTab, "Zamknij zakładkę", () => _active.CloseActiveTab())
-         .Register(CommandIds.LeftDriveMenu, "Menu dysków (lewy)", _ => ShowDriveMenuAsync(_left))
-         .Register(CommandIds.RightDriveMenu, "Menu dysków (prawy)", _ => ShowDriveMenuAsync(_right))
-         .Register(CommandIds.OpenNetwork, "Sieć (net://)", () => _ = _active.NavigateAsync(NetworkNeighborhoodVfsPlugin.RootPath))
-         .Register(CommandIds.OpenRegistry, "Rejestr (reg://)", () => _ = _active.NavigateAsync("reg://"))
-         .Register(CommandIds.AddConnection, "Dodaj połączenie sieciowe", AddConnectionAsync)
-         .Register(CommandIds.GoToFrecent, "Częste lokalizacje", GoToFrecentAsync)
-         .Register(CommandIds.ToggleSelection, "Zaznacz", ToggleMarkAndAdvance)
-         .Register(CommandIds.CalculateDirSizes, "Rozmiar katalogu / zaznacz", CalculateSize)
-         .Register(CommandIds.View, "Podgląd", ViewCurrent)
-         .Register(CommandIds.QuickView, "Szybki podgląd", TogglePreview)
-         .Register(CommandIds.PanelModes, "Tryb panelu (pliki, podgląd, panele wtyczek)", ShowPanelModesAsync)
-         .Register(CommandIds.Browser, "Przeglądarka (WWW, wyszukiwarki, asystenci AI)", () => OpenBrowser(null))
-         .Register(CommandIds.AskAi, "Zapytaj AI (ChatGPT, Gemini, Claude…) w przeglądarce", _ => new ValueTask(AskAiAsync()))
-         .Register(CommandIds.TogglePalettes, "Palety: pokaż / ukryj", _ => new ValueTask(TogglePalettesAsync()))
-         .Register(CommandIds.Palettes, "Palety: położenie (szybkie akcje, ulubione, widoki, wtyczki)", () => OpenSettings("paleta"))
-         .Register(CommandIds.AddFavorite, "Dodaj bieżący folder do ulubionych", _ => new ValueTask(AddFavoriteAsync()))
-         .Register(CommandIds.Edit, "Edycja", EditCurrentAsync)
-         .Register(CommandIds.Copy, "Kopiuj", _ => TransferAsync(TransferMode.Copy))
-         .Register(CommandIds.Move, "Przenieś", _ => TransferAsync(TransferMode.Move))
-         .Register(CommandIds.Columns, "Kolumny: Git, zdjęcia (EXIF), SHA-256", () => OpenSettings("kolumna"))
-         .Register(CommandIds.Pack,"Spakuj do archiwum (ZIP, TAR, TAR.GZ)", PackAsync)
-         .Register(CommandIds.Unpack, "Rozpakuj archiwum", UnpackAsync)
-         .Register(CommandIds.MakeDirectory, "Nowy katalog", MakeDirectoryAsync)
-         .Register(CommandIds.Delete, "Usuń", DeleteAsync)
-         .Register(CommandIds.SearchAsync, "Szukaj", OpenSearch)
-         .Register(CommandIds.Compare, "Porównaj pliki", CompareAsync)
-         .Register(CommandIds.OpenTerminal, "Terminal w bieżącym katalogu", OpenTerminalAsync)
-         .Register(CommandIds.CancelCurrentOperation, "Przerwij", CancelCurrent)
-         .Register(CommandIds.SelectSkin, "Wybór skórki", _ => new SkinPickerDialog(_host, _skins!).ShowAsync(this).ContinueWith(_ => { }, TaskScheduler.Default).AsValueTask())
-         .Register(CommandIds.NextSkin, "Następna skórka", NextSkin)
-         .Register(CommandIds.ToggleHidden, "Pokaż / ukryj pliki ukryte", ToggleHiddenAsync)
-         .Register(CommandIds.CommandPalette, "Paleta komend", ShowCommandPaletteAsync)
-         .Register(CommandIds.Settings, "Ustawienia", () => OpenSettings())
-         .Register(CommandIds.CheckForUpdates, "Sprawdź aktualizacje", _ => new ValueTask(CheckForUpdatesNowAsync()))
-         .Register(CommandIds.About, "O programie", _ => new ValueTask(new AboutDialog(_skins!.Current).ShowAsync(this)))
-         .Register(CommandIds.Exit, "Wyjście", Close);
+        c.Register(CommandIds.Help, Loc.T("Lista skrótów klawiszowych"), ShowHelpAsync)
+         .Register(CommandIds.SwitchPanel, Loc.T("Przełącz panel"), () => SetActive(Other))
+         .Register(CommandIds.Open, Loc.T("Otwórz / wejdź"), OpenCurrent)
+         .Register(CommandIds.GoToParent, Loc.T("Katalog wyżej"), () => _active.GoToParent())
+         .Register(CommandIds.Refresh, Loc.T("Odśwież"), () => _ = _active.ActiveTab.RefreshAsync())
+         .Register(CommandIds.NewTab, Loc.T("Nowa zakładka"), () => _active.AddTab(_active.ActiveTab.Path))
+         .Register(CommandIds.CloseTab, Loc.T("Zamknij zakładkę"), () => _active.CloseActiveTab())
+         .Register(CommandIds.LeftDriveMenu, Loc.T("Menu dysków (lewy)"), _ => ShowDriveMenuAsync(_left))
+         .Register(CommandIds.RightDriveMenu, Loc.T("Menu dysków (prawy)"), _ => ShowDriveMenuAsync(_right))
+         .Register(CommandIds.OpenNetwork, Loc.T("Sieć (net://)"), () => _ = _active.NavigateAsync(NetworkNeighborhoodVfsPlugin.RootPath))
+         .Register(CommandIds.OpenRegistry, Loc.T("Rejestr (reg://)"), () => _ = _active.NavigateAsync("reg://"))
+         .Register(CommandIds.AddConnection, Loc.T("Dodaj połączenie sieciowe"), AddConnectionAsync)
+         .Register(CommandIds.GoToFrecent, Loc.T("Częste lokalizacje"), GoToFrecentAsync)
+         .Register(CommandIds.ToggleSelection, Loc.T("Zaznacz"), ToggleMarkAndAdvance)
+         .Register(CommandIds.CalculateDirSizes, Loc.T("Rozmiar katalogu / zaznacz"), CalculateSize)
+         .Register(CommandIds.View, Loc.T("Podgląd"), ViewCurrent)
+         .Register(CommandIds.QuickView, Loc.T("Szybki podgląd"), TogglePreview)
+         .Register(CommandIds.PanelModes, Loc.T("Tryb panelu (pliki, podgląd, panele wtyczek)"), ShowPanelModesAsync)
+         .Register(CommandIds.Browser, Loc.T("Przeglądarka (WWW, wyszukiwarki, asystenci AI)"), () => OpenBrowser(null))
+         .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (ChatGPT, Gemini, Claude…) w przeglądarce"), _ => new ValueTask(AskAiAsync()))
+         .Register(CommandIds.TogglePalettes, Loc.T("Palety: pokaż / ukryj"), _ => new ValueTask(TogglePalettesAsync()))
+         .Register(CommandIds.Palettes, Loc.T("Palety: położenie (szybkie akcje, ulubione, widoki, wtyczki)"), () => OpenSettings(Loc.T("paleta")))
+         .Register(CommandIds.AddFavorite, Loc.T("Dodaj bieżący folder do ulubionych"), _ => new ValueTask(AddFavoriteAsync()))
+         .Register(CommandIds.Edit, Loc.T("Edycja"), EditCurrentAsync)
+         .Register(CommandIds.Copy, Loc.T("Kopiuj"), _ => TransferAsync(TransferMode.Copy))
+         .Register(CommandIds.Move, Loc.T("Przenieś"), _ => TransferAsync(TransferMode.Move))
+         .Register(CommandIds.Columns, Loc.T("Kolumny: Git, zdjęcia (EXIF), SHA-256"), () => OpenSettings(Loc.T("kolumna")))
+         .Register(CommandIds.Translate, Loc.T("Przetłumacz interfejs z AI (nowy język)"), _ => new ValueTask(new TranslationDialog(_host!, _skins!.Current).ShowAsync(this)))
+         .Register(CommandIds.Pack,Loc.T("Spakuj do archiwum (ZIP, TAR, TAR.GZ)"), PackAsync)
+         .Register(CommandIds.Unpack, Loc.T("Rozpakuj archiwum"), UnpackAsync)
+         .Register(CommandIds.MakeDirectory, Loc.T("Nowy katalog"), MakeDirectoryAsync)
+         .Register(CommandIds.Delete, Loc.T("Usuń"), DeleteAsync)
+         .Register(CommandIds.SearchAsync, Loc.T("Szukaj"), OpenSearch)
+         .Register(CommandIds.Compare, Loc.T("Porównaj pliki"), CompareAsync)
+         .Register(CommandIds.OpenTerminal, Loc.T("Terminal w bieżącym katalogu"), OpenTerminalAsync)
+         .Register(CommandIds.CancelCurrentOperation, Loc.T("Przerwij"), CancelCurrent)
+         .Register(CommandIds.SelectSkin, Loc.T("Wybór skórki"), _ => new SkinPickerDialog(_host, _skins!).ShowAsync(this).ContinueWith(_ => { }, TaskScheduler.Default).AsValueTask())
+         .Register(CommandIds.NextSkin, Loc.T("Następna skórka"), NextSkin)
+         .Register(CommandIds.ToggleHidden, Loc.T("Pokaż / ukryj pliki ukryte"), ToggleHiddenAsync)
+         .Register(CommandIds.CommandPalette, Loc.T("Paleta komend"), ShowCommandPaletteAsync)
+         .Register(CommandIds.Settings, Loc.T("Ustawienia"), () => OpenSettings())
+         .Register(CommandIds.CheckForUpdates, Loc.T("Sprawdź aktualizacje"), _ => new ValueTask(CheckForUpdatesNowAsync()))
+         .Register(CommandIds.About, Loc.T("O programie"), _ => new ValueTask(new AboutDialog(_skins!.Current).ShowAsync(this)))
+         .Register(CommandIds.Exit, Loc.T("Wyjście"), Close);
         c.Freeze();
     }
 
@@ -983,7 +985,7 @@ public sealed class MainWindow : Window, IShell
                 }
                 else
                 {
-                    Notify($"Brak wtyczki dla „{commandId}”.", isError: true);
+                    Notify(Loc.T("Brak wtyczki dla „{0}”.", commandId), isError: true);
                 }
 
                 return;
@@ -991,13 +993,13 @@ public sealed class MainWindow : Window, IShell
 
             if (_active.Mode is not null && FileCommands.Contains(commandId))
             {
-                Notify("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach.");
+                Notify(Loc.T("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach."));
                 return;
             }
 
             if (!await _host!.Commands.ExecuteAsync(commandId))
             {
-                Notify($"Nieznana komenda „{commandId}” w keymap.json.", isError: true);
+                Notify(Loc.T("Nieznana komenda „{0}” w keymap.json.", commandId), isError: true);
             }
         }
         catch (Exception ex)
@@ -1017,7 +1019,7 @@ public sealed class MainWindow : Window, IShell
 
         text.AppendLine();
         text.AppendLine($"Konfiguracja: {_host.Config.ConfigDirectory}");
-        return new ValueTask(new MessageDialog(_skins!.Current, "Skróty klawiszowe", text.ToString(), monospace: true).ShowAsync(this));
+        return new ValueTask(new MessageDialog(_skins!.Current, Loc.T("Skróty klawiszowe"), text.ToString(), monospace: true).ShowAsync(this));
     }
 
     private void OpenCurrent()
@@ -1110,14 +1112,14 @@ public sealed class MainWindow : Window, IShell
     {
         if (_active.ActiveTab.CurrentEntry is not { Kind: VfsEntryKind.File } entry || !IsFileSystemPath(entry.Path))
         {
-            Notify("Edycja działa dla plików na dyskach i udziałach sieciowych.");
+            Notify(Loc.T("Edycja działa dla plików na dyskach i udziałach sieciowych."));
             return;
         }
 
         var result = await _host!.Tools.EditAsync(entry.Path);
         if (!result.Launched)
         {
-            Notify(result.Error ?? "Nie udało się uruchomić edytora.", isError: true);
+            Notify(result.Error ?? Loc.T("Nie udało się uruchomić edytora."), isError: true);
         }
     }
 
@@ -1126,14 +1128,14 @@ public sealed class MainWindow : Window, IShell
         if (_left.ActiveTab.CurrentEntry is not { Kind: VfsEntryKind.File } left
             || _right.ActiveTab.CurrentEntry is not { Kind: VfsEntryKind.File } right)
         {
-            Notify("Ustaw kursor na pliku w obu panelach, aby je porównać.");
+            Notify(Loc.T("Ustaw kursor na pliku w obu panelach, aby je porównać."));
             return;
         }
 
         var result = await _host!.Tools.DiffAsync(left.Path, right.Path);
         if (!result.Launched)
         {
-            Notify(result.Error ?? "Nie znaleziono narzędzia do porównywania.", isError: true);
+            Notify(result.Error ?? Loc.T("Nie znaleziono narzędzia do porównywania."), isError: true);
         }
     }
 
@@ -1144,7 +1146,7 @@ public sealed class MainWindow : Window, IShell
         var result = await _host!.Tools.OpenTerminalAsync(directory);
         if (!result.Launched)
         {
-            Notify(result.Error ?? "Nie znaleziono terminala.", isError: true);
+            Notify(result.Error ?? Loc.T("Nie znaleziono terminala."), isError: true);
         }
     }
 
@@ -1179,8 +1181,8 @@ public sealed class MainWindow : Window, IShell
 
         var router = _host!.Router;
         var defaultName = (sources.Count == 1 ? Path.GetFileNameWithoutExtension(sources[0].Name) : _active.ActiveTab.Title) + ".zip";
-        var target = await new InputDialog(_skins!.Current, "Spakuj",
-            $"Spakuj {DescribeSelection(sources)} do (rozszerzenie wybiera format: .zip, .tar, .tar.gz):",
+        var target = await new InputDialog(_skins!.Current, Loc.T("Spakuj"),
+            Loc.T("Spakuj {0} do (rozszerzenie wybiera format: .zip, .tar, .tar.gz):", DescribeSelection(sources)),
             router.Combine(Other.ActiveTab.Path, defaultName)).ShowAsync(this);
         if (string.IsNullOrWhiteSpace(target))
         {
@@ -1198,13 +1200,13 @@ public sealed class MainWindow : Window, IShell
     {
         if (_active.ActiveTab.CurrentEntry is not { Kind: VfsEntryKind.File } archive || !ArchiveVfsPlugin.IsArchiveName(archive.Name))
         {
-            Notify("Ustaw kursor na archiwum (.zip, .7z, .tar.gz, .rar…).", isError: true);
+            Notify(Loc.T("Ustaw kursor na archiwum (.zip, .7z, .tar.gz, .rar…)."), isError: true);
             return;
         }
 
         var router = _host!.Router;
         var folderName = archive.Name[..^(ArchiveExtensionLength(archive.Name))];
-        var target = await new InputDialog(_skins!.Current, "Rozpakuj", $"Rozpakuj „{archive.Name}” do:",
+        var target = await new InputDialog(_skins!.Current, Loc.T("Rozpakuj"), Loc.T("Rozpakuj „{0}” do:", archive.Name),
             router.Combine(Other.ActiveTab.Path, folderName)).ShowAsync(this);
         if (string.IsNullOrWhiteSpace(target))
         {
@@ -1212,7 +1214,7 @@ public sealed class MainWindow : Window, IShell
         }
 
         var root = ArchiveVfsPlugin.RootPath(archive.Path);
-        RunJob(new DelegateJob($"Rozpakowywanie „{archive.Name}” → {target}", async (progress, ct) =>
+        RunJob(new DelegateJob(Loc.T("Rozpakowywanie „{0}” → {1}", archive.Name, target), async (progress, ct) =>
         {
             var entries = new List<VfsEntry>();
             await foreach (var entry in router.EnumerateAsync(root, ct))
@@ -1245,7 +1247,7 @@ public sealed class MainWindow : Window, IShell
     private async ValueTask MakeDirectoryAsync(CommandInvocation _)
     {
         var tab = _active.ActiveTab;
-        var name = await new InputDialog(_skins!.Current, "Nowy katalog", $"Utwórz katalog w {tab.Path}:").ShowAsync(this);
+        var name = await new InputDialog(_skins!.Current, Loc.T("Nowy katalog"), Loc.T("Utwórz katalog w {0}:", tab.Path)).ShowAsync(this);
         if (name is null)
         {
             return;
@@ -1270,7 +1272,7 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
-        if (_host!.Settings.ConfirmDelete && !await new ConfirmDialog(_skins!.Current, "Usuń", $"Usunąć {DescribeSelection(targets)}? Tej operacji nie można cofnąć.", "Usuń").ShowAsync(this))
+        if (_host!.Settings.ConfirmDelete && !await new ConfirmDialog(_skins!.Current, Loc.T("Usuń"), Loc.T("Usunąć {0}? Tej operacji nie można cofnąć.", DescribeSelection(targets)), Loc.T("Usuń")).ShowAsync(this))
         {
             return;
         }
@@ -1328,12 +1330,12 @@ public sealed class MainWindow : Window, IShell
             items.Add(new PickerItem(drive.Name, drive.Description, drive.Path));
         }
 
-        items.Add(new PickerItem("Sieć", "net:// – hosty w sieci LAN, udziały SMB, SFTP/FTP", NetworkNeighborhoodVfsPlugin.RootPath));
-        items.Add(new PickerItem("Rejestr Windows", "reg://", "reg://"));
+        items.Add(new PickerItem(Loc.T("Sieć"), Loc.T("net:// – hosty w sieci LAN, udziały SMB, SFTP/FTP"), NetworkNeighborhoodVfsPlugin.RootPath));
+        items.Add(new PickerItem(Loc.T("Rejestr Windows"), "reg://", "reg://"));
         items.AddRange(_host.PanelPlugins.Select(p => new PickerItem("Panel: " + p.Title, p.Description, CommandIds.PanelPrefix + p.Id)));
         items.AddRange(_host.Settings.Connections.Select(c => new PickerItem(c.Name, c.Path, c.Path)));
 
-        var choice = await new PickerDialog(_skins!.Current, "Zmień dysk", items).ShowAsync(this);
+        var choice = await new PickerDialog(_skins!.Current, Loc.T("Zmień dysk"), items).ShowAsync(this);
         if (choice is null)
         {
             return;
@@ -1362,7 +1364,7 @@ public sealed class MainWindow : Window, IShell
         var host = _host!;
         if (host.FindPanel(pluginId) is not { } plugin)
         {
-            Notify($"Nie znaleziono panelu „{pluginId}”.", isError: true);
+            Notify(Loc.T("Nie znaleziono panelu „{0}”.", pluginId), isError: true);
             return Task.CompletedTask;
         }
 
@@ -1377,7 +1379,7 @@ public sealed class MainWindow : Window, IShell
 
             if (argument is null)
             {
-                Notify($"{plugin.Title}: ustaw kursor na pliku i spróbuj ponownie.", isError: true);
+                Notify(Loc.T("{0}: ustaw kursor na pliku i spróbuj ponownie.", plugin.Title), isError: true);
                 return Task.CompletedTask;
             }
         }
@@ -1415,16 +1417,16 @@ public sealed class MainWindow : Window, IShell
     {
         var host = _host!;
         var (target, _) = ModeTarget();
-        var side = target == _left ? "lewy" : "prawy";
+        var side = target == _left ? Loc.T("lewy") : Loc.T("prawy");
         var items = new List<PickerItem>
         {
-            new("Pliki", "lista plików (zamyka tryb panelu)", "files", "lista katalog"),
-            new("Podgląd (Ctrl+Q)", "markdown z edycją, tekst, obrazy, rozmiary folderów — dla pliku pod kursorem", "preview", "quick view markdown"),
-            new("Przeglądarka (Ctrl+Alt+W)", "strony WWW, wyszukiwarki, ChatGPT / Gemini / Claude — logowanie jest zapamiętywane", "browser", "www internet web ai"),
+            new(Loc.T("Pliki"), Loc.T("lista plików (zamyka tryb panelu)"), "files", "lista katalog"),
+            new(Loc.T("Podgląd (Ctrl+Q)"), Loc.T("markdown z edycją, tekst, obrazy, rozmiary folderów — dla pliku pod kursorem"), "preview", "quick view markdown"),
+            new(Loc.T("Przeglądarka (Ctrl+Alt+W)"), Loc.T("strony WWW, wyszukiwarki, ChatGPT / Gemini / Claude — logowanie jest zapamiętywane"), "browser", "www internet web ai"),
         };
         items.AddRange(host.PanelPlugins.Select(p => new PickerItem(p.Title, p.Description, CommandIds.PanelPrefix + p.Id, p.Manifest.Name)));
 
-        var choice = await new PickerDialog(_skins!.Current, $"Tryb panelu ({side})", items, $"Co ma pokazywać {side} panel?").ShowAsync(this);
+        var choice = await new PickerDialog(_skins!.Current, Loc.T("Tryb panelu ({0})", side), items, Loc.T("Co ma pokazywać {0} panel?", side)).ShowAsync(this);
         switch (choice?.Value)
         {
             case null:
@@ -1492,7 +1494,7 @@ public sealed class MainWindow : Window, IShell
             return group;
         }
 
-        var pluginMenu = new MenuItem { Header = "_Wtyczki" };
+        var pluginMenu = new MenuItem { Header = Loc.T("_Wtyczki") };
         foreach (var command in all.Values.Where(c => c.Category is not null && c.Id.StartsWith(CommandIds.PluginPrefix, StringComparison.Ordinal)))
         {
             // "PowerShell/Sieć" → Wtyczki ▸ PowerShell ▸ Sieć ▸ command.
@@ -1515,18 +1517,18 @@ public sealed class MainWindow : Window, IShell
         pluginMenu.Items.Add(new Separator());
         var blocked = host.DiscoveredPlugins.Count(p => host.PluginBlocker(p) is not null);
         pluginMenu.Items.Add(Item(CommandIds.PanelPrefix + PluginManagerPanel.PluginId,
-            blocked > 0 ? $"Menedżer wtyczek… ({blocked} nieaktywnych)" : "Menedżer wtyczek…"));
+            blocked > 0 ? Loc.T("Menedżer wtyczek… ({0} nieaktywnych)", blocked) : Loc.T("Menedżer wtyczek…")));
 
         _menu.Items.Clear();
-        _menu.Items.Add(Group("_Plik", [Item(CommandIds.Copy), Item(CommandIds.Move), Item(CommandIds.MakeDirectory), Item(CommandIds.Delete), new Separator(),
+        _menu.Items.Add(Group(Loc.T("_Plik"), [Item(CommandIds.Copy), Item(CommandIds.Move), Item(CommandIds.MakeDirectory), Item(CommandIds.Delete), new Separator(),
             Item(CommandIds.NewTab), Item(CommandIds.CloseTab), new Separator(), Item(CommandIds.Exit)]));
-        _menu.Items.Add(Group("P_olecenia", [Item(CommandIds.SearchAsync), Item(CommandIds.GoToFrecent), Item(CommandIds.CalculateDirSizes), Item(CommandIds.Compare),
+        _menu.Items.Add(Group(Loc.T("P_olecenia"), [Item(CommandIds.SearchAsync), Item(CommandIds.GoToFrecent), Item(CommandIds.CalculateDirSizes), Item(CommandIds.Compare),
             Item(CommandIds.OpenTerminal), Item(CommandIds.Refresh), Item(CommandIds.ToggleHidden), new Separator(), Item(CommandIds.AddConnection)]));
-        _menu.Items.Add(Group("Pa_nele", [Item(CommandIds.LeftDriveMenu), Item(CommandIds.RightDriveMenu), Item(CommandIds.OpenNetwork), Item(CommandIds.OpenRegistry), new Separator(),
+        _menu.Items.Add(Group(Loc.T("Pa_nele"), [Item(CommandIds.LeftDriveMenu), Item(CommandIds.RightDriveMenu), Item(CommandIds.OpenNetwork), Item(CommandIds.OpenRegistry), new Separator(),
             .. host.PanelPlugins.Select(p => Item(CommandIds.PanelPrefix + p.Id, p.Title))]));
         _menu.Items.Add(pluginMenu);
-        _menu.Items.Add(Group("_Konfiguracja", [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.CommandPalette)]));
-        _menu.Items.Add(Group("Pomo_c", [Item(CommandIds.Help), Item(CommandIds.CheckForUpdates), Item(CommandIds.About)]));
+        _menu.Items.Add(Group(Loc.T("_Konfiguracja"), [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.CommandPalette)]));
+        _menu.Items.Add(Group(Loc.T("Pomo_c"), [Item(CommandIds.Help), Item(CommandIds.CheckForUpdates), Item(CommandIds.About)]));
         if (_skins is not null)
         {
             ApplyMenuSkin(_skins.Current);
@@ -1544,13 +1546,13 @@ public sealed class MainWindow : Window, IShell
     {
         if (_host!.Index is not { } index)
         {
-            Notify("Baza częstych lokalizacji jest niedostępna.", isError: true);
+            Notify(Loc.T("Baza częstych lokalizacji jest niedostępna."), isError: true);
             return;
         }
 
         var frecent = await index.GetFrecentAsync(null, 60);
         var items = frecent.Select(f => new PickerItem(f.Path, $"{f.Visits}× · ostatnio {f.LastVisit.ToLocalTime():g}", f.Path)).ToList();
-        var choice = await new PickerDialog(_skins!.Current, "Częste lokalizacje (Ctrl+G)", items, "Najczęściej i najświeżej odwiedzane katalogi:").ShowAsync(this);
+        var choice = await new PickerDialog(_skins!.Current, Loc.T("Częste lokalizacje (Ctrl+G)"), items, Loc.T("Najczęściej i najświeżej odwiedzane katalogi:")).ShowAsync(this);
         if (choice is not null)
         {
             await _active.NavigateAsync(choice.Value);
@@ -1600,13 +1602,13 @@ public sealed class MainWindow : Window, IShell
     {
         var next = _host!.Skins.Next(_skins!.Current.Skin.Id);
         _skins.Apply(next);
-        Notify($"Skórka: {next.DisplayName}");
+        Notify(Loc.T("Skórka: {0}", next.DisplayName));
     }
 
     private async ValueTask ToggleHiddenAsync(CommandInvocation _)
     {
         _host!.Settings.ShowHidden = !_host.Settings.ShowHidden;
-        Notify(_host.Settings.ShowHidden ? "Pokazuję pliki ukryte." : "Ukrywam pliki ukryte i systemowe.");
+        Notify(_host.Settings.ShowHidden ? Loc.T("Pokazuję pliki ukryte.") : Loc.T("Ukrywam pliki ukryte i systemowe."));
         await _host.SaveSettingsAsync();
         await Task.WhenAll(_left.ActiveTab.RefreshAsync(), _right.ActiveTab.RefreshAsync());
     }
@@ -1720,7 +1722,7 @@ public sealed class MainWindow : Window, IShell
     private static bool IsFileSystemPath(string path) => VfsPath.GetScheme(path) is VfsPath.FileScheme or VfsPath.SmbScheme;
 
     private static string DescribeSelection(IReadOnlyList<VfsEntry> entries) =>
-        entries.Count == 1 ? $"„{entries[0].Name}”" : $"{entries.Count} zaznaczonych elementów";
+        entries.Count == 1 ? Loc.T("„{0}”", entries[0].Name) : Loc.P(entries.Count, "{0} zaznaczony element|{0} zaznaczone elementy|{0} zaznaczonych elementów");
 }
 
 internal static class TaskExtensions

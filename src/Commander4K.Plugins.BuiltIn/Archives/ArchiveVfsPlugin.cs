@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Commander4K.Core.Localization;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
 using SharpCompress.Archives;
@@ -36,8 +37,8 @@ public sealed class ArchiveVfsPlugin : IVfsProviderPlugin, IArchivePlugin
 
     public string DisplayName => "Archives";
 
-    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.archives", "Archiwa",
-        "Przeglądanie archiwów ZIP, 7z, TAR (gz/bz2/xz), RAR i GZ jak folderów; pakowanie do ZIP i TAR.", PluginPermissions.FileRead, PluginPermissions.FileWrite);
+    public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.archives", Loc.T("Archiwa"),
+        Loc.T("Przeglądanie archiwów ZIP, 7z, TAR (gz/bz2/xz), RAR i GZ jak folderów; pakowanie do ZIP i TAR."), PluginPermissions.FileRead, PluginPermissions.FileWrite);
 
     public IReadOnlyList<string> Schemes { get; } = ["zip", "7z", "tar", "rar", "gz"];
 
@@ -74,8 +75,8 @@ public sealed class ArchiveVfsPlugin : IVfsProviderPlugin, IArchivePlugin
         if (!index.Children.TryGetValue(inner, out var children))
         {
             throw index.Items.ContainsKey(inner)
-                ? new IOException($"„{inner}” jest plikiem, nie folderem.")
-                : new DirectoryNotFoundException($"W archiwum nie ma folderu „{inner}”.");
+                ? new IOException(Loc.T("„{0}” jest plikiem, nie folderem.", inner))
+                : new DirectoryNotFoundException(Loc.T("W archiwum nie ma folderu „{0}”.", inner));
         }
 
         foreach (var key in children)
@@ -124,7 +125,7 @@ public sealed class ArchiveVfsPlugin : IVfsProviderPlugin, IArchivePlugin
         var index = await GetIndexAsync(archive, cancellationToken).ConfigureAwait(false);
         if (!index.Items.TryGetValue(inner, out var item) || item.IsDirectory)
         {
-            throw new FileNotFoundException($"W archiwum nie ma pliku „{inner}”.", path);
+            throw new FileNotFoundException(Loc.T("W archiwum nie ma pliku „{0}”.", inner), path);
         }
 
         await using var source = await OpenArchiveFileAsync(archive, cancellationToken).ConfigureAwait(false);
@@ -148,7 +149,7 @@ public sealed class ArchiveVfsPlugin : IVfsProviderPlugin, IArchivePlugin
             var index = Read(archive, null, cancellationToken);
             return index.Items.TryGetValue(NormalizeKey(entryPath), out var item) && !item.IsDirectory
                 ? Extract(archive, null, item.EntryKey, item.Size, cancellationToken)
-                : throw new FileNotFoundException($"W archiwum nie ma pliku „{entryPath}”.");
+                : throw new FileNotFoundException(Loc.T("W archiwum nie ma pliku „{0}”.", entryPath));
         }, cancellationToken));
 
     public ValueTask PackAsync(Stream output, IReadOnlyList<ArchiveInput> inputs, IProgress<long>? progress, CancellationToken cancellationToken) =>
@@ -212,14 +213,14 @@ public sealed class ArchiveVfsPlugin : IVfsProviderPlugin, IArchivePlugin
         item.IsDirectory ? -1 : item.Size,
         item.Modified,
         Description: !item.IsDirectory && item.CompressedSize > 0 && item.CompressedSize < item.Size
-            ? $"{item.CompressedSize * 100 / item.Size}% po kompresji"
+            ? Loc.T("{0}% po kompresji", item.CompressedSize * 100 / item.Size)
             : null);
 
     private async Task<ArchiveIndex> GetIndexAsync(string archive, CancellationToken cancellationToken)
     {
         var router = Router ?? throw new InvalidOperationException("Archive plugin used before the router was attached.");
         var file = await router.GetEntryAsync(archive, cancellationToken).ConfigureAwait(false)
-            ?? throw new FileNotFoundException($"Nie ma pliku archiwum „{archive}”.", archive);
+            ?? throw new FileNotFoundException(Loc.T("Nie ma pliku archiwum „{0}”.", archive), archive);
         var stamp = (file.Size, file.LastWriteTime);
         lock (_cache)
         {
@@ -368,7 +369,7 @@ public sealed class ArchiveVfsPlugin : IVfsProviderPlugin, IArchivePlugin
 
             if (entry.IsEncrypted)
             {
-                throw new IOException("Plik w archiwum jest zaszyfrowany — hasła nie są jeszcze obsługiwane.");
+                throw new IOException(Loc.T("Plik w archiwum jest zaszyfrowany — hasła nie są jeszcze obsługiwane."));
             }
 
             target = size is >= 0 and <= InMemoryLimit ? new MemoryStream((int)Math.Max(0, size)) : TempFile();
@@ -388,7 +389,7 @@ public sealed class ArchiveVfsPlugin : IVfsProviderPlugin, IArchivePlugin
 
         if (target is null)
         {
-            throw new FileNotFoundException($"W archiwum nie ma „{entryKey}”.");
+            throw new FileNotFoundException(Loc.T("W archiwum nie ma „{0}”.", entryKey));
         }
 
         target.Position = 0;
