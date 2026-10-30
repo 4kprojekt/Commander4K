@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Commander4K.PluginSdk</RootNamespace>
+  </PropertyGroup>
+</Project>

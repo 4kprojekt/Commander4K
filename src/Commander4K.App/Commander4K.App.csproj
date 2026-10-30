@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Commander4K.App</RootNamespace>
+    <AssemblyName>Commander4K</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Commander4K.PluginSdk\Commander4K.PluginSdk.csproj" />
+    <ProjectReference Include="..\Commander4K.Core\Commander4K.Core.csproj" />
+    <ProjectReference Include="..\Commander4K.Plugins.BuiltIn\Commander4K.Plugins.BuiltIn.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Markup.Declarative" />
+  </ItemGroup>
+</Project>
