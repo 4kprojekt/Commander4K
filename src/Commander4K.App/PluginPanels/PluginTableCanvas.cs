@@ -180,12 +180,18 @@ public sealed class PluginTableCanvas : Control
 
     private void DrawRow(DrawingContext context, SkinBrushes b, VisibleRow visible, int index, double y, double width, double[] widths)
     {
-        var rowRect = new Rect(0, y, width, b.RowHeight);
+        // Modern skins: rows inset 4 px with rounded corners, warning/error rows tinted (design system severities).
+        var rowRect = b.IsModern ? new Rect(4, y + 1, Math.Max(0, width - 8), b.RowHeight - 2) : new Rect(0, y, width, b.RowHeight);
+        var radius = b.IsModern ? 3f : 0f;
         var isCursor = index == CursorIndex;
         var isMarked = Marked.Contains(visible.Row.Id);
         if (isCursor)
         {
-            context.FillRectangle(IsActivePanel ? b.CursorBackground : b.InactiveCursorBackground, rowRect);
+            context.FillRectangle(IsActivePanel ? b.CursorBackground : b.InactiveCursorBackground, rowRect, radius);
+        }
+        else if (b.IsModern && visible.Row.Severity is RowSeverity.Warning or RowSeverity.Error)
+        {
+            context.FillRectangle(visible.Row.Severity == RowSeverity.Warning ? b.WarningBackground : b.ErrorBackground, rowRect, radius);
         }
 
         var foreground = isCursor && IsActivePanel && !isMarked ? b.CursorForeground
@@ -194,7 +200,7 @@ public sealed class PluginTableCanvas : Control
             {
                 RowSeverity.Muted => b.HiddenForeground,
                 RowSeverity.Highlight => b.DirectoryForeground,
-                RowSeverity.Warning => b.ArchiveForeground,
+                RowSeverity.Warning => b.IsModern ? b.Warning : b.ArchiveForeground,
                 RowSeverity.Error => b.Error,
                 _ => b.FileForeground,
             };

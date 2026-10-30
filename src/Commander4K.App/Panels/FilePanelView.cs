@@ -30,6 +30,11 @@ public sealed class FilePanelView : ViewBase
     private Border _statusBorder = null!;
     private Panel _content = null!;
     private TextBlock _status = null!;
+    private TextBlock _statusMarked = null!;
+    private StackPanel _statusMarkedBox = null!;
+    private Border _statusMarkedEdge = null!;
+    private Border _card = null!;
+    private Border _accentEdge = null!;
 
     public FilePanelView(AppHost host, SkinManager skins, string initialPath)
     {
@@ -148,25 +153,38 @@ public sealed class FilePanelView : ViewBase
         return root;
     }
 
-    private Grid CreateLayout() =>
-        new Grid()
-            .Rows("Auto,Auto,*,Auto")
-            .Children(
-                new Border()
-                    .Ref(out _tabBorder)
-                    .Row(0)
-                    .Child(new StackPanel().Ref(out _tabStrip).Orientation(Orientation.Horizontal)),
-                new Border()
-                    .Ref(out _pathBorder)
-                    .Row(1)
-                    .Padding(2)
-                    .Child(new TextBox().Ref(out _pathBox).BorderThickness(new Thickness(0)).MinHeight(24).Padding(6, 2)),
-                new Panel().Ref(out _content).Row(2).Children(Canvas),
-                new Border()
-                    .Ref(out _statusBorder)
-                    .Row(3)
-                    .Padding(6, 2)
-                    .Child(new TextBlock().Ref(out _status).TextTrimming(TextTrimming.CharacterEllipsis)));
+    /// <summary>
+    /// Design system: a card (6 px corners, 1 px border) with a 32 px tab bar, a 32 px path bar (active panel:
+    /// tinted with a 3 px accent edge), the list, and a 26 px status bar with the marked set on the right.
+    /// </summary>
+    private Border CreateLayout() =>
+        new Border()
+            .Ref(out _card)
+            .ClipToBounds(true)
+            .Child(new Grid()
+                .Rows("Auto,Auto,*,Auto")
+                .Children(
+                    new Border()
+                        .Ref(out _tabBorder)
+                        .Row(0)
+                        .Child(new StackPanel().Ref(out _tabStrip).Orientation(Orientation.Horizontal).Spacing(2).VerticalAlignment(VerticalAlignment.Center)),
+                    new Border()
+                        .Ref(out _pathBorder)
+                        .Row(1)
+                        .Child(new Grid().Cols("Auto,*").Children(
+                            new Border().Ref(out _accentEdge).Width(3).Col(0),
+                            new TextBox().Ref(out _pathBox).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(7, 2)
+                                .VerticalContentAlignment(VerticalAlignment.Center))),
+                    new Panel().Ref(out _content).Row(2).Children(Canvas),
+                    new Border()
+                        .Ref(out _statusBorder)
+                        .Row(3)
+                        .Child(new Grid().Cols("*,Auto").Children(
+                            new TextBlock().Ref(out _status).TextTrimming(TextTrimming.CharacterEllipsis).VerticalAlignment(VerticalAlignment.Center),
+                            new StackPanel().Ref(out _statusMarkedBox).Col(1).Orientation(Orientation.Horizontal).Spacing(6).IsVisible(false)
+                                .VerticalAlignment(VerticalAlignment.Center).Children(
+                                    new Border().Ref(out _statusMarkedEdge).Width(3).Height(12).CornerRadius(new CornerRadius(2)),
+                                    new TextBlock().Ref(out _statusMarked).FontWeight(FontWeight.SemiBold))))));
 
     public Task NavigateAsync(string path, string? focusName = null) => ActiveTab.NavigateAsync(path, focusName);
 
@@ -306,24 +324,28 @@ public sealed class FilePanelView : ViewBase
             _pathBox.Text = tab.Path;
         }
 
-        _status.Text = StatusText(tab);
+        var (main, marked) = StatusText(tab);
+        _status.Text = main;
         _status.Foreground = tab.Error is null ? _skins.Current.StatusForeground : _skins.Current.Error;
+        _statusMarked.Text = marked ?? string.Empty;
+        _statusMarkedBox.IsVisible = marked is not null;
         if (_tabStrip.Children.Count > 0)
         {
             RebuildTabs();
         }
     }
 
-    private string StatusText(PanelTab tab)
+    /// <summary>Counts on the left; the marked set (if any) on the right, in the marking colour.</summary>
+    private (string Main, string? Marked) StatusText(PanelTab tab)
     {
         if (tab.Error is { } error)
         {
-            return "⚠ " + error;
+            return ("⚠ " + error, null);
         }
 
         if (tab.Status is { } status)
         {
-            return status;
+            return (status, null);
         }
 
         int files = 0, containers = 0;
@@ -354,9 +376,7 @@ public sealed class FilePanelView : ViewBase
 
         var text = Loc.P(files, "{0:N0} plik ({1})|{0:N0} pliki ({1})|{0:N0} plików ({1})", FileViewportCanvas.FormatSize(bytes))
             + ", " + Loc.P(containers, "{0:N0} katalog|{0:N0} katalogi|{0:N0} katalogów");
-        return tab.Marked.Count > 0
-            ? Loc.T("Zaznaczono {0:N0} ({1}) · {2}", tab.Marked.Count, FileViewportCanvas.FormatSize(markedBytes), text)
-            : text;
+        return (text, tab.Marked.Count > 0 ? Loc.T("Zaznaczono {0:N0} · {1}", tab.Marked.Count, FileViewportCanvas.FormatSize(markedBytes)) : null);
     }
 
     private void OnPathKeyDown(object? sender, KeyEventArgs e)
@@ -387,13 +407,19 @@ public sealed class FilePanelView : ViewBase
     private void RebuildTabs()
     {
         _tabStrip.Children.Clear();
+        var b = _skins.Current;
+        if (b.IsModern)
+        {
+            RebuildModernTabs(b);
+            return;
+        }
+
         _tabBorder.IsVisible = _tabs.Count > 1;
         if (_tabs.Count <= 1)
         {
             return;
         }
 
-        var b = _skins.Current;
         for (var i = 0; i < _tabs.Count; i++)
         {
             var index = i;
@@ -411,6 +437,47 @@ public sealed class FilePanelView : ViewBase
         }
     }
 
+    /// <summary>Design system: always-visible tab bar; the current tab raised with a close button, the rest muted, "+" adds one.</summary>
+    private void RebuildModernTabs(SkinBrushes b)
+    {
+        _tabBorder.IsVisible = true;
+        var small = Math.Max(11, b.FontSize - 1);
+        for (var i = 0; i < _tabs.Count; i++)
+        {
+            var index = i;
+            var selected = i == _activeIndex;
+            var title = new TextBlock().Text(_tabs[i].Title).FontSize(small).MaxWidth(180).TextTrimming(TextTrimming.CharacterEllipsis)
+                .FontWeight(selected ? FontWeight.SemiBold : FontWeight.Normal).VerticalAlignment(VerticalAlignment.Center)
+                .Foreground(selected ? b.WindowForeground : b.MutedForeground);
+            var content = new StackPanel().Orientation(Orientation.Horizontal).Spacing(6).Children(
+                new TextBlock().Text("▱").FontSize(small).Foreground(selected ? b.DirectoryForeground : b.MutedForeground).VerticalAlignment(VerticalAlignment.Center),
+                title);
+            if (selected && _tabs.Count > 1)
+            {
+                var close = new Button().Content("✕").Padding(3, 0).MinHeight(0).FontSize(10).Background(Brushes.Transparent).BorderThickness(new Thickness(0))
+                    .Foreground(b.MutedForeground).VerticalAlignment(VerticalAlignment.Center).OnClick(_ => CloseActiveTab());
+                ToolTip.SetTip(close, Loc.T("Zamknij zakładkę (Ctrl+W)"));
+                content.Children.Add(close);
+            }
+
+            _tabStrip.Children.Add(new Button()
+                .Content(content)
+                .Height(24)
+                .Padding(8, 0)
+                .CornerRadius(new CornerRadius(4))
+                .BorderThickness(new Thickness(1))
+                .BorderBrush(selected ? b.PanelBorder : Brushes.Transparent)
+                .Background(selected ? b.PanelBackground : Brushes.Transparent)
+                .OnClick(_ => SelectTab(index)));
+        }
+
+        var add = new Button().Content("+").Width(24).Height(24).Padding(0).FontSize(14).HorizontalContentAlignment(HorizontalAlignment.Center)
+            .VerticalContentAlignment(VerticalAlignment.Center).Background(Brushes.Transparent).BorderThickness(new Thickness(0))
+            .Foreground(b.MutedForeground).OnClick(_ => AddTab(ActiveTab.Path));
+        ToolTip.SetTip(add, Loc.T("Nowa zakładka (Ctrl+T)"));
+        _tabStrip.Children.Add(add);
+    }
+
     private void ApplySkin(SkinBrushes b)
     {
         Canvas.Brushes = b;
@@ -420,17 +487,40 @@ public sealed class FilePanelView : ViewBase
             return;
         }
 
-        _tabBorder.Background = b.WindowBackground;
+        var modern = b.IsModern;
+        _card.Background = b.PanelBackground;
+        _card.BorderBrush = b.PanelBorder;
+        _card.BorderThickness = new Thickness(modern ? 1 : 0);
+        _card.CornerRadius = new CornerRadius(modern ? 6 : 0);
+        _tabBorder.Background = modern ? b.HeaderBackground : b.WindowBackground;
+        _tabBorder.BorderBrush = b.PanelBorder;
+        _tabBorder.BorderThickness = new Thickness(0, 0, 0, modern ? 1 : 0);
+        _tabBorder.Height = modern ? 32 : double.NaN;
+        _tabBorder.Padding = new Thickness(modern ? 4 : 0, 0);
+        _pathBorder.BorderBrush = b.PanelBorder;
+        _pathBorder.BorderThickness = new Thickness(0, 0, 0, modern ? 1 : 0);
+        _pathBorder.Height = modern ? 32 : double.NaN;
+        _pathBorder.Padding = new Thickness(modern ? 0 : 2);
         _statusBorder.Background = b.StatusBackground;
+        _statusBorder.BorderBrush = b.PanelBorder;
+        _statusBorder.BorderThickness = new Thickness(0, modern ? 1 : 0, 0, 0);
+        _statusBorder.Height = modern ? 26 : double.NaN;
+        _statusBorder.Padding = modern ? new Thickness(12, 0) : new Thickness(6, 2);
         _status.Foreground = b.StatusForeground;
         _status.FontFamily = b.FontFamily;
-        _status.FontSize = b.FontSize - 1;
+        _status.FontSize = modern ? Math.Max(11, b.FontSize - 1) : b.FontSize - 1;
+        _statusMarked.Foreground = b.SelectedForeground;
+        _statusMarked.FontFamily = b.FontFamily;
+        _statusMarked.FontSize = _status.FontSize;
+        _statusMarkedEdge.Background = b.SelectedForeground;
         _pathBox.FontFamily = b.FontFamily;
         _pathBox.FontSize = b.FontSize;
+        _pathBox.FontWeight = modern ? FontWeight.SemiBold : FontWeight.Normal;
         ApplyChrome();
         RebuildTabs();
     }
 
+    /// <summary>Active panel: modern skins tint the path bar and show the accent edge; retro skins use the cursor colours.</summary>
     private void ApplyChrome()
     {
         if (_pathBox is null)
@@ -439,8 +529,13 @@ public sealed class FilePanelView : ViewBase
         }
 
         var b = _skins.Current;
-        _pathBorder.Background = _isActive ? b.CursorBackground : b.HeaderBackground;
-        _pathBox.Background = _isActive ? b.CursorBackground : b.HeaderBackground;
-        _pathBox.Foreground = _isActive ? b.CursorForeground : b.HeaderForeground;
+        var (background, foreground) = b.IsModern
+            ? (_isActive ? b.ActiveHeaderBackground : b.HeaderBackground, _isActive ? b.ActiveHeaderForeground : b.HeaderForeground)
+            : (_isActive ? b.CursorBackground : b.HeaderBackground, _isActive ? b.CursorForeground : b.HeaderForeground);
+        _pathBorder.Background = background;
+        _pathBox.Background = Brushes.Transparent;
+        _pathBox.Foreground = foreground;
+        _accentEdge.Background = b.Accent;
+        _accentEdge.IsVisible = b.IsModern && _isActive;
     }
 }

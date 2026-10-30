@@ -8,6 +8,13 @@ namespace Commander4K.Core.Theming;
 [JsonConverter(typeof(RgbColorJsonConverter))]
 public readonly record struct RgbColor(byte R, byte G, byte B, byte A = 255)
 {
+    /// <summary>Blends <paramref name="other"/> into this colour by <paramref name="amount"/> (0 = this, 1 = other); opaque result.</summary>
+    public RgbColor Mix(RgbColor other, double amount)
+    {
+        byte Channel(byte a, byte b) => (byte)Math.Round(a + ((b - a) * Math.Clamp(amount, 0, 1)));
+        return new RgbColor(Channel(R, other.R), Channel(G, other.G), Channel(B, other.B));
+    }
+
     public static RgbColor Parse(string text)
     {
         if (!TryParse(text, out var color))

@@ -62,6 +62,12 @@ public static class SettingsCatalog
             SettingKind.Choice, s => s.Skin, (s, v) => s.Skin = (string)v!, ["motyw", "kolory", "theme", Loc.T("wygląd")])
         { Choices = skinChoices },
 
+        new("density", Appearance, Loc.T("Gęstość listy"), Loc.T("Kompaktowa: 12 px, wiersz 18 px · domyślna: wg skórki · wygodna: 14 px, wiersz 24 px."),
+            SettingKind.Choice, s => s.Density, (s, v) => s.Density = (string)v!, ["density", "gestosc", "wiersz", "rozmiar", "czcionka", "kompaktowa", "wygodna"])
+        {
+            Choices = () => [new("compact", Loc.T("Kompaktowa")), new("default", Loc.T("Domyślna")), new("comfortable", Loc.T("Wygodna"))],
+        },
+
         new("showHidden", Panels, Loc.T("Pokazuj pliki ukryte i systemowe"), Loc.T("Gdy wyłączone, pliki z atrybutem ukryty/systemowy nie pojawiają się w panelach (Ctrl+H)."),
             SettingKind.Toggle, s => s.ShowHidden, (s, v) => s.ShowHidden = (bool)v!, ["ukryte", "hidden", "systemowe", "atrybuty"]),
         new("confirmDelete", Panels, Loc.T("Pytaj przed usunięciem"), Loc.T("Okno potwierdzenia przed usunięciem plików i katalogów (F8)."),

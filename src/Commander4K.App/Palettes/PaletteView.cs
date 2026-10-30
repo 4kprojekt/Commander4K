@@ -51,31 +51,52 @@ public sealed class PaletteView : Border
         var vertical = dock != PaletteDock.Bottom;
         _items = vertical ? new StackPanel { Spacing = 2 } : new WrapPanel { Orientation = Orientation.Horizontal };
         // Between the panels there is no room for title and buttons on one line, so they wrap.
-        _header = dock == PaletteDock.BetweenPanels ? new WrapPanel { Margin = new Thickness(0, 0, 0, 2) } : new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+        // Design system: 30 px header, title on the left, 22 px icon buttons on the right. Between the panels there is
+        // no room for that, so title and buttons wrap.
+        _header = dock == PaletteDock.BetweenPanels ? new WrapPanel { Margin = new Thickness(0, 0, 0, 2) } : new DockPanel { Height = 30, LastChildFill = true };
         var title = new TextBlock
         {
             Text = palette.Title,
-            FontSize = 11,
+            FontSize = 12,
             FontWeight = FontWeight.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(2, 0, 6, 0),
+            Margin = new Thickness(4, 0, 6, 0),
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = dock == PaletteDock.BetweenPanels ? BetweenWidth - 10 : double.PositiveInfinity,
         };
-        _header.Children.Add(title);
+        var buttons = new List<Button>();
         foreach (var action in palette.Actions.Where(a => !a.ForItem))
         {
             var a = action;
             var button = SmallButton(action.Icon ?? action.Title, action.Title);
             button.Click += async (_, _) => await RunActionAsync(a.Id, null);
-            _header.Children.Add(button);
+            buttons.Add(button);
         }
 
         if (close is not null)
         {
             var closeButton = SmallButton("✕", Loc.T("Zamknij paletę (przywrócisz ją w ustawieniach: Palety)"));
             closeButton.Click += (_, _) => close();
-            _header.Children.Add(closeButton);
+            buttons.Add(closeButton);
+        }
+
+        if (_header is DockPanel)
+        {
+            for (var i = buttons.Count - 1; i >= 0; i--)
+            {
+                DockPanel.SetDock(buttons[i], Avalonia.Controls.Dock.Right);
+                _header.Children.Add(buttons[i]);
+            }
+
+            _header.Children.Add(title);
+        }
+        else
+        {
+            _header.Children.Add(title);
+            foreach (var button in buttons)
+            {
+                _header.Children.Add(button);
+            }
         }
 
         var layout = new DockPanel { Margin = new Thickness(4) };
@@ -178,18 +199,25 @@ public sealed class PaletteView : Border
     public void ApplySkin(SkinBrushes brushes)
     {
         _brushes = brushes;
+        // Design system: a card (5 px corners) on the status background; the title in the file colour.
         Background = brushes.StatusBackground;
         BorderBrush = brushes.PanelBorder;
         _grip.Background = brushes.PanelBorder; // A visible line, so the handle can be found.
         _grip.Opacity = 0.35;
-        BorderThickness = Dock switch
-        {
-            PaletteDock.Bottom => new Thickness(0, 1, 0, 0),
-            _ => new Thickness(1),
-        };
+        BorderThickness = brushes.IsModern || Dock != PaletteDock.Bottom ? new Thickness(1) : new Thickness(0, 1, 0, 0);
+        CornerRadius = new CornerRadius(brushes.IsModern ? 5 : 0);
+        ClipToBounds = true;
         foreach (var text in _header.Children.OfType<TextBlock>())
         {
-            text.Foreground = brushes.HeaderForeground;
+            text.Foreground = brushes.IsModern ? brushes.FileForeground : brushes.HeaderForeground;
+            text.FontSize = 12;
+        }
+
+        foreach (var button in _header.Children.OfType<Button>())
+        {
+            button.Background = Brushes.Transparent;
+            button.BorderThickness = new Thickness(0);
+            button.Foreground = brushes.MutedForeground;
         }
 
         Refresh();
@@ -236,12 +264,14 @@ public sealed class PaletteView : Border
 
     private Button ItemButton(PaletteItem item)
     {
+        // Design system: flat rows (28 px, accent icon, hover from the theme); between the panels 58 px tiles, icon above label.
         var compact = Dock == PaletteDock.BetweenPanels;
+        var modern = _brushes.IsModern;
         var icon = new TextBlock { Text = item.Icon ?? "▸", FontSize = compact ? 16 : 13, Foreground = _brushes.Accent, HorizontalAlignment = HorizontalAlignment.Center };
         var label = new TextBlock
         {
             Text = item.Title,
-            FontSize = compact ? 10.5 : 12,
+            FontSize = compact ? 11 : 12.5,
             Foreground = _brushes.FileForeground,
             TextTrimming = TextTrimming.CharacterEllipsis,
             TextAlignment = compact ? TextAlignment.Center : TextAlignment.Left,
@@ -249,20 +279,22 @@ public sealed class PaletteView : Border
             VerticalAlignment = VerticalAlignment.Center,
         };
         var content = compact
-            ? (Control)new StackPanel { Children = { icon, label } }
-            : new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { icon, label } };
+            ? (Control)new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Children = { icon, label } }
+            : new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { icon, label } };
 
         var button = new Button
         {
             Content = content,
-            Padding = compact ? new Thickness(2, 4) : new Thickness(8, 3),
-            Margin = new Thickness(1),
+            Height = compact ? 58 : 28,
+            Padding = compact ? new Thickness(4, 0) : new Thickness(8, 0),
+            Margin = Dock == PaletteDock.Bottom ? new Thickness(0, 0, 2, 0) : new Thickness(0, 1),
             HorizontalAlignment = Dock == PaletteDock.Bottom ? HorizontalAlignment.Left : HorizontalAlignment.Stretch,
             HorizontalContentAlignment = compact ? HorizontalAlignment.Center : HorizontalAlignment.Left,
-            Background = _brushes.PanelBackground,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = modern ? Brushes.Transparent : _brushes.PanelBackground,
             BorderBrush = _brushes.PanelBorder,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(_brushes.Skin.Chrome.CornerRadius),
+            BorderThickness = new Thickness(modern ? 0 : 1),
+            CornerRadius = new CornerRadius(modern ? 4 : 0),
         };
         ToolTip.SetTip(button, item.Tooltip ?? item.Title);
         button.Click += async (_, _) => await RunAsync(() => _palette.InvokeAsync(item.Id, _host, CancellationToken.None));
@@ -287,7 +319,17 @@ public sealed class PaletteView : Border
 
     private Button SmallButton(string text, string tip)
     {
-        var button = new Button { Content = text, Padding = new Thickness(6, 0), Margin = new Thickness(0, 0, 2, 0), FontSize = 12, MinHeight = 20 };
+        var button = new Button
+        {
+            Content = text,
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0, 0, 2, 0),
+            FontSize = 12,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
         ToolTip.SetTip(button, tip);
         return button;
     }

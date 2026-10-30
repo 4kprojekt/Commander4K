@@ -20,7 +20,6 @@ namespace Commander4K.App.Preview;
 public static class MarkdownRenderer
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
-    private static readonly FontFamily Monospace = FontFamily.Parse("Cascadia Mono, Consolas, Courier New");
 
     public static Control Render(string markdown, SkinBrushes brushes)
     {
@@ -36,26 +35,39 @@ public static class MarkdownRenderer
 
     private static Control RenderBlock(Block block, SkinBrushes b) => block switch
     {
-        HeadingBlock heading => Text(heading.Inline, b, size: b.FontSize * heading.Level switch { 1 => 2.0, 2 => 1.6, 3 => 1.3, 4 => 1.15, _ => 1.05 },
-            weight: FontWeight.Bold, foreground: heading.Level <= 2 ? b.DirectoryForeground : b.FileForeground, margin: new Thickness(0, heading.Level <= 2 ? 10 : 6, 0, 0)),
+        // Design system: h1 22 bold, h2 16 semibold over a rule, smaller headings in the body size.
+        HeadingBlock { Level: 2 } heading => new Border
+        {
+            BorderBrush = b.PanelBorder,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(0, 0, 0, 4),
+            Margin = new Thickness(0, 10, 0, 0),
+            Child = Text(heading.Inline, b, size: b.FontSize + 3, weight: FontWeight.SemiBold),
+        },
+        HeadingBlock heading => Text(heading.Inline, b, size: heading.Level switch { 1 => b.FontSize + 9, 3 => b.FontSize + 1, _ => b.FontSize },
+            weight: heading.Level == 1 ? FontWeight.Bold : FontWeight.SemiBold, margin: new Thickness(0, 6, 0, 0)),
         ParagraphBlock paragraph => Text(paragraph.Inline, b),
         ListBlock list => RenderList(list, b),
         QuoteBlock quote => new Border
         {
             BorderBrush = b.Accent,
+            Background = b.HighlightBackground,
             BorderThickness = new Thickness(3, 0, 0, 0),
-            Padding = new Thickness(12, 2, 0, 2),
-            Child = Container(quote, b, foreground: b.HiddenForeground),
+            CornerRadius = new CornerRadius(0, 3, 3, 0),
+            Padding = new Thickness(12, 6, 10, 6),
+            Child = Container(quote, b, foreground: b.MutedForeground),
         },
         FencedCodeBlock or CodeBlock => new Border
         {
-            Background = b.HeaderBackground,
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(10, 8),
+            Background = b.CodeBackground,
+            BorderBrush = b.PanelBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+            Padding = new Thickness(12, 10),
             Child = new SelectableTextBlock
             {
                 Text = ((LeafBlock)block).Lines.ToString().TrimEnd(),
-                FontFamily = Monospace,
+                FontFamily = b.MonospaceFamily,
                 FontSize = b.FontSize - 1,
                 Foreground = b.FileForeground,
                 TextWrapping = TextWrapping.Wrap,
@@ -63,7 +75,7 @@ public static class MarkdownRenderer
         },
         ThematicBreakBlock => new Border { Height = 1, Background = b.PanelBorder, Margin = new Thickness(0, 6) },
         MdTable table => RenderTable(table, b),
-        HtmlBlock html => new SelectableTextBlock { Text = html.Lines.ToString(), Foreground = b.HiddenForeground, FontFamily = Monospace, TextWrapping = TextWrapping.Wrap },
+        HtmlBlock html => new SelectableTextBlock { Text = html.Lines.ToString(), Foreground = b.MutedForeground, FontFamily = b.MonospaceFamily, TextWrapping = TextWrapping.Wrap },
         ContainerBlock container => Container(container, b),
         LeafBlock leaf => new SelectableTextBlock { Text = leaf.Lines.ToString(), Foreground = b.FileForeground, TextWrapping = TextWrapping.Wrap },
         _ => new Panel(),
@@ -200,7 +212,7 @@ public static class MarkdownRenderer
                 target.Add(span);
                 break;
             case CodeInline code:
-                target.Add(new Run(code.Content) { FontFamily = Monospace, Background = b.HeaderBackground, Foreground = b.ArchiveForeground });
+                target.Add(new Run(code.Content) { FontFamily = b.MonospaceFamily, Background = b.CodeBackground, Foreground = b.FileForeground });
                 break;
             case LinkInline { IsImage: true } image:
                 target.Add(new Run($"[obraz: {image.Url}]") { Foreground = b.HiddenForeground, FontStyle = FontStyle.Italic });

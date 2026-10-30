@@ -297,52 +297,61 @@ public sealed class FileViewportCanvas : Control
             return default;
         }
 
-        var inset = b.Skin.Chrome.BorderStyle switch
+        // Modern skins: the panel card (FilePanelView) draws the border, rows are inset; retro skins draw their frames here.
+        var inset = b.IsModern ? 0 : b.Skin.Chrome.BorderStyle switch
         {
             PanelBorderStyle.Double => 6,
             PanelBorderStyle.Single => 1,
             _ => 0,
         };
         var inner = new Rect(Bounds.Size).Deflate(inset);
-        var headerHeight = b.Skin.Chrome.ShowColumnHeaders ? b.RowHeight : 0;
+        var headerHeight = !b.Skin.Chrome.ShowColumnHeaders ? 0 : b.IsModern ? Math.Round(b.FontSize * 2) : b.RowHeight;
         var header = new Rect(inner.X, inner.Y, inner.Width, headerHeight);
         var footer = _tab is { IsLoading: true } ? b.RowHeight : 0;
-        var rows = new Rect(inner.X, inner.Y + headerHeight, inner.Width, Math.Max(0, inner.Height - headerHeight - footer));
+        var top = b.IsModern ? 4 : 0; // Design system: 4 px above the first row.
+        var rows = new Rect(inner.X, inner.Y + headerHeight + top, inner.Width, Math.Max(0, inner.Height - headerHeight - footer - top));
 
-        var charWidth = b.FontSize * 0.6;
-        var dateWidth = inner.Width > 420 ? charWidth * 17 : 0;
-        var sizeWidth = inner.Width > 260 ? charWidth * 11 : 0;
-        var dateX = inner.Right - dateWidth - 6;
-        var sizeX = dateX - sizeWidth - 6;
+        // Size and date columns (design system: 84 px and 124 px at 13 px), 8 px apart, 13 px from the right edge.
+        var scale = b.FontSize / 13.0;
+        var gap = b.IsModern ? 8 * scale : 6;
+        var right = inner.Right - (b.IsModern ? 13 : 6);
+        var dateWidth = inner.Width > 420 ? (b.IsModern ? 124 * scale : b.FontSize * 0.6 * 17) : 0;
+        var sizeWidth = inner.Width > 260 ? (b.IsModern ? 84 * scale : b.FontSize * 0.6 * 11) : 0;
+        var dateX = right - dateWidth;
+        var sizeX = dateX - sizeWidth - gap;
 
         // Plugin columns sit between name and size, in settings order, as long as the name keeps ~140 px.
-        var scale = b.FontSize / 13.0;
         var room = sizeX - inner.X - 140 * scale;
         var extras = new List<ExtraColumnLayout>();
-        var right = sizeX;
+        var nameRight = sizeX - gap;
         foreach (var column in _tab?.ColumnData.Columns ?? [])
         {
             var width = column.Definition.DefaultWidth * scale;
-            if (room - width - 6 < 0)
+            if (room - width - gap < 0)
             {
                 break;
             }
 
-            room -= width + 6;
+            room -= width + gap;
             extras.Add(new ExtraColumnLayout(column, 0, width));
         }
 
         for (var i = extras.Count - 1; i >= 0; i--)
         {
-            right -= extras[i].Width + 6;
-            extras[i] = extras[i] with { X = right };
+            extras[i] = extras[i] with { X = nameRight - extras[i].Width };
+            nameRight -= extras[i].Width + gap;
         }
 
-        return new CanvasLayout(inner, header, rows, sizeX, sizeWidth, dateX, dateWidth, extras, right);
+        return new CanvasLayout(inner, header, rows, sizeX, sizeWidth, dateX, dateWidth, extras, nameRight);
     }
 
     private static void DrawFrame(DrawingContext context, SkinBrushes b, Rect bounds)
     {
+        if (b.IsModern)
+        {
+            return; // The panel card around the list has the border.
+        }
+
         switch (b.Skin.Chrome.BorderStyle)
         {
             case PanelBorderStyle.Single:
@@ -359,32 +368,90 @@ public sealed class FileViewportCanvas : Control
     private static void DrawHeader(DrawingContext context, SkinBrushes b, CanvasLayout layout, SortOrder sort)
     {
         context.FillRectangle(b.HeaderBackground, layout.HeaderArea);
-        var arrow = sort.Descending ? " ▼" : " ▲";
         var y = layout.HeaderArea.Y;
-        DrawText(context, b, Loc.T("Nazwa") + (sort.Column is SortColumn.Name or SortColumn.Extension ? arrow : ""), b.HeaderForeground,
-            layout.Inner.X + 6, y, layout.NameRight - layout.Inner.X - 12, b.BoldTypeface);
-        foreach (var extra in layout.Extras)
+        var height = layout.HeaderArea.Height;
+        if (!b.IsModern)
         {
-            DrawText(context, b, extra.Column.Definition.Header, b.HeaderForeground, extra.X, y, extra.Width, b.BoldTypeface,
-                Align(extra.Column.Definition.Alignment));
+            var arrow = sort.Descending ? " ▼" : " ▲";
+            DrawText(context, b, Loc.T("Nazwa") + (sort.Column is SortColumn.Name or SortColumn.Extension ? arrow : ""), b.HeaderForeground,
+                layout.Inner.X + 6, y, layout.NameRight - layout.Inner.X - 12, b.BoldTypeface);
+            foreach (var extra in layout.Extras)
+            {
+                DrawText(context, b, extra.Column.Definition.Header, b.HeaderForeground, extra.X, y, extra.Width, b.BoldTypeface,
+                    Align(extra.Column.Definition.Alignment));
+            }
+
+            if (layout.SizeWidth > 0)
+            {
+                DrawText(context, b, Loc.T("Rozmiar") + (sort.Column == SortColumn.Size ? arrow : ""), b.HeaderForeground,
+                    layout.SizeX, y, layout.SizeWidth, b.BoldTypeface, TextAlignment.Right);
+            }
+
+            if (layout.DateWidth > 0)
+            {
+                DrawText(context, b, Loc.T("Data") + (sort.Column == SortColumn.Date ? arrow : ""), b.HeaderForeground,
+                    layout.DateX, y, layout.DateWidth, b.BoldTypeface);
+            }
         }
-        if (layout.SizeWidth > 0)
+        else
         {
-            DrawText(context, b, Loc.T("Rozmiar") + (sort.Column == SortColumn.Size ? arrow : ""), b.HeaderForeground,
-                layout.SizeX, y, layout.SizeWidth, b.BoldTypeface, TextAlignment.Right);
+            // Design system: 11 px semibold capitals, the name aligned with the text of the rows, an accent sort chevron.
+            var size = Math.Round(b.FontSize * 11 / 13);
+            var nameX = layout.Inner.X + RowTextOffset(b);
+            void Column(string title, double x, double width, bool sorted, TextAlignment alignment)
+            {
+                var text = title.ToUpper(Loc.Culture);
+                var shown = DrawText(context, b, text, b.HeaderForeground, x, y, width - (sorted ? 14 : 0), b.BoldTypeface, alignment, height, size);
+                if (sorted)
+                {
+                    var chevronX = alignment == TextAlignment.Right ? x + width - shown - 12 : x + shown + 4;
+                    DrawChevron(context, b.Accent, alignment == TextAlignment.Right ? x + width - 10 : chevronX, y + (height / 2), sort.Descending);
+                }
+            }
+
+            Column(Loc.T("Nazwa"), nameX, layout.NameRight - nameX, sort.Column is SortColumn.Name or SortColumn.Extension, TextAlignment.Left);
+            foreach (var extra in layout.Extras)
+            {
+                Column(extra.Column.Definition.Header, extra.X, extra.Width, false, Align(extra.Column.Definition.Alignment));
+            }
+
+            if (layout.SizeWidth > 0)
+            {
+                Column(Loc.T("Rozmiar"), layout.SizeX, layout.SizeWidth, sort.Column == SortColumn.Size, TextAlignment.Right);
+            }
+
+            if (layout.DateWidth > 0)
+            {
+                Column(Loc.T("Data"), layout.DateX, layout.DateWidth, sort.Column == SortColumn.Date, TextAlignment.Left);
+            }
         }
 
-        if (layout.DateWidth > 0)
-        {
-            DrawText(context, b, Loc.T("Data") + (sort.Column == SortColumn.Date ? arrow : ""), b.HeaderForeground,
-                layout.DateX, y, layout.DateWidth, b.BoldTypeface);
-        }
+        context.DrawLine(b.BorderPen, layout.HeaderArea.BottomLeft + new Vector(0, -0.5), layout.HeaderArea.BottomRight + new Vector(0, -0.5));
+    }
 
-        context.DrawLine(b.BorderPen, layout.HeaderArea.BottomLeft, layout.HeaderArea.BottomRight);
+    /// <summary>Row inset + padding + icon + gap: where names start (36 px in the design system at 13 px).</summary>
+    private static double RowTextOffset(SkinBrushes b) =>
+        b.IsModern ? 4 + 8 + IconSize(b) + 8 : 6 + (b.Skin.Chrome.ShowIcons ? b.RowHeight : 0);
+
+    private static double IconSize(SkinBrushes b) => Math.Round(b.FontSize * 16 / 13);
+
+    private static void DrawChevron(DrawingContext context, IBrush brush, double x, double centerY, bool down)
+    {
+        var pen = new Pen(brush, 1.5, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
+        var geometry = new PolylineGeometry(down
+            ? [new Point(x, centerY - 1.5), new Point(x + 2.5, centerY + 1), new Point(x + 5, centerY - 1.5)]
+            : [new Point(x, centerY + 1.5), new Point(x + 2.5, centerY - 1), new Point(x + 5, centerY + 1.5)], false);
+        context.DrawGeometry(null, pen, geometry);
     }
 
     private void DrawRow(DrawingContext context, SkinBrushes b, CanvasLayout layout, PanelTab tab, VfsEntry entry, int index, double y)
     {
+        if (b.IsModern)
+        {
+            DrawModernRow(context, b, layout, tab, entry, index, y);
+            return;
+        }
+
         var rowRect = new Rect(layout.Inner.X, y, layout.Inner.Width, b.RowHeight);
         var isCursor = index == tab.Cursor;
         var isMarked = tab.Marked.Contains(entry.Path);
@@ -440,6 +507,90 @@ public sealed class FileViewportCanvas : Control
                 ? entry.LastWriteTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm", Culture)
                 : entry.Description ?? string.Empty;
             DrawText(context, b, info, foreground, layout.DateX, y, layout.DateWidth, b.Typeface);
+        }
+    }
+
+    /// <summary>
+    /// Design-system row: inset 4 px, 3 px corners; active cursor filled, inactive cursor outlined; marked rows get
+    /// their own background and a 3 px edge; type icon; sizes and dates in the muted colour; folders semibold.
+    /// </summary>
+    private void DrawModernRow(DrawingContext context, SkinBrushes b, CanvasLayout layout, PanelTab tab, VfsEntry entry, int index, double y)
+    {
+        var rowRect = new Rect(layout.Inner.X + 4, y, layout.Inner.Width - 8, b.RowHeight);
+        var isCursor = index == tab.Cursor;
+        var isMarked = tab.Marked.Contains(entry.Path);
+        var activeCursor = isCursor && _isActive;
+        if (activeCursor)
+        {
+            context.FillRectangle(b.CursorBackground, rowRect, 3);
+        }
+        else if (isCursor)
+        {
+            context.DrawRectangle(b.InactiveCursorBackground, b.InactiveCursorPen, rowRect.Deflate(0.5), 3, 3);
+        }
+        else if (isMarked && b.SelectedBackground is { } markedBackground)
+        {
+            context.FillRectangle(markedBackground, rowRect, 3);
+        }
+
+        if (isMarked)
+        {
+            context.FillRectangle(b.SelectedForeground, new Rect(rowRect.X - 1, y + 4, 3, b.RowHeight - 8), 1.5f);
+        }
+
+        var hidden = (entry.Flags & (VfsEntryFlags.Hidden | VfsEntryFlags.System)) != 0;
+        var foreground = activeCursor ? (isMarked ? b.CursorSelectedForeground : b.CursorForeground)
+            : isMarked ? b.SelectedForeground
+            : ForegroundFor(b, entry);
+        IBrush meta = activeCursor ? foreground : isMarked ? b.SelectedForeground : b.MutedForeground;
+
+        var x = rowRect.X + 8;
+        if (b.Skin.Chrome.ShowIcons)
+        {
+            var size = IconSize(b);
+            FileIcons.Draw(context, FileIcons.For(entry), foreground, x, y + ((b.RowHeight - size) / 2), size, hidden ? 0.6 : 1);
+            x += size + 8;
+        }
+
+        var name = b.Skin.Chrome.UppercaseNames ? entry.Name.ToUpperInvariant() : entry.Name;
+        var bold = entry.IsContainer || isMarked;
+        DrawText(context, b, name, foreground, x, y, layout.NameRight - x, bold ? b.BoldTypeface : b.Typeface);
+        foreach (var extra in layout.Extras)
+        {
+            if (tab.ColumnData.Get(extra.Column, entry) is not { Text.Length: > 0 } value)
+            {
+                continue;
+            }
+
+            if (extra.Column.Plugin.Id == "builtin.columns.git")
+            {
+                // Git: a status dot plus the word, coloured by meaning (changes amber, new green, conflicts red).
+                var text = value.Text.TrimStart('●', ' ');
+                IBrush color = activeCursor ? foreground
+                    : text == Loc.T("zmieniony") || text == Loc.T("w indeksie") ? b.Warning
+                    : text == Loc.T("nowy") || text == Loc.T("dodany") ? b.Success
+                    : text == Loc.T("konflikt") || text == Loc.T("usunięty") ? b.Error
+                    : b.MutedForeground;
+                context.FillRectangle(color, new Rect(extra.X, y + (b.RowHeight / 2) - 3, 6, 6), 3);
+                DrawText(context, b, text, color, extra.X + 12, y, extra.Width - 12, b.Typeface);
+                continue;
+            }
+
+            DrawText(context, b, value.Text, value.Text.StartsWith('⚠') ? b.Error : meta, extra.X, y, extra.Width, b.Typeface,
+                Align(extra.Column.Definition.Alignment));
+        }
+
+        if (layout.SizeWidth > 0)
+        {
+            DrawText(context, b, SizeText(tab, entry), meta, layout.SizeX, y, layout.SizeWidth, b.Typeface, TextAlignment.Right);
+        }
+
+        if (layout.DateWidth > 0)
+        {
+            var info = entry.Kind is VfsEntryKind.File or VfsEntryKind.Directory && entry.LastWriteTime != default
+                ? entry.LastWriteTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm", Culture)
+                : entry.Description ?? string.Empty;
+            DrawText(context, b, info, meta, layout.DateX, y, layout.DateWidth, b.Typeface);
         }
     }
 
@@ -507,12 +658,9 @@ public sealed class FileViewportCanvas : Control
             VfsEntryKind.Directory or VfsEntryKind.ParentLink or VfsEntryKind.Drive or VfsEntryKind.RegistryKey => b.DirectoryForeground,
             VfsEntryKind.Host or VfsEntryKind.Share or VfsEntryKind.Action => b.NetworkForeground,
             VfsEntryKind.Archive => b.ArchiveForeground,
-            VfsEntryKind.File => Path.GetExtension(entry.Name).ToLowerInvariant() switch
-            {
-                ".exe" or ".com" or ".bat" or ".cmd" or ".ps1" or ".msi" => b.ExecutableForeground,
-                ".zip" or ".7z" or ".rar" or ".tar" or ".gz" or ".xz" or ".bz2" or ".zst" => b.ArchiveForeground,
-                _ => b.FileForeground,
-            },
+            VfsEntryKind.File => FileIcons.IsExecutable(entry.Name) ? b.ExecutableForeground
+                : FileIcons.IsArchive(entry.Name) ? b.ArchiveForeground
+                : b.FileForeground,
             _ => b.FileForeground,
         };
     }
@@ -549,7 +697,7 @@ public sealed class FileViewportCanvas : Control
         var bar = new Rect(layout.Inner.X, layout.RowsArea.Bottom, layout.Inner.Width, b.RowHeight);
         context.FillRectangle(b.StatusBackground, bar);
         var count = Math.Max(0, tab.Entries.Count - (tab.Entries.Count > 0 && tab.Entries[0].Kind == VfsEntryKind.ParentLink ? 1 : 0));
-        var text = $" {SpinnerFrames[_spinnerFrame]}  Wczytywanie… {count:N0}   [Esc – Anuluj]";
+        var text = $" {SpinnerFrames[_spinnerFrame]}  " + Loc.T("Wczytywanie… {0:N0}   [Esc – Anuluj]", count);
         DrawText(context, b, text, b.StatusForeground, bar.X + 4, bar.Y, bar.Width - 8, b.Typeface);
     }
 
@@ -573,21 +721,23 @@ public sealed class FileViewportCanvas : Control
         context.DrawText(formatted, new Point(area.X + 12, area.Y + (area.Height / 2) - formatted.Height));
     }
 
-    private static void DrawText(DrawingContext context, SkinBrushes b, string text, IBrush brush, double x, double y, double width,
-        Typeface typeface, TextAlignment alignment = TextAlignment.Left)
+    /// <summary>Draws one line centred vertically in a row (or <paramref name="height"/>); returns the drawn width.</summary>
+    private static double DrawText(DrawingContext context, SkinBrushes b, string text, IBrush brush, double x, double y, double width,
+        Typeface typeface, TextAlignment alignment = TextAlignment.Left, double? height = null, double? fontSize = null)
     {
         if (width <= 4 || text.Length == 0)
         {
-            return;
+            return 0;
         }
 
-        var formatted = Format(b, text, brush, typeface, width);
+        var formatted = Format(b, text, brush, typeface, width, fontSize);
         formatted.TextAlignment = alignment;
-        context.DrawText(formatted, new Point(x, y + ((b.RowHeight - formatted.Height) / 2)));
+        context.DrawText(formatted, new Point(x, Math.Round(y + (((height ?? b.RowHeight) - formatted.Height) / 2))));
+        return Math.Min(width, formatted.WidthIncludingTrailingWhitespace);
     }
 
-    private static FormattedText Format(SkinBrushes b, string text, IBrush brush, Typeface typeface, double width) =>
-        new(text, Culture, FlowDirection.LeftToRight, typeface, b.FontSize, brush)
+    private static FormattedText Format(SkinBrushes b, string text, IBrush brush, Typeface typeface, double width, double? fontSize = null) =>
+        new(text, Culture, FlowDirection.LeftToRight, typeface, fontSize ?? b.FontSize, brush)
         {
             MaxTextWidth = Math.Max(1, width),
             MaxLineCount = 1,

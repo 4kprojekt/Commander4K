@@ -33,6 +33,8 @@ public sealed class SettingsWindow : Window
     private readonly Func<Task> _checkForUpdates;
     private readonly TextBox _search;
     private readonly StackPanel _content;
+    private readonly StackPanel _nav;
+    private readonly ScrollViewer _scroll;
     private readonly TextBlock _keyStatus;
 
     public SettingsWindow(AppHost host, SkinBrushes brushes, Action<string> onChanged, Func<Task> checkForUpdates, string? query = null)
@@ -46,24 +48,51 @@ public sealed class SettingsWindow : Window
         Height = 700;
         MinWidth = 560;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = brushes.WindowBackground;
-        Foreground = brushes.FileForeground;
+        Width = 1000;
+        MinWidth = 640;
+        Background = brushes.PanelBackground;
+        Foreground = brushes.WindowForeground;
+        FontFamily = brushes.FontFamily;
+        FontSize = brushes.FontSize;
 
-        _search = new TextBox().Text(query ?? string.Empty).PlaceholderText(Loc.T("Szukaj ustawień, skrótów, plików… (np. „ukryte”, „F5”, „aktualizacje”)"));
+        _search = new TextBox().Text(query ?? string.Empty).Height(34).MaxWidth(560).Padding(10, 0).CornerRadius(new CornerRadius(6))
+            .VerticalContentAlignment(VerticalAlignment.Center)
+            .PlaceholderText(Loc.T("Szukaj ustawień, skrótów, plików… (np. „ukryte”, „F5”, „aktualizacje”)"));
         _search.TextChanged += (_, _) => Rebuild();
-        _content = new StackPanel().Spacing(2);
-        _keyStatus = new TextBlock().TextWrapping(TextWrapping.Wrap).Foreground(brushes.Error).IsVisible(false);
+        _content = new StackPanel().Spacing(22).Margin(24, 20, 24, 24);
+        _nav = new StackPanel().Spacing(2);
+        _keyStatus = new TextBlock().TextWrapping(TextWrapping.Wrap).Foreground(brushes.Error).IsVisible(false).Margin(24, 10, 24, 0);
+        _scroll = new ScrollViewer().Content(_content);
 
-        Content = new Grid().Rows("Auto,Auto,*,Auto").Margin(16).Children(
-            _search.Row(0),
-            _keyStatus.Row(1).Margin(0, 6, 0, 0),
-            new ScrollViewer().Row(2).Margin(0, 10, 0, 0).Content(_content),
-            new DockPanel().Row(3).Margin(0, 10, 0, 0).Children(
-                new TextBlock().Text($"Commander4K {AppVersion.Display}").Opacity(0.7).VerticalAlignment(VerticalAlignment.Center),
-                new StackPanel().Orientation(Orientation.Horizontal).HorizontalAlignment(HorizontalAlignment.Right).Spacing(8).Children(
-                    new Button().Content(Loc.T("Sprawdź aktualizacje")).OnClick(async _ => await _checkForUpdates()),
-                    new Button().Content(Loc.T("O programie")).OnClick(async _ => await new AboutDialog(brushes).ShowAsync(this)),
-                    new Button().Content(Loc.T("Zamknij")).OnClick(_ => Close()))));
+        // Design system: top bar (title + search), section list on the left, cards on the right, footer with actions.
+        var top = new Border().BorderBrush(brushes.PanelBorder).BorderThickness(new Thickness(0, 0, 0, 1)).Padding(20, 14).Child(
+            new Grid().Cols("Auto,*").Children(
+                new TextBlock().Text(Loc.T("Ustawienia")).FontSize(18).FontWeight(FontWeight.SemiBold).Foreground(brushes.FileForeground)
+                    .VerticalAlignment(VerticalAlignment.Center).Margin(0, 0, 24, 0).MinWidth(160),
+                _search.Col(1).HorizontalAlignment(HorizontalAlignment.Left)));
+        var version = new TextBlock().Text(Loc.T("Wersja {0} · zmiany zapisywane od razu w config/settings.json", AppVersion.Display)).FontSize(11)
+            .Foreground(brushes.MutedForeground).TextWrapping(TextWrapping.Wrap).Margin(10, 8, 10, 0);
+        DockPanel.SetDock(version, Dock.Bottom);
+        var nav = new Border().Width(230).Background(brushes.HeaderBackground).BorderBrush(brushes.PanelBorder)
+            .BorderThickness(new Thickness(0, 0, 1, 0)).Padding(10, 12).Child(new DockPanel().Children(
+                version,
+                new ScrollViewer().Content(_nav)));
+        var buttons = new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Children(
+            new Button().Content(Loc.T("Sprawdź aktualizacje")).Height(30).OnClick(async _ => await _checkForUpdates()),
+            new Button().Content(Loc.T("O programie")).Height(30).OnClick(async _ => await new AboutDialog(brushes).ShowAsync(this)),
+            new Button().Content(Loc.T("Zamknij")).Height(30).Background(brushes.Accent).BorderBrush(brushes.Accent)
+                .Foreground(Avalonia.Media.Brushes.White).FontWeight(FontWeight.SemiBold).OnClick(_ => Close()));
+        DockPanel.SetDock(buttons, Dock.Right);
+        var footer = new Border().Background(brushes.HeaderBackground).BorderBrush(brushes.PanelBorder).BorderThickness(new Thickness(0, 1, 0, 0))
+            .Padding(20, 10).Child(new DockPanel().Children(
+                buttons,
+                new TextBlock().Text(Loc.T("Esc czyści wyszukiwanie, drugie Esc zamyka · Tab przechodzi między kontrolkami")).FontSize(12)
+                    .Foreground(brushes.MutedForeground).VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis)));
+        DockPanel.SetDock(top, Dock.Top);
+        DockPanel.SetDock(footer, Dock.Bottom);
+        DockPanel.SetDock(nav, Dock.Left);
+        DockPanel.SetDock(_keyStatus, Dock.Top);
+        Content = new DockPanel().Children(top, footer, nav, _keyStatus, _scroll);
 
         Opened += (_, _) =>
         {
@@ -95,14 +124,12 @@ public sealed class SettingsWindow : Window
     {
         var query = _search.Text;
         _content.Children.Clear();
+        _nav.Children.Clear();
 
         foreach (var group in SettingsCatalog.Search(_host.SettingsCatalog, query).GroupBy(s => s.Category))
         {
-            _content.Children.Add(Header(group.Key));
-            foreach (var setting in group)
-            {
-                _content.Children.Add(Row(setting.Title, setting.Description + (setting.RequiresRestart ? Loc.T(" (wymaga ponownego uruchomienia)") : ""), Editor(setting)));
-            }
+            Section(group.Key, [.. group.Select(setting =>
+                Row(setting.Title, setting.Description + (setting.RequiresRestart ? Loc.T(" (wymaga ponownego uruchomienia)") : ""), Editor(setting)))]);
         }
 
         var commands = SettingsCatalog.Search(
@@ -112,46 +139,73 @@ public sealed class SettingsWindow : Window
             c => [KeysCategory, Loc.T("skrót klawisz"), c.Id, BindingsText(c.Id)]);
         if (commands.Count > 0)
         {
-            _content.Children.Add(Header(KeysCategory));
-            _content.Children.Add(new TextBlock()
-                .Text(Loc.T("Kilka skrótów oddziel średnikiem, akord spacją (np. „F5; Ctrl+K Ctrl+C”). Pusty = brak skrótu."))
-                .FontSize(12).Opacity(0.7).Margin(0, 0, 0, 6));
-            foreach (var command in commands)
-            {
-                _content.Children.Add(Row(command.Description, command.Id, BindingEditor(command.Id)));
-            }
+            Section(KeysCategory, [.. commands.Select(command => Row(command.Description, command.Id, BindingEditor(command.Id)))],
+                Loc.T("Kilka skrótów oddziel średnikiem, akord spacją (np. „F5; Ctrl+K Ctrl+C”). Pusty = brak skrótu."));
         }
 
         if (SettingsCatalog.Search([FilesCategory], query, s => s, _ => ["json", "folder", "konfiguracja", "keymap", "tools", Loc.T("narzędzia"), Loc.T("skórki"), "plik"]).Count > 0)
         {
-            _content.Children.Add(Header(FilesCategory));
-            _content.Children.Add(new WrapPanel().Children(
+            Section(FilesCategory, [new Border().Padding(16, 12).Child(new WrapPanel().Children(
                 FileButton(Loc.T("📂 Folder konfiguracji"), () => SkinPickerDialog.OpenFolder(_host.Config.ConfigDirectory)),
                 FileButton("⌨ keymap.json", () => _ = _host.Tools.EditAsync(_host.Config.KeymapPath)),
                 FileButton(Loc.T("🛠 tools.json (edytor, diff, terminal)"), () => _ = _host.Tools.EditAsync(_host.Config.ToolsPath)),
-                FileButton(Loc.T("🎨 Folder skórek"), () => SkinPickerDialog.OpenFolder(_host.Config.SkinsDirectory))));
+                FileButton(Loc.T("🎨 Folder skórek"), () => SkinPickerDialog.OpenFolder(_host.Config.SkinsDirectory))))]);
         }
 
         if (_content.Children.Count == 0)
         {
-            _content.Children.Add(new TextBlock().Text(Loc.T("Nic nie pasuje do wyszukiwania.")).Opacity(0.7).Margin(0, 20));
+            _content.Children.Add(new TextBlock().Text(Loc.T("Nic nie pasuje do wyszukiwania.")).Foreground(_brushes.MutedForeground).Margin(0, 20));
         }
     }
 
-    private TextBlock Header(string text) =>
-        new TextBlock().Text(text).FontSize(16).FontWeight(FontWeight.SemiBold).Foreground(_brushes.Accent).Margin(0, 14, 0, 4);
+    /// <summary>
+    /// One section: an 11 px uppercase accent heading and a card (6 px corners) whose rows are separated by rules; plus
+    /// an entry in the section list on the left that scrolls to it.
+    /// </summary>
+    private void Section(string title, IReadOnlyList<Control> rows, string? note = null)
+    {
+        var card = new StackPanel();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (i > 0 && rows[i] is Border row)
+            {
+                row.BorderBrush = _brushes.PanelBorder;
+                row.BorderThickness = new Thickness(0, 1, 0, 0);
+            }
 
+            card.Children.Add(rows[i]);
+        }
+
+        var heading = new TextBlock().Text(title.ToUpper(Loc.Culture)).FontSize(11).FontWeight(FontWeight.SemiBold).Foreground(_brushes.Accent)
+            .Margin(0, 0, 0, 8);
+        var section = new StackPanel().Children(heading);
+        if (note is not null)
+        {
+            section.Children.Add(new TextBlock().Text(note).FontSize(12).Foreground(_brushes.MutedForeground).TextWrapping(TextWrapping.Wrap).Margin(0, 0, 0, 8));
+        }
+
+        section.Children.Add(new Border().CornerRadius(new CornerRadius(6)).BorderBrush(_brushes.PanelBorder).BorderThickness(new Thickness(1))
+            .Background(_brushes.WindowBackground).ClipToBounds(true).Child(card));
+        _content.Children.Add(section);
+
+        var navButton = new Button().Height(32).Padding(10, 0).HorizontalAlignment(HorizontalAlignment.Stretch)
+            .HorizontalContentAlignment(HorizontalAlignment.Left).VerticalContentAlignment(VerticalAlignment.Center)
+            .Background(Avalonia.Media.Brushes.Transparent).BorderThickness(new Thickness(0))
+            .Foreground(_brushes.WindowForeground).Content(new TextBlock().Text(title).TextTrimming(TextTrimming.CharacterEllipsis))
+            .OnClick(_ => section.BringIntoView());
+        _nav.Children.Add(navButton);
+    }
+
+    /// <summary>Design system: min. 60 px, 10/16 px padding, semibold title, muted description, the control on the right.</summary>
     private Border Row(string title, string description, Control editor) =>
         new Border()
-            .Padding(10, 8)
-            .CornerRadius(new CornerRadius(4))
-            .Background(_brushes.PanelBackground)
-            .Margin(0, 0, 0, 4)
+            .Padding(16, 10)
+            .MinHeight(60)
             .Child(new Grid().Cols("*,Auto").Children(
                 new StackPanel().VerticalAlignment(VerticalAlignment.Center).Children(
-                    new TextBlock().Text(title).FontWeight(FontWeight.SemiBold).TextWrapping(TextWrapping.Wrap),
-                    new TextBlock().Text(description).FontSize(12).Opacity(0.7).TextWrapping(TextWrapping.Wrap)),
-                editor.Col(1).Margin(12, 0, 0, 0).VerticalAlignment(VerticalAlignment.Center)));
+                    new TextBlock().Text(title).FontWeight(FontWeight.SemiBold).Foreground(_brushes.FileForeground).TextWrapping(TextWrapping.Wrap),
+                    new TextBlock().Text(description).FontSize(12).Foreground(_brushes.MutedForeground).TextWrapping(TextWrapping.Wrap).Margin(0, 2, 0, 0)),
+                editor.Col(1).Margin(16, 0, 0, 0).VerticalAlignment(VerticalAlignment.Center)));
 
     private Control Editor(SettingDescriptor setting)
     {

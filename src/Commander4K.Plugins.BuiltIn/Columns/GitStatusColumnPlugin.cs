@@ -23,7 +23,7 @@ public sealed class GitStatusColumnPlugin : IColumnMetadataPlugin
     public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.columns.git", Loc.T("Kolumna Git"),
         Loc.T("Status plików w repozytorium Git (zmieniony, nowy, dodany, ignorowany, konflikt)."), PluginPermissions.ShellRun);
 
-    public IReadOnlyList<ColumnDefinition> Columns { get; } = [new(StatusColumn, "Git", ColumnAlignment.Left, 78)];
+    public IReadOnlyList<ColumnDefinition> Columns { get; } = [new(StatusColumn, "Git", ColumnAlignment.Left, 96)];
 
     public bool Supports(in VfsEntry entry) =>
         entry.Kind is VfsEntryKind.File or VfsEntryKind.Directory && VfsPath.GetScheme(entry.Path) == VfsPath.FileScheme;

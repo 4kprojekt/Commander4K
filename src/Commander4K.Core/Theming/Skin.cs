@@ -48,6 +48,38 @@ public sealed record SkinPalette
     public required RgbColor Accent { get; init; }
     public required RgbColor Progress { get; init; }
     public required RgbColor Error { get; init; }
+
+    // Design-system tokens (Grafit). Optional: older and retro skins leave them out and get values derived from the
+    // colours above (see SkinBrushes), so every skin keeps working.
+
+    /// <summary>Default text of chrome: menus, buttons, labels.</summary>
+    public RgbColor? WindowForeground { get; init; }
+    /// <summary>Secondary text: sizes, dates, descriptions, placeholders.</summary>
+    public RgbColor? MutedForeground { get; init; }
+    /// <summary>Raised surfaces: buttons, dialogs, menus, dropdowns.</summary>
+    public RgbColor? Surface2 { get; init; }
+    public RgbColor? HoverBackground { get; init; }
+    public RgbColor? PressedBackground { get; init; }
+    /// <summary>Keyboard focus ring of inputs and buttons.</summary>
+    public RgbColor? FocusRing { get; init; }
+    /// <summary>Path bar of the panel that has focus (with a 3 px accent edge).</summary>
+    public RgbColor? ActiveHeaderBackground { get; init; }
+    public RgbColor? ActiveHeaderForeground { get; init; }
+    /// <summary>Row background of marked entries (plus a selectedForeground edge).</summary>
+    public RgbColor? SelectedBackground { get; init; }
+    /// <summary>Text of a marked entry under the cursor.</summary>
+    public RgbColor? CursorSelectedForeground { get; init; }
+    /// <summary>Outline of the cursor row in the panel without focus.</summary>
+    public RgbColor? InactiveCursorBorder { get; init; }
+    public RgbColor? Warning { get; init; }
+    public RgbColor? Success { get; init; }
+    public RgbColor? WarningBackground { get; init; }
+    public RgbColor? ErrorBackground { get; init; }
+    /// <summary>Info rows, chosen chips, quotes, the current line in editors.</summary>
+    public RgbColor? HighlightBackground { get; init; }
+    public RgbColor? HighlightForeground { get; init; }
+    /// <summary>Code blocks, stack traces, the command line of viewers.</summary>
+    public RgbColor? CodeBackground { get; init; }
 }
 
 public sealed record SkinTypography

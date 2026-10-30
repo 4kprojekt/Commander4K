@@ -21,8 +21,10 @@ public abstract class DialogWindow<TResult> : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         CanResize = false;
         ShowInTaskbar = false;
-        Background = brushes.WindowBackground;
-        Foreground = brushes.FileForeground;
+        Background = brushes.IsModern ? brushes.Surface2 : brushes.WindowBackground;
+        Foreground = brushes.WindowForeground;
+        FontFamily = brushes.FontFamily;
+        FontSize = brushes.FontSize;
     }
 
     protected SkinBrushes Brushes { get; }
@@ -44,20 +46,26 @@ public abstract class DialogWindow<TResult> : Window
     protected static TextBlock Label(string text) =>
         new TextBlock().Text(text).TextWrapping(TextWrapping.Wrap).Margin(0, 0, 0, 6);
 
+    private const string FooterTag = "dialog-footer";
+
+    /// <summary>Right-aligned buttons (design system: 30 px, min 88 px; the default one filled with the accent).</summary>
     protected StackPanel ButtonRow(params (string Text, Action OnClick, bool IsDefault)[] buttons)
     {
         var row = new StackPanel()
             .Orientation(Orientation.Horizontal)
             .HorizontalAlignment(HorizontalAlignment.Right)
             .Spacing(8)
-            .Margin(0, 14, 0, 0);
+            .Tag(FooterTag);
         foreach (var (text, onClick, isDefault) in buttons)
         {
-            var button = new Button().Content(text).MinWidth(90).IsDefault(isDefault).OnClick(_ => onClick());
+            var button = new Button().Content(text).MinWidth(88).Height(30).HorizontalContentAlignment(HorizontalAlignment.Center)
+                .VerticalContentAlignment(VerticalAlignment.Center).IsDefault(isDefault).OnClick(_ => onClick());
             if (isDefault)
             {
                 button.Background = Brushes.Accent;
-                button.Foreground = Brushes.CursorForeground;
+                button.BorderBrush = Brushes.Accent;
+                button.Foreground = Avalonia.Media.Brushes.White;
+                button.FontWeight = FontWeight.SemiBold;
             }
 
             row.Children.Add(button);
@@ -66,8 +74,27 @@ public abstract class DialogWindow<TResult> : Window
         return row;
     }
 
-    protected void SetBody(params Control[] children) =>
-        Content = new StackPanel().Margin(18).Children(children);
+    /// <summary>Body with 16/18 px padding; a trailing <see cref="ButtonRow"/> becomes the footer band (header colour, top rule).</summary>
+    protected void SetBody(params Control[] children)
+    {
+        var footer = children.Length > 0 && children[^1] is StackPanel { Tag: FooterTag } row ? row : null;
+        var body = new StackPanel().Margin(18, 16).Spacing(Brushes.IsModern ? 6 : 0)
+            .Children(footer is null ? children : children[..^1]);
+        if (footer is null)
+        {
+            Content = body;
+            return;
+        }
+
+        var band = new Border()
+            .Background(Brushes.IsModern ? Brushes.HeaderBackground : Avalonia.Media.Brushes.Transparent)
+            .BorderBrush(Brushes.PanelBorder)
+            .BorderThickness(new Thickness(0, Brushes.IsModern ? 1 : 0, 0, 0))
+            .Padding(18, 12)
+            .Child(footer);
+        DockPanel.SetDock(band, Dock.Bottom);
+        Content = new DockPanel().Children(band, body);
+    }
 }
 
 public sealed class InputDialog : DialogWindow<string?>

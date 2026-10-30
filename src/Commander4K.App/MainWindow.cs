@@ -72,6 +72,8 @@ public sealed class MainWindow : Window, IShell
     private UpdateInfo? _pendingUpdate;
     private PluginHostAdapter? _pluginHost;
     private Menu _menu = null!;
+    private Grid _menuBar = null!;
+    private Button _paletteButton = null!;
     private Grid _leftDock = null!;
     private Grid _rightDock = null!;
     private Grid _betweenDock = null!;
@@ -181,11 +183,12 @@ public sealed class MainWindow : Window, IShell
         _menu = new Menu();
 
         // The between-panels dock sits inside the right half so the splitter keeps resizing two star columns.
+        // Design system: panels are cards 6 px apart on the window background.
         var rightHalf = new DockPanel().Col(2);
-        _betweenDock = new Grid().Margin(0, 2, 2, 0);
+        _betweenDock = new Grid().Margin(0, 0, 6, 0);
         DockPanel.SetDock(_betweenDock, Dock.Left);
         rightHalf.Children.Add(_betweenDock);
-        rightHalf.Children.Add(_right.Margin(0, 2, 2, 0));
+        rightHalf.Children.Add(_right.Margin(0, 0, 6, 0));
         var shell = new Grid()
             .Rows("*,Auto,Auto,Auto,Auto")
             .Children(
@@ -193,34 +196,56 @@ public sealed class MainWindow : Window, IShell
                     .Row(0)
                     .Cols("Auto,*,Auto")
                     .Children(
-                        new Grid().Ref(out _leftDock).Col(0).Margin(2, 2, 0, 0),
+                        new Grid().Ref(out _leftDock).Col(0).Margin(6, 0, 0, 0),
                         new Grid()
                             .Col(1)
-                            .Cols("*,4,*")
+                            .Cols("*,6,*")
                             .Children(
-                                _left.Col(0).Margin(2, 2, 0, 0),
+                                _left.Col(0).Margin(6, 0, 0, 0),
                                 new GridSplitter().Ref(out _splitter).Col(1).ResizeDirection(GridResizeDirection.Columns),
                                 rightHalf),
-                        new Grid().Ref(out _rightDock).Col(2).Margin(0, 2, 2, 0)),
-                new StackPanel().Ref(out _bottomDock).Row(1),
+                        new Grid().Ref(out _rightDock).Col(2).Margin(0, 0, 6, 0)),
+                new StackPanel().Ref(out _bottomDock).Row(1).Margin(6, 6, 6, 0),
                 new Border()
                     .Ref(out _jobsBar)
                     .Row(2)
                     .IsVisible(false)
-                    .Padding(8, 4)
-                    .Child(new StackPanel().Ref(out _jobsList).Spacing(4)),
+                    .Margin(6, 6, 6, 0)
+                    .Padding(12, 4)
+                    .MinHeight(34)
+                    .Child(new StackPanel().Ref(out _jobsList).Spacing(4).VerticalAlignment(VerticalAlignment.Center)),
                 new Border()
                     .Ref(out _commandBar)
                     .Row(3)
-                    .Padding(4, 2)
+                    .Margin(0, 6, 0, 0)
+                    .Height(30)
+                    .Padding(12, 0)
                     .Child(new Grid().Cols("Auto,*,Auto").Children(
-                        new TextBlock().Ref(out _prompt).VerticalAlignment(VerticalAlignment.Center).Margin(4, 0),
-                        new TextBox().Ref(out _commandLine).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(4, 2),
+                        new TextBlock().Ref(out _prompt).VerticalAlignment(VerticalAlignment.Center),
+                        new TextBox().Ref(out _commandLine).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(8, 2)
+                            .VerticalContentAlignment(VerticalAlignment.Center),
                         new TextBlock().Ref(out _notification).Col(2).VerticalAlignment(VerticalAlignment.Center).Margin(8, 0)
                             .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis))),
                 _keyBar.Row(4));
-        DockPanel.SetDock(_menu, Dock.Top);
-        Content = new DockPanel().Children(_menu, shell);
+
+        // Menu bar with the command-palette search box on the right (design system).
+        _paletteButton = new Button()
+            .Width(300)
+            .Height(24)
+            .Padding(10, 0, 4, 0)
+            .Margin(0, 0, 6, 0)
+            .VerticalAlignment(VerticalAlignment.Center)
+            .HorizontalContentAlignment(HorizontalAlignment.Stretch)
+            .OnClick(click => _ = ExecuteAsync(CommandIds.CommandPalette))
+            .Content(new Grid().Cols("Auto,*,Auto").Children(
+                new TextBlock().Text("⌕").FontSize(14).VerticalAlignment(VerticalAlignment.Center).Margin(0, 0, 8, 0),
+                new TextBlock().Col(1).Text(Loc.T("Paleta komend, pliki, ustawienia…")).FontSize(12).VerticalAlignment(VerticalAlignment.Center)
+                    .TextTrimming(TextTrimming.CharacterEllipsis),
+                new Border().Col(2).Padding(6, 1).CornerRadius(new CornerRadius(4)).BorderThickness(new Thickness(1))
+                    .Child(new TextBlock().Text("Ctrl+Shift+P").FontSize(11))));
+        _menuBar = new Grid().Cols("*,Auto").Height(32).Children(_menu.VerticalAlignment(VerticalAlignment.Center), _paletteButton.Col(1));
+        DockPanel.SetDock(_menuBar, Dock.Top);
+        Content = new DockPanel().Children(_menuBar, shell);
 
         RegisterCommands();
         RebuildMenu();
@@ -311,6 +336,9 @@ public sealed class MainWindow : Window, IShell
         {
             case "skin":
                 _skins!.Apply(_host!.Skins.Get(_host.Settings.Skin));
+                break;
+            case "density":
+                _skins!.Refresh();
                 break;
             case "showHidden":
                 _ = _left.ActiveTab.RefreshAsync();
@@ -830,16 +858,21 @@ public sealed class MainWindow : Window, IShell
 
     private Grid BuildKeyBar()
     {
-        var bar = new Grid().Cols(string.Join(",", FunctionKeys.Select(_ => "*")));
+        // Design system: 28 px bar, cells 2 px apart with 3 px corners; the number in its own 26 px block.
+        var bar = new Grid().Cols(string.Join(",", FunctionKeys.Select(_ => "*"))).Height(28);
         for (var i = 0; i < FunctionKeys.Length; i++)
         {
             var (key, label, command) = FunctionKeys[i];
             var cell = new Border()
                 .Col(i)
+                .Margin(i == 0 ? 2 : 1, 2, i == FunctionKeys.Length - 1 ? 2 : 1, 2)
+                .ClipToBounds(true)
                 .Cursor(new Cursor(StandardCursorType.Hand))
                 .Child(new DockPanel().Children(
-                    new TextBlock().Text(key).Padding(4, 2).Tag("number"),
-                    new Border().Margin(0, 0, 2, 0).Tag("label").Child(new TextBlock().Text(label).Padding(4, 2).TextTrimming(TextTrimming.CharacterEllipsis))));
+                    new Border().Width(26).Tag("number").Child(new TextBlock().Text(key).HorizontalAlignment(HorizontalAlignment.Center)
+                        .VerticalAlignment(VerticalAlignment.Center)),
+                    new Border().Tag("label").Child(new TextBlock().Text(label).Padding(8, 0).VerticalAlignment(VerticalAlignment.Center)
+                        .TextTrimming(TextTrimming.CharacterEllipsis))));
             cell.PointerPressed += (_, _) => _ = ExecuteAsync(command);
             bar.Children.Add(cell);
         }
@@ -850,29 +883,50 @@ public sealed class MainWindow : Window, IShell
     private void ApplySkin(SkinBrushes b)
     {
         Background = b.WindowBackground;
+        Foreground = b.WindowForeground;
         _splitter.Background = b.WindowBackground;
+        var radius = new CornerRadius(b.IsModern ? 6 : 0);
         _jobsBar.Background = b.StatusBackground;
+        _jobsBar.BorderBrush = b.PanelBorder;
+        _jobsBar.BorderThickness = new Thickness(b.IsModern ? 1 : 0);
+        _jobsBar.CornerRadius = radius;
+
+        // Command line: monospace (as in a terminal), muted prompt, thin rules above and below.
+        var mono = b.IsModern ? b.MonospaceFamily : b.FontFamily;
+        var commandSize = b.IsModern ? b.FontSize - 0.5 : b.FontSize;
         _commandBar.Background = b.CommandLineBackground;
-        _prompt.Foreground = b.CommandLineForeground;
-        _prompt.FontFamily = b.FontFamily;
-        _commandLine.Background = b.CommandLineBackground;
+        _commandBar.BorderBrush = b.PanelBorder;
+        _commandBar.BorderThickness = new Thickness(0, b.IsModern ? 1 : 0, 0, b.IsModern ? 1 : 0);
+        _prompt.Foreground = b.IsModern ? b.MutedForeground : b.CommandLineForeground;
+        _prompt.FontFamily = mono;
+        _prompt.FontSize = commandSize;
+        _commandLine.Background = Brushes.Transparent;
         _commandLine.Foreground = b.CommandLineForeground;
-        _commandLine.FontFamily = b.FontFamily;
+        _commandLine.FontFamily = mono;
+        _commandLine.FontSize = commandSize;
+        _commandLine.CaretBrush = b.Accent;
         _notification.Foreground = b.StatusForeground;
+        _notification.FontSize = Math.Max(11, b.FontSize - 1);
         ApplyMenuSkin(b);
-        _keyBar.Background = b.FunctionKeyNumberBackground;
+
+        _keyBar.Background = b.WindowBackground;
         foreach (var cell in _keyBar.Children.OfType<Border>())
         {
             var dock = (DockPanel)cell.Child!;
-            var number = (TextBlock)dock.Children[0];
+            var numberBorder = (Border)dock.Children[0];
+            var number = (TextBlock)numberBorder.Child!;
             var labelBorder = (Border)dock.Children[1];
+            cell.CornerRadius = new CornerRadius(b.IsModern ? 3 : 0);
+            numberBorder.Background = b.FunctionKeyNumberBackground;
             number.Foreground = b.FunctionKeyNumberForeground;
             number.FontFamily = b.FontFamily;
+            number.FontSize = Math.Max(11, b.FontSize - 1);
             number.FontWeight = FontWeight.Bold;
             labelBorder.Background = b.FunctionKeyLabelBackground;
             var label = (TextBlock)labelBorder.Child!;
             label.Foreground = b.FunctionKeyLabelForeground;
             label.FontFamily = b.FontFamily;
+            label.FontSize = Math.Max(11, b.FontSize - 1);
         }
 
         foreach (var palette in _paletteViews)
@@ -937,14 +991,19 @@ public sealed class MainWindow : Window, IShell
                 _ => "⚠ " + job.Error?.Message,
             };
             var handle = job;
+            // Design system: semibold title, a 6 px rounded progress track (max 320 px), state in the status colour, "✕ Anuluj".
+            var small = Math.Max(11, b.FontSize - 1);
             _jobsList.Children.Add(new Grid().Cols("2*,3*,Auto,Auto").Children(
-                new TextBlock().Text(job.Title).Foreground(b.StatusForeground).TextTrimming(TextTrimming.CharacterEllipsis).VerticalAlignment(VerticalAlignment.Center),
+                new TextBlock().Text(job.Title).Foreground(b.WindowForeground).FontWeight(FontWeight.SemiBold).FontSize(small)
+                    .TextTrimming(TextTrimming.CharacterEllipsis).VerticalAlignment(VerticalAlignment.Center),
                 new ProgressBar().Col(1).Minimum(0).Maximum(1).Value(Math.Max(0, fraction)).IsIndeterminate(job.State == JobState.Running && fraction < 0)
-                    .Foreground(b.Progress).Margin(8, 0).MinHeight(6),
+                    .Foreground(b.Progress).Background(b.PanelBorder).Margin(12, 0).Height(6).MinHeight(6).MaxWidth(320)
+                    .CornerRadius(new CornerRadius(3)).VerticalAlignment(VerticalAlignment.Center),
                 new TextBlock().Col(2).Text(state + (metrics.CurrentItem is { } item && job.State == JobState.Running ? "  " + item : string.Empty))
-                    .Foreground(job.State == JobState.Failed ? b.Error : b.StatusForeground).MaxWidth(360).TextTrimming(TextTrimming.CharacterEllipsis)
-                    .VerticalAlignment(VerticalAlignment.Center),
-                new Button().Col(3).Content("✕").Padding(6, 0).Margin(8, 0, 0, 0).IsVisible(job.State is JobState.Queued or JobState.Running)
+                    .Foreground(job.State == JobState.Failed ? b.Error : b.StatusForeground).FontSize(small).MaxWidth(360)
+                    .TextTrimming(TextTrimming.CharacterEllipsis).VerticalAlignment(VerticalAlignment.Center),
+                new Button().Col(3).Content(Loc.T("✕ Anuluj")).Height(24).Padding(8, 0).FontSize(small).Margin(12, 0, 0, 0)
+                    .Background(Brushes.Transparent).IsVisible(job.State is JobState.Queued or JobState.Running)
                     .OnClick(_ => handle.Cancel())));
         }
 
@@ -1609,11 +1668,26 @@ public sealed class MainWindow : Window, IShell
         }
     }
 
+    /// <summary>Design system: the menu sits on the window background; the palette search box is a muted header-coloured field.</summary>
     private void ApplyMenuSkin(SkinBrushes b)
     {
-        _menu.Background = b.HeaderBackground;
-        _menu.Foreground = b.HeaderForeground;
+        _menuBar.Background = b.IsModern ? b.WindowBackground : b.HeaderBackground;
+        _menu.Background = Brushes.Transparent;
+        _menu.Foreground = b.IsModern ? b.WindowForeground : b.HeaderForeground;
         _menu.FontFamily = b.FontFamily;
+        _menu.FontSize = b.FontSize;
+        _paletteButton.IsVisible = b.IsModern;
+        _paletteButton.Background = b.HeaderBackground;
+        _paletteButton.BorderBrush = b.PanelBorder;
+        _paletteButton.BorderThickness = new Thickness(1);
+        _paletteButton.CornerRadius = new CornerRadius(6);
+        _paletteButton.Foreground = b.MutedForeground;
+        if (_paletteButton.Content is Grid { Children: [_, _, Border shortcut] })
+        {
+            shortcut.BorderBrush = b.PanelBorder;
+            shortcut.Background = b.PanelBackground;
+            ((TextBlock)shortcut.Child!).Foreground = b.HeaderForeground;
+        }
     }
 
     private async ValueTask GoToFrecentAsync(CommandInvocation _)
