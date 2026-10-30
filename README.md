@@ -27,6 +27,11 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - folders show their total size and per-subfolder bars, filled in as they are computed.
 
   Moving the cursor cancels the running load at once. Plugins can add previews too.
+- **Palettes:** button bars docked to the left, the right, the bottom or between the panels. Each palette's position is a setting.
+  - Quick actions: any command, panel or plugin command, one click away.
+  - Favourite folders (`Ctrl+D` adds the current one) and recently used folders.
+  - Saved views: both panels' folders and modes (files, preview, plugin panel), restored with one click.
+  - Plugins can add their own palettes. `Ctrl+B` shows or hides them all.
 - **Total Commander-style workflow:**
   - `F5`/`F6` copy and move in the background, with an `F2` queue;
   - `F3` viewer, `F4` your editor, `F7` new folder, `F8` delete;
@@ -69,7 +74,7 @@ The binaries are not code-signed yet, so Windows SmartScreen may warn on first s
 
 Skins are JSON files in `config/skins/`. The schema is written to `config/skins/skin.schema.json` on every start. You can make a skin in three ways:
 
-1. **Export and edit:** press `F2` (skin picker), choose "Eksportuj do edycji", edit the JSON, then click "Przeładuj".
+1. **Export and edit:** press `Ctrl+Shift+K` (skin picker), choose "Eksportuj do edycji", edit the JSON, then click "Przeładuj".
 2. **Claude.ai or Claude Design:** "Kopiuj prompt dla Claude" copies a ready prompt with the schema and an example. Describe your idea, save the JSON you get into `config/skins/`, then reload.
 3. **In the app:** "Generuj z AI…" describes a skin in words and Claude designs it, with a live preview and contrast check before you save. This option needs an Anthropic API key in `ANTHROPIC_API_KEY`, and each generation is billed by the API.
 
@@ -107,6 +112,7 @@ Commander4K to szybki, dwupanelowy menedżer plików dla Windows 11 w stylu Nort
 
 - **Interfejs:** po polsku.
 - **Konfiguracja:** `Ctrl+,` otwiera ustawienia z wyszukiwarką, a `Ctrl+Shift+P` paletę komend.
+- **Palety:** szybkie akcje, ulubione foldery, zapisane widoki i palety wtyczek, dokowane na dole, po bokach albo między panelami (`Ctrl+B` pokazuje i ukrywa).
 - **Skórki:** są w `config/skins`. Możesz też wygenerować je z pomocą AI.
 - **Aktualizacje:** pobierane z GitHub Releases.
 

@@ -60,11 +60,17 @@ public sealed record PanelContribution(
 /// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
 public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10);
 
+public sealed record PaletteActionContribution(string Id, string Title, string? Icon = null, bool ForItem = false);
+
+/// <param name="Dock">Default position: <c>bottom</c>, <c>left</c>, <c>right</c>, <c>between</c> or <c>hidden</c>.</param>
+public sealed record PaletteContribution(string Id, string Title, string Dock = "bottom", IReadOnlyList<PaletteActionContribution>? Actions = null);
+
 /// <summary>What a plugin adds to the application. In-process plugins describe it by implementing interfaces instead.</summary>
 public sealed record PluginContributions(
     IReadOnlyList<CommandContribution>? Commands = null,
     IReadOnlyList<PanelContribution>? Panels = null,
-    IReadOnlyList<PreviewContribution>? Previews = null);
+    IReadOnlyList<PreviewContribution>? Previews = null,
+    IReadOnlyList<PaletteContribution>? Palettes = null);
 
 /// <summary>
 /// Identity and declared capabilities of a plugin: <c>plugin.json</c> for external plugins, a property for built-in

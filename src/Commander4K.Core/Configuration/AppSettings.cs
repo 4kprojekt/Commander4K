@@ -11,6 +11,27 @@ public sealed class ConnectionSetting
     public string Path { get; set; } = string.Empty;
 }
 
+public sealed class FavoriteSetting
+{
+    public string Name { get; set; } = string.Empty;
+
+    public string Path { get; set; } = string.Empty;
+}
+
+/// <summary>A saved layout: both panels' locations and modes (<c>null</c> = files, <c>preview</c>, <c>panel:&lt;id&gt;</c>).</summary>
+public sealed class ViewSetting
+{
+    public string Name { get; set; } = string.Empty;
+
+    public string? LeftPath { get; set; }
+
+    public string? RightPath { get; set; }
+
+    public string? LeftMode { get; set; }
+
+    public string? RightMode { get; set; }
+}
+
 /// <summary>
 /// Content of <c>config/settings.json</c>. Every user-facing property is also described in
 /// <see cref="SettingsCatalog"/>, which is what the searchable settings window and the command palette show.
@@ -49,4 +70,17 @@ public sealed class AppSettings
     public string? SkippedVersion { get; set; }
 
     public List<ConnectionSetting> Connections { get; set; } = [];
+
+    /// <summary>Docked palettes (quick actions, favourites, views, plugin palettes) are visible.</summary>
+    public bool ShowPalettes { get; set; } = true;
+
+    public List<FavoriteSetting> Favorites { get; set; } = [];
+
+    /// <summary>Command ids on the quick-actions palette; <c>null</c> = the default set.</summary>
+    public List<string>? QuickActions { get; set; }
+
+    public List<ViewSetting> SavedViews { get; set; } = [];
+
+    /// <summary>Palette id → dock (<c>hidden</c>, <c>bottom</c>, <c>left</c>, <c>right</c>, <c>between</c>); missing = the palette's default.</summary>
+    public Dictionary<string, string> PaletteDocks { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

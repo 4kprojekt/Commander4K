@@ -88,6 +88,33 @@
             },
             "additionalProperties": false
           }
+        },
+        "palettes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "title"],
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "dock": { "enum": ["bottom", "left", "right", "between", "hidden"], "default": "bottom", "description": "Default position; the user can move it in the settings." },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "title"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "title": { "type": "string" },
+                    "icon": { "type": "string", "description": "Short text or emoji shown on the button." },
+                    "forItem": { "type": "boolean", "default": false, "description": "true = in each item's context menu; false = a button in the palette header." }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

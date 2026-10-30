@@ -98,6 +98,41 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Node_plugin_palette_lists_adds_invokes_and_removes_items()
+    {
+        // A copy, because the palette's actions rewrite sites.json in the plugin folder.
+        var copy = Path.Combine(_folder, "site-check-copy");
+        Directory.CreateDirectory(copy);
+        foreach (var file in Directory.GetFiles(Path.Combine(Examples, "site-check-node")))
+        {
+            File.Copy(file, Path.Combine(copy, Path.GetFileName(file)));
+        }
+
+        await using var plugin = StartFrom(copy);
+        using var server = new LocalHttpServer("<html><title>Paleta C4K</title></html>");
+        var palette = new ExternalPalettePlugin(plugin, plugin.Manifest.Contributes!.Palettes![0]);
+        var host = HostFor(plugin);
+        Assert.Equal("examples.site-check/sites", palette.Id);
+        Assert.Equal(PaletteDock.Right, palette.DefaultDock);
+        Assert.Contains(palette.Actions, a => a.Id == "remove" && a.ForItem);
+
+        var before = await palette.GetItemsAsync(host, TestToken);
+        _ui.PromptAnswer = server.Url;
+        await palette.InvokeActionAsync("add", null, host, TestToken);
+        var added = Assert.Single(await palette.GetItemsAsync(host, TestToken), i => i.Id == server.Url);
+        Assert.Equal(before.Count + 1, (await palette.GetItemsAsync(host, TestToken)).Count);
+        Assert.StartsWith("127.0.0.1:", added.Title, StringComparison.Ordinal);
+
+        await palette.InvokeAsync(added.Id, host, TestToken);
+        Assert.Contains("OK", _ui.LastNotification, StringComparison.Ordinal);
+        Assert.Contains("Paleta C4K", _ui.LastNotification, StringComparison.Ordinal);
+
+        await palette.InvokeActionAsync("remove", added.Id, host, TestToken);
+        Assert.DoesNotContain(await palette.GetItemsAsync(host, TestToken), i => i.Id == server.Url);
+        Assert.DoesNotContain(server.Url, await File.ReadAllTextAsync(Path.Combine(copy, "sites.json"), TestToken), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PowerShell_plugin_runs_git_through_host()
     {
         Assert.SkipWhen(!(Environment.GetEnvironmentVariable("PATH") ?? "").Split(';').Any(d => File.Exists(Path.Combine(d.Trim(), "git.exe"))), "git is not installed");
@@ -168,9 +203,11 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.False(store.IsApproved(manifest));
     }
 
-    private ExternalPlugin Start(string example)
+    private ExternalPlugin Start(string example) => StartFrom(Path.Combine(Examples, example));
+
+    private ExternalPlugin StartFrom(string folder)
     {
-        var discovered = ManifestReader.Read(Path.Combine(Examples, example));
+        var discovered = ManifestReader.Read(folder);
         Assert.True(discovered.IsValid, string.Join("; ", discovered.Errors));
         var missing = RuntimeCatalog.CheckRequirement(discovered.Manifest!.Runtime, _runtimes);
         Assert.SkipWhen(missing is not null, missing ?? string.Empty);

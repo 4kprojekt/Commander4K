@@ -10,10 +10,12 @@ using Avalonia.VisualTree;
 using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
 using Commander4K.App.Input;
+using Commander4K.App.Palettes;
 using Commander4K.App.Panels;
 using Commander4K.App.PluginPanels;
 using Commander4K.App.Preview;
 using Commander4K.App.Theming;
+using Commander4K.Core.Configuration;
 using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
 using Commander4K.Core.Security;
@@ -31,7 +33,7 @@ namespace Commander4K.App;
 /// Dual-pane shell. The window shows immediately; <see cref="AppHost"/> (config, SQLite, plugins) is created in the
 /// background and the panels are built once it is ready.
 /// </summary>
-public sealed class MainWindow : Window
+public sealed class MainWindow : Window, IShell
 {
     private static readonly (string Key, string Label, string Command)[] FunctionKeys =
     [
@@ -66,6 +68,13 @@ public sealed class MainWindow : Window
     private UpdateInfo? _pendingUpdate;
     private PluginHostAdapter? _pluginHost;
     private Menu _menu = null!;
+    private Grid _leftDock = null!;
+    private Grid _rightDock = null!;
+    private Grid _betweenDock = null!;
+    private StackPanel _bottomDock = null!;
+    private readonly List<PaletteView> _paletteViews = [];
+    private IReadOnlyList<IPalettePlugin> _builtInPalettes = [];
+    private string? _navigationKey;
 
     public MainWindow()
     {
@@ -152,45 +161,67 @@ public sealed class MainWindow : Window
             async path => await host.Tools.EditAsync(path));
         host.PluginUi.Target = _pluginHost;
         host.PowerShell.CommandsChanged += () => Dispatcher.UIThread.Post(RebuildMenu);
-        host.PluginsChanged += () => Dispatcher.UIThread.Post(RebuildMenu);
+        host.PluginsChanged += () => Dispatcher.UIThread.Post(() =>
+        {
+            RebuildMenu();
+            RegisterPaletteSettings();
+            RebuildPalettes();
+        });
         _menu = new Menu();
+
+        // The between-panels dock sits inside the right half so the splitter keeps resizing two star columns.
+        var rightHalf = new DockPanel().Col(2);
+        _betweenDock = new Grid().Margin(0, 2, 2, 0);
+        DockPanel.SetDock(_betweenDock, Dock.Left);
+        rightHalf.Children.Add(_betweenDock);
+        rightHalf.Children.Add(_right.Margin(0, 2, 2, 0));
         var shell = new Grid()
-            .Rows("*,Auto,Auto,Auto")
+            .Rows("*,Auto,Auto,Auto,Auto")
             .Children(
                 new Grid()
                     .Row(0)
-                    .Cols("*,4,*")
+                    .Cols("Auto,*,Auto")
                     .Children(
-                        _left.Col(0).Margin(2, 2, 0, 0),
-                        new GridSplitter().Ref(out _splitter).Col(1).ResizeDirection(GridResizeDirection.Columns),
-                        _right.Col(2).Margin(0, 2, 2, 0)),
+                        new Grid().Ref(out _leftDock).Col(0).Margin(2, 2, 0, 0),
+                        new Grid()
+                            .Col(1)
+                            .Cols("*,4,*")
+                            .Children(
+                                _left.Col(0).Margin(2, 2, 0, 0),
+                                new GridSplitter().Ref(out _splitter).Col(1).ResizeDirection(GridResizeDirection.Columns),
+                                rightHalf),
+                        new Grid().Ref(out _rightDock).Col(2).Margin(0, 2, 2, 0)),
+                new StackPanel().Ref(out _bottomDock).Row(1),
                 new Border()
                     .Ref(out _jobsBar)
-                    .Row(1)
+                    .Row(2)
                     .IsVisible(false)
                     .Padding(8, 4)
                     .Child(new StackPanel().Ref(out _jobsList).Spacing(4)),
                 new Border()
                     .Ref(out _commandBar)
-                    .Row(2)
+                    .Row(3)
                     .Padding(4, 2)
                     .Child(new Grid().Cols("Auto,*,Auto").Children(
                         new TextBlock().Ref(out _prompt).VerticalAlignment(VerticalAlignment.Center).Margin(4, 0),
                         new TextBox().Ref(out _commandLine).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(4, 2),
                         new TextBlock().Ref(out _notification).Col(2).VerticalAlignment(VerticalAlignment.Center).Margin(8, 0)
                             .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis))),
-                _keyBar.Row(3));
+                _keyBar.Row(4));
         DockPanel.SetDock(_menu, Dock.Top);
         Content = new DockPanel().Children(_menu, shell);
 
         RegisterCommands();
         RebuildMenu();
+        _builtInPalettes = [new QuickActionsPalette(this), new FavoritesPalette(this), new ViewsPalette(this), new RecentPalette(this)];
+        RegisterPaletteSettings();
         host.Jobs.JobChanged += _ => Dispatcher.UIThread.Post(() => _jobsDirty = true);
         host.Remote.HostKeyValidator = ValidateHostKey;
         _jobsTimer.Start();
         skins.Changed += ApplySkin;
         ApplySkin(skins.Current);
         SetActive(_left);
+        RebuildPalettes();
 
         _notification.PointerPressed += async (_, _) =>
         {
@@ -273,8 +304,191 @@ public sealed class MainWindow : Window
                 _ = _left.ActiveTab.RefreshAsync();
                 _ = _right.ActiveTab.RefreshAsync();
                 break;
+            case "showPalettes":
+            case var palette when palette.StartsWith(PaletteSettingPrefix, StringComparison.Ordinal):
+                RebuildPalettes();
+                break;
         }
     }
+
+    private const string PaletteSettingPrefix = "palette:";
+
+    private IEnumerable<IPalettePlugin> AllPalettes => [.. _builtInPalettes, .. _host!.ExternalPalettes];
+
+    private static readonly IReadOnlyList<SettingChoice> DockChoices =
+    [
+        new("bottom", "Na dole"), new("left", "Po lewej"), new("right", "Po prawej"), new("between", "Między panelami"), new("hidden", "Ukryta"),
+    ];
+
+    private static string DockName(PaletteDock dock) => dock switch
+    {
+        PaletteDock.Left => "left",
+        PaletteDock.Right => "right",
+        PaletteDock.BetweenPanels => "between",
+        PaletteDock.Hidden => "hidden",
+        _ => "bottom",
+    };
+
+    private PaletteDock DockOf(IPalettePlugin palette) =>
+        _host!.Settings.PaletteDocks.TryGetValue(palette.Id, out var name) ? name switch
+        {
+            "bottom" => PaletteDock.Bottom,
+            "left" => PaletteDock.Left,
+            "right" => PaletteDock.Right,
+            "between" => PaletteDock.BetweenPanels,
+            "hidden" => PaletteDock.Hidden,
+            _ => palette.DefaultDock,
+        } : palette.DefaultDock;
+
+    /// <summary>One "position" setting per palette (built-in and from plugins), so they are searchable like the rest.</summary>
+    private void RegisterPaletteSettings()
+    {
+        _host!.ExtraSettings = [.. AllPalettes.Select(p => new SettingDescriptor(
+            PaletteSettingPrefix + p.Id,
+            SettingsCatalog.Palettes,
+            $"Paleta „{p.Title}”",
+            p.Manifest.IsBuiltIn
+                ? $"Gdzie pokazywać paletę: na dole, po bokach, między panelami albo wcale. {p.Manifest.Description}"
+                : $"Paleta wtyczki {p.Manifest.Name} ({p.Manifest.Id}): na dole, po bokach, między panelami albo wcale.",
+            SettingKind.Choice,
+            s => s.PaletteDocks.TryGetValue(p.Id, out var dock) ? dock : DockName(p.DefaultDock),
+            (s, v) => s.PaletteDocks[p.Id] = (string)v!,
+            ["paleta", "pasek", "położenie", "dokowanie", "przyciski", p.Title])
+        { Choices = () => DockChoices })];
+    }
+
+    /// <summary>Recreates every palette view in its dock (after a dock change, skin-independent plugin reloads, Ctrl+B).</summary>
+    private void RebuildPalettes()
+    {
+        foreach (var view in _paletteViews)
+        {
+            view.Detach();
+        }
+
+        _paletteViews.Clear();
+        Panel[] docks = [_leftDock, _rightDock, _betweenDock, _bottomDock];
+        foreach (var dock in docks)
+        {
+            dock.Children.Clear();
+        }
+
+        if (_host!.Settings.ShowPalettes)
+        {
+            foreach (var palette in AllPalettes)
+            {
+                var position = DockOf(palette);
+                if (position == PaletteDock.Hidden)
+                {
+                    continue;
+                }
+
+                var view = new PaletteView(palette, _host.HostFor(palette.Manifest), position, _skins!.Current, Notify);
+                _paletteViews.Add(view);
+                (position switch
+                {
+                    PaletteDock.Left => _leftDock,
+                    PaletteDock.Right => _rightDock,
+                    PaletteDock.BetweenPanels => _betweenDock,
+                    _ => (Panel)_bottomDock,
+                }).Children.Add(view);
+            }
+        }
+
+        // Several palettes in one side dock share its height.
+        foreach (var grid in new[] { _leftDock, _rightDock, _betweenDock })
+        {
+            grid.RowDefinitions.Clear();
+            for (var i = 0; i < grid.Children.Count; i++)
+            {
+                grid.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+                Grid.SetRow(grid.Children[i], i);
+            }
+        }
+    }
+
+    private async Task TogglePalettesAsync()
+    {
+        _host!.Settings.ShowPalettes = !_host.Settings.ShowPalettes;
+        RebuildPalettes();
+        await _host.SaveSettingsAsync();
+    }
+
+    private async Task AddFavoriteAsync()
+    {
+        var favorites = (FavoritesPalette)_builtInPalettes.First(p => p is FavoritesPalette);
+        var host = _host!.HostFor(favorites.Manifest);
+        await favorites.InvokeActionAsync("add", null, host, CancellationToken.None);
+        if (DockOf(favorites) == PaletteDock.Hidden || !_host.Settings.ShowPalettes)
+        {
+            Notify($"Dodano do ulubionych: {host.ActivePath} (paleta „Ulubione” jest ukryta — Ctrl+B / ustawienia).");
+        }
+    }
+
+    AppHost IShell.App => _host!;
+
+    public ViewSetting CaptureView(string name) => new()
+    {
+        Name = name,
+        LeftPath = _left.ActiveTab.Path,
+        RightPath = _right.ActiveTab.Path,
+        LeftMode = ModeId(_left),
+        RightMode = ModeId(_right),
+    };
+
+    private static string? ModeId(FilePanelView panel) => panel.Mode switch
+    {
+        PreviewPanelView => "preview",
+        PluginPanelView view => CommandIds.PanelPrefix + view.Plugin.Id,
+        _ => null,
+    };
+
+    /// <summary>Applies a saved view: modes switch at once, both panels navigate in parallel.</summary>
+    public async Task RestoreViewAsync(ViewSetting view)
+    {
+        _left.CloseMode();
+        _right.CloseMode();
+        var navigations = new List<Task>();
+        if (view.LeftPath is { Length: > 0 } leftPath)
+        {
+            navigations.Add(_left.NavigateAsync(leftPath));
+        }
+
+        if (view.RightPath is { Length: > 0 } rightPath)
+        {
+            navigations.Add(_right.NavigateAsync(rightPath));
+        }
+
+        await ApplyModeAsync(_left, view.LeftMode);
+        await ApplyModeAsync(_right, view.RightMode);
+        SetActive(_left.Mode is null || _right.Mode is not null ? _left : _right);
+        try
+        {
+            await Task.WhenAll(navigations);
+        }
+        catch (Exception ex)
+        {
+            Notify($"Widok „{view.Name}”: {ex.Message}", isError: true);
+        }
+    }
+
+    private async Task ApplyModeAsync(FilePanelView target, string? mode)
+    {
+        var source = target == _left ? _right : _left;
+        switch (mode)
+        {
+            case null:
+                break;
+            case "preview":
+                target.ShowMode(new PreviewPanelView(_host!, source, _skins!.Current, Notify));
+                break;
+            case var panel when panel.StartsWith(CommandIds.PanelPrefix, StringComparison.OrdinalIgnoreCase):
+                await OpenPanelInAsync(panel[CommandIds.PanelPrefix.Length..], null, target);
+                break;
+        }
+    }
+
+    public Task<PickerItem?> PickAsync(string title, IReadOnlyList<PickerItem> items) =>
+        new PickerDialog(_skins!.Current, title, items, "Wpisz, aby wyszukać:").ShowAsync(this);
 
     /// <summary>Ctrl+Shift+P: every command, skin and setting in one searchable list.</summary>
     private async ValueTask ShowCommandPaletteAsync(CommandInvocation _)
@@ -468,6 +682,11 @@ public sealed class MainWindow : Window
             label.FontFamily = b.FontFamily;
         }
 
+        foreach (var palette in _paletteViews)
+        {
+            palette.ApplySkin(b);
+        }
+
         _jobsDirty = true;
     }
 
@@ -487,6 +706,19 @@ public sealed class MainWindow : Window
     private void RefreshJobsBar()
     {
         UpdatePrompt(); // Cheap; follows navigation and tab switches without per-tab subscriptions.
+        if (_left is not null && _active is not null)
+        {
+            var navigation = $"{_left.ActiveTab.Path}|{_right.ActiveTab.Path}|{_active == _left}";
+            if (navigation != _navigationKey)
+            {
+                _navigationKey = navigation;
+                foreach (var palette in _paletteViews.Where(p => p.FollowsNavigation))
+                {
+                    palette.Refresh();
+                }
+            }
+        }
+
         if (!_jobsDirty || _host is null)
         {
             return;
@@ -575,6 +807,9 @@ public sealed class MainWindow : Window
          .Register(CommandIds.View, "Podgląd", ViewCurrent)
          .Register(CommandIds.QuickView, "Szybki podgląd", TogglePreview)
          .Register(CommandIds.PanelModes, "Tryb panelu (pliki, podgląd, panele wtyczek)", ShowPanelModesAsync)
+         .Register(CommandIds.TogglePalettes, "Palety: pokaż / ukryj", _ => new ValueTask(TogglePalettesAsync()))
+         .Register(CommandIds.Palettes, "Palety: położenie (szybkie akcje, ulubione, widoki, wtyczki)", () => OpenSettings("paleta"))
+         .Register(CommandIds.AddFavorite, "Dodaj bieżący folder do ulubionych", _ => new ValueTask(AddFavoriteAsync()))
          .Register(CommandIds.Edit, "Edycja", EditCurrentAsync)
          .Register(CommandIds.Copy, "Kopiuj", _ => TransferAsync(TransferMode.Copy))
          .Register(CommandIds.Move, "Przenieś", _ => TransferAsync(TransferMode.Move))
@@ -914,7 +1149,10 @@ public sealed class MainWindow : Window
     /// stays visible and remains the plugin's context; a panel already showing a plugin is reused.
     /// File-bound panels (log analysis) get the file under the cursor as their argument.
     /// </summary>
-    private Task OpenPanelAsync(string pluginId, string? argument)
+    private Task OpenPanelAsync(string pluginId, string? argument) => OpenPanelInAsync(pluginId, argument, null);
+
+    /// <param name="target">Panel to show the plugin in; <c>null</c> = the usual mode target (see <see cref="ModeTarget"/>).</param>
+    private Task OpenPanelInAsync(string pluginId, string? argument, FilePanelView? target)
     {
         var host = _host!;
         if (host.FindPanel(pluginId) is not { } plugin)
@@ -923,10 +1161,11 @@ public sealed class MainWindow : Window
             return Task.CompletedTask;
         }
 
-        var target = _active.Mode is null ? Other : _active;
+        target ??= ModeTarget().Target;
+        var source = target == _left ? _right : _left;
         if (plugin.RequiresArgument)
         {
-            if (argument is null && _active.Mode is null && _active.ActiveTab.CurrentEntry is { Kind: VfsEntryKind.File } file)
+            if (argument is null && source.Mode is null && source.ActiveTab.CurrentEntry is { Kind: VfsEntryKind.File } file)
             {
                 argument = file.Path;
             }

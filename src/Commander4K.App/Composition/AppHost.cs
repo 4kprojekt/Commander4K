@@ -77,7 +77,7 @@ public sealed class AppHost : IAsyncDisposable
         DirectorySizes = new DirectorySizeCalculator(Router);
         SearchProviders = [Registry, FileSearch];
         Updates = new UpdateService(Http);
-        SettingsCatalog = Core.Configuration.SettingsCatalog.Create(
+        _baseSettings = Core.Configuration.SettingsCatalog.Create(
             () => [.. Skins.Skins.Select(s => new SettingChoice(s.Id, s.DisplayName))]);
         PowerShell = new PowerShellCatalogPlugin(Path.Combine(config.ConfigDirectory, "powershell.json"));
         Audit = new AuditLog(Path.Combine(dataDirectory, "data", "logs"));
@@ -174,6 +174,7 @@ public sealed class AppHost : IAsyncDisposable
         PanelPlugins = [.. BuiltInPanels, .. external.SelectMany(e => (e.Manifest.Contributes?.Panels ?? []).Select(p => (IPanelPlugin)new ExternalPanelPlugin(e, p)))];
         CommandPlugins = [PowerShell, .. external.Where(e => e.Manifest.Contributes?.Commands is { Count: > 0 }).Select(e => (ICommandPlugin)new ExternalCommandPlugin(e))];
         PreviewPlugins = [.. BuiltInPreviews, .. external.SelectMany(e => (e.Manifest.Contributes?.Previews ?? []).Select(p => (IPreviewPlugin)new ExternalPreviewPlugin(e, p)))];
+        ExternalPalettes = [.. external.SelectMany(e => (e.Manifest.Contributes?.Palettes ?? []).Select(p => (IPalettePlugin)new ExternalPalettePlugin(e, p)))];
         PluginsChanged?.Invoke();
     }
 
@@ -216,7 +217,16 @@ public sealed class AppHost : IAsyncDisposable
 
     public UpdateService Updates { get; }
 
-    public IReadOnlyList<SettingDescriptor> SettingsCatalog { get; }
+    private readonly IReadOnlyList<SettingDescriptor> _baseSettings;
+
+    /// <summary>Static settings plus those registered at runtime (palette positions).</summary>
+    public IReadOnlyList<SettingDescriptor> SettingsCatalog => [.. _baseSettings, .. ExtraSettings];
+
+    /// <summary>Settings contributed by the window (one "position" setting per palette).</summary>
+    public IReadOnlyList<SettingDescriptor> ExtraSettings { get; set; } = [];
+
+    /// <summary>Palettes contributed by external plugins (built-in palettes live in the window).</summary>
+    public IReadOnlyList<IPalettePlugin> ExternalPalettes { get; private set; } = [];
 
     public string DataDirectory { get; }
 

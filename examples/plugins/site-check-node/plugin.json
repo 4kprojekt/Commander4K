@@ -13,6 +13,17 @@
     ],
     "panels": [
       { "id": "sites", "title": "Stan stron", "description": "Strony z sites.json.", "refreshSeconds": 60 }
+    ],
+    "palettes": [
+      {
+        "id": "sites",
+        "title": "Strony",
+        "dock": "right",
+        "actions": [
+          { "id": "add", "title": "Dodaj stronę", "icon": "+" },
+          { "id": "remove", "title": "Usuń stronę", "icon": "✕", "forItem": true }
+        ]
+      }
     ]
   }
 }

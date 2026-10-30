@@ -1,6 +1,6 @@
 # Commander4K plugins
 
-A plugin adds **commands** (menu bar, command palette, key bindings), **panels** (a tree/table shown inside a file panel, with a details pane and actions) and **previews** (the quick view, `Ctrl+Q`, for chosen file types). You can write one in **Python, Node.js, PowerShell 7, .NET or any executable**. Each plugin runs as a separate process and talks to Commander4K over a small JSON-RPC protocol.
+A plugin adds **commands** (menu bar, command palette, key bindings), **panels** (a tree/table shown inside a file panel, with a details pane and actions), **previews** (the quick view, `Ctrl+Q`, for chosen file types) and **palettes** (button bars docked below, beside or between the panels; the user picks the position in the settings). You can write one in **Python, Node.js, PowerShell 7, .NET or any executable**. Each plugin runs as a separate process and talks to Commander4K over a small JSON-RPC protocol.
 
 The protocol is deliberately small and explicit so that both people and AI assistants can write plugins from this document alone. The quickest start is the plugin manager (*Wtyczki ▸ Menedżer wtyczek…*, `Ctrl+N`), which copies a working example in your language into the plugins folder.
 
@@ -52,6 +52,12 @@ The schema is in [`plugin.schema.json`](plugin.schema.json).
     ],
     "previews": [
       { "id": "csv", "title": "CSV table", "extensions": [".csv"], "priority": 60 }
+    ],
+    "palettes": [
+      {
+        "id": "projects", "title": "Projects", "dock": "left",
+        "actions": [ { "id": "add", "title": "Add", "icon": "+" }, { "id": "remove", "title": "Remove", "icon": "✕", "forItem": true } ]
+      }
     ]
   }
 }
@@ -92,7 +98,7 @@ The UI and context calls (`ui.*`, `context.get`, `log.write`) need no permission
 - `C4K_PROTOCOL=1` is set in the environment.
 
 **Startup:**
-- The app starts the plugin process the first time one of its commands or panels is used.
+- The app starts the plugin process the first time one of its commands or panels is used. A plugin with a visible palette starts with the app, because the palette asks for its items.
 - It restarts the process if it crashed, and sends `shutdown` when the app exits.
 - **Both directions:** the app sends requests to the plugin, and while handling one, the plugin may send requests to the app (`fs.list`, `ui.confirm`…) and wait for the answers. Ids are any JSON value: use strings such as `"p1"` for your own requests.
 - **Cancellation:** the app may send the notification `$/cancelRequest {"id": …}` when the user presses Esc. Plugins may ignore it.
@@ -107,6 +113,9 @@ The UI and context calls (`ui.*`, `context.get`, `log.write`) need no permission
 | `panel.details` | `{ panel, rowId }` | `{ sections: [{ title, items: [[key, value]] }] }` or `null` |
 | `panel.action` | `{ panel, action, rowIds, context }` | `{ text?: string }`. Text is shown in a viewer, and the panel reloads afterwards. |
 | `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context }` | `{ kind: "markdown"\|"text", content, editable? }`. Quick view (`Ctrl+Q`) of the entry under the cursor. Markdown is rendered with formatting. The highest `priority` wins among previews that accept the extension (`"/"` in `extensions` means folders). |
+| `palette.items` | `{ palette, context }` | `{ items: [{ id, title, icon?, tooltip? }] }`. Buttons of a docked palette. Asked again after every navigation and after every `palette.action`, so items may depend on `context.activePath`. |
+| `palette.invoke` | `{ palette, item, context }` | Same as `command.execute`. The user clicked an item. |
+| `palette.action` | `{ palette, action, item, context }` | Same as `command.execute`. `item` is `null` for header buttons and the clicked item for `forItem` actions (context menu). |
 | `shutdown` | — | `null`, then exit |
 
 `context` = `{ activePath, otherPath, selection: [{ name, path, kind, size, modified, hidden }] }`:

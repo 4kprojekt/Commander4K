@@ -48,9 +48,12 @@ public sealed class PluginPanelView : Grid, IPanelModeView
     private bool _firstLoad = true;
     private SkinBrushes _brushes;
 
+    public IPanelPlugin Plugin { get; }
+
     public PluginPanelView(IPanelPlugin plugin, IPanelSession session, PanelRequest request, SkinBrushes brushes, PluginPanelServices services)
     {
         _plugin = plugin;
+        Plugin = plugin;
         _session = session;
         _request = request;
         _services = services;

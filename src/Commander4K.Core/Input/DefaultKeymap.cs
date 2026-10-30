@@ -23,6 +23,8 @@ public static class DefaultKeymap
         ["Ctrl+Alt+P"] = CommandIds.PanelPrefix + "builtin.powershell",
         ["Ctrl+,"] = CommandIds.Settings,
         ["F2"] = CommandIds.PanelModes,
+        ["Ctrl+B"] = CommandIds.TogglePalettes,
+        ["Ctrl+D"] = CommandIds.AddFavorite,
         ["F10"] = CommandIds.Exit,
         ["Ctrl+H"] = CommandIds.ToggleHidden,
         ["Tab"] = CommandIds.SwitchPanel,

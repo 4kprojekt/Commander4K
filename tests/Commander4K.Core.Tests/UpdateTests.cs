@@ -150,6 +150,7 @@ public sealed class UpdateTests : IDisposable
 
         Assert.DoesNotContain("cm_Move", file.Bindings.Values);
         Assert.Equal("cm_Settings", file.Bindings["Ctrl+,"]);
+        Assert.Equal("cm_AddFavorite", file.Bindings["Ctrl+D"]);
         Assert.Contains("cm_Move", file.KnownCommands!);
         Assert.False(ConfigStore.MergeNewDefaults(file));
     }
@@ -187,6 +188,7 @@ public sealed class UpdateTests : IDisposable
     [InlineData("zrodlo", "updateRepository")]
     [InlineData("AKTUALIZACJE beta", "includePrereleases")]
     [InlineData("motyw", "skin")]
+    [InlineData("palety ulubione", "showPalettes")]
     public void Settings_search_ignores_case_and_polish_diacritics(string query, string expectedKey)
     {
         var catalog = SettingsCatalog.Create(() => []);

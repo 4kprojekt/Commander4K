@@ -38,6 +38,7 @@ public static class SettingsCatalog
 {
     public const string Appearance = "Wygląd";
     public const string Panels = "Panele";
+    public const string Palettes = "Palety";
     public const string Network = "Sieć";
     public const string Preview = "Podgląd";
     public const string Updates = "Aktualizacje";
@@ -56,6 +57,9 @@ public static class SettingsCatalog
             SettingKind.Text, s => s.LeftPath ?? string.Empty, (s, v) => s.LeftPath = NullIfEmpty(v), ["start", "ścieżka", "katalog"]),
         new("rightPath", Panels, "Folder startowy prawego panelu", "Ścieżka otwierana przy starcie; zapisywana automatycznie przy zamknięciu.",
             SettingKind.Text, s => s.RightPath ?? string.Empty, (s, v) => s.RightPath = NullIfEmpty(v), ["start", "ścieżka", "katalog"]),
+
+        new("showPalettes", Palettes, "Pokazuj palety", "Palety z szybkimi akcjami, ulubionymi folderami, zapisanymi widokami i palety wtyczek (Ctrl+B). Położenie każdej palety ustawisz poniżej.",
+            SettingKind.Toggle, s => s.ShowPalettes, (s, v) => s.ShowPalettes = (bool)v!, ["paleta", "pasek", "przyciski", "ulubione", "widoki", "toolbar"]),
 
         new("markdownEdit", Preview, "Markdown: od razu edycja", "Podgląd (Ctrl+Q) otwiera pliki .md w edycji z podglądem na żywo obok, zamiast samego widoku sformatowanego (F4 przełącza).",
             SettingKind.Toggle, s => s.MarkdownEditByDefault, (s, v) => s.MarkdownEditByDefault = (bool)v!, ["markdown", "md", "edytor", "podgląd", "quick view"]),

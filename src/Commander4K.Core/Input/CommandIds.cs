@@ -15,6 +15,15 @@ public static class CommandIds
 
     /// <summary>Switches a panel's mode: files, quick preview or any plugin panel (F2).</summary>
     public const string PanelModes = "cm_PanelModes";
+
+    /// <summary>Shows or hides all docked palettes (Ctrl+B).</summary>
+    public const string TogglePalettes = "cm_TogglePalettes";
+
+    /// <summary>Settings filtered to palette positions.</summary>
+    public const string Palettes = "cm_Palettes";
+
+    /// <summary>Adds the active folder to the favourites palette (Ctrl+D).</summary>
+    public const string AddFavorite = "cm_AddFavorite";
     public const string CheckForUpdates = "cm_CheckForUpdates";
     public const string About = "cm_About";
     public const string AddConnection = "cm_AddConnection";
