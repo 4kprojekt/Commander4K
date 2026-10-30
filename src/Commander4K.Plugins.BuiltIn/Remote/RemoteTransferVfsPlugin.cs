@@ -8,7 +8,8 @@ namespace Commander4K.Plugins.BuiltIn.Remote;
 
 /// <summary>
 /// SFTP (SSH.NET) and FTP/FTPS (FluentFTP) servers. Sessions are pooled per user/host/port and kept alive, so
-/// navigating a remote tree does not reconnect on every directory. Skeleton: listing, reading, mkdir and delete.
+/// navigating a remote tree does not reconnect on every directory. Listing, stat, reading, uploading, mkdir,
+/// server-side move and recursive delete.
 /// </summary>
 public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposable
 {
@@ -23,7 +24,8 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
 
     public IReadOnlyList<string> Schemes { get; } = [RemoteEndpoint.Sftp, RemoteEndpoint.Ftp];
 
-    public VfsCapabilities Capabilities => VfsCapabilities.Read | VfsCapabilities.CreateDirectory | VfsCapabilities.Delete;
+    public VfsCapabilities Capabilities =>
+        VfsCapabilities.Read | VfsCapabilities.Write | VfsCapabilities.CreateDirectory | VfsCapabilities.Delete | VfsCapabilities.Move;
 
     public TimeSpan KeepAliveInterval { get; init; } = TimeSpan.FromSeconds(30);
 
@@ -46,13 +48,12 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
         }
     }
 
-    public ValueTask<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken)
+    /// <summary>One round trip (stat); <c>null</c> when the path does not exist — copy jobs rely on that to create folders.</summary>
+    public async ValueTask<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken)
     {
         var endpoint = RemoteEndpoint.Parse(path);
-        var name = endpoint.RemotePath.TrimEnd('/');
-        name = name.Length == 0 ? endpoint.Host : name[(name.LastIndexOf('/') + 1)..];
-        // Kind is a best guess without a round trip; listings carry the authoritative kind.
-        return ValueTask.FromResult<VfsEntry?>(new VfsEntry(name, path, VfsEntryKind.Directory));
+        var session = await GetSessionAsync(endpoint, cancellationToken).ConfigureAwait(false);
+        return await session.GetEntryAsync(endpoint, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The server root goes up to the host in the network neighbourhood.</summary>
@@ -89,12 +90,52 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
         await session.CreateDirectoryAsync(endpoint.RemotePath, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <remarks>Recursive deletion of non-empty remote directories is not implemented yet.</remarks>
+    public async ValueTask<Stream> OpenWriteAsync(string path, bool overwrite, CancellationToken cancellationToken)
+    {
+        var endpoint = RemoteEndpoint.Parse(path);
+        var session = await GetSessionAsync(endpoint, cancellationToken).ConfigureAwait(false);
+        return await session.OpenWriteAsync(endpoint.RemotePath, overwrite, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Files are deleted directly; directories with their whole contents, but only when <paramref name="recursive"/>
+    /// is set. Symbolic links are removed, never followed. A path that no longer exists is not an error.
+    /// </summary>
     public async ValueTask DeleteAsync(string path, bool recursive, CancellationToken cancellationToken)
     {
         var endpoint = RemoteEndpoint.Parse(path);
         var session = await GetSessionAsync(endpoint, cancellationToken).ConfigureAwait(false);
-        await session.DeleteAsync(endpoint.RemotePath, isDirectory: recursive, cancellationToken).ConfigureAwait(false);
+        if (await session.GetEntryAsync(endpoint, cancellationToken).ConfigureAwait(false) is not { } entry)
+        {
+            return;
+        }
+
+        var isDirectory = entry.Kind == VfsEntryKind.Directory && (entry.Flags & VfsEntryFlags.ReparsePoint) == 0;
+        if (isDirectory && !recursive)
+        {
+            await foreach (var _ in session.ListAsync(endpoint, cancellationToken).ConfigureAwait(false))
+            {
+                throw new IOException($"Folder „{entry.Name}” nie jest pusty.");
+            }
+        }
+
+        await session.DeleteAsync(endpoint.RemotePath, isDirectory, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Server-side rename within one connection; anything else is left to copy + delete.</summary>
+    public async ValueTask MoveAsync(string sourcePath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
+    {
+        var source = RemoteEndpoint.Parse(sourcePath);
+        var destination = RemoteEndpoint.Parse(destinationPath);
+        if (!string.Equals(source.SessionKey, destination.SessionKey, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException("Przenoszenie między serwerami odbywa się przez kopiowanie.");
+        }
+
+        var session = await GetSessionAsync(source, cancellationToken).ConfigureAwait(false);
+        var entry = await session.GetEntryAsync(source, cancellationToken).ConfigureAwait(false)
+            ?? throw new FileNotFoundException($"Nie ma „{sourcePath}”.", sourcePath);
+        await session.MoveAsync(source.RemotePath, destination.RemotePath, entry.Kind == VfsEntryKind.Directory, overwrite, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
