@@ -3,6 +3,9 @@ namespace Commander4K.Core.Input;
 /// <summary>Built-in command ids referenced from <c>config/keymap.json</c>; names follow Total Commander's <c>cm_</c> style.</summary>
 public static class CommandIds
 {
+    public const string Help = "cm_Help";
+    public const string AddConnection = "cm_AddConnection";
+    public const string ToggleHidden = "cm_ToggleHidden";
     public const string SwitchPanel = "cm_SwitchPanel";
     public const string Open = "cm_Open";
     public const string GoToParent = "cm_GoToParent";

@@ -16,6 +16,7 @@ namespace Commander4K.Core.Configuration;
 [JsonSerializable(typeof(ExternalToolsConfig))]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(Skin))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
 internal sealed partial class ConfigJsonContext : JsonSerializerContext;
 
 /// <summary>Loads JSON configuration from a directory, writing defaults for missing files. Runs off the caller's thread.</summary>

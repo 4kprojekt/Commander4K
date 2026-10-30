@@ -26,6 +26,8 @@ internal delegate void HostSink(string Display, string HostName, IPAddress? Addr
 /// </summary>
 public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChangeNotifier
 {
+    public const string RootPath = NetworkPath.RootPath;
+
     /// <summary>Listings larger than this are not cached for offline browsing.</summary>
     private const int MaxCachedListing = 20_000;
 

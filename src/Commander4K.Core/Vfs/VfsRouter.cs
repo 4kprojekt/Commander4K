@@ -133,6 +133,33 @@ public sealed class VfsRouter
         return _executor.RunAsync(ct => provider.OpenWriteAsync(path, overwrite, ct).AsTask(), cancellationToken);
     }
 
+    public Task CreateDirectoryAsync(string path, CancellationToken cancellationToken)
+    {
+        var provider = Resolve(path);
+        return _executor.RunAsync(ct => provider.CreateDirectoryAsync(path, ct).AsTask(), cancellationToken);
+    }
+
+    public Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken)
+    {
+        var provider = Resolve(path);
+        return _executor.RunAsync(ct => provider.DeleteAsync(path, recursive, ct).AsTask(), cancellationToken);
+    }
+
+    /// <summary>Provider-native move; both paths must belong to the same provider.</summary>
+    public Task MoveAsync(string sourcePath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
+    {
+        var provider = Resolve(sourcePath);
+        if (!ReferenceEquals(provider, Resolve(destinationPath)))
+        {
+            throw new NotSupportedException("Native move requires both paths to be on the same provider.");
+        }
+
+        return _executor.RunAsync(ct => provider.MoveAsync(sourcePath, destinationPath, overwrite, ct).AsTask(), cancellationToken);
+    }
+
+    public bool AreOnSameProvider(string first, string second) =>
+        TryResolve(first, out var a) && TryResolve(second, out var b) && ReferenceEquals(a, b);
+
     public string? GetParentPath(string path) => Resolve(path).GetParentPath(path);
 
     public string Combine(string directoryPath, string name) => Resolve(directoryPath).Combine(directoryPath, name);

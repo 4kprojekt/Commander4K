@@ -138,7 +138,7 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
         FileSystemListing.Watch(RequireLocal(directoryPath), changed);
 
     /// <summary>Returns the Windows path, or <c>null</c> for the virtual drive list.</summary>
-    internal static string? ToLocalPath(string path)
+    public static string? ToLocalPath(string path)
     {
         var stripped = VfsPath.StripScheme(path);
         if (!ReferenceEquals(stripped, path))
@@ -171,26 +171,36 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
                 if (drive.IsReady)
                 {
                     size = drive.TotalSize;
-                    var label = string.IsNullOrEmpty(drive.VolumeLabel) ? drive.DriveType.ToString() : drive.VolumeLabel;
-                    description = $"{label} — {FormatBytes(drive.AvailableFreeSpace)} free";
+                    var label = string.IsNullOrEmpty(drive.VolumeLabel) ? DescribeType(drive.DriveType) : drive.VolumeLabel;
+                    description = $"{label} — wolne {FormatBytes(drive.AvailableFreeSpace)}";
                 }
                 else
                 {
-                    description = drive.DriveType.ToString();
+                    description = DescribeType(drive.DriveType);
                 }
             }
             catch (IOException)
             {
-                description = drive.DriveType.ToString();
+                description = DescribeType(drive.DriveType);
             }
             catch (UnauthorizedAccessException)
             {
-                description = drive.DriveType.ToString();
+                description = DescribeType(drive.DriveType);
             }
 
             yield return new VfsEntry(drive.Name.TrimEnd('\\'), drive.Name, VfsEntryKind.Drive, size, Description: description);
         }
     }
+
+    private static string DescribeType(DriveType type) => type switch
+    {
+        DriveType.Fixed => "Dysk lokalny",
+        DriveType.Removable => "Dysk wymienny",
+        DriveType.Network => "Dysk sieciowy",
+        DriveType.CDRom => "Napęd optyczny",
+        DriveType.Ram => "RAM-dysk",
+        _ => "Dysk",
+    };
 
     private static string FormatBytes(long bytes)
     {

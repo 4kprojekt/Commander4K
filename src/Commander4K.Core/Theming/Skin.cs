@@ -1,5 +1,8 @@
+using System.Text.Json.Serialization;
+
 namespace Commander4K.Core.Theming;
 
+[JsonConverter(typeof(JsonStringEnumConverter<PanelBorderStyle>))]
 public enum PanelBorderStyle : byte
 {
     None,

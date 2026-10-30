@@ -1,0 +1,318 @@
+using System.Diagnostics;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.Layout;
+using Avalonia.Markup.Declarative;
+using Avalonia.Media;
+using Commander4K.App.Composition;
+using Commander4K.App.Theming;
+using Commander4K.Core.Theming;
+
+namespace Commander4K.App.Dialogs;
+
+/// <summary>Skin list with live preview; Cancel restores the skin that was active before.</summary>
+public sealed class SkinPickerDialog : DialogWindow<bool>
+{
+    private readonly AppHost _host;
+    private readonly SkinManager _skins;
+    private readonly Skin _original;
+    private readonly ListBox _list;
+    private readonly TextBlock _warnings;
+    private readonly TextBlock _info;
+
+    public SkinPickerDialog(AppHost host, SkinManager skins) : base("Skórki", skins.Current, 640)
+    {
+        _host = host;
+        _skins = skins;
+        _original = skins.Current.Skin;
+        _list = new ListBox().Height(260);
+        _list.SelectionChanged += (_, _) => PreviewSelected();
+        _warnings = new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12).Margin(0, 6, 0, 0);
+        _info = new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12).Opacity(0.75).Margin(0, 6, 0, 0)
+            .Text($"Własne skórki: pliki JSON w folderze {host.Config.SkinsDirectory} (schemat: {SkinSchema.FileName}).");
+
+        SetBody(
+            Label("Wybierz skórkę — podgląd działa na żywo:"),
+            _list,
+            _warnings,
+            new WrapPanel().Margin(0, 10, 0, 0).Children(
+                Action("✨ Generuj z AI…", GenerateWithAiAsync),
+                Action("📋 Kopiuj prompt dla Claude", CopyPromptAsync),
+                Action("📤 Eksportuj do edycji", ExportSelectedAsync),
+                Action("📂 Otwórz folder skórek", () =>
+                {
+                    OpenFolder(host.Config.SkinsDirectory);
+                    return Task.CompletedTask;
+                }),
+                Action("🔄 Przeładuj", ReloadAsync)),
+            _info,
+            ButtonRow(("OK", Accept, true), ("Anuluj", Cancel, false)));
+        Fill(_original.Id);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            Cancel();
+            e.Handled = true;
+            return;
+        }
+
+        base.OnKeyDown(e);
+    }
+
+    private Skin? Selected => (_list.SelectedItem as ListBoxItem)?.Tag as Skin;
+
+    private Button Action(string text, Func<Task> onClick) =>
+        new Button().Content(text).Margin(0, 0, 6, 6).OnClick(async _ => await onClick());
+
+    private void Fill(string selectId)
+    {
+        var builtIn = BuiltInSkins.All.Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var items = _host.Skins.Skins.Select(skin => new ListBoxItem
+        {
+            Tag = skin,
+            Content = new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Children(
+                Swatch(skin),
+                new TextBlock().Text(skin.DisplayName).VerticalAlignment(VerticalAlignment.Center),
+                new TextBlock().Text(builtIn.Contains(skin.Id) ? "" : "(własna)").Opacity(0.6).VerticalAlignment(VerticalAlignment.Center)),
+        }).ToList();
+        _list.ItemsSource = items;
+        _list.SelectedItem = items.FirstOrDefault(i => string.Equals(((Skin)i.Tag!).Id, selectId, StringComparison.OrdinalIgnoreCase)) ?? items.FirstOrDefault();
+
+        if (_host.Skins.Errors.Count > 0)
+        {
+            _info.Text += "\nNie wczytano: " + string.Join("; ", _host.Skins.Errors.Select(e => $"{Path.GetFileName(e.Path)} – {e.Error}"));
+        }
+    }
+
+    /// <summary>Four colour chips: panel, directory, cursor, selection.</summary>
+    private static StackPanel Swatch(Skin skin)
+    {
+        var p = skin.Palette;
+        return new StackPanel().Orientation(Orientation.Horizontal).Children(
+            [.. new[] { p.PanelBackground, p.DirectoryForeground, p.CursorBackground, p.SelectedForeground }
+                .Select(c => (Control)new Border().Width(14).Height(14).Background(new SolidColorBrush(SkinBrushes.ToColor(c))))]);
+    }
+
+    private void PreviewSelected()
+    {
+        if (Selected is not { } skin)
+        {
+            return;
+        }
+
+        _skins.Preview(skin);
+        var warnings = SkinValidator.Validate(skin);
+        _warnings.Text = warnings.Count == 0 ? "✓ Kontrast i czytelność w porządku." : "⚠ " + string.Join("\n⚠ ", warnings);
+    }
+
+    private void Accept()
+    {
+        if (Selected is { } skin)
+        {
+            _skins.Apply(skin);
+        }
+
+        Complete(true);
+    }
+
+    private void Cancel()
+    {
+        _skins.Preview(_original);
+        Complete(false);
+    }
+
+    private async Task GenerateWithAiAsync()
+    {
+        var generated = await new AiSkinDialog(_host, _skins).ShowAsync(this);
+        Fill(generated?.Id ?? Selected?.Id ?? _original.Id);
+    }
+
+    private async Task CopyPromptAsync()
+    {
+        await CopyToClipboardAsync(this, SkinPrompt.ForChat(null));
+        _info.Text = "Skopiowano prompt. Wklej go w Claude.ai lub Claude Design, opisz swój pomysł, a gotowy plik JSON " +
+            $"zapisz w {_host.Config.SkinsDirectory} i kliknij „Przeładuj”.";
+    }
+
+    private async Task ExportSelectedAsync()
+    {
+        if (Selected is not { } skin)
+        {
+            return;
+        }
+
+        var copy = skin with { Id = skin.Id + "-wlasna", DisplayName = skin.DisplayName + " (kopia)" };
+        var path = Path.Combine(_host.Config.SkinsDirectory, copy.Id + ".json");
+        await SkinCatalog.ExportAsync(copy, path);
+        await ReloadAsync();
+        _info.Text = $"Zapisano {path}. Edytuj plik i kliknij „Przeładuj”.";
+    }
+
+    private async Task ReloadAsync()
+    {
+        var selected = Selected?.Id;
+        await _host.ReloadSkinsAsync();
+        Fill(selected ?? _original.Id);
+    }
+
+    internal static async Task CopyToClipboardAsync(Window window, string text)
+    {
+        if (window.Clipboard is { } clipboard)
+        {
+            await clipboard.SetTextAsync(text);
+        }
+    }
+
+    internal static void OpenFolder(string path)
+    {
+        Directory.CreateDirectory(path);
+        using var _ = Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { path }, UseShellExecute = false });
+    }
+}
+
+/// <summary>"Describe it, Claude designs it": generates a skin, previews it live and saves it into config/skins.</summary>
+public sealed class AiSkinDialog : DialogWindow<Skin?>
+{
+    private readonly AppHost _host;
+    private readonly SkinManager _skins;
+    private readonly Skin _original;
+    private readonly ClaudeSkinGenerator _generator = new();
+    private readonly TextBox _description;
+    private readonly TextBlock _status;
+    private readonly Button _generate;
+    private readonly Button _save;
+    private CancellationTokenSource? _running;
+    private Skin? _result;
+
+    public AiSkinDialog(AppHost host, SkinManager skins) : base("Generuj skórkę z AI", skins.Current, 600)
+    {
+        _host = host;
+        _skins = skins;
+        _original = skins.Current.Skin;
+        _description = new TextBox()
+            .AcceptsReturn(true)
+            .TextWrapping(TextWrapping.Wrap)
+            .Height(80)
+            .PlaceholderText("np. „cyberpunk: neonowy róż i cyjan na granatowym tle” albo „sepia jak stary terminal”");
+        _status = new TextBlock().TextWrapping(TextWrapping.Wrap).Margin(0, 8, 0, 0)
+            .Text($"Model: {ClaudeSkinGenerator.Model}. Wymaga klucza ANTHROPIC_API_KEY (lub „ant auth login”). Generowanie trwa zwykle kilkanaście sekund i jest płatne wg cennika API.");
+        _generate = new Button().Content("✨ Generuj").OnClick(async _ => await GenerateAsync());
+        _save = new Button().Content("💾 Zapisz skórkę").IsEnabled(false).OnClick(async _ => await SaveAsync());
+
+        SetBody(
+            Label("Opisz wygląd skórki:"),
+            _description,
+            new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Margin(0, 8, 0, 0).Children(
+                _generate,
+                new Button().Content("📋 Kopiuj prompt (Claude.ai / Claude Design)").OnClick(async _ => await CopyPromptAsync())),
+            _status,
+            new StackPanel()
+                .Orientation(Orientation.Horizontal)
+                .HorizontalAlignment(HorizontalAlignment.Right)
+                .Spacing(8)
+                .Margin(0, 14, 0, 0)
+                .Children(_save, new Button().Content("Zamknij").OnClick(_ => Discard())));
+        Opened += (_, _) => _description.Focus();
+        Closed += (_, _) => _running?.Cancel();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            if (_running is not null)
+            {
+                _running.Cancel();
+            }
+            else
+            {
+                Discard();
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        base.OnKeyDown(e);
+    }
+
+    private async Task GenerateAsync()
+    {
+        var description = _description.Text?.Trim();
+        if (string.IsNullOrEmpty(description) || _running is not null)
+        {
+            return;
+        }
+
+        _running = new CancellationTokenSource();
+        _generate.IsEnabled = false;
+        _save.IsEnabled = false;
+        _status.Foreground = Brushes.FileForeground;
+        _status.Text = "⏳ Claude projektuje skórkę… (Esc – anuluj)";
+        try
+        {
+            var result = await _generator.GenerateAsync(description, _running.Token);
+            if (result.Skin is { } skin)
+            {
+                _result = skin;
+                _skins.Preview(skin);
+                var warnings = SkinValidator.Validate(skin);
+                _status.Text = $"✓ „{skin.DisplayName}” — podgląd jest widoczny w głównym oknie." +
+                    (warnings.Count == 0 ? "" : "\n⚠ " + string.Join("\n⚠ ", warnings));
+                _save.IsEnabled = true;
+            }
+            else
+            {
+                _status.Foreground = Brushes.Error;
+                _status.Text = "⚠ " + result.Error;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _status.Text = "Anulowano.";
+        }
+        finally
+        {
+            _running.Dispose();
+            _running = null;
+            _generate.IsEnabled = true;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_result is not { } skin)
+        {
+            return;
+        }
+
+        if (BuiltInSkins.All.Any(b => string.Equals(b.Id, skin.Id, StringComparison.OrdinalIgnoreCase)))
+        {
+            skin = skin with { Id = skin.Id + "-ai" };
+        }
+
+        var path = Path.Combine(_host.Config.SkinsDirectory, skin.Id + ".json");
+        await SkinCatalog.ExportAsync(skin, path);
+        await _host.ReloadSkinsAsync();
+        _skins.Apply(_host.Skins.Get(skin.Id));
+        Complete(skin);
+    }
+
+    private async Task CopyPromptAsync()
+    {
+        await SkinPickerDialog.CopyToClipboardAsync(this, SkinPrompt.ForChat(_description.Text));
+        _status.Text = $"Skopiowano prompt{(string.IsNullOrWhiteSpace(_description.Text) ? "" : " z Twoim opisem")}. " +
+            $"Wklej go w Claude.ai lub Claude Design; gotowy plik JSON zapisz w {_host.Config.SkinsDirectory}.";
+    }
+
+    private void Discard()
+    {
+        _running?.Cancel();
+        _skins.Preview(_original);
+        Complete(null);
+    }
+}

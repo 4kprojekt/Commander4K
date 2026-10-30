@@ -47,6 +47,20 @@ public sealed class ResilientAsyncExecutor
         return DetachOnCancelAsync(task, timeout ?? DefaultTimeout, cancellationToken);
     }
 
+    /// <summary>Asynchronous call without a result; see <see cref="RunAsync{T}(Func{CancellationToken, Task{T}}, CancellationToken, TimeSpan?)"/>.</summary>
+    public Task RunAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken, TimeSpan? timeout = null)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        return RunAsync<bool>(
+            async ct =>
+            {
+                await operation(ct).ConfigureAwait(false);
+                return true;
+            },
+            cancellationToken,
+            timeout);
+    }
+
     /// <summary>
     /// Re-streams <paramref name="source"/> so that a stalled <c>MoveNextAsync</c> is detached on cancellation or
     /// when no item arrives within <paramref name="stallTimeout"/>. The first step runs on the thread pool because

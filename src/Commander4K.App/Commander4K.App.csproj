@@ -6,6 +6,18 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
   </PropertyGroup>
+  <!-- SkiaSharp/HarfBuzz packages ship ~100 MB of native .pdb symbols; keep them out of published builds. -->
+  <Target Name="DropSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
+  <!-- The single-file bundler collects its own list (SDK-internal item name); filter it the same way. -->
+  <Target Name="DropSymbolsFromBundle" AfterTargets="_ComputeFilesToBundle" BeforeTargets="GenerateSingleFileBundle">
+    <ItemGroup>
+      <_FilesToBundle Remove="@(_FilesToBundle)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
   <ItemGroup>
     <ProjectReference Include="..\Commander4K.PluginSdk\Commander4K.PluginSdk.csproj" />
     <ProjectReference Include="..\Commander4K.Core\Commander4K.Core.csproj" />
@@ -16,5 +28,6 @@
     <PackageReference Include="Avalonia.Desktop" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
     <PackageReference Include="Avalonia.Markup.Declarative" />
+    <PackageReference Include="Anthropic" />
   </ItemGroup>
 </Project>

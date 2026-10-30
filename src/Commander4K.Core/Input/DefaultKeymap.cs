@@ -5,6 +5,10 @@ public static class DefaultKeymap
 {
     public static IReadOnlyDictionary<string, string> Bindings { get; } = new Dictionary<string, string>
     {
+        ["F1"] = CommandIds.Help,
+        ["F2"] = CommandIds.SelectSkin,
+        ["F10"] = CommandIds.Exit,
+        ["Ctrl+H"] = CommandIds.ToggleHidden,
         ["Tab"] = CommandIds.SwitchPanel,
         ["Enter"] = CommandIds.Open,
         ["Backspace"] = CommandIds.GoToParent,
