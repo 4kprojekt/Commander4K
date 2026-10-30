@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag such as v0.2.0 (or v0.3.0-beta.1 for a pre-release) to build, test and publish a GitHub release.
-# The in-app updater looks for Commander4K-win-x64.exe / Commander4K-win-arm64.exe and SHA256SUMS.txt.
+# The in-app updater looks for Commander4K-<rid>.zip (portable) / Commander4K-<rid>.msi (installer) and SHA256SUMS.txt.
 on:
   push:
     tags: ['v*']

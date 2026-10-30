@@ -4,6 +4,8 @@
     <RootNamespace>Commander4K.App</RootNamespace>
     <AssemblyName>Commander4K</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Generated (16–256 px, badge from 40 px); also embedded below for the window icons. -->
+    <ApplicationIcon>Assets\commander4k.ico</ApplicationIcon>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <!-- [LibraryImport] (browser key state) generates unsafe stubs. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -23,6 +25,7 @@
   </Target>
   <!-- Example plugins ship inside the app as templates ("Nowa wtyczka z przykładu" in the plugin manager). -->
   <ItemGroup>
+    <EmbeddedResource Include="Assets\commander4k.ico" LogicalName="commander4k.ico" />
     <EmbeddedResource Include="..\..\examples\plugins\**\*" Exclude="..\..\examples\plugins\**\__pycache__\**" LogicalName="examples/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>

@@ -10,6 +10,9 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Commander4K is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
+    <!-- Shown in "Installed apps" and on the Start menu shortcut. -->
+    <Icon Id="AppIcon" SourceFile="$(var.RepoRoot)src\Commander4K.App\Assets\commander4k.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/4kprojekt/Commander4K" />
     <Property Id="ARPHELPLINK" Value="https://github.com/4kprojekt/Commander4K/issues" />
 
@@ -33,6 +36,7 @@
                   Description="Dual-pane file manager"
                   Directory="ProgramMenuFolder"
                   Target="[INSTALLFOLDER]Commander4K.exe"
+                  Icon="AppIcon"
                   WorkingDirectory="INSTALLFOLDER" />
         <RegistryValue Root="HKLM" Key="Software\4Kprojekt\Commander4K" Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
       </Component>

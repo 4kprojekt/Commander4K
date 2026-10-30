@@ -1,4 +1,4 @@
-# Commander4K
+# <img src="docs/images/icon.png" alt="" width="48" align="top"> Commander4K
 
 [![CI](https://github.com/4kprojekt/Commander4K/actions/workflows/ci.yml/badge.svg)](https://github.com/4kprojekt/Commander4K/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
