@@ -82,5 +82,7 @@ public static class CommandIds
     public const string SelectSkin = "cm_SelectSkin";
     /// <summary>Switches straight to the next skin, for quick previewing.</summary>
     public const string NextSkin = "cm_NextSkin";
+    /// <summary>Skin JSON editor: paste, validate, open an existing skin or start a new one from it.</summary>
+    public const string EditSkin = "cm_EditSkin";
     public const string Exit = "cm_Exit";
 }

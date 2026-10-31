@@ -46,6 +46,28 @@ public sealed class SkinSchemaTests
     }
 
     [Fact]
+    public void Prompt_for_chat_starts_from_the_given_skin_and_states_the_schema_rules()
+    {
+        var prompt = SkinPrompt.ForChat(null, BuiltInSkins.ModernDark);
+
+        Assert.Contains("\"$schema\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"required\"", prompt, StringComparison.Ordinal);
+        Assert.Contains($"\"{BuiltInSkins.ModernDarkId}\"", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"norton-commander\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("Hard requirements", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Extract_takes_the_json_out_of_a_pasted_chat_answer()
+    {
+        var json = SkinJson.Serialize(BuiltInSkins.NortonCommander);
+
+        Assert.Equal(BuiltInSkins.NortonCommander, SkinJson.Deserialize(SkinJson.Extract($"Here it is:\n```json\n{json}\n```\nEnjoy!")));
+        Assert.Equal(BuiltInSkins.NortonCommander, SkinJson.Deserialize(SkinJson.Extract($"Sure — {json} — done.")));
+        Assert.Equal(json.Trim(), SkinJson.Extract("  " + json + "  "));
+    }
+
+    [Fact]
     public void Serialized_skin_round_trips_with_string_enums()
     {
         var json = SkinJson.Serialize(BuiltInSkins.NortonCommander);
