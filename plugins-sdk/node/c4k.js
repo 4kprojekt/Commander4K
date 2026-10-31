@@ -102,7 +102,7 @@ module.exports = {
     Buffer.from((await call('fs.readBytes', { path, offset, length })).data, 'base64'),
   writeText: (path, content) => call('fs.writeText', { path, content }),       // fs.write
   writeBytes: (path, data) => call('fs.writeBytes', { path, data: Buffer.from(data).toString('base64') }), // fs.write
-  makeDir: path => call('fs.mkdir', { path }),                                 // fs.write
+  makeDir: (path, hidden = false) => call('fs.mkdir', { path, hidden }),       // fs.write (hidden: Hidden attribute on disks/shares)
   remove: (path, recursive = false) => call('fs.delete', { path, recursive }), // fs.write
   move: (from, to, overwrite = false) => call('fs.move', { from, to, overwrite }), // fs.write (also rename)
   listProcesses: () => call('process.list'),                                     // process.read -> [{pid, parentPid, name, path, memoryBytes, started}]

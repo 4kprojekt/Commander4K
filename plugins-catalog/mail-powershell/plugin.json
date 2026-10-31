@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "official.mail",
+  "name": "Poczta",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Oficjalna wtyczka: poczta IMAP/SMTP w folderach .eml. Folder konta z plikiem c4k.dir: { \"preview\": { \"plugin\": \"official.mail\", \"options\": { \"imap\": \"imap.example.com:993\", \"smtp\": \"smtp.example.com:465\", \"user\": \"ja@example.com\", \"refresh\": \"5m\", \"since\": \"3m\" } }, \"enter\": \"official.mail\" }. Hasło zna tylko aplikacja.",
+  "runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" },
+  "permissions": ["mail", "fs.read", "fs.write", "background"],
+  "contributes": {
+    "background": { "interval": "1m" },
+    "previews": [
+      { "id": "account", "title": "Poczta: konto", "extensions": ["/"], "priority": -10, "card": true },
+      { "id": "message", "title": "Poczta: wiadomość", "extensions": [".eml"], "priority": 60, "enter": true }
+    ]
+  }
+}

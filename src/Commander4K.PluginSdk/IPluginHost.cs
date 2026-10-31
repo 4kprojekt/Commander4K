@@ -143,6 +143,12 @@ public interface IPluginHost
     /// <summary>Creates a folder (and missing parents). Requires <see cref="PluginPermissions.FileWrite"/>.</summary>
     Task CreateDirectoryAsync(string path, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Creates a folder (and missing parents); with <paramref name="hidden"/> it also gets the Hidden attribute on disks and
+    /// shares (other locations ignore it). Requires <see cref="PluginPermissions.FileWrite"/>.
+    /// </summary>
+    Task CreateDirectoryAsync(string path, bool hidden, CancellationToken cancellationToken = default);
+
     /// <summary>Deletes a file, or a folder (with <paramref name="recursive"/> its content too). Requires <see cref="PluginPermissions.FileWrite"/>.</summary>
     Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken = default);
 

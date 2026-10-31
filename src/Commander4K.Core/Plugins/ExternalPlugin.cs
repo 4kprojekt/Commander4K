@@ -239,7 +239,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
                 await _host.WriteBytesAsync(Str("path"), Convert.FromBase64String(Str("data")), cancellationToken).ConfigureAwait(false);
                 return null;
             case "fs.mkdir":
-                await _host.CreateDirectoryAsync(Str("path"), cancellationToken).ConfigureAwait(false);
+                await _host.CreateDirectoryAsync(Str("path"), Bool("hidden"), cancellationToken).ConfigureAwait(false);
                 return null;
             case "fs.delete":
                 await _host.DeleteAsync(Str("path"), Bool("recursive"), cancellationToken).ConfigureAwait(false);

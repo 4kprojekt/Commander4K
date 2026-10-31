@@ -119,11 +119,38 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
         });
 
     public Task CreateDirectoryAsync(string path, CancellationToken cancellationToken = default) =>
-        Gate(PluginPermissions.FileWrite, "fs.mkdir", path, async () =>
+        CreateDirectoryAsync(path, hidden: false, cancellationToken);
+
+    public Task CreateDirectoryAsync(string path, bool hidden, CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.FileWrite, "fs.mkdir", hidden ? path + " (hidden)" : path, async () =>
         {
             await router.CreateDirectoryAsync(path, cancellationToken).ConfigureAwait(false);
+            if (hidden && VfsPath.GetScheme(path) is VfsPath.FileScheme or VfsPath.SmbScheme && !path.Contains("://", StringComparison.Ordinal))
+            {
+                // SMB attribute calls can block; the failure travels back as a value, never out of the Task.Run lambda.
+                var failure = await Task.Run(() => TryHide(path), cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
+                if (failure is not null)
+                {
+                    throw failure;
+                }
+            }
+
             return true;
         });
+
+    private static Exception? TryHide(string path)
+    {
+        try
+        {
+            var info = new DirectoryInfo(path);
+            info.Attributes |= FileAttributes.Hidden;
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return ex;
+        }
+    }
 
     public Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken = default) =>
         Gate(PluginPermissions.FileWrite, "fs.delete", recursive ? path + Loc.T(" (z zawartością)") : path, async () =>

@@ -25,7 +25,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "63c47e5d397fd1611cbeb9e36d33ac7d2a308dde8e3dea0ac4b5e982ede9cd8c"
+          "sha256": "fd7b20333cbc254db5457fbe8dddf24805499c3d716fc3d069fd7f110c177ec3"
         },
         {
           "path": "main.ps1",
@@ -60,7 +60,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "63c47e5d397fd1611cbeb9e36d33ac7d2a308dde8e3dea0ac4b5e982ede9cd8c"
+          "sha256": "fd7b20333cbc254db5457fbe8dddf24805499c3d716fc3d069fd7f110c177ec3"
         },
         {
           "path": "main.ps1",
@@ -95,7 +95,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "020ec6f91b093d9a3c88d319995f76427314a4f8ba745d514bc44528a580d8ab"
+          "sha256": "e42f645d89b8b23ed9655329a6d0725543c720fb24fe32ab001ac1bb96f103f0"
         },
         {
           "path": "main.py",
@@ -128,7 +128,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "63c47e5d397fd1611cbeb9e36d33ac7d2a308dde8e3dea0ac4b5e982ede9cd8c"
+          "sha256": "fd7b20333cbc254db5457fbe8dddf24805499c3d716fc3d069fd7f110c177ec3"
         },
         {
           "path": "main.ps1",
@@ -160,7 +160,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "020ec6f91b093d9a3c88d319995f76427314a4f8ba745d514bc44528a580d8ab"
+          "sha256": "e42f645d89b8b23ed9655329a6d0725543c720fb24fe32ab001ac1bb96f103f0"
         },
         {
           "path": "main.py",
@@ -193,7 +193,7 @@
       "files": [
         {
           "path": "c4k.js",
-          "sha256": "46b284fd0228299e68ae4c3a6d390962a0d2a24b20be463a6942e1560fa5acf7"
+          "sha256": "9acba9fd737474e9ce5bf48b588e19e325c75c34921c262128d5c2681adda836"
         },
         {
           "path": "main.js",
@@ -229,7 +229,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "020ec6f91b093d9a3c88d319995f76427314a4f8ba745d514bc44528a580d8ab"
+          "sha256": "e42f645d89b8b23ed9655329a6d0725543c720fb24fe32ab001ac1bb96f103f0"
         },
         {
           "path": "main.py",
@@ -267,7 +267,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "020ec6f91b093d9a3c88d319995f76427314a4f8ba745d514bc44528a580d8ab"
+          "sha256": "e42f645d89b8b23ed9655329a6d0725543c720fb24fe32ab001ac1bb96f103f0"
         },
         {
           "path": "main.py",
@@ -309,7 +309,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "020ec6f91b093d9a3c88d319995f76427314a4f8ba745d514bc44528a580d8ab"
+          "sha256": "e42f645d89b8b23ed9655329a6d0725543c720fb24fe32ab001ac1bb96f103f0"
         },
         {
           "path": "main.py",
@@ -318,6 +318,45 @@
         {
           "path": "plugin.json",
           "sha256": "d08d2ac414c587f60f60f16867162fff53b27fbb4c5ac35ed595ac033160adf3"
+        }
+      ]
+    },
+    {
+      "id": "official.mail",
+      "name": "Poczta",
+      "version": "1.0.0",
+      "author": "4Kprojekt",
+      "runtime": "powershell",
+      "description": {
+        "pl": "Poczta z własnego serwera IMAP/SMTP w folderach .eml: synchronizacja w tle, nieprzeczytane z przedrostkiem ● w nazwie pliku. Hasło trzyma aplikacja, wtyczka go nie widzi.",
+        "en": "Mail from your own IMAP/SMTP server in .eml folders: background sync, unread messages marked with ● in the file name. The app keeps the password; the plugin never sees it."
+      },
+      "tags": [
+        "poczta",
+        "mail",
+        "email",
+        "imap",
+        "smtp",
+        "eml"
+      ],
+      "example": "{ \"preview\": { \"plugin\": \"official.mail\", \"options\": { \"imap\": \"imap.example.com:993\", \"smtp\": \"smtp.example.com:465\", \"user\": \"ja@example.com\", \"refresh\": \"5m\", \"since\": \"3m\" } }, \"enter\": \"official.mail\" }",
+      "path": "plugins-catalog/mail-powershell",
+      "files": [
+        {
+          "path": "c4k.ps1",
+          "sha256": "fd7b20333cbc254db5457fbe8dddf24805499c3d716fc3d069fd7f110c177ec3"
+        },
+        {
+          "path": "main.ps1",
+          "sha256": "d3ccf6e2bb93b32dc12bd6215f99b6fd7cc468e645e9088f1ea39aa2a4e563bf"
+        },
+        {
+          "path": "plugin.json",
+          "sha256": "4a83b283ead1d5d91387e51cc6ad167e773d5f68dcbc0739aa641be17c5a1137"
+        },
+        {
+          "path": "sync.ps1",
+          "sha256": "a4149877e13d366312e6a1e19bc10505a141bbc98eda239f79f3ebc248d680f7"
         }
       ]
     }

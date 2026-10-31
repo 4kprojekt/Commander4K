@@ -194,7 +194,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `fs.readBytes` | `{ path, offset?, length? }` (default 64 KB, max 16 MB) | `{ data (base64), bytesRead, eof }` | `fs.read` |
 | `fs.writeText` | `{ path, content }` | `null` | `fs.write` |
 | `fs.writeBytes` | `{ path, data (base64) }` | `null` | `fs.write` |
-| `fs.mkdir` | `{ path }` (creates parents) | `null` | `fs.write` |
+| `fs.mkdir` | `{ path, hidden? }` (creates parents; `hidden` sets the Hidden attribute on disks and shares) | `null` | `fs.write` |
 | `fs.delete` | `{ path, recursive? }` | `null` | `fs.write` |
 | `fs.move` | `{ from, to, overwrite? }` (also rename) | `null` | `fs.write` |
 | `process.list` | — | `[{ pid, parentPid, name, path, memoryBytes, started }]` | `process.read` |
@@ -295,7 +295,7 @@ Every helper maps to one protocol method above:
 | `fs.readBytes` | `read_bytes(path, offset=0, length=65536)` → `bytes` | `readBytes(path, offset, length)` → `Buffer` | `Read-C4KBytes $Path [$Offset] [$Length]` → `byte[]` |
 | `fs.writeText` | `write_text(path, content)` | `writeText(path, content)` | `Set-C4KText $Path $Content` |
 | `fs.writeBytes` | `write_bytes(path, data)` | `writeBytes(path, data)` | `Write-C4KBytes $Path $Data` |
-| `fs.mkdir` | `make_dir(path)` | `makeDir(path)` | `New-C4KDirectory $Path` |
+| `fs.mkdir` | `make_dir(path, hidden=False)` | `makeDir(path, hidden = false)` | `New-C4KDirectory $Path [-Hidden]` |
 | `fs.delete` | `remove(path, recursive=False)` | `remove(path, recursive)` | `Remove-C4KItem $Path [-Recurse]` |
 | `fs.move` | `move(source, target, overwrite=False)` | `move(from, to, overwrite)` | `Move-C4KItem $Path $Destination [-Force]` |
 | `process.list` | `list_processes()` | `listProcesses()` | `Get-C4KProcess` |

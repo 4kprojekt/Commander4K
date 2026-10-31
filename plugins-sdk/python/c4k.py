@@ -99,7 +99,7 @@ def read_bytes(path, offset=0, length=65536):                                   
     return base64.b64decode(call("fs.readBytes", path=path, offset=offset, length=length)["data"])
 def write_text(path, content):       call("fs.writeText", path=path, content=content)        # fs.write
 def write_bytes(path, data):         call("fs.writeBytes", path=path, data=base64.b64encode(data).decode("ascii"))  # fs.write
-def make_dir(path):                  call("fs.mkdir", path=path)                             # fs.write
+def make_dir(path, hidden=False):    call("fs.mkdir", path=path, hidden=hidden)              # fs.write (hidden: Hidden attribute on disks/shares)
 def remove(path, recursive=False):   call("fs.delete", path=path, recursive=recursive)       # fs.write
 def move(source, target, overwrite=False):                                                   # fs.write (also rename)
     call("fs.move", **{"from": source, "to": target, "overwrite": overwrite})

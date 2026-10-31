@@ -86,7 +86,7 @@ function Read-C4KBytes([string] $Path, [long] $Offset = 0, [int] $Length = 65536
 }
 function Set-C4KText([string] $Path, [string] $Content) { [void](Invoke-C4K 'fs.writeText' @{ path = $Path; content = $Content }) }   # fs.write
 function Write-C4KBytes([string] $Path, [byte[]] $Data) { [void](Invoke-C4K 'fs.writeBytes' @{ path = $Path; data = [Convert]::ToBase64String($Data) }) }  # fs.write
-function New-C4KDirectory([string] $Path) { [void](Invoke-C4K 'fs.mkdir' @{ path = $Path }) }                       # fs.write
+function New-C4KDirectory([string] $Path, [switch] $Hidden) { [void](Invoke-C4K 'fs.mkdir' @{ path = $Path; hidden = [bool]$Hidden }) }  # fs.write (-Hidden: Hidden attribute on disks/shares)
 function Remove-C4KItem([string] $Path, [switch] $Recurse) { [void](Invoke-C4K 'fs.delete' @{ path = $Path; recursive = [bool]$Recurse }) }  # fs.write
 function Move-C4KItem([string] $Path, [string] $Destination, [switch] $Force) { [void](Invoke-C4K 'fs.move' @{ from = $Path; to = $Destination; overwrite = [bool]$Force }) }  # fs.write
 function Get-C4KProcess { Invoke-C4K 'process.list' }                                                               # process.read -> pid, parentPid, name, path, memoryBytes, started

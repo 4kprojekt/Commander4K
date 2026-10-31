@@ -861,6 +861,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("../../plugins-catalog/openapi-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/html-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/git-repo-powershell", "powershell", "c4k.ps1")]
+    [InlineData("../../plugins-catalog/mail-powershell", "powershell", "c4k.ps1")]
     public void Example_sdk_clients_match_plugins_sdk(string example, string language, string file) =>
         Assert.Equal(
             File.ReadAllText(Path.Combine(RepositoryRoot(), "plugins-sdk", language, file)),
