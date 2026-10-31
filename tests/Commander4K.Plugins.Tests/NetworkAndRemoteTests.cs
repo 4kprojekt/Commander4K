@@ -57,6 +57,14 @@ public sealed class NetworkAndRemoteTests
     public void Remote_parents(string path, string expected) =>
         Assert.Equal(expected, new RemoteTransferVfsPlugin().GetParentPath(path));
 
+    [Theory]
+    [InlineData("sftp://demo@127.0.0.1:2222/config", "demo")]
+    [InlineData("ftp://user:pass@host/ftp", "user")]
+    [InlineData("sftp://host/srv", null)]
+    [InlineData(@"C:\Users", null)]
+    public void User_names_come_from_remote_paths(string path, string? expected) =>
+        Assert.Equal(expected, RemoteTransferVfsPlugin.UserNameOf(path));
+
     [Fact]
     public async Task Probe_detects_open_and_closed_ports()
     {

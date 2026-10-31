@@ -106,9 +106,15 @@ public static class MermaidRenderer
             throw new InvalidOperationException("The Mermaid renderer is not configured.");
         }
 
+        // WebView2 rejects a null parent with ArgumentException; without a window yet (or headless) the code is shown instead.
+        if (_windowHandle() is var parent && parent == 0)
+        {
+            throw new InvalidOperationException("The window has no native handle yet.");
+        }
+
         var folder = await Task.Run(() => ExtractAssets(_dataDirectory));
         var environment = await WebView2Host.GetEnvironmentAsync(Path.Combine(_dataDirectory, "data", "webview2"));
-        var controller = await environment.CreateCoreWebView2ControllerAsync(_windowHandle());
+        var controller = await environment.CreateCoreWebView2ControllerAsync(parent);
         controller.IsVisible = false;
         controller.Bounds = new System.Drawing.Rectangle(0, 0, 1200, 900);
         var core = controller.CoreWebView2;

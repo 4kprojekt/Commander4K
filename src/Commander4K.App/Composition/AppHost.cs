@@ -94,6 +94,7 @@ public sealed class AppHost : IAsyncDisposable
         AiCatalog = new AiCatalogService(Http, Path.Combine(dataDirectory, "data", "ai-providers.json"), Path.Combine(config.ConfigDirectory, "ai", "providers.json"));
         PluginCatalog = new PluginCatalogService(Http, Path.Combine(dataDirectory, "data", "plugin-catalog.json"));
         FolderTrust = new FolderTrustStore(Path.Combine(config.ConfigDirectory, "trusted-folders.json"));
+        Secrets = new Core.Security.SecretStore(Path.Combine(config.ConfigDirectory, "secrets.json"));
         AiCredentials = new AiCredentialStore(Path.Combine(config.ConfigDirectory, "ai", "credentials.json"));
         Ai = new AiRouter(AiCatalog, AiCredentials, new OpenAiCompatibleClient(Http), AiLogin.GitHubCliToken);
         _baseSettings = Core.Configuration.SettingsCatalog.Create(
@@ -195,7 +196,6 @@ public sealed class AppHost : IAsyncDisposable
         PanelPlugins = [.. BuiltInPanels, .. external.SelectMany(e => (e.Manifest.Contributes?.Panels ?? []).Select(p => (IPanelPlugin)new ExternalPanelPlugin(e, p)))];
         CommandPlugins = [PowerShell, .. external.Where(e => e.Manifest.Contributes?.Commands is { Count: > 0 }).Select(e => (ICommandPlugin)new ExternalCommandPlugin(e))];
         PreviewPlugins = [.. BuiltInPreviews, .. external.SelectMany(e => (e.Manifest.Contributes?.Previews ?? []).Select(p => (IPreviewPlugin)new ExternalPreviewPlugin(e, p)))];
-        ExternalPalettes = [.. external.SelectMany(e => (e.Manifest.Contributes?.Palettes ?? []).Select(p => (IPalettePlugin)new ExternalPalettePlugin(e, p)))];
         PluginsChanged?.Invoke();
     }
 
@@ -261,6 +261,23 @@ public sealed class AppHost : IAsyncDisposable
     public Task<FolderConfig?> ReadFolderConfigAsync(string folder, CancellationToken cancellationToken) =>
         Settings.FolderConfigs ? FolderConfig.ReadAsync(Router, folder, TimeSpan.FromSeconds(2), cancellationToken) : Task.FromResult<FolderConfig?>(null);
 
+    /// <summary>Tokens that <c>c4k.dir</c> requests name as <c>{secret:name}</c> (<c>config/secrets.json</c>, DPAPI).</summary>
+    public Core.Security.SecretStore Secrets { get; }
+
+    /// <summary>API cards and the API view of <c>c4k.dir</c> dashboards.</summary>
+    public Plugins.BuiltIn.Dashboard.ApiCards ApiCards => _apiCards ??= new(Secrets);
+
+    private Plugins.BuiltIn.Dashboard.ApiCards? _apiCards;
+
+    /// <summary>SSH monitor cards; keeps one SSH session per server while a dashboard shows it.</summary>
+    public Plugins.BuiltIn.Remote.SshMonitor SshMonitor => _sshMonitor ??= new(Remote, Audit);
+
+    private Plugins.BuiltIn.Remote.SshMonitor? _sshMonitor;
+
+    /// <summary>Card sources for a dashboard, over the preview plugins loaded right now.</summary>
+    public Plugins.BuiltIn.Dashboard.CardResolver CreateCardResolver() =>
+        new(PreviewPlugins, HostFor, ReadFolderConfigAsync, id => PluginCatalog.Find(id) is not null, ApiCards, SshMonitor);
+
     public AiRouter Ai { get; }
 
     private readonly IReadOnlyList<SettingDescriptor> _baseSettings;
@@ -268,11 +285,8 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>Static settings plus those registered at runtime (palette positions).</summary>
     public IReadOnlyList<SettingDescriptor> SettingsCatalog => [.. _baseSettings, .. ExtraSettings];
 
-    /// <summary>Settings contributed by the window (one "position" setting per palette).</summary>
+    /// <summary>Settings contributed by the window (one on/off switch per plugin column).</summary>
     public IReadOnlyList<SettingDescriptor> ExtraSettings { get; set; } = [];
-
-    /// <summary>Palettes contributed by external plugins (built-in palettes live in the window).</summary>
-    public IReadOnlyList<IPalettePlugin> ExternalPalettes { get; private set; } = [];
 
     public string DataDirectory { get; }
 
@@ -411,6 +425,11 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         await Jobs.DisposeAsync();
+        if (_sshMonitor is not null)
+        {
+            await _sshMonitor.DisposeAsync();
+        }
+
         await Remote.DisposeAsync();
         await Audit.DisposeAsync();
         Http.Dispose();

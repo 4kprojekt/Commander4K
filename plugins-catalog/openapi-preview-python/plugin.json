@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "official.openapi-preview",
+  "name": "Podgląd OpenAPI",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Oficjalna wtyczka: specyfikacje OpenAPI 3 i Swagger 2 (JSON albo YAML) jako lista endpointów pogrupowana po tagach, serwery i schematy; karta na dashboard liczy endpointy wg metody.",
+  "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+  "permissions": ["fs.read"],
+  "contributes": {
+    "previews": [
+      {
+        "id": "openapi",
+        "title": "OpenAPI",
+        "extensions": ["openapi.json", "openapi.yaml", "openapi.yml", "swagger.json", "swagger.yaml", "swagger.yml", "*.openapi.json", "*.openapi.yaml", "*.openapi.yml"],
+        "priority": 70,
+        "card": true
+      }
+    ]
+  }
+}

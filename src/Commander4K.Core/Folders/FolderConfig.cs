@@ -23,7 +23,43 @@ public static class FolderViewIds
     /// <summary>A Markdown file of the folder (<see cref="FolderAction.File"/>, README.md by default).</summary>
     public const string Markdown = "markdown";
 
-    public static readonly IReadOnlyList<string> All = [Files, Gallery, Dashboard, Notes, Markdown];
+    /// <summary>Fields from an HTTP API (<see cref="FolderAction.Api"/>).</summary>
+    public const string Api = "api";
+
+    /// <summary>Card only: status, CPU, memory and disks of an SSH server (the tile's <c>open</c> is an <c>sftp://</c> path).</summary>
+    public const string Ssh = "ssh";
+
+    public static readonly IReadOnlyList<string> All = [Files, Gallery, Dashboard, Notes, Markdown, Api];
+}
+
+/// <summary>Width of a card on a dashboard: one column or two.</summary>
+public enum TileSize
+{
+    Small,
+    Wide,
+}
+
+/// <summary>How an API field is shown: as a value, as a point added to a chart on every refresh, or as a status colour.</summary>
+public enum ApiFieldKind
+{
+    Value,
+    Chart,
+    Status,
+}
+
+/// <summary>One field picked from an API response.</summary>
+/// <param name="Path">Path in the JSON: <c>a.b</c>, <c>items[0].name</c>, <c>$</c> for the whole value.</param>
+/// <param name="Ok">For <see cref="ApiFieldKind.Status"/>: values that mean good; empty = <c>true</c>, ok, up, healthy.</param>
+public sealed record ApiField(string Path, string? Label, ApiFieldKind As, string? Unit, IReadOnlyList<string> Ok);
+
+/// <summary>
+/// An HTTP request from a <c>c4k.dir</c>. Url, header values and body may hold <c>{secret:name}</c> placeholders; the
+/// values live in the app's secret store, never in the file.
+/// </summary>
+public sealed record ApiRequest(string Url, string Method, IReadOnlyDictionary<string, string> Headers, string? Body, string? ContentType, IReadOnlyList<ApiField> Fields)
+{
+    /// <summary>Anything but GET and HEAD may change something on the server, so it needs the user's trust in the file.</summary>
+    public bool HasSideEffects => Method is not ("GET" or "HEAD");
 }
 
 public enum FolderActionKind
@@ -54,7 +90,31 @@ public sealed record FolderRun(string Command, IReadOnlyList<string> Arguments, 
 
 /// <summary>A dashboard tile: what it shows and what a click does (exactly one of open, url, run).</summary>
 /// <param name="Image">Picture file relative to the folder (or any path).</param>
-public sealed record FolderTile(string Title, string? Subtitle, string? Icon, string? Image, string? Open, string? Url, FolderRun? Run);
+public sealed record FolderTile(string Title, string? Subtitle, string? Icon, string? Image, string? Open, string? Url, FolderRun? Run)
+{
+    /// <summary><see cref="Card"/> for <c>"card": true</c>: the preview Ctrl+Q would pick for the target.</summary>
+    public const string AutoCard = "auto";
+
+    /// <summary>
+    /// <c>null</c> = a plain shortcut; otherwise the tile is a card drawn by this preview: <see cref="AutoCard"/>, a
+    /// built-in view (<see cref="FolderViewIds"/>), or a plugin id (<c>&lt;plugin&gt;</c> or <c>&lt;plugin&gt;/&lt;preview&gt;</c>).
+    /// </summary>
+    public string? Card { get; init; }
+
+    /// <summary>How often the card is read again while the dashboard is visible; <c>null</c> = once.</summary>
+    public TimeSpan? Refresh { get; init; }
+
+    /// <summary>Raw JSON object passed to the card's preview.</summary>
+    public string? Options { get; init; }
+
+    public TileSize Size { get; init; }
+
+    /// <summary>The request of an <see cref="FolderViewIds.Api"/> card.</summary>
+    public ApiRequest? Api { get; init; }
+
+    /// <summary>Why the tile's card fields are wrong; the dashboard shows it on the tile instead of failing the file.</summary>
+    public string? Error { get; init; }
+}
 
 /// <summary>
 /// What happens on preview or on entering the folder. Exactly one target is meant to be set; when several are,
@@ -91,6 +151,9 @@ public sealed record FolderAction
     public string? File { get; init; }
 
     public IReadOnlyList<FolderTile> Tiles { get; init; } = [];
+
+    /// <summary>The request of the <see cref="FolderViewIds.Api"/> view.</summary>
+    public ApiRequest? Api { get; init; }
 
     /// <summary>Raw JSON passed to the plugin (<c>preview.render</c> / <c>panel.load</c> <c>options</c>).</summary>
     public string? Options { get; init; }
@@ -139,6 +202,50 @@ public sealed record FolderConfig
 
     public string FilePath => ChildPath(Folder, FileName);
 
+    /// <summary>
+    /// What trusting this file unlocks, one line each, shown verbatim in the consent dialog: commands it runs, requests
+    /// that may change something (anything but GET/HEAD) and SSH servers it signs in to.
+    /// </summary>
+    public IReadOnlyList<string> TrustSummary()
+    {
+        var lines = new List<string>();
+        foreach (var action in new[] { Enter, Preview })
+        {
+            if (action is null)
+            {
+                continue;
+            }
+
+            if (action.Run is { } run)
+            {
+                lines.Add("run " + run);
+            }
+
+            if (action.Api is { HasSideEffects: true } api)
+            {
+                lines.Add($"{api.Method} {api.Url}");
+            }
+
+            foreach (var tile in action.Tiles)
+            {
+                if (tile.Run is { } tileRun)
+                {
+                    lines.Add("run " + tileRun);
+                }
+                else if (tile.Api is { HasSideEffects: true } tileApi)
+                {
+                    lines.Add($"{tileApi.Method} {tileApi.Url}");
+                }
+                else if (string.Equals(tile.Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase) && tile.Open is { } server)
+                {
+                    lines.Add("SSH " + Resolve(server));
+                }
+            }
+        }
+
+        return [.. lines.Distinct(StringComparer.Ordinal)];
+    }
+
     private static readonly JsonDocumentOptions DocumentOptions = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
     public static FolderConfig Parse(string folder, string json)
@@ -153,14 +260,27 @@ public sealed record FolderConfig
                 return new FolderConfig { Folder = folder, Hash = hash, Error = "c4k.dir must contain a JSON object." };
             }
 
+            var previewAction = root.TryGetProperty("preview", out var preview) ? ParseAction(preview) : null;
+            var enterAction = root.TryGetProperty("enter", out var enter) ? ParseAction(enter) : null;
+
+            // "preview": "dashboard" next to a dashboard on Enter (or the other way round) shows the same tiles.
+            if (previewAction is { View: FolderViewIds.Dashboard, Tiles.Count: 0 } && enterAction is { View: FolderViewIds.Dashboard, Tiles.Count: > 0 })
+            {
+                previewAction = previewAction with { Tiles = enterAction.Tiles };
+            }
+            else if (enterAction is { View: FolderViewIds.Dashboard, Tiles.Count: 0 } && previewAction is { View: FolderViewIds.Dashboard, Tiles.Count: > 0 })
+            {
+                enterAction = enterAction with { Tiles = previewAction.Tiles };
+            }
+
             return new FolderConfig
             {
                 Folder = folder,
                 Hash = hash,
                 Title = String(root, "title"),
                 Description = String(root, "description"),
-                Preview = root.TryGetProperty("preview", out var preview) ? ParseAction(preview) : null,
-                Enter = root.TryGetProperty("enter", out var enter) ? ParseAction(enter) : null,
+                Preview = previewAction,
+                Enter = enterAction,
             };
         }
         catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException)
@@ -264,17 +384,147 @@ public sealed record FolderConfig
             Run = element.TryGetProperty("run", out var run) ? ParseRun(run) : null,
             Tiles = element.TryGetProperty("tiles", out var tiles) && tiles.ValueKind == JsonValueKind.Array ? [.. tiles.EnumerateArray().Select(ParseTile)] : [],
             Options = element.TryGetProperty("options", out var options) && options.ValueKind == JsonValueKind.Object ? options.GetRawText() : null,
+            Api = element.TryGetProperty("api", out var api) ? ParseApi(api) : null,
         };
     }
 
-    private static FolderTile ParseTile(JsonElement tile) => new(
-        String(tile, "title") ?? throw new FormatException("Every tile needs a \"title\"."),
-        String(tile, "subtitle"),
-        String(tile, "icon"),
-        String(tile, "image"),
-        String(tile, "open"),
-        String(tile, "url"),
-        tile.TryGetProperty("run", out var run) ? ParseRun(run) : null);
+    private static FolderTile ParseTile(JsonElement tile)
+    {
+        var parsed = new FolderTile(
+            String(tile, "title") ?? throw new FormatException("Every tile needs a \"title\"."),
+            String(tile, "subtitle"),
+            String(tile, "icon"),
+            String(tile, "image"),
+            String(tile, "open"),
+            String(tile, "url"),
+            tile.TryGetProperty("run", out var run) ? ParseRun(run) : null);
+
+        // Card fields are checked per tile: one mistyped tile shows its error and the rest of the dashboard still works.
+        try
+        {
+            var card = tile.TryGetProperty("card", out var c) ? c.ValueKind switch
+            {
+                JsonValueKind.True => FolderTile.AutoCard,
+                JsonValueKind.False or JsonValueKind.Null => null,
+                JsonValueKind.String when c.GetString() is { Length: > 0 } name => name,
+                _ => throw new FormatException("\"card\" must be true or a preview name."),
+            } : null;
+            if (card is not null && parsed.Run is not null)
+            {
+                throw new FormatException("A card cannot run a command; use a plain tile for \"run\".");
+            }
+
+            var api = tile.TryGetProperty("api", out var a) ? ParseApi(a) : null;
+            if (string.Equals(card, FolderViewIds.Api, StringComparison.OrdinalIgnoreCase) && api is null)
+            {
+                throw new FormatException("An \"api\" card needs \"api\": { \"url\": … }.");
+            }
+
+            return parsed with
+            {
+                Card = card,
+                Refresh = tile.TryGetProperty("refresh", out var refresh) && refresh.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)
+                    ? throw new FormatException("\"refresh\" must be text such as \"10s\".")
+                    : ParseRefresh(String(tile, "refresh")),
+                Options = tile.TryGetProperty("options", out var options) && options.ValueKind == JsonValueKind.Object ? options.GetRawText() : null,
+                Size = String(tile, "size") switch
+                {
+                    null or "small" => TileSize.Small,
+                    "wide" => TileSize.Wide,
+                    var other => throw new FormatException($"Unknown \"size\" '{other}' (small, wide)."),
+                },
+                Api = api,
+            };
+        }
+        catch (FormatException ex)
+        {
+            // Still a card, so the dashboard shows the message where the card would be.
+            var name = tile.TryGetProperty("card", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+            return parsed with { Card = string.IsNullOrEmpty(name) ? FolderTile.AutoCard : name, Error = ex.Message };
+        }
+    }
+
+    /// <summary><c>"10s"</c>, <c>"5m"</c>, <c>"1h"</c>; anything under 2 s becomes 2 s so a dashboard cannot hammer a server.</summary>
+    public static TimeSpan? ParseRefresh(string? text)
+    {
+        if (text is null)
+        {
+            return null;
+        }
+
+        if (text.Length < 2 || !int.TryParse(text.AsSpan(0, text.Length - 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var amount))
+        {
+            throw new FormatException($"\"refresh\" '{text}' must look like 10s, 5m or 1h.");
+        }
+
+        var seconds = text[^1] switch
+        {
+            's' => (double)amount,
+            'm' => amount * 60.0,
+            'h' => amount * 3600.0,
+            _ => throw new FormatException($"\"refresh\" '{text}' must look like 10s, 5m or 1h."),
+        };
+        if (seconds > MaxRefresh.TotalSeconds)
+        {
+            throw new FormatException($"\"refresh\" '{text}' is longer than 24h.");
+        }
+
+        var interval = TimeSpan.FromSeconds(seconds);
+        return interval < MinRefresh ? MinRefresh : interval;
+    }
+
+    private static readonly TimeSpan MinRefresh = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MaxRefresh = TimeSpan.FromHours(24);
+
+    private static ApiRequest ParseApi(JsonElement api)
+    {
+        if (api.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("\"api\" must be an object.");
+        }
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (api.TryGetProperty("headers", out var h))
+        {
+            if (h.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException("\"headers\" must be an object of strings.");
+            }
+
+            foreach (var header in h.EnumerateObject())
+            {
+                headers[header.Name] = header.Value.ValueKind == JsonValueKind.String ? header.Value.GetString()! : throw new FormatException($"Header '{header.Name}' must be a string.");
+            }
+        }
+
+        var fields = new List<ApiField>();
+        if (api.TryGetProperty("fields", out var f) && f.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var field in f.EnumerateArray())
+            {
+                fields.Add(new ApiField(
+                    String(field, "path") ?? throw new FormatException("Every API field needs a \"path\"."),
+                    String(field, "label"),
+                    String(field, "as") switch
+                    {
+                        null or "value" => ApiFieldKind.Value,
+                        "chart" => ApiFieldKind.Chart,
+                        "status" => ApiFieldKind.Status,
+                        var other => throw new FormatException($"Unknown field \"as\" '{other}' (value, chart, status)."),
+                    },
+                    String(field, "unit"),
+                    field.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.Array ? [.. ok.EnumerateArray().Select(o => o.ToString())] : []));
+            }
+        }
+
+        return new ApiRequest(
+            String(api, "url") ?? throw new FormatException("\"api\" needs a \"url\"."),
+            (String(api, "method") ?? "GET").ToUpperInvariant(),
+            headers,
+            String(api, "body"),
+            String(api, "contentType"),
+            fields);
+    }
 
     /// <summary><c>"run": "script.ps1"</c> or <c>{ "command": "pwsh", "args": ["-File", "build.ps1"], "cwd": "src", "hidden": false }</c>.</summary>
     private static FolderRun ParseRun(JsonElement run) => run.ValueKind switch

@@ -100,6 +100,173 @@ public sealed class FolderConfigTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void Card_tiles_parse_card_refresh_options_size_and_api()
+    {
+        var config = FolderConfig.Parse(@"C:\Dom", """
+            {
+              "preview": {
+                "view": "dashboard",
+                "tiles": [
+                  { "title": "Zdjęcia", "open": "D:/Foto/2026", "card": "gallery" },
+                  { "title": "Projekty", "open": "~/Repos" },
+                  { "title": "Projekty", "open": "~/Repos", "card": true, "size": "wide" },
+                  { "title": "VPS", "open": "sftp://kamil@vps.example.com/", "card": "ssh", "refresh": "10s" },
+                  { "title": "Grafana", "card": "api", "refresh": "1m",
+                    "api": {
+                      "url": "https://grafana.example.com/api/health",
+                      "headers": { "Authorization": "Bearer {secret:grafana}" },
+                      "fields": [
+                        { "path": "database", "label": "Baza", "as": "status", "ok": ["ok"] },
+                        { "path": "version", "label": "Wersja" }
+                      ]
+                    } },
+                  { "title": "Steam", "card": "official.steam-library", "options": { "top": 3 } }
+                ]
+              }
+            }
+            """);
+
+        Assert.Null(config.Error);
+        var tiles = config.Preview!.Tiles;
+        Assert.Equal(["gallery", null, FolderTile.AutoCard, FolderViewIds.Ssh, FolderViewIds.Api, "official.steam-library"], tiles.Select(t => t.Card));
+        Assert.All(tiles, t => Assert.Null(t.Error));
+        Assert.Equal(TileSize.Wide, tiles[2].Size);
+        Assert.Equal(TileSize.Small, tiles[0].Size);
+        Assert.Equal(TimeSpan.FromSeconds(10), tiles[3].Refresh);
+        Assert.Null(tiles[0].Refresh);
+
+        var api = tiles[4].Api!;
+        Assert.Equal(TimeSpan.FromMinutes(1), tiles[4].Refresh);
+        Assert.Equal("GET", api.Method);
+        Assert.False(api.HasSideEffects);
+        Assert.Equal("Bearer {secret:grafana}", api.Headers["Authorization"]);
+        Assert.Equal(ApiFieldKind.Status, api.Fields[0].As);
+        Assert.Equal(["ok"], api.Fields[0].Ok);
+        Assert.Equal(ApiFieldKind.Value, api.Fields[1].As);
+        Assert.Equal("Wersja", api.Fields[1].Label);
+
+        Assert.Equal(3, System.Text.Json.JsonDocument.Parse(tiles[5].Options!).RootElement.GetProperty("top").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("1s", 2)]
+    [InlineData("90s", 90)]
+    [InlineData("5m", 300)]
+    [InlineData("2h", 7200)]
+    public void Refresh_is_parsed_and_clamped_to_two_seconds(string text, int seconds) =>
+        Assert.Equal(TimeSpan.FromSeconds(seconds), FolderConfig.ParseRefresh(text));
+
+    [Fact]
+    public void Refresh_rejects_other_text()
+    {
+        Assert.Null(FolderConfig.ParseRefresh(null));
+        Assert.Throws<FormatException>(() => FolderConfig.ParseRefresh("fast"));
+        Assert.Throws<FormatException>(() => FolderConfig.ParseRefresh("10"));
+        Assert.Throws<FormatException>(() => FolderConfig.ParseRefresh("300000000h"));
+        Assert.Throws<FormatException>(() => FolderConfig.ParseRefresh("25h"));
+    }
+
+    [Fact]
+    public void Huge_or_numeric_refresh_is_a_tile_error()
+    {
+        var config = FolderConfig.Parse(@"C:\Dom", """
+            { "preview": { "view": "dashboard", "tiles": [
+              { "title": "Huge", "open": "a", "card": true, "refresh": "300000000h" },
+              { "title": "Number", "open": "a", "card": true, "refresh": 10 }
+            ] } }
+            """);
+
+        Assert.Null(config.Error);
+        Assert.All(config.Preview!.Tiles, t => Assert.False(string.IsNullOrEmpty(t.Error), t.Title));
+    }
+
+    [Fact]
+    public void Bad_card_fields_become_tile_errors()
+    {
+        var config = FolderConfig.Parse(@"C:\Dom", """
+            { "preview": { "view": "dashboard", "tiles": [
+              { "title": "OK", "open": "a", "card": true },
+              { "title": "Refresh", "open": "a", "card": true, "refresh": "fast" },
+              { "title": "No url", "card": "api", "api": { "method": "GET" } },
+              { "title": "Api missing", "card": "api" },
+              { "title": "Number", "open": "a", "card": 5 },
+              { "title": "Pie", "card": "api", "api": { "url": "https://x/y", "fields": [ { "path": "a", "as": "pie" } ] } },
+              { "title": "Run", "card": true, "run": "build.ps1" }
+            ] } }
+            """);
+
+        Assert.Null(config.Error);
+        var tiles = config.Preview!.Tiles;
+        Assert.Equal(7, tiles.Count);
+        Assert.Null(tiles[0].Error);
+        Assert.All(tiles.Skip(1), t => Assert.False(string.IsNullOrEmpty(t.Error), t.Title));
+        Assert.Equal("Refresh", tiles[1].Title);
+    }
+
+    [Fact]
+    public void Trust_summary_lists_post_ssh_and_run_but_not_get()
+    {
+        var config = FolderConfig.Parse(@"C:\Dom", """
+            {
+              "enter": { "run": { "command": "build.ps1", "args": ["-Release"] } },
+              "preview": { "view": "dashboard", "tiles": [
+                { "title": "Get", "card": "api", "api": { "url": "https://example.com/health" } },
+                { "title": "Post", "card": "api", "api": { "url": "https://example.com/deploy", "method": "post" } },
+                { "title": "Ssh", "open": "sftp://kamil@vps.example.com/", "card": "ssh" },
+                { "title": "Script", "run": "clean.ps1" }
+              ] }
+            }
+            """);
+
+        Assert.Equal(
+            ["run build.ps1 -Release", "POST https://example.com/deploy", "SSH sftp://kamil@vps.example.com/", "run clean.ps1"],
+            config.TrustSummary());
+    }
+
+    [Fact]
+    public void Changed_file_loses_trust_for_post_and_ssh()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "c4k-trust-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var store = new FolderTrustStore(path);
+            const string Template = """{ "preview": { "view": "dashboard", "tiles": [ { "title": "Post", "card": "api", "api": { "url": "URL", "method": "POST" } } ] } }""";
+            var trusted = FolderConfig.Parse(@"C:\Dom", Template.Replace("URL", "https://example.com/deploy", StringComparison.Ordinal));
+            store.Trust(trusted);
+
+            var changed = FolderConfig.Parse(@"C:\Dom", Template.Replace("URL", "https://evil.example.net/deploy", StringComparison.Ordinal));
+
+            Assert.True(store.IsTrusted(trusted));
+            Assert.False(store.IsTrusted(changed));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Dashboard_without_tiles_shares_the_other_sections_tiles()
+    {
+        var config = FolderConfig.Parse(@"C:\Dom", """{ "preview": "dashboard", "enter": { "view": "dashboard", "tiles": [ { "title": "A", "open": "a" } ] } }""");
+
+        Assert.Equal("A", Assert.Single(config.Preview!.Tiles).Title);
+    }
+
+    [Fact]
+    public void Api_view_parses_as_preview_action()
+    {
+        var config = FolderConfig.Parse(@"C:\Api", """{ "preview": { "view": "api", "api": { "url": "https://x/y", "method": "post", "body": "{}" } } }""");
+
+        Assert.Null(config.Error);
+        Assert.Equal(FolderViewIds.Api, config.Preview!.View);
+        Assert.Equal("POST", config.Preview.Api!.Method);
+        Assert.True(config.Preview.Api.HasSideEffects);
+        Assert.Equal("{}", config.Preview.Api.Body);
+        Assert.False(config.Preview.IsPlainFiles);
+    }
 }
 
 /// <summary>The catalog in the repository must describe exactly the files GitHub serves, or installs fail their checksum.</summary>

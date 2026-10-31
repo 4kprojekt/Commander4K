@@ -7,7 +7,7 @@ namespace Commander4K.Plugins.BuiltIn.Local;
 /// <summary>
 /// Local disks. <c>C:\...</c> paths are served directly; <c>local://</c> is the virtual root listing the drives.
 /// </summary>
-public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifier
+public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifier, IVfsTreeListing
 {
     public const string RootPath = "local://";
 
@@ -61,6 +61,27 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
 
         var count = 0;
         foreach (var entry in FileSystemListing.Enumerate(local))
+        {
+            if (++count % CancellationCheckInterval == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            yield return entry;
+        }
+
+        await Task.CompletedTask.ConfigureAwait(false);
+    }
+
+    public async IAsyncEnumerable<VfsEntry> EnumerateForWalkAsync(string path, Action inaccessible, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (ToLocalPath(path) is not { } local)
+        {
+            yield break; // "This PC" is not part of any folder's size.
+        }
+
+        var count = 0;
+        foreach (var entry in FileSystemListing.EnumerateForWalk(local, inaccessible))
         {
             if (++count % CancellationCheckInterval == 0)
             {
