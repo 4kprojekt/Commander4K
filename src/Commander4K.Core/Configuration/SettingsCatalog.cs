@@ -99,11 +99,11 @@ public static class SettingsCatalog
         new("searchEngine", Browser, Loc.T("Wyszukiwarka w przeglądarce"), Loc.T("Co dzieje się z tekstem wpisanym w pasek adresu wewnętrznej przeglądarki (Ctrl+Alt+W), gdy nie jest adresem."),
             SettingKind.Choice, s => s.SearchEngine, (s, v) => s.SearchEngine = (string)v!, ["google", "bing", "duckduckgo", "szukaj", "www", "internet"])
         { Choices = () => [.. Web.SearchEngines.All.Select(e => new SettingChoice(e.Id, e.Name))] },
-        new("assistantEngine", Browser, Loc.T("Asystent AI do szukania rozwiązań"), Loc.T("Kogo pyta „Szukaj rozwiązania” (menedżer wtyczek) i komenda „Zapytaj AI” (Ctrl+Alt+A). Zaloguj się raz w przeglądarce — sesja zostaje zapamiętana."),
+        new("assistantEngine", Browser, Loc.T("Asystent AI do szukania rozwiązań"), Loc.T("Kogo pyta „Szukaj rozwiązania” (menedżer wtyczek) i wyszukiwania asystenta z wtyczek. Zaloguj się raz w przeglądarce — sesja zostaje zapamiętana."),
             SettingKind.Choice, s => s.AssistantEngine, (s, v) => s.AssistantEngine = (string)v!, ["ai", "chatgpt", "gemini", "claude", "perplexity", "asystent", "pomoc"])
         { Choices = () => [.. Web.SearchEngines.All.OrderBy(e => !e.IsAssistant).Select(e => new SettingChoice(e.Id, e.IsAssistant ? e.Name : e.Name + Loc.T(" (wyszukiwarka)")))] },
 
-        new("aiInApp", Ai, Loc.T("Odpowiedzi AI w aplikacji"), Loc.T("„Zapytaj AI” (Ctrl+Alt+A) odpowiada w oknie czatu przez zalogowanych dostawców (OpenRouter, Groq, Cerebras…), przechodząc do następnego, gdy któryś wyczerpie limit. Wyłączone lub bez logowania: otwiera asystenta w przeglądarce."),
+        new("aiInApp", Ai, Loc.T("Odpowiedzi AI w aplikacji"), Loc.T("„Zapytaj AI” (Ctrl+Alt+A) odpowiada w oknie czatu przez zalogowanych dostawców (OpenRouter, Groq, Cerebras…), przechodząc do następnego, gdy któryś wyczerpie limit. Wyłączone lub bez logowania: otwiera okno Claude Code (pytanie trafia do schowka)."),
             SettingKind.Toggle, s => s.AiInApp, (s, v) => s.AiInApp = (bool)v!, ["ai", "czat", "chat", "openrouter", "groq", "cerebras", "gemini", "mistral", "dostawcy", "darmowe", "rotacja", "limit"]),
         new("aiCatalogUrl", Ai, Loc.T("Lista dostawców AI (adres)"), Loc.T("Plik ai-providers.json pobierany przy starcie z repozytorium projektu, więc nowe darmowe modele pojawiają się bez aktualizacji programu. Własne wpisy: config/ai/providers.json."),
             SettingKind.Text, s => s.AiCatalogUrl, (s, v) => s.AiCatalogUrl = NullIfEmpty(v) ?? AppSettings.DefaultAiCatalogUrl,

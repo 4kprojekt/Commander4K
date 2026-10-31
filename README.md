@@ -24,13 +24,13 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
 - **Connections:** SFTP/SSH with a password or a private key (passphrase optional). Your `~/.ssh` keys are tried automatically, as `ssh` does. Also FTP and Windows shares. "Testuj" checks a connection before saving it. Passwords and passphrases are stored DPAPI-encrypted in `config/settings.json`.
 - **Panel modes (`F2`):** either panel can show files, a quick preview, the built-in browser or any plugin panel.
 - **Built-in browser (`Ctrl+Alt+W`):** a web panel based on Microsoft Edge WebView2. The address bar also searches (Google, Bing, DuckDuckGo).
-  - Without AI providers signed in (see below), `Ctrl+Alt+A` asks an AI assistant in the browser: ChatGPT, Claude, Perplexity or Gemini. Sign in once and the session is remembered.
+  - Without AI providers signed in (see below), `Ctrl+Alt+A` shows the question for Claude Code (copied to the clipboard).
 - **AI chat with free providers (`Ctrl+Alt+A`):** sign in to several free API tiers in "Konfiguracja → Dostawcy AI". Questions go to them in turn; when one hits its rate limit or quota, or rejects its key, the next one answers.
   - Providers: OpenRouter (one-click browser sign-in, no key to copy), Groq, Cerebras, Google AI Studio, Mistral, NVIDIA NIM, Hugging Face and Cohere, plus local models through Ollama or LM Studio (no account, no limits, nothing leaves the PC; the window detects them, shows install steps and can install them with winget). Keys can also come from environment variables (`OPENROUTER_API_KEY`, `GROQ_API_KEY`…).
   - The provider list ([`ai-providers.json`](src/Commander4K.Core/Ai/ai-providers.json)) is downloaded from this repository at start-up, so endpoints and free models can be updated without a new release. Add your own in `config/ai/providers.json`.
   - The AI knows where you are: it gets both panels' paths, the cursor, the marked files and the installed plugins. It can look into folders, and it reads a file only after you allow it.
   - **Plugins written by AI:** "Napisz wtyczkę z AI" gives the model the [plugin guide](docs/plugins.md) and installs the plugin from its answer. The plugin stays disabled until you approve its permissions.
-  - **Gemini, ChatGPT or Claude in the browser panel:** the "🤖 AI" menu types the app state, or a plugin request with the guide, into the page's chat box for you to send. It can also install a plugin from the answer on the page.
+  - **Claude Code:** with the MCP server connected, Claude Code can read the app state and write and install plugins itself; otherwise the question or plugin request is copied for you to paste there.
   - Keys are stored in `config/ai/credentials.json`, encrypted for the current Windows user (DPAPI). After moving a portable copy to another account or PC, sign in again.
   - The plugin manager's "Szukaj rozwiązania" sends a plugin's problem to that assistant, and plugins can open pages or searches here too.
 - **Quick view (`Ctrl+Q`):** previews the entry under the cursor in the opposite panel:

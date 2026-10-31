@@ -329,10 +329,10 @@ To add a plugin, put its folder in `plugins-catalog/` (official) or `examples/pl
 
 ## Writing a plugin with an AI assistant
 
-Commander4K does this for you (*Konfiguracja ▸ Napisz wtyczkę z AI*):
+Commander4K helps with this (*Konfiguracja ▸ Napisz wtyczkę z AI*):
 
 - **In-app AI chat** ("🧩 Napisz wtyczkę"): the model gets this guide, an example in a runtime you have installed and the app's current state. It can also call `get_context`, `list_directory`, `read_text_file` (only with your consent) and `get_plugin_guide`. An answer containing a plugin gets a "🧩 Zainstaluj wtyczkę" button.
-- **Assistant in the browser panel** (Gemini, ChatGPT, Claude…, menu "🤖 AI"): the same request is typed into the page's chat box for you to send. "⬇ Zainstaluj wtyczkę z odpowiedzi" then reads the code blocks from the page.
+- **Claude Code over MCP:** Claude Code connected to Commander4K can write the plugin itself with the MCP tools `get_plugin_guide`, `check_plugin` and `install_plugin`. Without a signed-in provider, "Napisz wtyczkę z AI" copies the request for Claude Code.
 
 Either way the installer checks the paths and the manifest, shows the permissions before writing anything, and puts the plugin into `plugins/<id>` **disabled**. You enable it in the plugin manager after reviewing it. It also adds the SDK client when the answer leaves it out.
 
