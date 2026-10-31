@@ -42,11 +42,18 @@ public sealed class FilePanelView : ViewBase
     {
         _host = host;
         _skins = skins;
-        Canvas.Activated += () => Activated?.Invoke(this);
+        Canvas.Activated += () =>
+        {
+            // The canvas is not focusable: a click must take focus away from the command line or path bar,
+            // otherwise cursor keys keep going to that text box.
+            LeavePathBar();
+            Activated?.Invoke(this);
+        };
         Canvas.RowActivated += Open;
         Canvas.HeaderClicked += column => ActiveTab.SetSort(ActiveTab.Sort.Toggle(column));
         Canvas.RightClicked += entry =>
         {
+            LeavePathBar();
             Activated?.Invoke(this);
             if (_host.Settings.ShellContextMenu)
             {
