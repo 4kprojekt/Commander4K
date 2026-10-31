@@ -68,7 +68,8 @@ public sealed class McpToolDispatcher(
                 "allow" => McpToolMode.Allow,
                 "ask" => McpToolMode.Ask,
                 "block" => McpToolMode.Block,
-                _ => tool.DefaultMode,
+                // A typo must not loosen the policy: unknown values ask at least.
+                _ => (McpToolMode)Math.Max((byte)tool.DefaultMode, (byte)McpToolMode.Ask),
             };
         }
 
@@ -89,6 +90,7 @@ public sealed class McpToolDispatcher(
         var tool = tools.FirstOrDefault(t => t.Definition.Name == name);
         if (tool is null)
         {
+            Record(call, name, "unknown tool", AuditOutcome.Denied);
             return McpToolResult.Error($"Unknown tool: {name}");
         }
 
@@ -107,11 +109,25 @@ public sealed class McpToolDispatcher(
         }
 
         var summary = Summarize(tool, arguments, paths);
-        if (EffectiveMode(definition) == McpToolMode.Ask && !definition.SelfConfirming
-            && !await ConfirmAsync(call.ClientName, definition, summary, ct).ConfigureAwait(false))
+        if (EffectiveMode(definition) == McpToolMode.Ask && !definition.SelfConfirming)
         {
-            Record(call, name, summary, AuditOutcome.Denied);
-            return McpToolResult.Error(DeclinedMessage);
+            bool confirmed;
+            try
+            {
+                confirmed = await ConfirmAsync(call.ClientName, definition, summary, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Treated like a failing handler: audited, then left to McpServer to map.
+                Record(call, name, summary, AuditOutcome.Failed);
+                throw;
+            }
+
+            if (!confirmed)
+            {
+                Record(call, name, summary, AuditOutcome.Denied);
+                return McpToolResult.Error(DeclinedMessage);
+            }
         }
 
         McpToolResult result;
@@ -143,9 +159,15 @@ public sealed class McpToolDispatcher(
         IReadOnlyList<string>? protectedList = definition.Writes ? protectedRoots() : null;
         foreach (var argument in names)
         {
-            if (!arguments.TryGetPropertyValue(argument, out var node) || node is null)
+            // An absent argument is fine (tools may take one of several); handlers never default it (see PathArguments).
+            if (!arguments.TryGetPropertyValue(argument, out var node))
             {
                 continue;
+            }
+
+            if (node is null)
+            {
+                return $"Argument '{argument}' must be a path.";
             }
 
             switch (node)
@@ -236,7 +258,7 @@ public sealed class McpToolDispatcher(
                 _sessionGrants[key] = true;
             }
 
-            return consent != McpConsent.No;
+            return consent is McpConsent.Yes or McpConsent.YesForSession;
         }
         catch (OperationCanceledException)
         {
@@ -252,10 +274,37 @@ public sealed class McpToolDispatcher(
     {
         if (tool.Summary is not null)
         {
-            return tool.Summary(arguments);
+            try
+            {
+                return tool.Summary(arguments);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // The summary sees unvalidated input; a broken one must not skip the audit line.
+            }
         }
 
-        return paths.Count == 0 ? tool.Definition.Name : tool.Definition.Name + " " + string.Join(", ", paths);
+        var shown = paths.Count > 0 ? paths : RawPaths(tool.Definition, arguments);
+        return shown.Count == 0 ? tool.Definition.Name : tool.Definition.Name + " " + string.Join(", ", shown);
+    }
+
+    private static List<string> RawPaths(McpToolDefinition definition, JsonObject arguments)
+    {
+        var result = new List<string>();
+        foreach (var argument in definition.PathArguments ?? [])
+        {
+            switch (arguments[argument])
+            {
+                case JsonValue value when value.TryGetValue<string>(out var text):
+                    result.Add(text);
+                    break;
+                case JsonArray array:
+                    result.AddRange(array.OfType<JsonValue>().Select(v => v.TryGetValue<string>(out var t) ? t : null).OfType<string>());
+                    break;
+            }
+        }
+
+        return result;
     }
 
     private void Record(McpCall call, string tool, string summary, AuditOutcome outcome)
@@ -270,6 +319,13 @@ public sealed class McpToolDispatcher(
             }
         }
 
-        Called?.Invoke();
+        try
+        {
+            Called?.Invoke();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // A broken subscriber (UI) must not fail a call that already happened.
+        }
     }
 }

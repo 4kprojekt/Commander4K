@@ -187,14 +187,15 @@ public static class McpPathPolicy
     private static string? NormalizeRemote(string scheme, string path)
     {
         var rest = VfsPath.StripScheme(path);
-        var slash = rest.IndexOf('/');
+        var slash = rest.IndexOfAny(['/', '\\']);
         var authority = slash < 0 ? rest : rest[..slash];
         if (authority.Length == 0)
         {
             return null;
         }
 
-        var segments = slash < 0 ? [] : Resolve(rest[(slash + 1)..].Split('/'));
+        // Windows-hosted servers also treat '\' as a separator; on Unix servers that only means false denials.
+        var segments = slash < 0 ? [] : Resolve(rest[(slash + 1)..].Split('/', '\\'));
         return scheme + "://" + authority + "/" + string.Join('/', segments);
     }
 

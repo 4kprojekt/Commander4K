@@ -10,6 +10,10 @@ public enum McpToolMode : byte
     Block,
 }
 
+/// <param name="PathArguments">Arguments holding paths (string or string array), checked against the allowed and
+/// protected folders and normalized before the handler runs. Hard rule: handlers must never substitute a default for
+/// a declared path argument; any path a handler derives itself (active panel, selection) must be checked with
+/// <see cref="McpPathPolicy.IsAllowed"/> inside the handler.</param>
 /// <param name="SelfConfirming">The tool shows its own dialog (install/enable with permissions), so the dispatcher skips
 /// its confirmation but still applies block, roots and protected paths.</param>
 public sealed record McpToolDefinition(

@@ -36,6 +36,10 @@ public sealed class McpPolicyTests
     [InlineData("sftp://h/home/a/../../etc/passwd", "sftp://h/home/a", false)]
     [InlineData("sftp://h/../../home/a/x", "sftp://h/home/a", true)]
     [InlineData("sftp://other/home/a/x", "sftp://h/home/a", false)]
+    [InlineData(@"sftp://h/home/a/..\..\etc\x", "sftp://h/home/a", false)]
+    [InlineData(@"ftp://h/home/a/..\..\etc\x", "ftp://h/home/a", false)]
+    [InlineData(@"sftp://h/home/a\b", "sftp://h/home/a", true)]
+    [InlineData(@"sftp://h\home\a\x", "sftp://h/home/a", true)]
     [InlineData("ftp://h/home/a/x", "sftp://h/home/a", false)]
     [InlineData(@"zip://C:\Other\x.zip::/inner/f", @"C:\Repo", false)]
     [InlineData(@"zip://C:\Repo\..\x.zip::/inner/f", @"C:\Repo", false)]
@@ -139,7 +143,9 @@ public sealed class McpPolicyTests
         Assert.True((await f.CallAsync("bad", Args(@"C:\Repo\a"))).IsError);
         await Assert.ThrowsAsync<IOException>(() => f.CallAsync("throws", Args(@"C:\Repo\a")));
 
-        Assert.All(f.Audit.Recent("mcp:" + Client), e => Assert.Equal(AuditOutcome.Failed, e.Outcome));
+        var entries = f.Audit.Recent("mcp:" + Client);
+        Assert.Equal(2, entries.Count);
+        Assert.All(entries, e => Assert.Equal(AuditOutcome.Failed, e.Outcome));
         Assert.Equal(2, f.Dispatcher.Recent.Count);
     }
 
@@ -221,7 +227,84 @@ public sealed class McpPolicyTests
         f.Settings.ToolModes["Read_File"] = "Ask";
         Assert.Equal(McpToolMode.Ask, f.Dispatcher.EffectiveMode(tool.Definition));
         f.Settings.ToolModes["read_file"] = "nonsense";
-        Assert.Equal(McpToolMode.Allow, f.Dispatcher.EffectiveMode(tool.Definition));
+        Assert.Equal(McpToolMode.Ask, f.Dispatcher.EffectiveMode(tool.Definition));
+
+        var blocked = f.Add("dangerous", McpToolMode.Block);
+        f.Settings.ToolModes["dangerous"] = "alow";
+        Assert.Equal(McpToolMode.Block, f.Dispatcher.EffectiveMode(blocked.Definition));
+    }
+
+    [Fact]
+    public async Task Unknown_tool_is_audited_as_denied()
+    {
+        var f = new Fixture();
+
+        var result = await f.CallAsync("nope", Args(@"C:\Repo\a"));
+
+        Assert.True(result.IsError);
+        var entry = Assert.Single(f.Audit.Recent("mcp:" + Client));
+        Assert.Equal(("nope", "unknown tool", AuditOutcome.Denied), (entry.Operation, entry.Detail, entry.Outcome));
+    }
+
+    [Fact]
+    public async Task Throwing_confirm_is_audited_as_failed_and_surfaces()
+    {
+        var f = new Fixture { Confirm = (_, _) => throw new InvalidOperationException("dialog broke") };
+        var tool = f.Add("delete", McpToolMode.Ask);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => f.CallAsync("delete", Args(@"C:\Repo\a")));
+
+        Assert.Equal(0, tool.Runs);
+        Assert.Equal(AuditOutcome.Failed, Assert.Single(f.Audit.Recent("mcp:" + Client)).Outcome);
+
+        // The confirmation slot was released.
+        f.Confirm = (_, _) => Task.FromResult(McpConsent.Yes);
+        Assert.False((await f.CallAsync("delete", Args(@"C:\Repo\a"))).IsError);
+    }
+
+    [Fact]
+    public async Task Absent_optional_path_runs_but_explicit_null_is_refused()
+    {
+        var f = new Fixture();
+        var tool = f.Add("check_plugin", McpToolMode.Allow, pathArguments: ["files", "folder"]);
+
+        Assert.False((await f.CallAsync("check_plugin", new JsonObject { ["folder"] = @"C:\Repo\p" })).IsError);
+        Assert.Equal(1, tool.Runs);
+
+        var result = await f.CallAsync("check_plugin", new JsonObject { ["folder"] = null });
+        Assert.True(result.IsError);
+        Assert.Equal("Argument 'folder' must be a path.", result.Text);
+        Assert.True((await f.CallAsync("check_plugin", new JsonObject { ["files"] = new JsonArray(@"C:\Repo\a", null) })).IsError);
+        Assert.Equal(1, tool.Runs);
+    }
+
+    [Fact]
+    public async Task Throwing_summary_falls_back_and_is_still_audited()
+    {
+        var f = new Fixture();
+        f.Add("read_file", McpToolMode.Allow, summary: _ => throw new FormatException("bad"));
+        f.Add("blocked", McpToolMode.Block, summary: _ => throw new FormatException("bad"));
+
+        Assert.False((await f.CallAsync("read_file", Args("C:/Repo/a"))).IsError);
+        Assert.True((await f.CallAsync("read_file", Args(@"C:\Other\a"))).IsError);
+        Assert.True((await f.CallAsync("blocked", Args(@"C:\Raw\x"))).IsError);
+
+        var entries = f.Audit.Recent("mcp:" + Client);
+        Assert.Equal(3, entries.Count);
+        Assert.Equal(@"read_file C:\Repo\a", entries[0].Detail);
+        Assert.Equal(@"read_file C:\Other\a", entries[1].Detail);
+        Assert.Equal(@"blocked C:\Raw\x", entries[2].Detail);
+    }
+
+    [Fact]
+    public async Task Throwing_Called_subscriber_does_not_fail_the_call()
+    {
+        var f = new Fixture();
+        var tool = f.Add("read_file", McpToolMode.Allow);
+        f.Dispatcher.Called += () => throw new InvalidOperationException("ui");
+
+        Assert.False((await f.CallAsync("read_file", Args(@"C:\Repo\a"))).IsError);
+        Assert.Equal(1, tool.Runs);
     }
 
     [Fact]
