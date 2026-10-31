@@ -532,7 +532,7 @@ public sealed class MainWindow : Window, IShell
         Loc.T("Narzędzie MCP „{0}”", tool.Name),
         Loc.T("Co robi AI z Claude Code, gdy użyje tego narzędzia: zezwalaj, pytaj albo zablokuj. {0}", tool.Description),
         SettingKind.Choice,
-        s => s.Mcp.ToolModes.TryGetValue(tool.Name, out var mode) ? mode : tool.DefaultMode.ToString().ToLowerInvariant(),
+        s => McpToolDispatcher.EffectiveMode(tool, s.Mcp.ToolModes.GetValueOrDefault(tool.Name), s.Mcp.ToolModes.ContainsKey(tool.Name)).ToString().ToLowerInvariant(),
         (s, v) => s.Mcp.ToolModes[tool.Name] = (string)v!,
         ["mcp", "claude", "claude code", "ai", tool.Name])
     {

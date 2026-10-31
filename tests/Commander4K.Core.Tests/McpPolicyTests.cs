@@ -587,4 +587,17 @@ public sealed class McpPolicyTests
         Assert.Equal([@"C:\A", @"D:\B"], settings.Mcp.AllowedRoots);
         Assert.Equal(@"C:\A;D:\B", roots.Get(settings));
     }
+
+    [Theory]
+    [InlineData(true, McpToolMode.Allow, "allow", McpToolMode.Ask)]
+    [InlineData(true, McpToolMode.Ask, null, McpToolMode.Ask)]
+    [InlineData(false, McpToolMode.Allow, "bogus", McpToolMode.Ask)]
+    [InlineData(false, McpToolMode.Block, "bogus", McpToolMode.Block)]
+    [InlineData(false, McpToolMode.Block, "block", McpToolMode.Block)]
+    [InlineData(false, McpToolMode.Allow, "ALLOW", McpToolMode.Allow)]
+    public void Effective_mode_is_clamped_to_what_is_enforced(bool alwaysAsk, McpToolMode defaultMode, string? stored, McpToolMode expected)
+    {
+        var tool = new McpToolDefinition("t", "d", McpSchema.Object(), defaultMode, alwaysAsk);
+        Assert.Equal(expected, McpToolDispatcher.EffectiveMode(tool, stored, hasConfigured: stored is not null));
+    }
 }

@@ -58,10 +58,14 @@ public sealed class McpToolDispatcher(
     public static string OutsideRootsMessage(string path) =>
         $"Path is outside the folders allowed for MCP: {path}. Ask the user to add a folder in Commander4K (MCP settings → allowed folders).";
 
-    public McpToolMode EffectiveMode(McpToolDefinition tool)
+    public McpToolMode EffectiveMode(McpToolDefinition tool) =>
+        EffectiveMode(tool, settings().ToolModes.TryGetValue(tool.Name, out var configured) ? configured : null, hasConfigured: settings().ToolModes.ContainsKey(tool.Name));
+
+    /// <summary>The mode that is enforced for a tool given the stored value (<c>null</c> + no entry = the default).</summary>
+    public static McpToolMode EffectiveMode(McpToolDefinition tool, string? configured, bool hasConfigured = true)
     {
         var mode = tool.DefaultMode;
-        if (settings().ToolModes.TryGetValue(tool.Name, out var configured))
+        if (hasConfigured)
         {
             mode = configured?.Trim().ToLowerInvariant() switch
             {
