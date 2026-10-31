@@ -1835,7 +1835,7 @@ public sealed class MainWindow : Window, IShell
             if (_active.Mode is not null && FileCommands.Contains(commandId)
                 && !(_active.Mode is PluginPanelView { Session.CanProvide: true } && string.Equals(commandId, CommandIds.Copy, StringComparison.OrdinalIgnoreCase)))
             {
-                Notify(Loc.T("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach."));
+                Notify(ModeActive);
                 return;
             }
 
@@ -2027,37 +2027,53 @@ public sealed class MainWindow : Window, IShell
 
     private static string DoesNotReceive(string title) => Loc.T("Panel „{0}” nie przyjmuje plików.", title);
 
+    private static string ModeActive => Loc.T("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach.");
+
+    /// <summary>For <see cref="Core.Plugins.PanelTransferRouting"/>: only a preview (Ctrl+Q, pinned folder view) still shows the panel's folder.</summary>
+    private static Core.Plugins.PanelModeKind KindOf(IPanelModeView? mode) => mode switch
+    {
+        null => Core.Plugins.PanelModeKind.Files,
+        PreviewPanelView => Core.Plugins.PanelModeKind.Preview,
+        PluginPanelView => Core.Plugins.PanelModeKind.Plugin,
+        _ => Core.Plugins.PanelModeKind.Other,
+    };
+
+    /// <summary>The other panel still shows a folder files can be written to (file list, quick view or pinned folder view).</summary>
+    private static bool ShowsFolder(FilePanelView panel) => KindOf(panel.Mode) is Core.Plugins.PanelModeKind.Files or Core.Plugins.PanelModeKind.Preview;
+
     /// <summary>
-    /// F5/F6. A plugin panel on either side changes what happens: the active one provides files (copy only), the other
-    /// one receives them (copy only); the browser takes nothing. A preview or pinned folder still copies into the folder
-    /// it shows.
+    /// F5/F6, routed by <see cref="Core.Plugins.PanelTransferRouting.Decide"/>: a plugin panel on either side changes
+    /// what happens (the active one provides files, the other one receives them; copy only). A preview or pinned folder
+    /// still copies into the folder it shows; any other mode takes nothing.
     /// </summary>
     private async ValueTask TransferAsync(TransferMode mode)
     {
-        if (_active.Mode is PluginPanelView source)
+        var route = Core.Plugins.PanelTransferRouting.Decide(
+            KindOf(_active.Mode),
+            _active.Mode is PluginPanelView { Session.CanProvide: true },
+            KindOf(Other.Mode),
+            Other.Mode is PluginPanelView { Session.CanReceive: true },
+            mode == TransferMode.Move);
+        switch (route)
         {
-            if (mode == TransferMode.Move)
-            {
-                Notify(MoveNotSupported);
-            }
-            else
-            {
-                await GuardPanelTransferAsync(() => ProvideFromPanelAsync(_active, Other, source));
-            }
-
-            return;
-        }
-
-        switch (Other.Mode)
-        {
-            case PluginPanelView when mode == TransferMode.Move:
+            case Core.Plugins.PanelTransferRoute.RefuseMove:
                 Notify(MoveNotSupported);
                 return;
-            case PluginPanelView panel:
+            case Core.Plugins.PanelTransferRoute.BlockedModeActive:
+                Notify(ModeActive);
+                return;
+            case Core.Plugins.PanelTransferRoute.RefuseNotAccepting:
+                Notify(DoesNotReceive(Other.Mode?.Title ?? string.Empty));
+                return;
+            case Core.Plugins.PanelTransferRoute.ProvideFromPanel when _active.Mode is PluginPanelView source:
+                await GuardPanelTransferAsync(() => ProvideFromPanelAsync(_active, Other, source));
+                return;
+            case Core.Plugins.PanelTransferRoute.SendToPanel when Other.Mode is PluginPanelView panel:
                 await GuardPanelTransferAsync(() => SendToPanelAsync(_active, Other, panel));
                 return;
-            case BrowserPanelView browser:
-                Notify(DoesNotReceive(browser.Title));
+            case Core.Plugins.PanelTransferRoute.OrdinaryCopy:
+                break;
+            default:
                 return;
         }
 
@@ -2107,7 +2123,8 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
-        var fitting = offered.Where(receiver => Core.Plugins.TransferMatching.Fits(receiver, items)).ToList();
+        // Ids pick the receiver after the dialog, so a duplicate id (a plugin bug) keeps only its first receiver.
+        var fitting = offered.Where(receiver => Core.Plugins.TransferMatching.Fits(receiver, items)).DistinctBy(r => r.Id, StringComparer.Ordinal).ToList();
         if (fitting.Count == 0)
         {
             Notify(Core.Plugins.TransferMatching.WhyNone(offered, items) ?? DoesNotReceive(panel.Title));
@@ -2128,7 +2145,8 @@ public sealed class MainWindow : Window, IShell
         var job = new PanelReceiveJob(session, panel.Title, receiver, items);
         RunJob(job, queue: null, refreshBoth: false, handle =>
         {
-            if (handle.State == JobState.Completed && job.Result is { } result)
+            // The plugin's answer only exists when the call returned; a failed or cancelled call is reported by RunJob.
+            if (job.Result is { } result)
             {
                 var report = new StringBuilder();
                 if (receiver.ReturnsMessage && !string.IsNullOrWhiteSpace(result.Text))
@@ -2171,27 +2189,31 @@ public sealed class MainWindow : Window, IShell
     /// <param name="target">The panel whose folder receives the files.</param>
     private async Task ProvideFromPanelAsync(FilePanelView source, FilePanelView target, PluginPanelView panel)
     {
-        if (target.Mode is PluginPanelView or BrowserPanelView)
+        if (!ShowsFolder(target))
         {
-            Notify(DoesNotReceive(target.Mode.Title));
+            Notify(DoesNotReceive(target.Mode?.Title ?? string.Empty));
             return;
         }
 
         var rowIds = panel.SelectedRowIds;
         if (rowIds.Count == 0)
         {
+            Notify(Loc.T("Panel „{0}” nie ma wierszy do skopiowania.", panel.Title));
             return;
         }
 
-        // While we wait the target may turn into a plugin or the browser (its folder is then hidden) or the panel may close.
-        bool StillThere() => source.Mode == panel && target.Mode is not (PluginPanelView or BrowserPanelView);
+        // While we wait the target may turn into a mode that hides its folder, or the panel may close.
+        bool StillThere() => source.Mode == panel && ShowsFolder(target);
 
         var session = panel.Session;
-        var providers = await AskPanelAsync(panel.Title, ct => session.GetProvidersAsync(rowIds, ct));
-        if (providers is null || !Unchanged(StillThere()))
+        var asked = await AskPanelAsync(panel.Title, ct => session.GetProvidersAsync(rowIds, ct));
+        if (asked is null || !Unchanged(StillThere()))
         {
             return;
         }
+
+        // Ids pick the provider after the dialog, so a duplicate id (a plugin bug) keeps only its first provider.
+        var providers = asked.DistinctBy(p => p.Id, StringComparer.Ordinal).ToList();
 
         if (providers.Count == 0)
         {
@@ -2212,16 +2234,12 @@ public sealed class MainWindow : Window, IShell
 
         // Downloads of url files go through the plugin's own host: gated by its "net" permission and audited.
         var host = (Core.Plugins.ScopedPluginHost)_host!.HostFor(panel.Plugin.Manifest);
-        var job = new PanelProvideJob(session, provider, rowIds, _host.Router, folder, choice.Overwrite, host.OpenHttpReadAsync);
+        var job = new PanelProvideJob(session, provider, rowIds, _host.Router, folder, choice.Overwrite, host.OpenHttpReadAsync, host.Audit);
         RunJob(job, queue: null, refreshBoth: true, handle =>
         {
-            if (handle.State != JobState.Completed)
-            {
-                return;
-            }
-
+            // Also after a failure or cancel: the files that went wrong before it are still worth knowing (RunJob reports the failure itself).
             var report = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(job.Result?.Text))
+            if (handle.State == JobState.Completed && !string.IsNullOrWhiteSpace(job.Result?.Text))
             {
                 report.AppendLine(job.Result.Text);
             }
@@ -2231,6 +2249,11 @@ public sealed class MainWindow : Window, IShell
                 if (report.Length > 0)
                 {
                     report.AppendLine();
+                }
+
+                if (handle.State != JobState.Completed)
+                {
+                    report.AppendLine(handle.State == JobState.Canceled ? Loc.T("Przerwano kopiowanie.") : Loc.T("Kopiowanie nie powiodło się."));
                 }
 
                 report.AppendLine(Loc.T("Nie zapisano:"));

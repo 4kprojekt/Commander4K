@@ -1,6 +1,7 @@
 using System.Text;
 using Commander4K.Core.Execution;
 using Commander4K.Core.Jobs;
+using Commander4K.Core.Plugins;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
 
@@ -48,6 +49,9 @@ public sealed class PanelTransferJobTests
     private sealed class WritableProvider : IVfsProviderPlugin
     {
         public bool FailOpenWrite { get; set; }
+
+        /// <summary>Delete throws an exception type no catch list would name (as SSH.NET's do).</summary>
+        public bool FailDelete { get; set; }
 
         public Dictionary<string, byte[]> Files { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -105,6 +109,11 @@ public sealed class PanelTransferJobTests
 
         public ValueTask DeleteAsync(string path, bool recursive, CancellationToken cancellationToken)
         {
+            if (FailDelete)
+            {
+                throw new ProviderSpecificException("permission denied by server");
+            }
+
             Files.Remove(path);
             return ValueTask.CompletedTask;
         }
@@ -123,15 +132,60 @@ public sealed class PanelTransferJobTests
         }
     }
 
+    private sealed class ProviderSpecificException(string message) : Exception(message);
+
+    /// <summary>Gives <paramref name="good"/> bytes, then fails like a dropped connection.</summary>
+    private sealed class BreakingStream(int good) : Stream
+    {
+        private int _left = good;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_left == 0)
+            {
+                throw new IOException("connection reset");
+            }
+
+            var n = Math.Min(count, _left);
+            Array.Fill(buffer, (byte)7, offset, n);
+            _left -= n;
+            return n;
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed record Audited(string Operation, string Detail, AuditOutcome Outcome);
+
     private static (PanelProvideJob Job, WritableProvider Fs) ProvideJob(
         IEnumerable<ProvidedFile> files,
         OverwritePolicy policy = OverwritePolicy.Skip,
-        Func<Uri, CancellationToken, Task<Stream>>? openUrl = null)
+        Func<Uri, CancellationToken, Task<Stream>>? openUrl = null,
+        List<Audited>? audit = null)
     {
         var fs = new WritableProvider();
         var router = new VfsRouter(new ResilientAsyncExecutor(), [fs]);
         var session = new Session { Provided = new ProvideResult([.. files]) };
-        return (new PanelProvideJob(session, Provider, ["r"], router, "w://t", policy, openUrl ?? ((_, _) => throw new InvalidOperationException())), fs);
+        Action<string, string, AuditOutcome>? record = audit is null ? null : (op, detail, outcome) => audit.Add(new Audited(op, detail, outcome));
+        return (new PanelProvideJob(session, Provider, ["r"], router, "w://t", policy, openUrl ?? ((_, _) => throw new InvalidOperationException()), record), fs);
     }
 
     [Fact]
@@ -190,13 +244,13 @@ public sealed class PanelTransferJobTests
     }
 
     [Fact]
-    public async Task Provide_refuses_inline_over_16_MB()
+    public async Task Provide_refuses_inline_over_8_MB()
     {
         var (job, fs) = ProvideJob([new ProvidedFile("big.bin", Data: new byte[PanelProvideJob.MaxInlineBytes + 1]), new ProvidedFile("ok.bin", Data: new byte[PanelProvideJob.MaxInlineBytes])]);
 
         await job.ExecuteAsync(new Sink(), Token);
 
-        Assert.Single(job.Errors);
+        Assert.Contains("8 MB", Assert.Single(job.Errors), StringComparison.Ordinal);
         Assert.DoesNotContain("w://t/big.bin", fs.Files.Keys);
         Assert.Contains("w://t/ok.bin", fs.Files.Keys);
     }
@@ -301,5 +355,68 @@ public sealed class PanelTransferJobTests
 
         Assert.Empty(job.Errors);
         Assert.Contains("w://t/a.txt", fs.Files.Keys);
+    }
+
+    [Fact]
+    public async Task Provide_keeps_the_file_error_when_discarding_throws_any_exception()
+    {
+        var (job, fs) = ProvideJob([new ProvidedFile("u.bin", Url: new Uri("https://example.test/u")), new ProvidedFile("ok.txt", Text: "ok")],
+            openUrl: (_, _) => Task.FromResult<Stream>(new BreakingStream(10)));
+        fs.FailDelete = true;
+
+        await job.ExecuteAsync(new Sink(), Token);
+
+        var error = Assert.Single(job.Errors);
+        Assert.StartsWith("u.bin", error, StringComparison.Ordinal);
+        Assert.Contains("connection reset", error, StringComparison.Ordinal);
+        Assert.Equal("ok", Encoding.UTF8.GetString(fs.Files["w://t/ok.txt"]));
+    }
+
+    [Fact]
+    public async Task Provide_says_an_overwritten_file_may_be_incomplete()
+    {
+        var (job, fs) = ProvideJob([new ProvidedFile("e.bin", Url: new Uri("https://example.test/u"))], OverwritePolicy.Overwrite,
+            (_, _) => Task.FromResult<Stream>(new BreakingStream(10)));
+        fs.Files["w://t/e.bin"] = [1, 2, 3];
+
+        await job.ExecuteAsync(new Sink(), Token);
+
+        var error = Assert.Single(job.Errors);
+        Assert.Contains("connection reset", error, StringComparison.Ordinal);
+        Assert.Contains("częściowo", error, StringComparison.Ordinal);
+        Assert.Equal(10, fs.Files["w://t/e.bin"].Length); // what was written stays, as the message says
+    }
+
+    [Fact]
+    public async Task Provide_audits_every_written_skipped_and_failed_file()
+    {
+        var audit = new List<Audited>();
+        var (job, fs) = ProvideJob([
+            new ProvidedFile("a.txt", Text: "abc"),
+            new ProvidedFile("exists.txt", Text: "x"),
+            new ProvidedFile("../evil.txt", Text: "x"),
+            new ProvidedFile("bad.txt", Error: "HTTP 404")], audit: audit);
+        fs.Files["w://t/exists.txt"] = [1];
+
+        await job.ExecuteAsync(new Sink(), Token);
+
+        Assert.Contains(audit, a => a.Operation == "provide" && a.Detail.Contains("w://t", StringComparison.Ordinal));
+        Assert.Contains(new Audited("provide.write", "w://t/a.txt (3 B)", AuditOutcome.Allowed), audit);
+        Assert.Contains(new Audited("provide.skip", "exists.txt: exists: w://t/exists.txt", AuditOutcome.Info), audit);
+        Assert.Contains(audit, a => a.Operation == "provide.fail" && a.Detail.StartsWith("..", StringComparison.Ordinal) && a.Outcome == AuditOutcome.Failed);
+        Assert.Contains(new Audited("provide.fail", "bad.txt: plugin error: HTTP 404", AuditOutcome.Failed), audit);
+        Assert.Equal(3, job.Errors.Count);
+    }
+
+    [Fact]
+    public async Task Provide_audits_a_failed_download_in_english()
+    {
+        var audit = new List<Audited>();
+        var (job, _) = ProvideJob([new ProvidedFile("u.bin", Url: new Uri("https://example.test/u"))],
+            openUrl: (_, _) => throw new HttpRequestException("404"), audit: audit);
+
+        await job.ExecuteAsync(new Sink(), Token);
+
+        Assert.Contains(new Audited("provide.fail", "u.bin: failed: w://t/u.bin: 404", AuditOutcome.Failed), audit);
     }
 }

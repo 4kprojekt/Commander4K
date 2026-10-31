@@ -109,13 +109,18 @@ public sealed class ReadGrantTests : IDisposable
     [Fact]
     public async Task Grants_are_audited()
     {
-        using (_host.GrantRead([File_(P("a.txt"))]))
+        using (_host.GrantRead([File_(P("a.txt")), Folder(P("X")), File_("relative.txt")]))
         {
             await AssertReadableAsync(P("a.txt"));
         }
 
+        // Each granted path is named; a path that was not granted is logged as refused, not counted.
         var entries = _audit.Recent("tests.grant");
-        Assert.Contains(entries, e => e.Operation == "fs.grant" && e.Detail == "1 paths");
+        Assert.Contains(entries, e => e.Operation == "fs.grant" && e.Detail == "file " + P("a.txt") && e.Outcome == AuditOutcome.Allowed);
+        Assert.Contains(entries, e => e.Operation == "fs.grant" && e.Detail == "folder " + P("X") && e.Outcome == AuditOutcome.Allowed);
+        Assert.Contains(entries, e => e.Operation == "fs.grant" && e.Detail.EndsWith("relative.txt", StringComparison.Ordinal) && e.Outcome == AuditOutcome.Denied);
+        Assert.Equal(3, entries.Count(e => e.Operation == "fs.grant"));
+        Assert.Contains(entries, e => e.Operation == "fs.grant.end" && e.Detail == "2 paths");
         Assert.Contains(entries, e => e.Operation == "fs.read" && e.Outcome == AuditOutcome.Allowed && e.Detail.EndsWith("(granted)", StringComparison.Ordinal));
         Assert.Contains(entries, e => e.Operation == "fs.grant.end");
     }

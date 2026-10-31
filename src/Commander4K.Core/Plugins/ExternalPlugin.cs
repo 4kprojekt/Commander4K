@@ -70,6 +70,12 @@ public sealed class ExternalPlugin : IAsyncDisposable
         return new JobRegistration(_jobs, jobId, progress);
     }
 
+    /// <summary>
+    /// Lets this plugin read <paramref name="items"/> (folders: everything below) until the result is disposed. The
+    /// grant goes to the host this plugin's requests are served with, so it always applies to them.
+    /// </summary>
+    public IDisposable GrantRead(IReadOnlyList<TransferItem> items) => _host.GrantRead(items);
+
     private sealed class JobRegistration(ConcurrentDictionary<string, IProgress<TransferProgress>> jobs, string jobId, IProgress<TransferProgress> progress) : IDisposable
     {
         public void Dispose() => jobs.TryRemove(new KeyValuePair<string, IProgress<TransferProgress>>(jobId, progress));

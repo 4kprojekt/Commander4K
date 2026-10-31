@@ -101,7 +101,7 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
 
         public bool CanProvide => panel.Provides;
 
-        /// <remarks>Result: <c>[{ id, title, description?, extensions?, multiple?, folders?, returnsMessage? }]</c>.</remarks>
+        /// <remarks>Result: <c>[{ id, title, description?, extensions?, multiple?, folders?, returnsMessage? }]</c>; a repeated id keeps its first entry.</remarks>
         public async Task<IReadOnlyList<PanelReceiver>> GetReceiversAsync(IReadOnlyList<TransferItem> items, CancellationToken ct)
         {
             var result = await plugin.CallAsync("panel.receivers",
@@ -116,7 +116,7 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
                     : null,
                 Flag(r, "multiple"),
                 Flag(r, "folders"),
-                Flag(r, "returnsMessage")))];
+                Flag(r, "returnsMessage"))).DistinctBy(r => r.Id, StringComparer.Ordinal)];
         }
 
         /// <remarks>
@@ -127,7 +127,8 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
         public async Task<ReceiveResult> ReceiveAsync(string receiverId, IReadOnlyList<TransferItem> items, IProgress<TransferProgress>? progress, CancellationToken ct)
         {
             var jobId = Guid.NewGuid().ToString("N");
-            var grant = (host as ScopedPluginHost)?.GrantRead(items);
+            // Granted by the plugin itself, on the host that serves its requests, so the grant cannot miss them.
+            using var grant = plugin.GrantRead(items);
             var registration = progress is null ? null : plugin.RegisterProgress(jobId, progress);
             try
             {
@@ -147,22 +148,23 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
             finally
             {
                 registration?.Dispose();
-                grant?.Dispose();
             }
         }
 
-        /// <remarks>Result: <c>[{ id, title, description? }]</c>.</remarks>
+        /// <remarks>Result: <c>[{ id, title, description? }]</c>; a repeated id keeps its first entry.</remarks>
         public async Task<IReadOnlyList<PanelProvider>> GetProvidersAsync(IReadOnlyList<string> rowIds, CancellationToken ct)
         {
             var result = await plugin.CallAsync("panel.providers",
                 new { panel = panel.Id, rowIds, context = ExternalPlugin.Context(host) },
                 ct, QuestionTimeout).ConfigureAwait(false);
-            return [.. Objects(result).Select(r => new PanelProvider(RequiredString(r, "id"), RequiredString(r, "title"), OptionalString(r, "description")))];
+            return [.. Objects(result).Select(r => new PanelProvider(RequiredString(r, "id"), RequiredString(r, "title"), OptionalString(r, "description")))
+                .DistinctBy(p => p.Id, StringComparer.Ordinal)];
         }
 
         /// <remarks>
-        /// No time limit, only the token. Result: <c>{ files: [{ name, text? | base64? | url? }], text? }</c>; inline
-        /// content is limited to <see cref="MaxInlineBytes"/> per file, larger files come as an http(s) <c>url</c>.
+        /// No time limit, only the token. Result: <c>{ files: [{ name, text? | base64? | url? | error? }], text? }</c>;
+        /// inline content is limited to <see cref="PanelTransferLimits.MaxInlineBytes"/> per file and the whole reply to
+        /// <see cref="JsonRpcConnection.MaxMessageLength"/> characters; larger files come as an http(s) <c>url</c>.
         /// </remarks>
         public async Task<ProvideResult> ProvideAsync(string providerId, IReadOnlyList<string> rowIds, IProgress<TransferProgress>? progress, CancellationToken ct)
         {
@@ -189,7 +191,7 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
     private static readonly TimeSpan QuestionTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>Inline <c>text</c>/<c>base64</c> limit per provided file.</summary>
-    public const int MaxInlineBytes = 16 * 1024 * 1024;
+    public const int MaxInlineBytes = PanelTransferLimits.MaxInlineBytes;
 
     private static object FileDto(TransferItem item) => new
     {
@@ -209,6 +211,12 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
         {
             var placeholder = (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
             return new ProvidedFile(placeholder, Error: Loc.T("Wtyczka nie podała nazwy pliku nr {0}.", placeholder));
+        }
+
+        // The plugin's own per-file failure (a download that failed, a row without data): shown, nothing written.
+        if (OptionalString(file, "error") is { Length: > 0 } error)
+        {
+            return new ProvidedFile(name, Error: error);
         }
 
         if (OptionalString(file, "url") is { } url)

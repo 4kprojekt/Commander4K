@@ -121,10 +121,28 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
     /// </summary>
     public IDisposable GrantRead(IReadOnlyList<TransferItem> items)
     {
-        var grant = _grants.Grant(items);
-        audit.Record(Manifest.Id, "fs.grant", $"{items.Count} paths", AuditOutcome.Info);
-        return new GrantScope(grant, () => audit.Record(Manifest.Id, "fs.grant.end", string.Empty, AuditOutcome.Info));
+        var grant = _grants.Grant(items, out var granted, out var ignored);
+
+        // One line per path, so the log shows exactly what the plugin could read (English, like every audit entry).
+        foreach (var item in granted)
+        {
+            audit.Record(Manifest.Id, "fs.grant", $"{(item.Kind == TransferItemKind.Folder ? "folder" : "file")} {item.Path}", AuditOutcome.Allowed);
+        }
+
+        foreach (var item in ignored)
+        {
+            audit.Record(Manifest.Id, "fs.grant", $"not an absolute path, not granted: {item.Path}", AuditOutcome.Denied);
+        }
+
+        var count = granted.Count;
+        return new GrantScope(grant, () => audit.Record(Manifest.Id, "fs.grant.end", $"{count} paths", AuditOutcome.Info));
     }
+
+    /// <summary>
+    /// Writes an audit entry under this plugin's id for work the app does on the plugin's behalf (files it provided
+    /// being written). Details are English, like every audit entry.
+    /// </summary>
+    public void Audit(string operation, string detail, AuditOutcome outcome) => audit.Record(Manifest.Id, operation, detail, outcome);
 
     public Task<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken = default) =>
         Gate(PluginPermissions.FileRead, "fs.stat", path, () => router.GetEntryAsync(path, cancellationToken));

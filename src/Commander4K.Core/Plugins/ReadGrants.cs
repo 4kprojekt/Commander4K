@@ -18,18 +18,30 @@ public sealed class ReadGrants
     /// Grants read access; paths that are not recognised absolute VFS paths are ignored. Disposing releases this grant
     /// and cancels its <see cref="TryCover"/> token, so work started under it (a streamed upload) stops with it.
     /// </summary>
-    public IDisposable Grant(IReadOnlyList<TransferItem> items)
+    public IDisposable Grant(IReadOnlyList<TransferItem> items) => Grant(items, out _, out _);
+
+    /// <inheritdoc cref="Grant(IReadOnlyList{TransferItem})"/>
+    /// <param name="granted">The items actually granted.</param>
+    /// <param name="ignored">Items whose path was not a recognised absolute VFS path (not granted).</param>
+    public IDisposable Grant(IReadOnlyList<TransferItem> items, out IReadOnlyList<TransferItem> granted, out IReadOnlyList<TransferItem> ignored)
     {
         var keys = new List<(bool Folder, string Path)>();
+        var accepted = new List<TransferItem>();
+        var refused = new List<TransferItem>();
         foreach (var item in items)
         {
             if (!McpPathPolicy.IsInside(item.Path, item.Path))
             {
-                continue; // Not a recognised absolute path: never grant it.
+                refused.Add(item); // Not a recognised absolute path: never grant it.
+                continue;
             }
 
+            accepted.Add(item);
             keys.Add((item.Kind == TransferItemKind.Folder, McpPathPolicy.Normalize(item.Path)));
         }
+
+        granted = accepted;
+        ignored = refused;
 
         var entry = new Entry(keys);
         lock (_gate)

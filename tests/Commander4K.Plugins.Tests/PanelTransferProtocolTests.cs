@@ -27,6 +27,7 @@ public sealed class PanelTransferProtocolTests : IAsyncLifetime
                 {"id": "r1", "title": "One", "description": "first", "extensions": [".txt", "*.log"],
                  "multiple": True, "folders": True, "returnsMessage": True},
                 {"id": "r2", "title": "Two"},
+                {"id": "r2", "title": "Duplicate id"},
             ]
 
         @c4k.handler("panel.receive")
@@ -61,15 +62,20 @@ public sealed class PanelTransferProtocolTests : IAsyncLifetime
 
         @c4k.handler("panel.providers")
         def providers(params):
-            return [{"id": "save", "title": "Save", "description": "as files"}, {"id": "bare", "title": "Bare"}]
+            return [{"id": "save", "title": "Save", "description": "as files"}, {"id": "bare", "title": "Bare"}, {"id": "save", "title": "Duplicate id"}]
 
         @c4k.handler("panel.provide")
         def provide(params):
             if params["provider"] == "bad":
                 return {"files": [{"name": "x.txt", "url": "file:///c:/x"}, {"base64": "AA=="}, {"name": "empty.txt"},
                                   {"name": "broken.bin", "base64": "@@@"}, {"name": "ok.txt", "text": "y"}]}
+            if params["provider"] == "errors":
+                return {"files": [{"name": "x.json", "error": "HTTP 404"}, {"name": "ok.txt", "text": "y"}]}
+            if params["provider"] == "huge":
+                # 17 M characters on one line: over the 16 M message limit.
+                return {"files": [{"name": "huge.txt", "text": "x" * 17000000}]}
             if params["provider"] == "big":
-                # 9 M characters on the wire (under the 16 M message limit), 18 MB as UTF-8: over the inline limit.
+                # 9 M characters on the wire (under the 16 M message limit), 18 MB as UTF-8: over the 8 MB inline limit.
                 return {"files": [{"name": "big.txt", "text": "ż" * 9000000}, {"name": "ok.txt", "text": "fine"}]}
             return {"text": "3 files", "files": [
                 {"name": "a.txt", "text": "hello"},
@@ -223,8 +229,47 @@ public sealed class PanelTransferProtocolTests : IAsyncLifetime
         Assert.Equal(2, result.Files.Count);
         Assert.Equal("big.txt", result.Files[0].Name);
         Assert.Null(result.Files[0].Text);
-        Assert.Contains("16 MB", result.Files[0].Error, StringComparison.Ordinal);
+        Assert.Contains("8 MB", result.Files[0].Error, StringComparison.Ordinal);
         Assert.Equal(new ProvidedFile("ok.txt", Text: "fine"), result.Files[1]);
+    }
+
+    [Fact]
+    public async Task Provide_maps_a_per_file_error_from_the_plugin()
+    {
+        var (plugin, host) = Start();
+        await using var owned = plugin;
+
+        var result = await Session(plugin, host, "main").ProvideAsync("errors", ["row1"], null, TestToken);
+
+        Assert.Equal([new ProvidedFile("x.json", Error: "HTTP 404"), new ProvidedFile("ok.txt", Text: "y")], result.Files);
+    }
+
+    [Fact]
+    public async Task Oversized_reply_fails_with_a_clear_message_and_the_plugin_restarts()
+    {
+        var (plugin, host) = Start();
+        await using var owned = plugin;
+        var session = Session(plugin, host, "main");
+
+        var error = await Assert.ThrowsAsync<PluginMessageTooLargeException>(() => session.ProvideAsync("huge", ["row1"], null, TestToken));
+
+        Assert.Contains("16 MB", error.Message, StringComparison.Ordinal);
+        Assert.Contains("url", error.Message, StringComparison.Ordinal);
+        var next = await session.ProvideAsync("save", ["row1"], null, TestToken);
+        Assert.Equal("3 files", next.Text);
+    }
+
+    [Fact]
+    public async Task Receive_grant_is_audited_per_path_on_the_plugins_host()
+    {
+        var (plugin, host) = Start();
+        await using var owned = plugin;
+
+        await Session(plugin, host, "main").ReceiveAsync("r1", [Item(A)], null, TestToken);
+
+        var entries = _audit.Recent("tests.transfer");
+        Assert.Contains(entries, e => e.Operation == "fs.grant" && e.Detail == "file " + A && e.Outcome == AuditOutcome.Allowed);
+        Assert.Contains(entries, e => e.Operation == "fs.grant.end" && e.Detail == "1 paths");
     }
 
     [Fact]

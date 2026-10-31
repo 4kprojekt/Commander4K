@@ -32,6 +32,9 @@ internal sealed class Relay(IProgress<JobMetrics> target) : IProgress<TransferPr
 }
 
 /// <summary>Copies files a plugin panel provides into a folder (F5 from a plugin panel onto a file panel).</summary>
+/// <param name="audit">
+/// Records (operation, English detail, outcome) under the providing plugin's id: every file written, skipped or failed.
+/// </param>
 public sealed class PanelProvideJob(
     IPanelSession session,
     PanelProvider provider,
@@ -39,10 +42,11 @@ public sealed class PanelProvideJob(
     VfsRouter router,
     string targetFolder,
     OverwritePolicy overwrite,
-    Func<Uri, CancellationToken, Task<Stream>> openUrl) : IJob
+    Func<Uri, CancellationToken, Task<Stream>> openUrl,
+    Action<string, string, AuditOutcome>? audit = null) : IJob
 {
     /// <summary>Inline content (<c>Data</c>/<c>Text</c>) above this size is refused; larger files must come as a url.</summary>
-    public const int MaxInlineBytes = 16 * 1024 * 1024;
+    public const int MaxInlineBytes = PanelTransferLimits.MaxInlineBytes;
 
     private const int BufferSize = 256 * 1024;
 
@@ -57,6 +61,7 @@ public sealed class PanelProvideJob(
 
     public async Task ExecuteAsync(IProgress<JobMetrics> progress, CancellationToken cancellationToken)
     {
+        audit?.Invoke("provide", $"{provider.Id}: {rowIds.Count} rows -> {targetFolder} ({overwrite})", AuditOutcome.Info);
         var result = await session.ProvideAsync(provider.Id, rowIds, new Relay(progress), cancellationToken).ConfigureAwait(false);
         Result = result;
 
@@ -81,13 +86,13 @@ public sealed class PanelProvideJob(
     {
         if (!string.IsNullOrEmpty(file.Error))
         {
-            Fail(file.Name, file.Error);
+            Fail(file.Name, file.Error, $"plugin error: {file.Error}");
             return 0;
         }
 
         if (!PluginAuthoring.IsSafeRelativePath(file.Name))
         {
-            Fail(file.Name, Loc.T("niedozwolona nazwa pliku"));
+            Fail(file.Name, Loc.T("niedozwolona nazwa pliku"), "unsafe file name");
             return 0;
         }
 
@@ -96,7 +101,7 @@ public sealed class PanelProvideJob(
         {
             if (Encoding.UTF8.GetByteCount(file.Text) > MaxInlineBytes)
             {
-                Fail(file.Name, Loc.T("zawartość większa niż 16 MB"));
+                Fail(file.Name, TooLarge, "inline content over the limit");
                 return 0;
             }
 
@@ -105,19 +110,20 @@ public sealed class PanelProvideJob(
 
         if (inline is { Length: > MaxInlineBytes })
         {
-            Fail(file.Name, Loc.T("zawartość większa niż 16 MB"));
+            Fail(file.Name, TooLarge, "inline content over the limit");
             return 0;
         }
 
         if (inline is null && (file.Url is null || file.Url.Scheme is not ("http" or "https")))
         {
-            Fail(file.Name, Loc.T("brak zawartości lub niedozwolony adres"));
+            Fail(file.Name, Loc.T("brak zawartości lub niedozwolony adres"), "no content or url not allowed");
             return 0;
         }
 
         var parts = PluginAuthoring.SplitRelativePath(file.Name);
         var target = targetFolder;
         var createdTarget = false;
+        var overwriting = false;
         try
         {
             for (var i = 0; i < parts.Length - 1; i++)
@@ -133,7 +139,7 @@ public sealed class PanelProvideJob(
             var existing = await router.GetEntryAsync(target, cancellationToken).ConfigureAwait(false);
             if (existing is { } found && (overwrite == OverwritePolicy.Skip || found.IsContainer))
             {
-                Fail(file.Name, Loc.T("już istnieje, pominięto"));
+                Fail(file.Name, Loc.T("już istnieje, pominięto"), $"exists: {target}", "provide.skip", AuditOutcome.Info);
                 return 0;
             }
 
@@ -143,6 +149,7 @@ public sealed class PanelProvideJob(
             await using (var output = await router.OpenWriteAsync(target, overwrite == OverwritePolicy.Overwrite, cancellationToken).ConfigureAwait(false))
             {
                 createdTarget = existing is null;
+                overwriting = existing is not null;
                 if (inline is not null)
                 {
                     await output.WriteAsync(inline, cancellationToken).ConfigureAwait(false);
@@ -154,21 +161,44 @@ public sealed class PanelProvideJob(
                 }
             }
 
+            audit?.Invoke("provide.write", $"{target} ({size} B)", AuditOutcome.Allowed);
             return size;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await DiscardAsync(createdTarget ? target : null).ConfigureAwait(false);
+            if (overwriting)
+            {
+                Fail(file.Name, PartlyWritten(Loc.T("przerwano")), $"cancelled, existing file partly overwritten: {target}");
+            }
+            else
+            {
+                audit?.Invoke("provide.cancel", $"{file.Name}: {target}", AuditOutcome.Info);
+            }
+
             throw;
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // Only a file this job created is removed; an existing one that was overwritten keeps what was written.
             await DiscardAsync(createdTarget ? target : null).ConfigureAwait(false);
-            Fail(file.Name, ex.Message);
+            if (overwriting)
+            {
+                Fail(file.Name, PartlyWritten(ex.Message), $"failed, existing file partly overwritten: {target}: {ex.Message}");
+            }
+            else
+            {
+                Fail(file.Name, ex.Message, $"failed: {target}: {ex.Message}");
+            }
+
             return 0;
         }
     }
+
+    private static string TooLarge => Loc.T("zawartość większa niż {0} MB", PanelTransferLimits.MaxInlineMegabytes);
+
+    private static string PartlyWritten(string reason) =>
+        Loc.T("{0} — istniejący plik został nadpisany tylko częściowo i może być niekompletny", reason);
 
     private static async Task<long> CopyAsync(Stream input, Stream output, CancellationToken cancellationToken)
     {
@@ -199,11 +229,18 @@ public sealed class PanelProvideJob(
                 await router.DeleteAsync(path, recursive: false, CancellationToken.None).ConfigureAwait(false);
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            // Best effort.
+            // Best effort with any provider (SFTP throws its own exceptions): the file's real error is what gets reported.
+            audit?.Invoke("provide.discard", $"{path}: {ex.Message}", AuditOutcome.Failed);
         }
     }
 
-    private void Fail(string name, string reason) => _errors.Add(Loc.T("{0}: {1}", name, reason));
+    /// <param name="reason">For the user (localized).</param>
+    /// <param name="auditDetail">For the audit log (English).</param>
+    private void Fail(string name, string reason, string auditDetail, string operation = "provide.fail", AuditOutcome outcome = AuditOutcome.Failed)
+    {
+        _errors.Add(Loc.T("{0}: {1}", name, reason));
+        audit?.Invoke(operation, $"{name}: {auditDetail}", outcome);
+    }
 }
