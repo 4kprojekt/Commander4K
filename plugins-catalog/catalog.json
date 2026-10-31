@@ -348,11 +348,15 @@
           "path": "c4k.py"
         },
         {
-          "sha256": "58daa8f568476b6d8e8efae0c31e32454dc10990dd12164882ecb516cf1e3418",
+          "sha256": "60acc6de09101330f35cbb0816b135df0f7de1624c762322ae3ed8a4a9f83b14",
+          "path": "deps.py"
+        },
+        {
+          "sha256": "58f48686c110c8469337e48fe6589e65525c13f4617e6c828f1b0d9e50392bd7",
           "path": "main.py"
         },
         {
-          "sha256": "a1d46f785dd3cb0cf402f204fa5b5c4a7a12daab2425652b29394a7874664d24",
+          "sha256": "195858921217f97365d02157388fe3fe013cfc0b5bde532782b4185b4fa14566",
           "path": "pe.py"
         },
         {
@@ -360,7 +364,7 @@
           "path": "plugin.json"
         },
         {
-          "sha256": "1324e63eb559597c19af1c0baeebdf68aaea3961594be4acc055a6d901fff633",
+          "sha256": "69311a6fa772781ecaf2e24e4441cf18665add93414bf519d08c08fe444a26b8",
           "path": "resources.py"
         }
       ]

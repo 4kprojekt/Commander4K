@@ -37,6 +37,7 @@ class Manifest:
     supported_os: list = field(default_factory=list)
     dependencies: list = field(default_factory=list)
     skipped_reason: str = None
+    error: str = None          # the XML could not be parsed
 
 
 def _directory(reader, base, rel):
@@ -153,7 +154,8 @@ def _truthy(text):
 
 
 def parse_manifest(text):
-    """Manifest fields from XML text. DTDs/entities are never parsed."""
+    """Manifest fields from XML text. DTDs/entities are never parsed. Resource padding (NULs, whitespace) is stripped."""
+    text = text.rstrip("\0 \r\n\t")
     manifest = Manifest(xml=text)
     if "<!doctype" in text.lower() or "<!entity" in text.lower():
         manifest.xml = ""
@@ -161,8 +163,8 @@ def parse_manifest(text):
         return manifest
     try:
         root = ET.fromstring(text)
-    except ET.ParseError:
-        manifest.skipped_reason = "manifest XML jest uszkodzony"
+    except ET.ParseError as error:
+        manifest.error = f"XML jest uszkodzony ({error})"
         return manifest
     dpi_aware = None
     for node in root.iter():
