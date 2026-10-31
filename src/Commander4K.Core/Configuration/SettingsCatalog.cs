@@ -64,6 +64,10 @@ public static class SettingsCatalog
             SettingKind.Choice, s => s.Skin, (s, v) => s.Skin = (string)v!, ["motyw", "kolory", "theme", Loc.T("wygląd")])
         { Choices = skinChoices },
 
+        new("splashScreen", Appearance, Loc.T("Animacja przy starcie"),
+            Loc.T("Przy uruchomieniu pokazuje animowany ekran startowy, dopóki aplikacja się nie wczyta (Esc lub kliknięcie go pomija). Tę samą animację można obejrzeć w „O programie”."),
+            SettingKind.Toggle, s => s.SplashScreen, (s, v) => s.SplashScreen = (bool)v!, ["splash", "start", "startup", "animacja", "animation", "ekran startowy", "intro"]),
+
         new("density", Appearance, Loc.T("Gęstość listy"), Loc.T("Kompaktowa: 12 px, wiersz 18 px · domyślna: wg skórki · wygodna: 14 px, wiersz 24 px."),
             SettingKind.Choice, s => s.Density, (s, v) => s.Density = (string)v!, ["density", "gestosc", "wiersz", "rozmiar", "czcionka", "kompaktowa", "wygodna"])
         {

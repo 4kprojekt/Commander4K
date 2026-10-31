@@ -24,7 +24,9 @@ public sealed class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow();
+            var main = new MainWindow();
+            desktop.MainWindow = main;
+            Splash.SplashWindow.ShowWhileStarting(main);
         }
 
         base.OnFrameworkInitializationCompleted();

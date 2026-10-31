@@ -71,12 +71,15 @@ public sealed class AppSettings
     public WindowPlacement? Window { get; set; }
 
     /// <summary>The saved window placement straight from settings.json (the host loads later); <c>null</c> on first run.</summary>
-    public static WindowPlacement? ReadWindowPlacement(string settingsPath)
+    public static WindowPlacement? ReadWindowPlacement(string settingsPath) => ReadStartupSettings(settingsPath)?.Window;
+
+    /// <summary>settings.json read before any window exists (placement, splash, skin id); <c>null</c> when missing or unreadable.</summary>
+    public static AppSettings? ReadStartupSettings(string settingsPath)
     {
         try
         {
             return File.Exists(settingsPath)
-                ? System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(settingsPath), ConfigJsonContext.Default.AppSettings)?.Window
+                ? System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(settingsPath), ConfigJsonContext.Default.AppSettings)
                 : null;
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
@@ -157,6 +160,9 @@ public sealed class AppSettings
 
     /// <summary>Right click opens the Windows (Explorer) context menu; off = right click marks, as in Total Commander.</summary>
     public bool ShellContextMenu { get; set; } = true;
+
+    /// <summary>Animated splash screen while the app starts (also under "About").</summary>
+    public bool SplashScreen { get; set; } = true;
 
     public List<FavoriteSetting> Favorites { get; set; } = [];
 

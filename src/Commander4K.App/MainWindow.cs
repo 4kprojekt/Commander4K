@@ -90,6 +90,11 @@ public sealed class MainWindow : Window, IShell
     /// <summary>Saved window state, read by <c>Program</c> before the window exists; <c>null</c> = first run → maximized.</summary>
     public static WindowPlacement? StartupPlacement { get; set; }
 
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once the shell is built (or start-up failed and shows its error); the splash waits for it.</summary>
+    public Task Started => _started.Task;
+
     private PixelPoint? _normalPosition;
     private Size _normalSize = new(1360, 860);
     private bool _maximizedBeforeMinimize;
@@ -191,6 +196,7 @@ public sealed class MainWindow : Window, IShell
         _host = host;
         _skins = new SkinManager(host, host.Skins.Get(host.Settings.Skin));
         BuildShell();
+        _started.TrySetResult();
         _mcp = new McpHost(host, this);
         host.Mcp = _mcp;
         _mcp.Changed += UpdateMcpBadge;
@@ -220,6 +226,7 @@ public sealed class MainWindow : Window, IShell
         catch (Exception ex)
         {
             Content = new SelectableTextBlock().Text(Loc.T("Nie udało się uruchomić Commander4K:\n\n") + ex).Margin(20).TextWrapping(TextWrapping.Wrap);
+            _started.TrySetResult();
         }
     }
 
