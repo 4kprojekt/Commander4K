@@ -34,12 +34,21 @@ public sealed class McpConfirmDialog : DialogWindow<McpConsent>
         {
             buttons.Add((Loc.T("Tak do końca sesji"), () => Complete(McpConsent.YesForSession), false));
         }
+
+        var row = ButtonRow([.. buttons]);
         SetBody(
             Label(Loc.T("Klient MCP: {0} (nazwę podaje sam klient)", confirmation.ClientName)),
             Label(Loc.T("Narzędzie: {0}", confirmation.Tool)),
             new ScrollViewer().MaxHeight(260).Content(details),
-            ButtonRow([.. buttons]));
+            row);
+
+        // Focus starts on "Nie": keys typed for the panel (Space, Enter, Tab) must not land on "Tak".
+        NoButton = row.Children.OfType<Button>().ElementAt(1);
+        Opened += (sender, args) => NoButton.Focus();
     }
+
+    /// <summary>The "Nie" button, focused when the dialog opens.</summary>
+    public Button NoButton { get; }
 
     /// <summary>The tool's name as an action ("AI chce: odczytać plik"); unknown tools keep their MCP name.</summary>
     public static string ToolName(string tool) => tool switch

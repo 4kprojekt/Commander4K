@@ -29,6 +29,13 @@ public static class McpPathPolicy
         return false;
     }
 
+    /// <summary>
+    /// True when <paramref name="path"/> is inside one of the protected folders or, with <paramref name="orAbove"/>
+    /// (writing and recursive tools), when a protected folder is inside it.
+    /// </summary>
+    public static bool IsProtected(string path, IReadOnlyList<string> protectedRoots, bool orAbove = false) =>
+        protectedRoots.Any(p => IsInside(path, p) || (orAbove && IsInside(p, path)));
+
     /// <summary>True when <paramref name="path"/> is <paramref name="root"/> or below it.</summary>
     public static bool IsInside(string path, string root)
     {

@@ -11,6 +11,7 @@ using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
 using Commander4K.Core.Mcp;
 using Commander4K.Core.Plugins;
+using Commander4K.PluginSdk;
 
 namespace Commander4K.App.Mcp;
 
@@ -211,7 +212,14 @@ public sealed class McpConnectWindow : Window
     private async Task AddActiveFolderAsync()
     {
         var folder = _activeFolder();
-        if (string.IsNullOrWhiteSpace(folder) || _host.Settings.Mcp.AllowedRoots.Contains(folder, StringComparer.OrdinalIgnoreCase))
+        if (!IsRealFolder(folder))
+        {
+            _status.Text = Loc.T("Otwórz w aktywnym panelu folder na dysku, w udziale sieciowym albo na serwerze SFTP/FTP.");
+            _status.Foreground = _brushes.Error;
+            return;
+        }
+
+        if (_host.Settings.Mcp.AllowedRoots.Contains(folder, StringComparer.OrdinalIgnoreCase))
         {
             return;
         }
@@ -219,6 +227,27 @@ public sealed class McpConnectWindow : Window
         // A new list, never an in-place edit: the server reads a snapshot taken by ApplySettingsAsync.
         _host.Settings.Mcp.AllowedRoots = [.. _host.Settings.Mcp.AllowedRoots, folder];
         await SaveAndApplyAsync();
+    }
+
+    /// <summary>
+    /// Only real folders can be allowed: disk paths, <c>\\server\share</c>, <c>sftp://</c> and <c>ftp://</c>. Virtual
+    /// lists (This PC <c>local://</c>, the network <c>net://</c>, a bare <c>\\server</c>), the registry and archives are
+    /// not offered here (the setting "Foldery dostępne dla MCP" still takes any path).
+    /// </summary>
+    private static bool IsRealFolder([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return false;
+        }
+
+        return VfsPath.GetScheme(folder) switch
+        {
+            VfsPath.FileScheme => !folder.Contains("://", StringComparison.Ordinal) && Path.IsPathFullyQualified(folder),
+            VfsPath.SmbScheme => folder.TrimStart('\\').TrimEnd('\\').Contains('\\'),
+            "sftp" or "ftp" => true,
+            _ => false,
+        };
     }
 
     private async Task RemoveRootAsync(string root)

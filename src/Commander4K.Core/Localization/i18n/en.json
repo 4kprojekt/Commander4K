@@ -1131,5 +1131,6 @@
   "MCP: port {0} zajęty": "MCP: port {0} in use",
   "MCP: błąd": "MCP: error",
   "AI podłączone ({0})": "AI connected ({0})",
-  "MCP: gotowy": "MCP: ready"
+  "MCP: gotowy": "MCP: ready",
+  "Otwórz w aktywnym panelu folder na dysku, w udziale sieciowym albo na serwerze SFTP/FTP.": "Open a folder on a disk, a network share or an SFTP/FTP server in the active panel."
 }

@@ -28,7 +28,8 @@ public static class McpFileTools
                     "Lists a folder: one line per entry with kind, size and modification time (at most 500 entries).",
                     McpSchema.Object(path),
                     McpToolMode.Allow,
-                    PathArguments: ["path"]),
+                    PathArguments: ["path"],
+                    NamesOnly: true),
                 (call, ct) => Guard(() => ListAsync(router, call.Required("path"), ct)),
                 args => "list_directory " + Str(args, "path")),
             new McpTool(
@@ -37,7 +38,8 @@ public static class McpFileTools
                     "Describes one file or folder: kind, size and modification time.",
                     McpSchema.Object(path),
                     McpToolMode.Allow,
-                    PathArguments: ["path"]),
+                    PathArguments: ["path"],
+                    NamesOnly: true),
                 (call, ct) => Guard(() => StatAsync(router, call.Required("path"), ct)),
                 args => "stat " + Str(args, "path")),
             new McpTool(

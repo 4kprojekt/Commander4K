@@ -31,7 +31,7 @@ public sealed class McpToolDispatcher(
     AuditLog audit) : IMcpToolHandler
 {
     public const string BlockedMessage = "This tool is disabled in Commander4K settings (MCP).";
-    public const string ProtectedMessage = "Commander4K's plugin and config folders cannot be changed through MCP. Use install_plugin.";
+    public const string ProtectedMessage = "Commander4K's own plugin, config and data folders cannot be accessed through MCP. Use install_plugin to install plugins.";
     public const string DeclinedMessage = "The user declined this action in Commander4K.";
     public const string DisabledSuffix = " (Disabled by the user in Commander4K.)";
     private const int RecentCapacity = 50;
@@ -54,6 +54,15 @@ public sealed class McpToolDispatcher(
             }
         }
     }
+
+    /// <summary>
+    /// Why a path a tool takes from somewhere other than its arguments (panels, selection, prompt arguments) may not
+    /// be used: outside the allowed folders, or inside a protected one. <c>null</c> = allowed.
+    /// </summary>
+    public static string? Refusal(string path, IReadOnlyList<string> roots, IReadOnlyList<string> protectedRoots) =>
+        !McpPathPolicy.IsAllowed(path, roots) ? OutsideRootsMessage(path)
+        : McpPathPolicy.IsProtected(path, protectedRoots) ? ProtectedMessage
+        : null;
 
     public static string OutsideRootsMessage(string path) =>
         $"Path is outside the folders allowed for MCP: {path}. Ask the user to add a folder in Commander4K (MCP settings → allowed folders).";
@@ -160,7 +169,10 @@ public sealed class McpToolDispatcher(
 
         var current = settings();
         var roots = current.AllowedRoots;
-        IReadOnlyList<string>? protectedList = definition.Writes ? protectedRoots() : null;
+        // Protected folders are off limits for everything but names (list_directory, stat); writing and recursive
+        // tools are also refused on a folder that contains one (move/delete/read the whole tree).
+        IReadOnlyList<string>? protectedList = definition.NamesOnly ? null : protectedRoots();
+        var orAbove = definition.Writes || definition.ReadsTree;
         foreach (var argument in names)
         {
             // An absent argument is fine (tools may take one of several); handlers never default it (see PathArguments).
@@ -177,7 +189,7 @@ public sealed class McpToolDispatcher(
             switch (node)
             {
                 case JsonValue value when value.TryGetValue<string>(out var text):
-                    if (CheckPath(text, roots, protectedList, paths) is { } refusal)
+                    if (CheckPath(text, roots, protectedList, orAbove, paths) is { } refusal)
                     {
                         return refusal;
                     }
@@ -193,7 +205,7 @@ public sealed class McpToolDispatcher(
                             return $"Argument '{argument}' must be a list of paths.";
                         }
 
-                        if (CheckPath(entry, roots, protectedList, paths) is { } arrayRefusal)
+                        if (CheckPath(entry, roots, protectedList, orAbove, paths) is { } arrayRefusal)
                         {
                             return arrayRefusal;
                         }
@@ -213,7 +225,7 @@ public sealed class McpToolDispatcher(
 
     private static string Normalized(string path) => McpPathPolicy.Normalize(path);
 
-    private static string? CheckPath(string path, IReadOnlyList<string> roots, IReadOnlyList<string>? protectedList, List<string> paths)
+    private static string? CheckPath(string path, IReadOnlyList<string> roots, IReadOnlyList<string>? protectedList, bool orAbove, List<string> paths)
     {
         paths.Add(Normalized(path));
         if (!McpPathPolicy.IsAllowed(path, roots))
@@ -221,9 +233,7 @@ public sealed class McpToolDispatcher(
             return OutsideRootsMessage(path);
         }
 
-        // Writing into a protected folder, or into a folder above one (move/delete), would change it.
-        if (protectedList is not null
-            && protectedList.Any(p => McpPathPolicy.IsInside(path, p) || McpPathPolicy.IsInside(p, path)))
+        if (protectedList is not null && McpPathPolicy.IsProtected(path, protectedList, orAbove))
         {
             return ProtectedMessage;
         }

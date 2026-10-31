@@ -23,7 +23,8 @@ public static class McpPluginTools
                 + "Give exactly one of: files (array of {path, content}) or folder (local plugin folder on disk).",
                 FilesOrFolderSchema(),
                 McpToolMode.Allow,
-                PathArguments: ["folder"]),
+                PathArguments: ["folder"],
+                ReadsTree: true),
             (call, ct) => Task.Run(() => Check(call, sdkClient, pluginsRoot, ct), ct),
             args => "check_plugin " + (args["folder"]?.ToString() ?? "(files)")),
         new McpTool(

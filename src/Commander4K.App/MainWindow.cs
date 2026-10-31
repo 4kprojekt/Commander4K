@@ -538,14 +538,14 @@ public sealed class MainWindow : Window, IShell
     /// so this works without a running server.
     /// </summary>
     internal IReadOnlyList<McpToolDefinition> McpToolDefinitions() =>
-        [.. McpTools(() => _host!.Settings.Mcp.AllowedRoots).Select(t => t.Definition)];
+        [.. McpTools(() => _host!.Settings.Mcp.AllowedRoots, () => McpHost.ProtectedRootsOf(_host!)).Select(t => t.Definition)];
 
     /// <summary>The tools the MCP server runs (<see cref="McpHost"/>); the settings list the same set.</summary>
-    internal IReadOnlyList<McpTool> McpTools(Func<IReadOnlyList<string>> allowedRoots) =>
+    internal IReadOnlyList<McpTool> McpTools(Func<IReadOnlyList<string>> allowedRoots, Func<IReadOnlyList<string>> protectedRoots) =>
     [
         .. McpFileTools.Create(_host!.Router),
         .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit),
-        .. McpAppTools.Create(this, _host, AiContext, allowedRoots),
+        .. McpAppTools.Create(this, _host, AiContext, allowedRoots, protectedRoots),
     ];
 
     private async Task ApplyMcpAsync()

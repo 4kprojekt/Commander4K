@@ -35,21 +35,12 @@ public sealed class McpHost : IAsyncDisposable
         _host = host;
         _window = window;
         _snapshot = Snapshot(host.Settings.Mcp);
+        _protectedRoots = ProtectedRootsOf(host);
         IReadOnlyList<string> AllowedRoots() => _snapshot.AllowedRoots;
-        var tools = window.McpTools(AllowedRoots);
-        _prompts = McpPrompts.Create(host, AllowedRoots);
-
-        // Writing tools never touch the plugin folders (install_plugin is the way in), the configuration (approvals,
-        // credentials, keymap) or the data folder (audit logs, plugin storage, the browser profile with its sign-ins).
-        _protectedRoots =
-        [
-            .. host.PluginRoots
-                .Append(host.Config.ConfigDirectory)
-                .Append(Path.Combine(host.DataDirectory, "data"))
-                .Select(Path.GetFullPath)
-                .Distinct(StringComparer.OrdinalIgnoreCase),
-        ];
-        _dispatcher = new McpToolDispatcher(tools, () => _snapshot, () => _protectedRoots, ConfirmAsync, host.Audit);
+        IReadOnlyList<string> ProtectedRoots() => _protectedRoots;
+        var tools = window.McpTools(AllowedRoots, ProtectedRoots);
+        _prompts = McpPrompts.Create(host, AllowedRoots, ProtectedRoots);
+        _dispatcher = new McpToolDispatcher(tools, () => _snapshot, ProtectedRoots, ConfirmAsync, host.Audit);
         _dispatcher.Called += () => Dispatcher.UIThread.Post(RaiseChanged);
     }
 
@@ -66,6 +57,20 @@ public sealed class McpHost : IAsyncDisposable
     public IReadOnlyList<McpCallRecord> Recent => _dispatcher.Recent;
 
     public IReadOnlyList<string> ProtectedRoots => _protectedRoots;
+
+    /// <summary>
+    /// Folders no MCP tool may read or change (only list_directory and stat see names there): the plugin folders
+    /// (install_plugin is the way in), the configuration (approvals, credentials, the MCP token, known hosts) and the
+    /// data folder (audit logs, plugin storage, the browser profile with its sign-ins).
+    /// </summary>
+    public static IReadOnlyList<string> ProtectedRootsOf(AppHost host) =>
+    [
+        .. host.PluginRoots
+            .Append(host.Config.ConfigDirectory)
+            .Append(Path.Combine(host.DataDirectory, "data"))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase),
+    ];
 
     /// <summary>One line for the badge's tooltip, the connect window and the Claude Code dialog.</summary>
     public string StatusText()
@@ -147,17 +152,30 @@ public sealed class McpHost : IAsyncDisposable
     /// <summary>Replaces the token; requests with the old one are refused from now on.</summary>
     public async Task NewTokenAsync()
     {
-        var settings = _host.Settings.Mcp;
-        var token = McpSettings.NewToken();
-        settings.SetToken(token);
-        _snapshot = Snapshot(settings);
-        if (settings.Enabled)
+        await _gate.WaitAsync();
+        try
         {
-            _token = token;
-        }
+            if (_disposed)
+            {
+                return;
+            }
 
-        RaiseChanged();
-        await _host.SaveSettingsAsync();
+            var settings = _host.Settings.Mcp;
+            var token = McpSettings.NewToken();
+            settings.SetToken(token);
+            _snapshot = Snapshot(settings);
+            if (settings.Enabled)
+            {
+                _token = token;
+            }
+
+            RaiseChanged();
+            await _host.SaveSettingsAsync();
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     public void NewToken() => _ = SaveQuietlyAsync(NewTokenAsync());

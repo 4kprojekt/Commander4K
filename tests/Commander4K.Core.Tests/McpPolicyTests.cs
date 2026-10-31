@@ -159,14 +159,69 @@ public sealed class McpPolicyTests
 
         var result = await f.CallAsync("write_file", Args(@"C:\Repo\Plugins\x\plugin.json"));
         var parent = await f.CallAsync("write_file", Args(@"C:\Repo"));
-        var read = await f.CallAsync("read_file", Args(@"C:\Repo\plugins\x\plugin.json"));
+        var readParent = await f.CallAsync("read_file", Args(@"C:\Repo\notes.txt"));
 
         Assert.True(result.IsError);
-        Assert.Equal("Commander4K's plugin and config folders cannot be changed through MCP. Use install_plugin.", result.Text);
+        Assert.Equal(McpToolDispatcher.ProtectedMessage, result.Text);
+        Assert.Equal("Commander4K's own plugin, config and data folders cannot be accessed through MCP. Use install_plugin to install plugins.", result.Text);
         Assert.True(parent.IsError);
         Assert.Equal(0, writer.Runs);
-        Assert.False(read.IsError);
+        Assert.False(readParent.IsError);
         Assert.Equal(1, reader.Runs);
+    }
+
+    [Fact]
+    public async Task Reads_into_protected_root_are_refused_but_names_only_tools_work()
+    {
+        var f = new Fixture();
+        f.Protected.Add(@"C:\Repo\config");
+        var reader = f.Add("read_file", McpToolMode.Allow);
+        var navigate = f.Add("navigate", McpToolMode.Allow);
+        var lister = f.Add("list_directory", McpToolMode.Allow, namesOnly: true);
+        var stat = f.Add("stat", McpToolMode.Allow, namesOnly: true);
+
+        var read = await f.CallAsync("read_file", Args(@"C:\Repo\Config\ai\credentials.json"));
+        var into = await f.CallAsync("navigate", Args(@"C:\Repo\config"));
+        var above = await f.CallAsync("navigate", Args(@"C:\Repo"));
+
+        Assert.True(read.IsError);
+        Assert.Equal(McpToolDispatcher.ProtectedMessage, read.Text);
+        Assert.True(into.IsError);
+        Assert.False(above.IsError); // Reading tools may open a folder that merely contains a protected one.
+        Assert.Equal(0, reader.Runs);
+        Assert.Equal(1, navigate.Runs);
+        Assert.False((await f.CallAsync("list_directory", Args(@"C:\Repo\config"))).IsError);
+        Assert.False((await f.CallAsync("stat", Args(@"C:\Repo\config\settings.json"))).IsError);
+        Assert.Equal(1, lister.Runs);
+        Assert.Equal(1, stat.Runs);
+        Assert.Contains(f.Audit.Recent("mcp:" + Client), e => e.Outcome == AuditOutcome.Denied);
+    }
+
+    [Fact]
+    public async Task Recursive_folder_tools_refuse_a_folder_that_contains_a_protected_root()
+    {
+        var f = new Fixture();
+        f.Protected.Add(@"C:\Repo\data");
+        var check = f.Add("check_plugin", McpToolMode.Allow, readsTree: true, pathArguments: ["folder"]);
+
+        Assert.True((await f.CallAsync("check_plugin", new JsonObject { ["folder"] = @"C:\Repo" })).IsError);
+        Assert.True((await f.CallAsync("check_plugin", new JsonObject { ["folder"] = @"C:\Repo\data\plugin-data" })).IsError);
+        Assert.False((await f.CallAsync("check_plugin", new JsonObject { ["folder"] = @"C:\Repo\src\my-plugin" })).IsError);
+        Assert.Equal(1, check.Runs);
+    }
+
+    [Fact]
+    public void Refusal_helper_covers_roots_and_protected_folders()
+    {
+        string[] roots = [@"C:\Repo"];
+        string[] protectedRoots = [@"C:\Repo\plugins"];
+
+        Assert.Null(McpToolDispatcher.Refusal(@"C:\Repo\src", roots, protectedRoots));
+        Assert.Null(McpToolDispatcher.Refusal(@"C:\Repo", roots, protectedRoots));
+        Assert.Equal(McpToolDispatcher.ProtectedMessage, McpToolDispatcher.Refusal(@"C:\Repo\Plugins\x", roots, protectedRoots));
+        Assert.Equal(McpToolDispatcher.OutsideRootsMessage(@"D:\x"), McpToolDispatcher.Refusal(@"D:\x", roots, protectedRoots));
+        Assert.True(McpPathPolicy.IsProtected(@"C:\Repo", protectedRoots, orAbove: true));
+        Assert.False(McpPathPolicy.IsProtected(@"C:\Repo", protectedRoots));
     }
 
     [Fact]
@@ -541,11 +596,13 @@ public sealed class McpPolicyTests
             bool alwaysAsk = false,
             bool selfConfirming = false,
             IReadOnlyList<string>? pathArguments = null,
+            bool namesOnly = false,
+            bool readsTree = false,
             Func<JsonObject, string>? summary = null,
             Func<McpCall, CancellationToken, Task<McpToolResult>>? handler = null)
         {
             var definition = new McpToolDefinition(
-                name, "Tool " + name, new JsonObject(), mode, alwaysAsk, pathArguments ?? ["path"], writes, selfConfirming);
+                name, "Tool " + name, new JsonObject(), mode, alwaysAsk, pathArguments ?? ["path"], writes, selfConfirming, namesOnly, readsTree);
             var fake = new FakeTool { Definition = definition };
             _tools.Add(new McpTool(
                 definition,

@@ -16,6 +16,10 @@ public enum McpToolMode : byte
 /// <see cref="McpPathPolicy.IsAllowed"/> inside the handler.</param>
 /// <param name="SelfConfirming">The tool shows its own dialog (install/enable with permissions), so the dispatcher skips
 /// its confirmation but still applies block, roots and protected paths.</param>
+/// <param name="NamesOnly">The tool only reports names and metadata (list_directory, stat), so it may look into the
+/// protected folders; every other tool is refused there.</param>
+/// <param name="ReadsTree">A folder argument is read recursively (check_plugin, install_plugin), so a folder that
+/// contains a protected folder is refused too, as for writing tools.</param>
 public sealed record McpToolDefinition(
     string Name,
     string Description,
@@ -24,7 +28,9 @@ public sealed record McpToolDefinition(
     bool AlwaysAsk = false,
     IReadOnlyList<string>? PathArguments = null,
     bool Writes = false,
-    bool SelfConfirming = false);
+    bool SelfConfirming = false,
+    bool NamesOnly = false,
+    bool ReadsTree = false);
 
 public sealed record McpToolResult(string Text, bool IsError = false)
 {
