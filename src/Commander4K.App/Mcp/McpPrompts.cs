@@ -57,6 +57,31 @@ public static class McpPrompts
                 return "Identify the format of this file and explain its structure and what it is used for. " +
                     "Say how sure you are, and what else you would need to check.\n\n" + sample;
             }),
+        new McpPrompt(
+            "translate_ui",
+            "Translate the Commander4K user interface into a language (or complete an existing translation).",
+            [
+                new McpPromptArgument("language", "Language code, e.g. de, uk, pt-BR.", true),
+                new McpPromptArgument("name", "Language name in English (optional).", false),
+            ],
+            (args, _) =>
+            {
+                var language = args["language"].Trim();
+                var name = args.TryGetValue("name", out var n) && !string.IsNullOrWhiteSpace(n) ? n.Trim() : language;
+                return Task.FromResult(
+                    $"Translate the Commander4K user interface into {name} (language code \"{language}\"). " +
+                    $"Use the commander4k MCP tools: get_translation_kit (language \"{language}\", onlyMissing true) gives the rules and a page of entries; " +
+                    "translate the page, check it with check_translation, save it with save_translation, and continue with the next offset " +
+                    "until no entries are missing. Finally offer to switch the language with set_setting (key \"language\"); it needs a restart.");
+            }),
+        new McpPrompt(
+            "design_skin",
+            "Design a Commander4K colour skin from a description.",
+            [new McpPromptArgument("description", "What the skin should look like.", true)],
+            (args, _) => Task.FromResult(
+                $"Design a Commander4K skin: \"{args["description"].Trim()}\". " +
+                "Use the commander4k MCP tools: read get_skin_guide, write the skin JSON with a new id, check it with check_skin and fix every warning, " +
+                "then save_skin (the user sees it live and accepts it).")),
     ];
 
     private static async Task<string> SampleAsync(

@@ -547,7 +547,30 @@ public sealed class MainWindow : Window, IShell
         .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit,
             id => _host.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, id, StringComparison.OrdinalIgnoreCase))),
         .. McpAppTools.Create(this, _host, AiContext, allowedRoots, protectedRoots),
+        .. McpConfigTools.Create(McpConfigContext()),
+        .. McpSkinTools.Create(this, _host, () => _skins!),
     ];
+
+    /// <summary>What the configuration tools change: the same settings, key bindings and skins as the settings window.</summary>
+    private McpConfigContext McpConfigContext() => new(
+        () => _host!.SettingsCatalog,
+        _host!.Settings,
+        action => Dispatcher.UIThread.InvokeAsync(action),
+        async key =>
+        {
+            OnSettingChanged(key);
+            await _host.SaveSettingsAsync();
+        },
+        () => _host.KeyBindings,
+        async bindings =>
+        {
+            await _host.SaveKeyBindingsAsync(bindings);
+            RebuildMenu(); // The menu shows the shortcuts.
+        },
+        id => _host.ListCommands().FirstOrDefault(c => string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase))?.Description,
+        _host.Config.ConfigDirectory,
+        () => _host.Skins,
+        () => _host.Settings.Skin);
 
     private async Task ApplyMcpAsync()
     {

@@ -92,6 +92,18 @@ public sealed class McpConfirmDialog : DialogWindow<McpConsent>
         "install_plugin" => Loc.T("zainstalować wtyczkę"),
         "enable_plugin" => Loc.T("włączyć wtyczkę"),
         "reload_plugin" => Loc.T("przeładować wtyczkę"),
+        "list_settings" => Loc.T("odczytać ustawienia"),
+        "set_setting" => Loc.T("zmienić ustawienie"),
+        "list_key_bindings" => Loc.T("odczytać skróty klawiszowe"),
+        "set_key_binding" => Loc.T("zmienić skrót klawiszowy"),
+        "get_translation_kit" => Loc.T("pobrać teksty do tłumaczenia"),
+        "check_translation" => Loc.T("sprawdzić tłumaczenie"),
+        "save_translation" => Loc.T("zapisać tłumaczenie"),
+        "get_skin_guide" => Loc.T("odczytać przewodnik skórek"),
+        "list_skins" => Loc.T("wyświetlić listę skórek"),
+        "get_skin" => Loc.T("odczytać skórkę"),
+        "check_skin" => Loc.T("sprawdzić skórkę"),
+        "save_skin" => Loc.T("zapisać skórkę"),
         _ => tool,
     };
 }
