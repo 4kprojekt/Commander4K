@@ -17,12 +17,19 @@ public static partial class MailSince
         var m = Relative().Match(text);
         if (m.Success && int.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && n <= 10000)
         {
-            return char.ToLowerInvariant(m.Groups[2].Value[0]) switch
+            try
             {
-                'd' => now.AddDays(-n),
-                'm' => now.AddMonths(-n),
-                _ => now.AddYears(-n),
-            };
+                return char.ToLowerInvariant(m.Groups[2].Value[0]) switch
+                {
+                    'd' => now.AddDays(-n),
+                    'm' => now.AddMonths(-n),
+                    _ => now.AddYears(-n),
+                };
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                throw new FormatException($"'since' value out of range: {text}");
+            }
         }
 
         if (DateTimeOffset.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date))

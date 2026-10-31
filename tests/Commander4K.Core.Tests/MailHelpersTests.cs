@@ -6,8 +6,18 @@ using MimeKit;
 
 namespace Commander4K.Core.Tests;
 
+[Collection(nameof(LocalizationTests))]
 public sealed class MailHelpersTests
 {
+    [Fact]
+    public void Reserved_device_names_are_made_safe()
+    {
+        Assert.Equal("Aux_", MailFileNames.LocalFolderName("Aux", '/', MailSpecialFolder.None));
+        Assert.Equal("con.txt_", MailFileNames.LocalFolderName("con.txt", '/', MailSpecialFolder.None));
+        Assert.Equal(@"Projekty\NUL_", MailFileNames.LocalFolderName("Projekty/NUL", '/', MailSpecialFolder.None));
+        Assert.Equal("Console", MailFileNames.LocalFolderName("Console", '/', MailSpecialFolder.None));
+    }
+
     [Fact]
     public void Endpoint_picks_tls_mode_by_port()
     {
@@ -128,5 +138,6 @@ public sealed class MailHelpersTests
         Assert.Equal(new DateTimeOffset(2025, 10, 31, 0, 0, 0, TimeSpan.Zero), MailSince.Resolve("1y", now));
         Assert.Equal(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), MailSince.Resolve("2026-01-01", now));
         Assert.Throws<FormatException>(() => MailSince.Resolve("abc", now));
+        Assert.Throws<FormatException>(() => MailSince.Resolve("10000y", now));
     }
 }

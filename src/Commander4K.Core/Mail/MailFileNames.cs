@@ -57,9 +57,20 @@ public static partial class MailFileNames
         }
 
         var parts = separator == '\0' ? [serverName] : serverName.Split(separator, StringSplitOptions.RemoveEmptyEntries);
-        var leaves = parts.Select(p => Segment(p, 80)).Where(p => p.Length > 0).ToArray();
+        var leaves = parts.Select(p => AvoidReserved(Segment(p, 80))).Where(p => p.Length > 0).ToArray();
         return leaves.Length == 0 ? "_" : string.Join('\\', leaves);
     }
+
+    /// <summary>Windows device names (CON, NUL.x, COM1...) cannot be folder names; a trailing underscore makes them safe.</summary>
+    private static string AvoidReserved(string leaf)
+    {
+        var dot = leaf.IndexOf('.');
+        var stem = (dot >= 0 ? leaf[..dot] : leaf).TrimEnd(' ');
+        return Reserved().IsMatch(stem) ? leaf + "_" : leaf;
+    }
+
+    [GeneratedRegex(@"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", RegexOptions.IgnoreCase)]
+    private static partial Regex Reserved();
 
     public static MailSpecialFolder Classify(string serverName, FolderAttributes attributes)
     {
