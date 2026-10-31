@@ -66,7 +66,7 @@ public static partial class MailFileNames
     {
         var dot = leaf.IndexOf('.');
         var stem = (dot >= 0 ? leaf[..dot] : leaf).TrimEnd(' ');
-        return Reserved().IsMatch(stem) ? leaf + "_" : leaf;
+        return Reserved().IsMatch(stem) ? leaf.Insert(dot >= 0 ? dot : leaf.Length, "_") : leaf;
     }
 
     [GeneratedRegex(@"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", RegexOptions.IgnoreCase)]

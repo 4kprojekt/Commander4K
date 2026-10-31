@@ -26,9 +26,9 @@ public static partial class MailSince
                     _ => now.AddYears(-n),
                 };
             }
-            catch (ArgumentOutOfRangeException)
+            catch (ArgumentOutOfRangeException ex)
             {
-                throw new FormatException($"'since' value out of range: {text}");
+                throw new FormatException($"'since' value out of range: {text}", ex);
             }
         }
 

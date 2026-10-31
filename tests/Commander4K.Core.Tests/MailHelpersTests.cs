@@ -13,7 +13,13 @@ public sealed class MailHelpersTests
     public void Reserved_device_names_are_made_safe()
     {
         Assert.Equal("Aux_", MailFileNames.LocalFolderName("Aux", '/', MailSpecialFolder.None));
-        Assert.Equal("con.txt_", MailFileNames.LocalFolderName("con.txt", '/', MailSpecialFolder.None));
+        Assert.Equal("con_.txt", MailFileNames.LocalFolderName("con.txt", '/', MailSpecialFolder.None));
+        Assert.Equal("NUL_.x", MailFileNames.LocalFolderName("NUL.x", '/', MailSpecialFolder.None));
+        foreach (var n in new[] { "Aux", "con.txt", "NUL.x", "COM1.a.b", "lpt9" })
+        {
+            var safe = MailFileNames.LocalFolderName(n, '/', MailSpecialFolder.None);
+            Assert.DoesNotMatch(@"^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])$", safe.Split('.')[0]);
+        }
         Assert.Equal(@"Projekty\NUL_", MailFileNames.LocalFolderName("Projekty/NUL", '/', MailSpecialFolder.None));
         Assert.Equal("Console", MailFileNames.LocalFolderName("Console", '/', MailSpecialFolder.None));
     }
