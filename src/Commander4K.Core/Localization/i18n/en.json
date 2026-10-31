@@ -1200,5 +1200,10 @@
   "_// splash: settings and About": "",
   "Animacja przy starcie": "Start-up animation",
   "Przy uruchomieniu pokazuje animowany ekran startowy, dopóki aplikacja się nie wczyta (Esc lub kliknięcie go pomija). Tę samą animację można obejrzeć w „O programie”.": "Shows an animated splash screen while the app starts (Esc or a click skips it). The same animation can be watched under “About”.",
-  "Animacja startowa": "Start-up animation"
+  "Animacja startowa": "Start-up animation",
+  "_// folder sizes: unreadable subfolders, elevation": "",
+  "{0} podfolderu|{0} podfolderów|{0} podfolderów": "{0} subfolder|{0} subfolders",
+  "Rozmiar może być niedokładny: brak dostępu do {0}, nawet jako administrator.": "The size may be inaccurate: {0} could not be read, even as administrator.",
+  "Rozmiar może być niedokładny: brak uprawnień do {0}. Spróbuj uruchomić Commander4K jako administrator.": "The size may be inaccurate: no permission to read {0}. Try running Commander4K as administrator.",
+  "Commander4K {0} — Administrator": "Commander4K {0} — Administrator"
 }

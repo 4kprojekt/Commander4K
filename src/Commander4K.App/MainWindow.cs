@@ -145,7 +145,9 @@ public sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = $"Commander4K {AppVersion.Display}";
+        Title = ProcessElevation.IsAdministrator
+            ? Loc.T("Commander4K {0} — Administrator", AppVersion.Display)
+            : $"Commander4K {AppVersion.Display}";
         Width = 1360;
         Height = 860;
         MinWidth = 720;

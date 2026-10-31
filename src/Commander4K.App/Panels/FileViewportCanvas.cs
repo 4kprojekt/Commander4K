@@ -6,6 +6,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
+using Commander4K.Core.Security;
 using Commander4K.Core.Theming;
 using Commander4K.PluginSdk;
 
@@ -26,6 +27,7 @@ public sealed class FileViewportCanvas : Control
     private bool _isActive;
     private ColumnDrag? _drag;
     private string? _hoverDivider;
+    private string? _sizeTipPath;
 
     /// <summary>Keys of the built-in columns in <see cref="ColumnWidths"/>; plugin columns use <see cref="ActiveColumn.Key"/>.</summary>
     public const string SizeColumnKey = "size";
@@ -295,13 +297,52 @@ public sealed class FileViewportCanvas : Control
             return;
         }
 
-        var hover = _brushes is null ? null : DividerAt(Layout(), point)?.Key;
+        var layout = _brushes is null ? (CanvasLayout?)null : Layout();
+        var hover = layout is { } current ? DividerAt(current, point)?.Key : null;
         if (hover != _hoverDivider)
         {
             _hoverDivider = hover;
             Cursor = hover is null ? null : ResizeCursor;
             InvalidateVisual();
         }
+
+        UpdateSizeTip(layout is { } l && hover is null ? IncompleteSizeAt(l, point) : null);
+    }
+
+    /// <summary>The folder whose size cell is under <paramref name="point"/>, when its size skipped unreadable subfolders.</summary>
+    private string? IncompleteSizeAt(CanvasLayout layout, Point point)
+    {
+        if (_tab is null || _brushes is null || layout.SizeWidth <= 0 || !layout.RowsArea.Contains(point)
+            || point.X < layout.SizeX || point.X >= layout.SizeX + layout.SizeWidth)
+        {
+            return null;
+        }
+
+        var index = _tab.TopIndex + (int)((point.Y - layout.RowsArea.Y) / _brushes.RowHeight);
+        return index < _tab.Entries.Count && _tab.IncompleteSizes.ContainsKey(_tab.Entries[index].Path) ? _tab.Entries[index].Path : null;
+    }
+
+    /// <summary>The "!" before an incomplete folder size explains itself in a tooltip while the pointer is on that cell.</summary>
+    private void UpdateSizeTip(string? path)
+    {
+        if (path == _sizeTipPath)
+        {
+            return;
+        }
+
+        _sizeTipPath = path;
+        if (path is null || _tab is null || !_tab.IncompleteSizes.TryGetValue(path, out var inaccessible))
+        {
+            ToolTip.SetIsOpen(this, false);
+            ToolTip.SetTip(this, null);
+            return;
+        }
+
+        var folders = Loc.P(inaccessible, "{0} podfolderu|{0} podfolderów|{0} podfolderów");
+        ToolTip.SetTip(this, ProcessElevation.IsAdministrator
+            ? Loc.T("Rozmiar może być niedokładny: brak dostępu do {0}, nawet jako administrator.", folders)
+            : Loc.T("Rozmiar może być niedokładny: brak uprawnień do {0}. Spróbuj uruchomić Commander4K jako administrator.", folders));
+        ToolTip.SetIsOpen(this, true);
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -330,6 +371,8 @@ public sealed class FileViewportCanvas : Control
             Cursor = null;
             InvalidateVisual();
         }
+
+        UpdateSizeTip(null);
     }
 
     private void EndDrag()
@@ -372,6 +415,11 @@ public sealed class FileViewportCanvas : Control
     private void OnTabChanged()
     {
         UpdateSpinner();
+        if (_sizeTipPath is not null && _tab?.IncompleteSizes.ContainsKey(_sizeTipPath) != true)
+        {
+            UpdateSizeTip(null);
+        }
+
         if (_tab is not null && Bounds.Height > 0)
         {
             EnsureCursorVisible();
@@ -748,10 +796,20 @@ public sealed class FileViewportCanvas : Control
         }
     }
 
-    /// <summary>Size column; a folder still being sized shows the wave dots before its running total.</summary>
+    /// <summary>
+    /// Size column; a folder still being sized shows the wave dots before its running total, and a "!" when some
+    /// subfolders could not be read (the total is then too small; the tooltip says why).
+    /// </summary>
     private static void DrawSize(DrawingContext context, SkinBrushes b, CanvasLayout layout, PanelTab tab, VfsEntry entry, IBrush brush, double y)
     {
         var shown = DrawText(context, b, SizeText(tab, entry), brush, layout.SizeX, y, layout.SizeWidth, b.Typeface, TextAlignment.Right);
+        if (entry.IsContainer && tab.IncompleteSizes.ContainsKey(entry.Path))
+        {
+            var right = layout.SizeX + layout.SizeWidth - shown - (shown > 0 ? b.FontSize * 0.4 : 0);
+            shown += layout.SizeX + layout.SizeWidth - right
+                + DrawText(context, b, "!", b.Warning, layout.SizeX, y, right - layout.SizeX, b.BoldTypeface, TextAlignment.Right);
+        }
+
         if (entry.IsContainer && tab.SizesInProgress.Contains(entry.Path))
         {
             var dot = DotSize(b);

@@ -14,7 +14,7 @@ namespace Commander4K.App.Panels;
 public sealed class PanelTab
 {
     private readonly AppHost _host;
-    private readonly Dictionary<string, (long Generation, long Bytes)> _pendingSizes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (long Generation, DirectorySize Size)> _pendingSizes = new(StringComparer.OrdinalIgnoreCase);
     private bool _sizesPosted;
     private CancellationTokenSource? _listing;
     private IDisposable? _watch;
@@ -50,6 +50,9 @@ public sealed class PanelTab
     public Dictionary<string, long> DirectorySizes { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public HashSet<string> SizesInProgress { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Folders whose size skipped subfolders it could not read (usually access denied), with their count.</summary>
+    public Dictionary<string, int> IncompleteSizes { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public int Cursor { get; set; }
 
@@ -154,17 +157,19 @@ public sealed class PanelTab
         try
         {
             // Running totals stay off the UI thread; QueueSize coalesces every calculation of this tab into one post.
-            var progress = new InlineProgress<DirectorySize>(size => QueueSize(generation, entry.Path, size.Bytes));
+            var progress = new InlineProgress<DirectorySize>(size => QueueSize(generation, entry.Path, size));
             var result = await Task.Run(() => _host.DirectorySizes.CalculateAsync(entry.Path, progress, token), token);
             if (generation == _generation)
             {
                 DirectorySizes[entry.Path] = result.Bytes;
+                SetIncomplete(entry.Path, result.InaccessibleDirectories);
                 _host.Index?.SetDirectorySize(entry.Path, result.Bytes, result.Files);
             }
         }
         catch (OperationCanceledException)
         {
             DirectorySizes.Remove(entry.Path);
+            IncompleteSizes.Remove(entry.Path);
         }
         catch (Exception ex)
         {
@@ -177,11 +182,23 @@ public sealed class PanelTab
         }
     }
 
-    private void QueueSize(long generation, string path, long bytes)
+    private void SetIncomplete(string path, int inaccessible)
+    {
+        if (inaccessible > 0)
+        {
+            IncompleteSizes[path] = inaccessible;
+        }
+        else
+        {
+            IncompleteSizes.Remove(path);
+        }
+    }
+
+    private void QueueSize(long generation, string path, DirectorySize size)
     {
         lock (_pendingSizes)
         {
-            _pendingSizes[path] = (generation, bytes);
+            _pendingSizes[path] = (generation, size);
             if (_sizesPosted)
             {
                 return;
@@ -195,7 +212,7 @@ public sealed class PanelTab
 
     private void ApplyPendingSizes()
     {
-        KeyValuePair<string, (long Generation, long Bytes)>[] pending;
+        KeyValuePair<string, (long Generation, DirectorySize Size)>[] pending;
         lock (_pendingSizes)
         {
             pending = [.. _pendingSizes];
@@ -204,11 +221,12 @@ public sealed class PanelTab
         }
 
         var any = false;
-        foreach (var (path, (generation, bytes)) in pending)
+        foreach (var (path, (generation, size)) in pending)
         {
             if (generation == _generation && SizesInProgress.Contains(path))
             {
-                DirectorySizes[path] = bytes;
+                DirectorySizes[path] = size.Bytes;
+                SetIncomplete(path, size.InaccessibleDirectories);
                 any = true;
             }
         }
@@ -258,6 +276,7 @@ public sealed class PanelTab
             Entries = parent is null ? [] : [ParentRow(parent)];
             Marked.Clear();
             DirectorySizes.Clear();
+            IncompleteSizes.Clear();
             Cursor = 0;
             TopIndex = 0;
         }
