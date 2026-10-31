@@ -46,7 +46,7 @@ public static class McpPluginTools
                 },
                 McpToolMode.Allow,
                 PathArguments: ["folder"]),
-            (call, ct) => Task.Run(() => Check(call, sdkClient, pluginsRoot), ct),
+            (call, ct) => Task.Run(() => Check(call, sdkClient, pluginsRoot, ct), ct),
             args => "check_plugin " + (args["folder"]?.ToString() ?? "(files)")),
         new McpTool(
             new McpToolDefinition(
@@ -60,7 +60,7 @@ public static class McpPluginTools
             args => "get_plugin_log " + args["id"]),
     ];
 
-    private static McpToolResult Check(McpCall call, Func<string, string?> sdkClient, string pluginsRoot)
+    private static McpToolResult Check(McpCall call, Func<string, string?> sdkClient, string pluginsRoot, CancellationToken ct)
     {
         var hasFiles = call.Arguments["files"] is JsonArray;
         var folder = call.Optional("folder");
@@ -75,7 +75,15 @@ public static class McpPluginTools
             PluginLimits limits;
             if (hasFiles)
             {
-                files = ReadFiles((JsonArray)call.Arguments["files"]!);
+                try
+                {
+                    files = ReadFiles((JsonArray)call.Arguments["files"]!);
+                }
+                catch (ArgumentException ex)
+                {
+                    return McpToolResult.Error(ex.Message);
+                }
+
                 limits = PluginLimits.Answer;
             }
             else
@@ -90,7 +98,7 @@ public static class McpPluginTools
                     return McpToolResult.Error($"Folder not found: {folder}");
                 }
 
-                files = PluginAuthoring.FromFolder(folder!, PluginLimits.Folder);
+                files = PluginAuthoring.FromFolder(folder!, PluginLimits.Folder, ct);
                 limits = PluginLimits.Folder;
             }
 
@@ -105,7 +113,8 @@ public static class McpPluginTools
             var permissions = m.Permissions.Count == 0 ? "none" : string.Join(", ", m.Permissions);
             return new McpToolResult($"OK: {m.Name} ({m.Id}) {m.Version}, runtime {m.Runtime?.Type}, permissions: {permissions}, {draft.Files.Count} files");
         }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException
+            or NotSupportedException or System.Security.SecurityException)
         {
             // Validation problems are the answer of this tool, not a protocol error.
             return new McpToolResult(ex.Message);

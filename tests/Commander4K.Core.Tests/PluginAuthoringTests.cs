@@ -194,17 +194,31 @@ public sealed class PluginAuthoringTests : IDisposable
         File.WriteAllText(Path.Combine(dir, "node_modules", ".cache", "x.js"), "x");
         File.WriteAllBytes(Path.Combine(dir, "sub", "img.png"), [1, 0, 2]);
         File.WriteAllBytes(Path.Combine(dir, "sub", "weird.txt"), [65, 0, 66]);
-        var files = PluginAuthoring.FromFolder(dir, PluginLimits.Folder);
+        var files = PluginAuthoring.FromFolder(dir, PluginLimits.Folder, TestContext.Current.CancellationToken);
         Assert.Equal(3, files.Count);
         Assert.Contains(files, f => f.Path == "plugin.json" && f.Content == Manifest && f.Bytes is null);
         Assert.Contains(files, f => f.Path.Replace(Path.DirectorySeparatorChar, '/') == "sub/img.png" && f.Bytes!.SequenceEqual(new byte[] { 1, 0, 2 }));
         Assert.Contains(files, f => f.Path.EndsWith("weird.txt", StringComparison.Ordinal) && f.Bytes is not null);
-        Assert.Throws<InvalidOperationException>(() => PluginAuthoring.FromFolder(dir, new PluginLimits(2, 1024, 1024)));
+        Assert.Throws<InvalidOperationException>(() => PluginAuthoring.FromFolder(dir, new PluginLimits(2, 1024, 1024), TestContext.Current.CancellationToken));
     }
 
     [Fact]
     public void Source_check_ignores_binary_files()
     {
         Assert.Empty(PluginSourceCheck.Scan([new GeneratedFile("x.py", string.Empty, [1, 2, 3])]));
+    }
+
+    [Fact]
+    public void FromFolder_keeps_odd_encoded_code_as_text_so_the_lint_sees_it()
+    {
+        var dir = Path.Combine(_root, "enc-plugin");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "a.ps1"), [.. System.Text.Encoding.Unicode.GetPreamble(), .. System.Text.Encoding.Unicode.GetBytes("Get-Content x\n")]);
+        File.WriteAllBytes(Path.Combine(dir, "b.py"), [.. System.Text.Encoding.Latin1.GetBytes("# café\nx = open('a')\n")]);
+        var files = PluginAuthoring.FromFolder(dir, PluginLimits.Folder, TestContext.Current.CancellationToken);
+        Assert.All(files, f => Assert.Null(f.Bytes));
+        var findings = PluginSourceCheck.Scan(files);
+        Assert.Contains(findings, f => f.File == "a.ps1");
+        Assert.Contains(findings, f => f.File == "b.py");
     }
 }

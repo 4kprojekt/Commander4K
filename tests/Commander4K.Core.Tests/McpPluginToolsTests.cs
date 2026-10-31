@@ -73,4 +73,11 @@ public sealed class McpPluginToolsTests
         Assert.DoesNotContain("line 2", result.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("other", result.Text, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task Check_plugin_malformed_files_is_an_error()
+    {
+        var args = new JsonObject { ["files"] = new JsonArray(new JsonObject { ["path"] = "x" }) };
+        Assert.True((await Call("check_plugin", args)).IsError);
+    }
 }

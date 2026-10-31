@@ -244,7 +244,7 @@ public static partial class PluginAuthoring
     /// bytes. Skips <c>.git</c>, <c>__pycache__</c>, <c>node_modules/.cache</c> and links. Blocking; throws
     /// <see cref="InvalidOperationException"/> when a limit is exceeded.
     /// </summary>
-    public static IReadOnlyList<GeneratedFile> FromFolder(string folder, PluginLimits limits)
+    public static IReadOnlyList<GeneratedFile> FromFolder(string folder, PluginLimits limits, CancellationToken ct = default)
     {
         var result = new List<GeneratedFile>();
         long total = 0;
@@ -256,6 +256,7 @@ public static partial class PluginAuthoring
             var dir = pending.Pop();
             foreach (var entry in new DirectoryInfo(dir).EnumerateFileSystemInfos())
             {
+                ct.ThrowIfCancellationRequested();
                 if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint))
                 {
                     continue;
@@ -264,7 +265,7 @@ public static partial class PluginAuthoring
                 if (entry is DirectoryInfo sub)
                 {
                     var rel = Path.GetRelativePath(folder, sub.FullName).Replace('\\', '/');
-                    if (sub.Name is ".git" or "__pycache__"
+                    if (sub.Name.Equals(".git", StringComparison.OrdinalIgnoreCase) || sub.Name == "__pycache__"
                         || rel.Equals("node_modules/.cache", StringComparison.OrdinalIgnoreCase)
                         || rel.EndsWith("/node_modules/.cache", StringComparison.OrdinalIgnoreCase))
                     {
@@ -272,6 +273,11 @@ public static partial class PluginAuthoring
                     }
 
                     pending.Push(sub.FullName);
+                    continue;
+                }
+
+                if (entry.Name.Equals(".git", StringComparison.OrdinalIgnoreCase))
+                {
                     continue;
                 }
 
@@ -294,7 +300,12 @@ public static partial class PluginAuthoring
                 }
 
                 var bytes = File.ReadAllBytes(info.FullName);
-                if (TextExtensions.Contains(info.Extension) && Array.IndexOf(bytes, (byte)0) < 0 && TryDecode(strict, bytes) is { } text)
+                if (LintedExtensions.Contains(info.Extension))
+                {
+                    // Code the lint must see: never binary, whatever its encoding.
+                    result.Add(new GeneratedFile(relative, DecodeLeniently(bytes)));
+                }
+                else if (TextExtensions.Contains(info.Extension) && Array.IndexOf(bytes, (byte)0) < 0 && TryDecode(strict, bytes) is { } text)
                 {
                     result.Add(new GeneratedFile(relative, text));
                 }
@@ -307,6 +318,20 @@ public static partial class PluginAuthoring
 
         return result;
     }
+
+    private static readonly HashSet<string> LintedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".py", ".js", ".mjs", ".cjs", ".ts", ".ps1", ".psm1",
+    };
+
+    /// <summary>Honours a UTF-8 / UTF-16 BOM, otherwise UTF-8 with replacement characters.</summary>
+    private static string DecodeLeniently(byte[] b) => b switch
+    {
+        [0xEF, 0xBB, 0xBF, ..] => Encoding.UTF8.GetString(b, 3, b.Length - 3),
+        [0xFF, 0xFE, ..] => Encoding.Unicode.GetString(b, 2, b.Length - 2),
+        [0xFE, 0xFF, ..] => Encoding.BigEndianUnicode.GetString(b, 2, b.Length - 2),
+        _ => Encoding.UTF8.GetString(b),
+    };
 
     private static string? TryDecode(UTF8Encoding strict, byte[] bytes)
     {
