@@ -10,7 +10,8 @@ public sealed class McpPluginToolsTests
     private readonly IReadOnlyList<McpTool> _tools;
 
     public McpPluginToolsTests() =>
-        _tools = McpPluginTools.Create(_ => null, Path.Combine(Path.GetTempPath(), "c4k-none-" + Guid.NewGuid().ToString("N")), _audit);
+        _tools = McpPluginTools.Create(_ => null, Path.Combine(Path.GetTempPath(), "c4k-none-" + Guid.NewGuid().ToString("N")), _audit,
+            id => id is "p.one" or "p.two" or "builtin.browser" or "mcp:other");
 
     private Task<McpToolResult> Call(string name, JsonObject args) =>
         _tools.Single(t => t.Definition.Name == name).Handler(new McpCall("test", args), TestContext.Current.CancellationToken);
@@ -72,6 +73,39 @@ public sealed class McpPluginToolsTests
         Assert.Contains("line 3", result.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("line 2", result.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("other", result.Text, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("builtin.browser")]
+    [InlineData("mcp:other")]
+    [InlineData("p.missing")]
+    public async Task Get_plugin_log_refuses_built_ins_mcp_clients_and_unknown_ids(string id)
+    {
+        _audit.Record(id, "navigate", "https://secret.example/search?q=private", AuditOutcome.Allowed);
+        var result = await Call("get_plugin_log", new JsonObject { ["id"] = id });
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("secret.example", result.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Check_plugin_cancelled_returns_an_error_instead_of_throwing()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "c4k-check-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(folder, "plugin.json"), "{}", TestContext.Current.CancellationToken);
+            using var cancelled = new CancellationTokenSource();
+            await cancelled.CancelAsync();
+            var tool = _tools.Single(t => t.Definition.Name == "check_plugin");
+            var result = await tool.Handler(new McpCall("test", new JsonObject { ["folder"] = folder }), cancelled.Token);
+            Assert.True(result.IsError);
+            Assert.Contains("cancelled", result.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
     }
 
     [Fact]

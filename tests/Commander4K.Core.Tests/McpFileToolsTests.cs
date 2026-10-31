@@ -29,6 +29,33 @@ public sealed class McpFileToolsTests
     }
 
     [Fact]
+    public void Write_file_confirmation_details_show_a_truncated_preview()
+    {
+        var details = Tool("write_file").Details!;
+        Assert.Equal("hello", details(new JsonObject { ["path"] = "mfs://d/a", ["content"] = "hello" }));
+        var longText = details(new JsonObject { ["path"] = "mfs://d/a", ["content"] = new string('x', 5000) })!;
+        Assert.Equal(McpFileTools.MaxPreviewChars + 1, longText.Length);
+        Assert.EndsWith("…", longText, StringComparison.Ordinal);
+        Assert.Equal("binary, 3 bytes", details(new JsonObject { ["path"] = "mfs://d/a", ["content"] = "AAEC", ["encoding"] = "base64" }));
+        Assert.Null(Tool("read_file").Details);
+    }
+
+    [Fact]
+    public void Real_file_and_plugin_tools_carry_their_security_flags()
+    {
+        var plugins = McpPluginTools.Create(_ => null, Path.GetTempPath(), new Commander4K.Core.Plugins.AuditLog(null), _ => false);
+        var all = _tools.Concat(plugins).Select(t => t.Definition).ToDictionary(d => d.Name);
+        string[] names = ["list_directory", "stat", "read_file", "write_file", "make_directory", "move", "delete", "check_plugin", "get_plugin_log"];
+        Assert.Equal(names.Order(), all.Keys.Order());
+        Assert.Equal(["list_directory", "stat"], all.Values.Where(d => d.NamesOnly).Select(d => d.Name).Order());
+        Assert.Equal(["check_plugin"], all.Values.Where(d => d.ReadsTree).Select(d => d.Name));
+        Assert.Equal(["delete", "make_directory", "move", "write_file"], all.Values.Where(d => d.Writes).Select(d => d.Name).Order());
+        Assert.Equal(["delete", "move"], all.Values.Where(d => d.AlwaysAsk).Select(d => d.Name).Order());
+        Assert.DoesNotContain(all.Values, d => d.SelfConfirming);
+        Assert.All(all.Values.Where(d => d.Name != "get_plugin_log"), d => Assert.NotEmpty(d.PathArguments ?? []));
+    }
+
+    [Fact]
     public async Task List_directory_lists_names_kinds_sizes()
     {
         _fs.Dirs.Add("mfs://d/sub");

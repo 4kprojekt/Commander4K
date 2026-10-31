@@ -14,7 +14,9 @@ public static class McpPluginTools
     public const int DefaultLogLines = 100;
     public const int MaxLogLines = 1000;
 
-    public static IReadOnlyList<McpTool> Create(Func<string, string?> sdkClient, string pluginsRoot, AuditLog audit) =>
+    /// <param name="isExternalPlugin">True for the id of an installed external plugin. get_plugin_log answers only
+    /// for those: built-in logs (the browser's navigations and searches) and other MCP clients' calls stay private.</param>
+    public static IReadOnlyList<McpTool> Create(Func<string, string?> sdkClient, string pluginsRoot, AuditLog audit, Func<string, bool> isExternalPlugin) =>
     [
         new McpTool(
             new McpToolDefinition(
@@ -25,17 +27,19 @@ public static class McpPluginTools
                 McpToolMode.Allow,
                 PathArguments: ["folder"],
                 ReadsTree: true),
-            (call, ct) => Task.Run(() => Check(call, sdkClient, pluginsRoot, ct), ct),
+            // Check catches cancellation itself, so nothing expected leaves the Task.Run lambda (debugger rule).
+            (call, ct) => Task.Run(() => Check(call, sdkClient, pluginsRoot, ct), CancellationToken.None),
             args => "check_plugin " + (args["folder"]?.ToString() ?? "(files)")),
         new McpTool(
             new McpToolDefinition(
                 "get_plugin_log",
-                "Returns the most recent audit/log lines of a plugin (host calls, errors, and what the plugin wrote to stderr).",
+                "Returns the most recent audit/log lines of an installed external plugin (host calls, errors, and what the plugin wrote to stderr). "
+                + "Built-in plugins and other MCP clients are not available.",
                 McpSchema.Object(
                     ("id", "string", "Plugin id.", true),
                     ("count", "integer", "How many lines (default 100, 1 to 1000).", false)),
                 McpToolMode.Allow),
-            (call, _) => Task.FromResult(Log(call, audit)),
+            (call, _) => Task.FromResult(Log(call, audit, isExternalPlugin)),
             args => "get_plugin_log " + args["id"]),
     ];
 
@@ -76,6 +80,7 @@ public static class McpPluginTools
                 limits = PluginLimits.Folder;
             }
 
+            ct.ThrowIfCancellationRequested();
             var draft = PluginAuthoring.Prepare(files, pluginsRoot, sdkClient, limits);
             var findings = PluginSourceCheck.Scan(draft.Files);
             if (findings.Count > 0)
@@ -86,6 +91,10 @@ public static class McpPluginTools
             var m = draft.Manifest;
             var permissions = m.Permissions.Count == 0 ? "none" : string.Join(", ", m.Permissions);
             return new McpToolResult($"OK: {m.Name} ({m.Id}) {m.Version}, runtime {m.Runtime?.Type}, permissions: {permissions}, {draft.Files.Count} files");
+        }
+        catch (OperationCanceledException)
+        {
+            return McpToolResult.Error("The request was cancelled.");
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException
             or NotSupportedException or System.Security.SecurityException)
@@ -149,9 +158,15 @@ public static class McpPluginTools
         return files;
     }
 
-    private static McpToolResult Log(McpCall call, AuditLog audit)
+    private static McpToolResult Log(McpCall call, AuditLog audit, Func<string, bool> isExternalPlugin)
     {
         var id = call.Required("id");
+        if (id.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase) || id.StartsWith("mcp:", StringComparison.OrdinalIgnoreCase)
+            || !isExternalPlugin(id))
+        {
+            return McpToolResult.Error($"'{id}' is not an installed external plugin; only their logs are available.");
+        }
+
         var count = DefaultLogLines;
         if (call.Optional("count") is { } text)
         {

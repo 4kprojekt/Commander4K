@@ -544,7 +544,8 @@ public sealed class MainWindow : Window, IShell
     internal IReadOnlyList<McpTool> McpTools(Func<IReadOnlyList<string>> allowedRoots, Func<IReadOnlyList<string>> protectedRoots) =>
     [
         .. McpFileTools.Create(_host!.Router),
-        .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit),
+        .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit,
+            id => _host.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, id, StringComparison.OrdinalIgnoreCase))),
         .. McpAppTools.Create(this, _host, AiContext, allowedRoots, protectedRoots),
     ];
 

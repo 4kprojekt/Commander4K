@@ -285,6 +285,24 @@ public sealed class McpPolicyTests
     }
 
     [Fact]
+    public async Task Confirmation_details_reach_the_dialog_but_not_the_audit()
+    {
+        var f = new Fixture();
+        f.Add("write_file", McpToolMode.Ask, writes: true, details: a => "content: " + a["content"]);
+        f.Add("broken", McpToolMode.Ask, details: _ => throw new InvalidOperationException("boom"));
+
+        var args = Args(@"C:\Repo\a.txt");
+        args["content"] = "SECRET-BODY";
+        Assert.False((await f.CallAsync("write_file", args)).IsError);
+        Assert.False((await f.CallAsync("broken", Args(@"C:\Repo\b.txt"))).IsError);
+
+        Assert.Equal("content: SECRET-BODY", f.Asked[0].Details);
+        Assert.Null(f.Asked[1].Details); // A failing preview is left out; the call is still asked about.
+        Assert.DoesNotContain(f.Audit.Recent("mcp:" + Client), e => e.ToString().Contains("SECRET-BODY", StringComparison.Ordinal));
+        Assert.DoesNotContain(f.Dispatcher.Recent, r => r.Summary.Contains("SECRET-BODY", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task YesForSession_skips_the_next_confirmation_for_that_client_only()
     {
         var f = new Fixture { Answer = McpConsent.YesForSession };
@@ -643,7 +661,8 @@ public sealed class McpPolicyTests
             bool namesOnly = false,
             bool readsTree = false,
             Func<JsonObject, string>? summary = null,
-            Func<McpCall, CancellationToken, Task<McpToolResult>>? handler = null)
+            Func<McpCall, CancellationToken, Task<McpToolResult>>? handler = null,
+            Func<JsonObject, string?>? details = null)
         {
             var definition = new McpToolDefinition(
                 name, "Tool " + name, new JsonObject(), mode, alwaysAsk, pathArguments ?? ["path"], writes, selfConfirming, namesOnly, readsTree);
@@ -656,7 +675,8 @@ public sealed class McpPolicyTests
                     fake.LastPath = call.Optional("path");
                     return Task.FromResult(new McpToolResult("ok"));
                 }),
-                summary));
+                summary,
+                details));
             return fake;
         }
 

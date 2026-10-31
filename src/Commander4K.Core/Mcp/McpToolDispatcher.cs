@@ -5,7 +5,8 @@ using Commander4K.Core.Plugins;
 namespace Commander4K.Core.Mcp;
 
 /// <summary>What the user is asked before a tool runs.</summary>
-public sealed record McpConfirmation(string ClientName, string Tool, string Summary, bool AlwaysAsk);
+/// <param name="Details">Shown in the dialog only, never audited (<see cref="McpTool.Details"/>).</param>
+public sealed record McpConfirmation(string ClientName, string Tool, string Summary, bool AlwaysAsk, string? Details = null);
 
 public enum McpConsent : byte
 {
@@ -127,7 +128,7 @@ public sealed class McpToolDispatcher(
             bool confirmed;
             try
             {
-                confirmed = await ConfirmAsync(call.ClientName, definition, summary, ct).ConfigureAwait(false);
+                confirmed = await ConfirmAsync(call.ClientName, definition, summary, Details(tool, arguments), ct).ConfigureAwait(false);
             }
             catch
             {
@@ -241,7 +242,7 @@ public sealed class McpToolDispatcher(
         return null;
     }
 
-    private async Task<bool> ConfirmAsync(string client, McpToolDefinition definition, string summary, CancellationToken ct)
+    private async Task<bool> ConfirmAsync(string client, McpToolDefinition definition, string summary, string? details, CancellationToken ct)
     {
         var key = (client, definition.Name);
         if (!definition.AlwaysAsk && _sessionGrants.ContainsKey(key))
@@ -266,7 +267,7 @@ public sealed class McpToolDispatcher(
                 return true;
             }
 
-            var consent = await confirm(new McpConfirmation(client, definition.Name, summary, definition.AlwaysAsk), ct).ConfigureAwait(false);
+            var consent = await confirm(new McpConfirmation(client, definition.Name, summary, definition.AlwaysAsk, details), ct).ConfigureAwait(false);
             if (consent == McpConsent.YesForSession && !definition.AlwaysAsk)
             {
                 _sessionGrants[key] = true;
@@ -281,6 +282,19 @@ public sealed class McpToolDispatcher(
         finally
         {
             _confirmGate.Release();
+        }
+    }
+
+    private static string? Details(McpTool tool, JsonObject arguments)
+    {
+        try
+        {
+            return tool.Details?.Invoke(arguments);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Unvalidated input: a broken preview only leaves the extra text out of the dialog.
+            return null;
         }
     }
 

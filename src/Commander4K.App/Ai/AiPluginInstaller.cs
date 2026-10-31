@@ -87,7 +87,8 @@ public static class AiPluginInstaller
             (draft.TargetExists ? Loc.T("Wtyczka o tym id już istnieje — jej folder zostanie zastąpiony. ") : string.Empty) +
             Loc.T("Wtyczka zostanie zapisana jako wyłączona; włączysz ją w menedżerze wtyczek po sprawdzeniu uprawnień.");
         var title = forMcp ? Loc.T("Zainstalować wtyczkę od klienta MCP?") : fromCatalog ? Loc.T("Zainstalować wtyczkę z katalogu?") : Loc.T("Zainstalować wtyczkę od AI?");
-        if (!await new ConfirmDialog(brushes, title, message, draft.TargetExists ? Loc.T("Zastąp") : Loc.T("Zainstaluj")).ShowAsync(owner))
+        // An MCP request pops up unprompted: Enter must not install.
+        if (!await new ConfirmDialog(brushes, title, message, draft.TargetExists ? Loc.T("Zastąp") : Loc.T("Zainstaluj"), cancelIsDefault: forMcp).ShowAsync(owner))
         {
             return new AiInstallResult(forMcp ? "The user declined the installation." : Loc.T("Anulowano instalację wtyczki."));
         }

@@ -24,7 +24,7 @@ public sealed class McpServerTests
         var prompts = new List<McpPrompt>
         {
             new("p", "A prompt", [new McpPromptArgument("path", "Where", true)],
-                (args, _) => Task.FromResult("Look at " + args["path"])),
+                (args, _) => Task.FromResult("Look at " + args["path"] + " for " + args.ClientName)),
         };
         var server = new McpServer(tools, () => prompts, "1.2.3");
         return (server, server.CreateSession(), tools);
@@ -158,5 +158,7 @@ public sealed class McpServerTests
 
         Assert.Equal("user", (string?)reply!["result"]!["messages"]![0]!["role"]);
         Assert.Contains("C:\\x", (string?)reply["result"]!["messages"]![0]!["content"]!["text"], StringComparison.Ordinal);
+        // The prompt knows which client asked (McpPrompts audits it as mcp:<client>).
+        Assert.Contains("for unknown", (string?)reply["result"]!["messages"]![0]!["content"]!["text"], StringComparison.Ordinal);
     }
 }

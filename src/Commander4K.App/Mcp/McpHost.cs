@@ -39,7 +39,9 @@ public sealed class McpHost : IAsyncDisposable
         IReadOnlyList<string> AllowedRoots() => _snapshot.AllowedRoots;
         IReadOnlyList<string> ProtectedRoots() => _protectedRoots;
         var tools = window.McpTools(AllowedRoots, ProtectedRoots);
-        _prompts = McpPrompts.Create(host, AllowedRoots, ProtectedRoots);
+        var readFile = tools.First(t => t.Definition.Name == "read_file").Definition;
+        // Prompts that sample a file honour read_file's mode (the dispatcher exists by the time a prompt runs).
+        _prompts = McpPrompts.Create(host, AllowedRoots, ProtectedRoots, () => _dispatcher!.EffectiveMode(readFile) == McpToolMode.Block);
         _dispatcher = new McpToolDispatcher(tools, () => _snapshot, ProtectedRoots, ConfirmAsync, host.Audit);
         _dispatcher.Called += () => Dispatcher.UIThread.Post(RaiseChanged);
     }
@@ -61,11 +63,13 @@ public sealed class McpHost : IAsyncDisposable
     /// <summary>
     /// Folders no MCP tool may read or change (only list_directory and stat see names there): the plugin folders
     /// (install_plugin is the way in), the configuration (approvals, credentials, the MCP token, known hosts) and the
-    /// data folder (audit logs, plugin storage, the browser profile with its sign-ins).
+    /// data folder (audit logs, plugin storage, the browser profile with its sign-ins), and the folder of the
+    /// executable itself (a DLL written next to Commander4K.exe would be loaded on the next start).
     /// </summary>
     public static IReadOnlyList<string> ProtectedRootsOf(AppHost host) =>
     [
         .. host.PluginRoots
+            .Append(AppContext.BaseDirectory)
             .Append(host.Config.ConfigDirectory)
             .Append(Path.Combine(host.DataDirectory, "data"))
             .Select(Path.GetFullPath)

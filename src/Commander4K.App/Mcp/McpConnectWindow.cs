@@ -98,7 +98,7 @@ public sealed class McpConnectWindow : Window
             Box(_snippet),
             SmallButton(Loc.T("Kopiuj wpis"), () => _ = CopyAsync(_mcp.McpJsonSnippet())),
             Heading(Loc.T("Foldery dostępne dla AI")).Margin(0, 8, 0, 0),
-            Muted(Loc.T("Narzędzia plikowe działają tylko w tych folderach i ich podfolderach. Foldery wtyczek, config/ i data/ są chronione przed zapisem.")),
+            Muted(Loc.T("Narzędzia plikowe działają tylko w tych folderach i ich podfolderach. Do folderów wtyczek, config/, data/ i folderu programu MCP nie ma dostępu (widzi tylko nazwy plików).")),
             _roots,
             SmallButton(Loc.T("Dodaj folder z aktywnego panelu"), () => _ = AddActiveFolderAsync()),
             Heading(Loc.T("Ostatnie wywołania")).Margin(0, 8, 0, 0),

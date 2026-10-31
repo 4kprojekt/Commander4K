@@ -160,7 +160,10 @@ public static class McpAppTools
                     ("path", "string", "File or folder to preview.", true),
                     ("plugin", "string", "Preview plugin id (from list_plugins) instead of the automatic choice.", false)),
                 McpToolMode.Ask,
-                PathArguments: ["path"]),
+                PathArguments: ["path"],
+                // A folder preview reads its children (Markdown excerpts, notes overview), so an ancestor of a
+                // protected folder is refused, as for the other recursive tools.
+                ReadsTree: true),
             (call, ct) => RenderPreviewAsync(host, call, ct),
             args => "render_preview " + args["path"]),
         new McpTool(
@@ -189,7 +192,7 @@ public static class McpAppTools
         new McpTool(
             new McpToolDefinition(
                 "reload_plugin",
-                "Restarts an installed plugin's process so it picks up edited code (Commander4K restarts all external plugins together). Permissions are checked again: grown permissions need enable_plugin.",
+                "Restarts an installed plugin's process: after install_plugin replaced its code, or when it hangs (Commander4K restarts all external plugins together). Permissions are checked again: grown permissions need enable_plugin.",
                 McpSchema.Object(("id", "string", "Plugin id.", true)),
                 McpToolMode.Ask),
             (call, _) => ReloadAsync(host, call.Required("id")),
@@ -532,6 +535,11 @@ public static class McpAppTools
 
             argument = McpPathPolicy.Normalize(argument);
         }
+        else
+        {
+            // Panels that take no file never see an unchecked argument (a plugin could treat it as a path).
+            argument = null;
+        }
 
         var request = new PanelRequest(argument, call.Optional("filter"));
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -807,7 +815,7 @@ public static class McpAppTools
         var details = await PluginManagerPanel.ApprovalMessageAsync(plugin, ct).ConfigureAwait(false);
         var message = Loc.T("Klient MCP „{0}” prosi o włączenie wtyczki {1}.", call.ClientName, manifest.Id) + "\n\n" + details;
         var confirmed = await Dispatcher.UIThread.InvokeAsync(() =>
-            new ConfirmDialog(window.McpBrushes, Loc.T("Włącz wtyczkę"), message, Loc.T("Włącz")).ShowAsync(window));
+            new ConfirmDialog(window.McpBrushes, Loc.T("Włącz wtyczkę"), message, Loc.T("Włącz"), cancelIsDefault: true).ShowAsync(window));
         if (!confirmed)
         {
             return McpToolResult.Error($"The user declined enabling {manifest.Id}.");

@@ -15,6 +15,9 @@ public static class McpFileTools
     public const int MaxTextChars = 60_000;
     public const int MaxBase64Bytes = 262_144;
     public const int MaxWriteBytes = 8 * 1024 * 1024;
+
+    /// <summary>How much of write_file's text the confirmation dialog shows.</summary>
+    public const int MaxPreviewChars = 2000;
     public static readonly TimeSpan ListingTimeout = TimeSpan.FromSeconds(20);
 
     public static IReadOnlyList<McpTool> Create(VfsRouter router)
@@ -67,7 +70,8 @@ public static class McpFileTools
                     PathArguments: ["path"],
                     Writes: true),
                 (call, ct) => Guard(() => WriteAsync(router, call, ct)),
-                WriteSummary),
+                WriteSummary,
+                WritePreview),
             new McpTool(
                 new McpToolDefinition(
                     "make_directory",
@@ -115,6 +119,19 @@ public static class McpFileTools
         var base64 = string.Equals(Str(args, "encoding"), "base64", StringComparison.OrdinalIgnoreCase);
         var bytes = base64 ? (long)content.Length * 3 / 4 : Encoding.UTF8.GetByteCount(content);
         return $"write_file {Str(args, "path")} ({bytes} B)";
+    }
+
+    /// <summary>What write_file would write, for the confirmation dialog only: the start of the text, or the size of binary content.</summary>
+    private static string WritePreview(JsonObject args)
+    {
+        var content = Str(args, "content");
+        if (string.Equals(Str(args, "encoding"), "base64", StringComparison.OrdinalIgnoreCase))
+        {
+            var padding = content.EndsWith("==", StringComparison.Ordinal) ? 2 : content.EndsWith('=') ? 1 : 0;
+            return $"binary, {Math.Max(0, (long)content.Length * 3 / 4 - padding)} bytes";
+        }
+
+        return content.Length > MaxPreviewChars ? content[..MaxPreviewChars] + "…" : content;
     }
 
     /// <summary>Expected failures become tool errors; anything else is left to the dispatcher and server.</summary>

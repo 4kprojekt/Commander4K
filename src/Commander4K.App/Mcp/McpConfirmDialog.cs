@@ -36,11 +36,24 @@ public sealed class McpConfirmDialog : DialogWindow<McpConsent>
         }
 
         var row = ButtonRow([.. buttons]);
-        SetBody(
+        var body = new List<Control>
+        {
             Label(Loc.T("Klient MCP: {0} (nazwę podaje sam klient)", confirmation.ClientName)),
             Label(Loc.T("Narzędzie: {0}", confirmation.Tool)),
             new ScrollViewer().MaxHeight(260).Content(details),
-            row);
+        };
+        if (confirmation.Details is { Length: > 0 } extra)
+        {
+            // What the tool would write (write_file): shown here only, not in the audit.
+            Preview = new SelectableTextBlock().Text(extra.Length > MaxSummaryLength ? extra[..MaxSummaryLength] + "…" : extra)
+                .TextWrapping(TextWrapping.Wrap).FontFamily(brushes.MonospaceFamily);
+            body.Add(Label(Loc.T("Treść:")).Margin(0, 8, 0, 4));
+            body.Add(new Border().BorderBrush(brushes.PanelBorder).BorderThickness(1).Padding(6)
+                .Child(new ScrollViewer().MaxHeight(260).Content(Preview)));
+        }
+
+        body.Add(row);
+        SetBody([.. body]);
 
         // Focus starts on "Nie": keys typed for the panel (Space, Enter, Tab) must not land on "Tak".
         NoButton = row.Children.OfType<Button>().ElementAt(1);
@@ -49,6 +62,9 @@ public sealed class McpConfirmDialog : DialogWindow<McpConsent>
 
     /// <summary>The "Nie" button, focused when the dialog opens.</summary>
     public Button NoButton { get; }
+
+    /// <summary>The content preview (<see cref="McpConfirmation.Details"/>), or <c>null</c> when there is none.</summary>
+    public SelectableTextBlock? Preview { get; }
 
     /// <summary>The tool's name as an action ("AI chce: odczytać plik"); unknown tools keep their MCP name.</summary>
     public static string ToolName(string tool) => tool switch

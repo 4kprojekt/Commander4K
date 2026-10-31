@@ -121,10 +121,20 @@ public sealed class InputDialog : DialogWindow<string?>
 
 public sealed class ConfirmDialog : DialogWindow<bool>
 {
-    public ConfirmDialog(SkinBrushes brushes, string title, string message, string? confirmText = null) : base(title, brushes)
+    /// <param name="cancelIsDefault">For dialogs that open unprompted (an MCP client asks): Cancel is the default and
+    /// focused button, so an Enter or Space meant for the panel does not confirm.</param>
+    public ConfirmDialog(SkinBrushes brushes, string title, string message, string? confirmText = null, bool cancelIsDefault = false) : base(title, brushes)
     {
-        SetBody(Label(message), ButtonRow((confirmText ?? Loc.T("Tak"), () => Complete(true), true), (Loc.T("Anuluj"), () => Complete(false), false)));
+        var row = ButtonRow((confirmText ?? Loc.T("Tak"), () => Complete(true), !cancelIsDefault), (Loc.T("Anuluj"), () => Complete(false), cancelIsDefault));
+        SetBody(Label(message), row);
+        CancelButton = row.Children.OfType<Button>().ElementAt(1);
+        if (cancelIsDefault)
+        {
+            Opened += (sender, args) => CancelButton.Focus();
+        }
     }
+
+    public Button CancelButton { get; }
 }
 
 public sealed class MessageDialog : DialogWindow<bool>
