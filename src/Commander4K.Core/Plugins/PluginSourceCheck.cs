@@ -59,7 +59,7 @@ public static partial class PluginSourceCheck
         foreach (var file in files)
         {
             var name = Path.GetFileName(file.Path);
-            if (PluginAuthoring.SdkClients.Values.Contains(name, StringComparer.OrdinalIgnoreCase) || RulesFor(name) is not { } rules)
+            if (file.Bytes is not null || PluginAuthoring.SdkClients.Values.Contains(name, StringComparer.OrdinalIgnoreCase) || RulesFor(name) is not { } rules)
             {
                 continue;
             }
