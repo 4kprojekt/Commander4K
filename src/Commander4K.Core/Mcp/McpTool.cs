@@ -12,10 +12,14 @@ public enum McpToolMode : byte
 
 /// <param name="PathArguments">Arguments holding paths (string or string array), checked against the allowed and
 /// protected folders and normalized before the handler runs. Hard rule: handlers must never substitute a default for
-/// a declared path argument; any path a handler derives itself (active panel, selection) must be checked with
-/// <see cref="McpPathPolicy.IsAllowed"/> inside the handler.</param>
+/// a declared path argument; any path a handler derives itself (active panel, selection, a plugin argument) must be
+/// checked with <see cref="McpToolDispatcher.Refusal"/> (allowed and protected folders) inside the handler.</param>
 /// <param name="SelfConfirming">The tool shows its own dialog (install/enable with permissions), so the dispatcher skips
 /// its confirmation but still applies block, roots and protected paths.</param>
+/// <param name="NamesOnly">The tool only reports names and metadata (list_directory, stat), so it may look into the
+/// protected folders; every other tool is refused there.</param>
+/// <param name="ReadsTree">A folder argument is read recursively (check_plugin, install_plugin), so a folder that
+/// contains a protected folder is refused too, as for writing tools.</param>
 public sealed record McpToolDefinition(
     string Name,
     string Description,
@@ -24,7 +28,9 @@ public sealed record McpToolDefinition(
     bool AlwaysAsk = false,
     IReadOnlyList<string>? PathArguments = null,
     bool Writes = false,
-    bool SelfConfirming = false);
+    bool SelfConfirming = false,
+    bool NamesOnly = false,
+    bool ReadsTree = false);
 
 public sealed record McpToolResult(string Text, bool IsError = false)
 {
@@ -48,10 +54,13 @@ public sealed record McpCall(string ClientName, JsonObject Arguments)
 }
 
 /// <param name="Summary">Human line for confirmation/audit (default: name + path arguments).</param>
+/// <param name="Details">Extra text shown only in the confirmation dialog (e.g. what write_file would write), never in
+/// the audit; <c>null</c> = nothing extra.</param>
 public sealed record McpTool(
     McpToolDefinition Definition,
     Func<McpCall, CancellationToken, Task<McpToolResult>> Handler,
-    Func<JsonObject, string>? Summary = null);
+    Func<JsonObject, string>? Summary = null,
+    Func<JsonObject, string?>? Details = null);
 
 public sealed record McpPromptArgument(string Name, string Description, bool Required);
 
@@ -59,7 +68,16 @@ public sealed record McpPrompt(
     string Name,
     string Description,
     IReadOnlyList<McpPromptArgument> Arguments,
-    Func<IReadOnlyDictionary<string, string>, CancellationToken, Task<string>> Render);
+    Func<McpPromptCall, CancellationToken, Task<string>> Render);
+
+/// <summary>One <c>prompts/get</c>: the client that asked (for the audit) and the argument values.</summary>
+public sealed record McpPromptCall(string ClientName, IReadOnlyDictionary<string, string> Arguments)
+{
+    public string this[string name] => Arguments[name];
+
+    public bool TryGetValue(string name, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out string value) =>
+        Arguments.TryGetValue(name, out value);
+}
 
 public static class McpSchema
 {

@@ -51,6 +51,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private bool _escapeArmed;
     private string _savedText = string.Empty;
     private TextBox? _editor;
+    private WebPreviewView? _web;
+    private WebPreview? _webShown;
     private ScrollViewer? _livePreview;
     private DispatcherTimer? _liveDelay;
 
@@ -126,6 +128,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     /// <summary>Asks the user to trust a <c>c4k.dir</c> whose cards sign in or change something (POST, SSH); locked when null.</summary>
     public Func<FolderConfig, Task<bool>>? AskFolderTrust { get; init; }
+    /// <summary>App shortcuts pressed inside a web preview page (Avalonia never sees those keys); Esc closes the preview first.</summary>
+    public Func<Core.Input.KeyStroke, bool>? RunShortcut { get; init; }
 
     public string Title => _pinned is { } pinned ? pinned.Config.Title ?? pinned.Folder.Name : Loc.T("Podgląd");
 
@@ -272,6 +276,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _loading?.Cancel();
         _debounce?.Cancel();
         StopDashboard();
+        DisposeWeb();
         if (_pinned is not null)
         {
             return ValueTask.CompletedTask;
@@ -554,8 +559,14 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _saveButton.IsVisible = _editing;
         SetStatus(_plugin is null ? string.Empty : $"{_plugin.DisplayName} · {_entry?.Path}");
 
+        if (content is not WebPreview)
+        {
+            DisposeWeb(); // Another kind of preview: the page and its WebView2 go away.
+        }
+
         Control? view = content switch
         {
+            WebPreview web => WebView(web),
             MarkdownPreview markdown when _editing => MarkdownEditor(markdown.Markdown),
             MarkdownPreview markdown => Scroll(MarkdownRenderer.Render(markdown.Markdown, _brushes)),
             TextPreview text => TextView(text),
@@ -584,6 +595,61 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
         _content.Content = view;
     }
+
+    /// <summary>
+    /// One <see cref="WebPreviewView"/> serves consecutive web previews (the same page gets an "entry" event instead of
+    /// a reload); re-showing the same content (a skin change) only repaints it.
+    /// </summary>
+    private Control WebView(WebPreview web)
+    {
+        if (!WebPreviewView.IsSupported)
+        {
+            return MessageText(WebPreviewView.UnavailableMessage);
+        }
+
+        if (_entry is not { } entry || _plugin is not ExternalPreviewPlugin plugin)
+        {
+            return MessageText(Loc.T("Strony podglądu pokazują tylko wtyczki zewnętrzne."));
+        }
+
+        if (_web is null)
+        {
+            _web = new WebPreviewView(_app, _brushes, RunWebShortcut);
+        }
+        else
+        {
+            _web.ApplySkin(_brushes);
+        }
+
+        if (!ReferenceEquals(_webShown, web))
+        {
+            _webShown = web;
+            _ = _web.ShowAsync(web, entry, plugin, _app.HostFor(plugin.Manifest));
+        }
+
+        return _web;
+    }
+
+    private bool RunWebShortcut(Core.Input.KeyStroke stroke)
+    {
+        if (stroke.Key == "ESCAPE" && stroke.Modifiers == Core.Input.KeyModifiers.None)
+        {
+            CloseRequested?.Invoke();
+            return true;
+        }
+
+        return RunShortcut?.Invoke(stroke) ?? false;
+    }
+
+    private void DisposeWeb()
+    {
+        _web?.Dispose();
+        _web = null;
+        _webShown = null;
+    }
+
+    private TextBlock MessageText(string text) =>
+        new() { Text = text, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap };
 
     private Border UnknownFileBanner(VfsEntry file)
     {

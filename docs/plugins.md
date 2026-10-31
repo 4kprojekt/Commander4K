@@ -144,8 +144,9 @@ Ask for the fewest permissions that do the job.
 | `panel.load` | `{ panel, argument, filter, context, options }` | `{ columns: [{ id, header, align?: "left"\|"right"\|"center", width? }], rows: [{ id, parentId?, cells: [string], severity?: "normal"\|"muted"\|"highlight"\|"warning"\|"error", sortKeys?: [number\|null], expanded? }], status? }` |
 | `panel.details` | `{ panel, rowId }` | `{ sections: [{ title, items: [[key, value]] }] }` or `null` |
 | `panel.action` | `{ panel, action, rowIds, context }` | `{ text?: string }`. Text is shown in a viewer, and the panel reloads afterwards. |
-| `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }`. A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). A preview may also return `{ kind: "chart", title, description?, chart }` (see `preview.card` for `chart`). |
+| `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }` or `{ kind: "web", page, state? }` (an HTML page from the preview's `webRoot`, see "Web previews"). A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). A preview may also return `{ kind: "chart", title, description?, chart }` (see `preview.card` for `chart`). |
 | `preview.card` | `{ preview, entry: { … } \| null, context, options, previous }` | Only for previews with `"card": true` in `contributes.previews`. The small form shown on a `c4k.dir` dashboard: `{ title?, subtitle?, icon?, status?: "ok"\|"warning"\|"error", items: [...], actions: [{ label, target }] }`. Items: `{ kind: "value", label, value, status? }`, `{ kind: "progress", label, fraction (0–1), text? }`, `{ kind: "text", text }`, `{ kind: "thumbnails", images: [path] }` (at most 4, read with your `fs.read`), `{ kind: "chart", chart: { kind: "line"\|"bar", unit?, min?, max?, series: [{ name, points: [{ x, y, label? }] }] } }`. `previous` is the card you returned last time (thumbnails as a count), so a card refreshed on a timer can add a point to its chart; keep at most 120 points. An action `target` is a path, a URL, or `c4k:refresh` (read the card again). Previews without `"card": true` get a plain card with their title and an Open button. |
+| `preview.message` | `{ preview, entry, method, params, context }` | Any JSON value. A web preview page called `c4k.request(method, params)`; answer it here (30 s limit). See "Web previews". |
 | `palette.items` | `{ palette, context }` | Legacy: the app no longer shows palettes, so it never sends the `palette.*` requests; `contributes.palettes` is still accepted but ignored. `{ items: [{ id, title, icon?, tooltip? }] }`. Asked again after every navigation and after every `palette.action`, so items may depend on `context.activePath`. |
 | `palette.invoke` | `{ palette, item, context }` | Same as `command.execute`. The user clicked an item. |
 | `palette.action` | `{ palette, action, item, context }` | Same as `command.execute`. `item` is `null` for header buttons and the clicked item for `forItem` actions (context menu). |
@@ -239,6 +240,7 @@ Every helper maps to one protocol method above:
 | `ui.openUrl` | `open_url(url)` | `openUrl(url)` | `Open-C4KUrl $Url` |
 | `ui.search` | `search(query, engine=None)` | `search(query, engine)` | `Search-C4KWeb $Query $Engine` |
 | `ui.copyText` | `copy_text(text)` | `copyText(text)` | `Copy-C4KText $Text` |
+| — (result of `preview.render`) | `web_preview(page, state=None)` | `webPreview(page, state)` | `New-C4KWebPreview $Page [$State]` |
 | `storage.get` / `.set` | `storage_get(key, default)` / `storage_set(key, value)` | `storageGet(key, fallback)` / `storageSet(key, value)` | `Get-C4KStorage $Key $Default` / `Set-C4KStorage $Key $Value` |
 | `fs.list` | `list_dir(path)` | `listDir(path)` | `Get-C4KChildItem $Path` |
 | `fs.stat` | `stat(path)` | `stat(path)` | `Get-C4KItem $Path` |
@@ -274,6 +276,33 @@ c4k.serve()
 
 Its `plugin.json` declares `"permissions": ["fs.read"]` and `"contributes": { "previews": [ { "id": "ini", "title": "INI", "extensions": [".ini"], "priority": 60 } ] }`.
 
+## Web previews
+
+A preview can show an HTML/JS page in WebView2 instead of text: viewers, charts, editors. Declare the folder with the page in the preview contribution and return `kind: "web"` from `preview.render`:
+
+```json
+"previews": [ { "id": "viewer", "title": "Viewer", "extensions": [".pdf"], "webRoot": "web" } ]
+```
+
+```json
+{ "kind": "web", "page": "index.html", "state": { "zoom": "page-width" } }
+```
+
+- `webRoot` is required for `kind: "web"`: a relative folder inside the plugin (no `..`, no drive letters). The plugin is refused if the folder does not exist; a `web` result from a preview without `webRoot` shows an error message.
+- `page` is a path inside `webRoot` (`/` separators). A page that is missing, rooted or leaves `webRoot` shows an error message. `state` is any JSON value, handed to the page as `c4k.state`.
+- The page is served from `https://<label>.plugin.c4k/`, one origin per plugin id: an id made only of `a-z`, `0-9` and single inner hyphens (at most 63 characters) is the label itself; any other id becomes a readable part (lower case, other characters as `-`, shortened), `--` and the first 16 hex digits of the SHA-256 of the exact id (`examples.pdf-viewer` → `examples-pdf-viewer--<hash>`). Read `location.host` rather than building it. Only files under `webRoot`, with a Content Security Policy that allows that origin plus `data:` and `blob:` (inline scripts and `eval` are allowed, `object`, `form` submissions and other origins are not). It cannot read the rest of the plugin folder or the disk, and it has its own WebView2 profile, without the browser panel's cookies or sign-ins. Service workers cannot be registered (their script requests get 403).
+- Nothing leaves the machine: requests to any other host get 403, and the profile's network goes to a proxy that does not exist, so WebSockets and WebRTC fail too. A top-level navigation to another address is cancelled and the preview stays. Only an http(s) link the user clicks (a plain link, `target="_blank"`, or `window.open` called from the click) opens in the app's browser panel (at most once a second); navigations a script starts on its own (`location.href = …`, `window.open` from a timer) open nothing. Frames may show only the page's own files, `about:` and `blob:`. Downloads are cancelled, permission prompts (camera, location, notifications…) are denied, and other URI schemes (`mailto:` …) do not launch.
+- The page reads the file being previewed from `c4k.fileUrl`, `https://<host>/__entry/<token>/<name>`. The token is new for every file shown; an old token gets 404. `GET` and `HEAD` are supported, with a single `Range: bytes=a-b`, `a-` or `-n`: 206 with `Content-Range`, 416 when the range starts beyond the end, 200 with the whole file without a header or with one the app does not understand (several ranges, other units). Responses about the file (200, 206, 416) carry `Accept-Ranges: bytes`; `Content-Type` follows the file extension (`application/octet-stream` when unknown). The app reads the file with the plugin's `fs.read` permission, audited: without the permission every request gets 403. A file that is not seekable (inside an archive, on some remote servers) is first copied to a temporary file. Opened on its own (in a frame or as the page), the file is sandboxed content without scripts.
+- `c4k.request(method, params)` reaches the plugin as the request `preview.message` with `{ preview, entry, method, params, context }`; the handler's return value resolves the page's promise, an error rejects it. Register it like any handler (`@c4k.handler("preview.message")`). The SDK helper `web_preview(page, state)` / `webPreview(page, state)` / `New-C4KWebPreview` builds the `preview.render` result.
+- Files in `webRoot` are page code, not plugin code: `PluginSourceCheck` does not lint them. They have no SDK; the page talks to the app only through the `window.c4k` bridge.
+
+The `window.c4k` bridge exists in the top frame before the page's own scripts run:
+- `c4k.entry` = `{ name, path, kind, size, modified }` (like `entry` in the protocol, without `hidden`), `c4k.fileUrl`, `c4k.state` (the `state` from `preview.render`, or `null`) and `c4k.skin` = `{ background, foreground, accent, muted, selection, border, fontFamily, fontSize }` (colours as `#rrggbb`, the size in pixels).
+- `c4k.on(event, fn)` returns a function that unsubscribes. `"entry"`: the cursor moved to another file that the same page of the same plugin shows; the page is not reloaded, `fn({ entry, fileUrl, state })` is called and the `c4k` fields are already updated (another page or plugin navigates instead). `"skin"`: `fn(skin)` after the user changed the skin.
+- `c4k.request(method, params)` returns a promise: the plugin's `preview.message` handler gets `{ preview, entry, method, params, context }`, its result resolves the promise and its error rejects it (with an `Error` carrying the message). A request still running when the cursor moves to another file never settles. At most 16 requests per file may be unanswered at once; more are rejected with `too many requests`.
+- `c4k.notify(text, error = false)` shows a message in the status area; `c4k.copyText(text)` puts text on the clipboard. Together they are limited to 5 calls a second per file; extra calls are dropped silently.
+- Keys: F1–F12 (with any modifiers), Esc, Tab, Ctrl+Q, Alt combinations without Ctrl and Ctrl+Shift combinations without Alt are offered to the application first: when the app has a command for the key it runs it (Esc closes the preview, Ctrl+Q toggles it) and the page never sees the key; otherwise the page gets it. Ctrl+Alt+<character key> always goes to the page, because Ctrl+Alt is AltGr on many keyboards (Polish ą, ł…). Every other key stays in the page. If the page receives Esc and does not call `preventDefault()`, the preview closes. The page has the default context menu (copy) and Ctrl+wheel zoom.
+
 ## Examples
 
 These are in [`examples/plugins`](../examples/plugins), and the app embeds them as templates:
@@ -283,6 +312,12 @@ These are in [`examples/plugins`](../examples/plugins), and the app embeds them 
 - **`git-powershell`** (`shell.run`): `git status`, and a commit history panel. `git` runs through the app, so each command line is audited.
 - **`project-modules-python`** (`fs.read`): a dedicated quick view for chosen files. It shows the dependencies of `package.json`, `*.csproj`, `pyproject.toml`, `requirements*.txt`, `go.mod`, `Cargo.toml` and `composer.json`, and the modules of an HTTP API from OpenAPI/Swagger files (endpoints grouped by tag, plus data models). It shows file names and patterns in `extensions`.
 - `site-check-node` keeps its site list in the plugin's storage (`storageGet`/`storageSet`), not in a file.
+
+[`pdf-viewer-node`](../examples/plugins/pdf-viewer-node) (`fs.read`) is the web preview example. It is not embedded as a template (PDF.js is ~6 MB) and is not in the catalog; copy the folder into `plugins/`. `main.js` only returns `webPreview("index.html", { zoom })` and stores the zoom that the page sends with `c4k.request("saveZoom", { zoom })`. The page (`web/`) runs PDF.js 5 (`PDFViewer`, `PDFFindController`) under the page CSP:
+- ES modules and the worker load from the page's own origin (`GlobalWorkerOptions.workerSrc`, `cMapUrl`, `standardFontDataUrl`, `wasmUrl` as absolute URLs built from `import.meta.url`, since PDF.js does not resolve relative ones).
+- `getDocument({ url: c4k.fileUrl, rangeChunkSize: 65536, disableAutoFetch: true })` reads the file in ranges; on `c4k.on("entry")` the page destroys the old loading task and opens the new file without a reload.
+- Colours come from `c4k.skin` as CSS variables and follow `c4k.on("skin")`. `Ctrl+F` stays in the page and focuses the search box.
+- Printing renders every page at 150 dpi into a container that only `@media print` shows, calls `window.print()` and empties it on `afterprint`.
 
 When the quick view cannot recognise a file (only hex is left), it offers to ask an AI what the format is. It can then have an AI write a preview plugin for that type, from a sample of the file.
 
@@ -362,7 +397,7 @@ To add a plugin, put its folder in `plugins-catalog/` (official) or `examples/pl
 Commander4K helps with this (*Konfiguracja ▸ Napisz wtyczkę z AI*):
 
 - **In-app AI chat** ("🧩 Napisz wtyczkę"): the model gets this guide, an example in a runtime you have installed and the app's current state. It can also call `get_context`, `list_directory`, `read_text_file` (only with your consent) and `get_plugin_guide`. An answer containing a plugin gets a "🧩 Zainstaluj wtyczkę" button.
-- **Claude Code over MCP:** Claude Code connected to Commander4K can write the plugin itself with the MCP tools `get_plugin_guide`, `check_plugin` and `install_plugin`. Without a signed-in provider, "Napisz wtyczkę z AI" copies the request for Claude Code.
+- **Claude Code over MCP:** Claude Code connected to Commander4K can write the plugin itself with the MCP tools `get_plugin_guide`, `check_plugin` and `install_plugin`. Without a signed-in provider, "Napisz wtyczkę z AI" copies the request for Claude Code. See [Writing plugins with Claude Code over MCP](#writing-plugins-with-claude-code-over-mcp).
 
 Either way the installer checks the paths and the manifest, shows the permissions before writing anything, and puts the plugin into `plugins/<id>` **disabled**. You enable it in the plugin manager after reviewing it. It also adds the SDK client when the answer leaves it out.
 
@@ -375,3 +410,55 @@ To do it by hand, give the assistant this file, one example plugin and a descrip
 3. keep the plugin in one folder: `plugin.json`, the entry file and the copied SDK client.
 
 Then copy the folder into `plugins/`. Open the plugin manager and check the permissions it asks for before you enable it.
+
+## Writing plugins with Claude Code over MCP
+
+Commander4K is also an MCP server (Model Context Protocol, Streamable HTTP, protocol 2025-06-18). Claude Code connected to it can look at your panels, write a plugin into a folder you chose, check it, install it and try it, while you confirm each risky step in the app.
+
+**Connect.** Open *Połącz Claude Code* (command `cm_McpConnect`, or click the MCP badge in the status bar), switch the server on and add at least one allowed folder. The window shows the command to run once in a terminal:
+
+```
+claude mcp add --transport http commander4k http://127.0.0.1:47800/mcp --header "Authorization: Bearer <token>"
+```
+
+It also shows the same server as a `.mcp.json` entry for a project. Use `127.0.0.1` exactly: the listener is bound to that address and HTTP.sys rejects requests whose `Host` header says `localhost`. Every request needs the bearer token. "Nowy token" replaces it, and the old token stops working at once. The server listens on loopback only and refuses browser origins other than localhost. The badge shows "AI podłączone (n)" while clients are connected, and says so when the port is in use.
+
+**Tools.** Each tool has a mode, set per tool in the settings (`Ctrl+,`, search "mcp"): allow, ask or block. The defaults are:
+
+| Tool | Default | What it does |
+|---|---|---|
+| `get_context`, `list_commands`, `list_plugins`, `get_plugin_guide` | allow | The app's state, commands, installed plugins, this guide with the schema and an example. |
+| `list_directory`, `stat` | allow | Folder listings and entry details, inside the allowed folders. |
+| `navigate`, `select`, `set_panel_mode` | allow | Drive the panels. |
+| `check_plugin`, `get_plugin_log` | allow | Validate a plugin without installing it (manifest, limits, SDK bypasses); read an installed external plugin's recent log lines (not built-ins such as the browser, and not other MCP clients' calls). |
+| `read_file`, `write_file`, `make_directory` | ask | Read and write files inside the allowed folders. |
+| `move`, `delete` | always ask | No "yes for this session" for these. |
+| `run_command`, `run_plugin_command`, `load_plugin_panel`, `render_preview`, `reload_plugin` | ask | Run app or plugin commands, open plugin panels, render a preview, restart a plugin's process. |
+| `install_plugin`, `enable_plugin` | always ask | Show the plugin's permissions in their own dialog. |
+| `list_settings`, `list_key_bindings` | allow | The settings (as in `Ctrl+,`: key, value, allowed values) and the keyboard shortcuts. |
+| `set_setting`, `set_key_binding` | ask | Change a setting (applied at once and saved) or bind keys to a command (saved to `keymap.json`). |
+| `get_translation_kit`, `check_translation` | allow | The translation rules and the texts to translate, page by page (`onlyMissing` to complete a language); check translated entries without saving. |
+| `save_translation` | ask | Merge translated entries into `config/i18n/<code>.json`. Refused for wrong placeholders or plural forms and unknown keys; `pl` is the source language. |
+| `get_skin_guide`, `list_skins`, `get_skin`, `check_skin` | allow | The skin brief, schema and current skin; the skins; one skin's JSON; schema and contrast check. |
+| `save_skin` | always ask | Shows the skin live in the window while you decide; "Zapisz skórkę" saves it to `config/skins/<id>.json` and switches to it, anything else puts the old skin back. |
+
+A blocked tool is still listed, with "(Disabled by the user in Commander4K.)" at the end of its description, and calling it returns an error. Prompts: `write_plugin`, `preview_plugin_for_file`, `explain_file_format`, `translate_ui`, `design_skin`. The two prompts about a file include its first bytes only when the file is allowed, not protected, and `read_file` is not blocked; each of them is audited as `prompt:<name>`.
+
+**Allowed folders.** File tools only work inside the folders listed in the connect window (or the setting "Foldery dostępne dla MCP"). Any VFS path can be one: a disk folder, `\\server\share`, `sftp://…`. With an empty list no file can be touched. A path outside them is refused with a message that tells the model to ask you. The same applies to folders the app tools take from the panels: `get_context` shows a panel's contents only when its folder is allowed (and not protected), `select` needs the chosen panel's folder, and `run_command`, `run_plugin_command` and `load_plugin_panel` need both panels' folders and the marked entries, inside the allowed folders and outside the protected ones. `load_plugin_panel` passes `argument` only to panels that take a file, after the same check; other panels never see it. "Dodaj folder z aktywnego panelu" accepts real folders only: disk paths, `\\server\share`, `sftp://` and `ftp://` (not This PC, `net://`, the registry or archives; type those into the setting if you really mean it).
+
+**Protected folders.** No tool can read or change the `plugins/` folders (next to the exe and in the data folder), `config/` (approvals, encrypted credentials and the MCP token, known hosts, trusted folders), `data/` (audit logs, plugin storage, the browser profile with its sign-ins) or the folder of `Commander4K.exe` itself (a DLL placed there would load on the next start), even when they sit inside an allowed folder. Only `list_directory` and `stat` work there, because they return names and sizes, not contents. `navigate`, the panel checks of the app tools and the `explain_file_format` prompt refuse them too. Writing tools (`write_file`, `make_directory`, `move`, `delete`), `render_preview` (a folder preview reads its children) and the recursive `folder` argument of `check_plugin` and `install_plugin` are also refused on a folder that contains a protected one. Paths with NTFS stream syntax (a `:` after the drive, as in `file.txt:stream` or `folder::$INDEX_ALLOCATION`) are refused by every tool, because they reach real files under a different name. The refusal reads "Commander4K's own plugin, config and data folders cannot be accessed through MCP." Plugins get into `plugins/` only through `install_plugin`.
+
+**Confirmations.** A tool in "ask" mode opens a dialog in Commander4K: "Tak", "Nie" or "Tak do końca sesji" (yes for this tool and client until the server stops or you press "Cofnij zgody z tej sesji"). Esc, Enter and closing the dialog mean "Nie"; in the install and enable dialogs of `install_plugin` and `enable_plugin`, Enter and Esc mean "Anuluj". The `write_file` dialog shows the start of the text to be written (up to 2000 characters), or "binary, N bytes" for base64; that preview is not written to the audit log. Only one dialog is shown at a time, and parallel calls wait their turn. A call that the client cancels, or that is still waiting when the server stops, closes its dialog as "Nie". A declined call returns "The user declined this action in Commander4K." The client name in the dialog and the log is what the client reported about itself; do not rely on it.
+
+**Configuration, translations and skins.** The client is the model, so these tools call no AI API: they hand out what the clipboard prompts ("Przetłumacz interfejs z AI", "Generuj skórkę z AI") contain, check the answer and save it. They take no paths: files are named only from a checked language code (`de`, `pt-BR`) or skin id (`solarized-dark`), and `config/` stays closed to the file tools. Some settings are read-only over MCP, whatever the mode and even after "Tak do końca sesji": everything under MCP (server, port, allowed folders, tool modes) and the plugin catalog, AI catalog and update addresses. `list_settings` marks them, and `set_setting` answers that they can only be changed in the settings window. External tools (`tools.json`), saved connections and AI keys are not reachable either.
+
+**Audit.** Every call is written to `data/logs/plugins-YYYYMMDD.log` as `mcp:<client>` with the tool, a summary and the outcome. The connect window lists the last 50 calls.
+
+**The plugin flow.**
+
+1. `get_plugin_guide` (optionally with `runtime` or `example`) returns this guide, the manifest schema and an example plugin.
+2. Write the files into a folder inside the allowed folders with `write_file`.
+3. `check_plugin` with `folder` (or `files`) reports manifest errors and SDK bypasses. Fix them until it is clean.
+4. `install_plugin` shows its permissions to the user and installs it into `plugins/<id>`, disabled. Code that bypasses the SDK is not installed.
+5. `enable_plugin` shows the permissions again; on "yes" the plugin starts.
+6. Try it with `run_plugin_command`, `load_plugin_panel` or `render_preview`. Read problems with `get_plugin_log`. After editing the code, call `install_plugin` again (it replaces the installed code), then `reload_plugin`; `reload_plugin` also restarts a plugin that hangs. Grown permissions need `enable_plugin` again.

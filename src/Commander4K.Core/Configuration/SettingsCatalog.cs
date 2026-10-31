@@ -47,6 +47,7 @@ public static class SettingsCatalog
     public static string Browser => Loc.T("Przeglądarka");
     public static string Language => Loc.T("Język");
     public static string Ai => Loc.T("Sztuczna inteligencja");
+    public static string Mcp => Loc.T("MCP (AI z zewnątrz)");
 
     public static IReadOnlyList<SettingDescriptor> Create(Func<IReadOnlyList<SettingChoice>> skinChoices, Func<IReadOnlyList<SettingChoice>>? languageChoices = null) =>
     [
@@ -113,6 +114,22 @@ public static class SettingsCatalog
             SettingKind.Text, s => s.AiCatalogUrl, (s, v) => s.AiCatalogUrl = NullIfEmpty(v) ?? AppSettings.DefaultAiCatalogUrl,
             ["ai", "dostawcy", "lista", "repozytorium", "modele", "providers"]),
 
+        new("mcp.enabled", Mcp, Loc.T("Serwer MCP dla Claude Code"), Loc.T("Udostępnia aplikację przez Model Context Protocol na lokalnym porcie (tylko 127.0.0.1, z tokenem), żeby Claude Code mógł przeglądać pliki, pisać wtyczki i sterować panelami. Dostęp ogranicza lista folderów poniżej, a każde narzędzie ma własny tryb: zezwalaj, pytaj albo zablokuj."),
+            SettingKind.Toggle, s => s.Mcp.Enabled, (s, v) => s.Mcp.Enabled = (bool)v!, McpKeywords),
+        new("mcp.port", Mcp, Loc.T("Port serwera MCP"), Loc.T("Port na 127.0.0.1 (1024–65535). Po zmianie podłącz Claude Code ponownie."),
+            SettingKind.Text, s => s.Mcp.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            (s, v) =>
+            {
+                if (v is string text && int.TryParse(text.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var port) && port is >= 1024 and <= 65535)
+                {
+                    s.Mcp.Port = port;
+                }
+            }, McpKeywords),
+        new("mcp.roots", Mcp, Loc.T("Foldery dostępne dla MCP"), Loc.T("Foldery (dowolna ścieżka: dysk, udział sieciowy, sftp://…), do których AI może zaglądać i w których może pisać; kilka oddziel średnikiem. Pusta lista: żaden."),
+            SettingKind.Text, s => string.Join(';', s.Mcp.AllowedRoots),
+            (s, v) => s.Mcp.AllowedRoots = [.. (v as string ?? string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal)],
+            McpKeywords),
+
         new("checkForUpdates", Updates, Loc.T("Sprawdzaj aktualizacje automatycznie"), Loc.T("Raz na dobę sprawdza wydania na GitHubie i informuje o nowej wersji."),
             SettingKind.Toggle, s => s.CheckForUpdates, (s, v) => s.CheckForUpdates = (bool)v!, ["update", "wersja", "nowa"]),
         new("includePrereleases", Updates, Loc.T("Wersje testowe (pre-release)"), Loc.T("Proponuje także wydania oznaczone jako testowe."),
@@ -171,6 +188,8 @@ public static class SettingsCatalog
 
         return builder.ToString();
     }
+
+    private static readonly string[] McpKeywords = ["mcp", "claude", "claude code", "ai", "serwer", "port", "foldery", "dostęp"];
 
     private static string? NullIfEmpty(object? value) => value is string s && !string.IsNullOrWhiteSpace(s) ? s.Trim() : null;
 

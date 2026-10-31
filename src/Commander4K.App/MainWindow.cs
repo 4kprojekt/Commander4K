@@ -8,6 +8,8 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Commander4K.App.Ai;
+using Commander4K.App.Mcp;
+using Commander4K.Core.Mcp;
 using Commander4K.App.Browser;
 using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
@@ -173,7 +175,11 @@ public sealed class MainWindow : Window
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         Opened += async (_, _) => await StartAsync();
-        Closing += (_, _) => SaveState();
+        Closing += (_, _) =>
+        {
+            SaveState();
+            StopMcp();
+        };
     }
 
     /// <summary>For tests and screenshots: builds the shell around an existing host without the async start-up.</summary>
@@ -183,7 +189,14 @@ public sealed class MainWindow : Window
         _skins = new SkinManager(host, host.Skins.Get(host.Settings.Skin));
         BuildShell();
         _started.TrySetResult();
+        _mcp = new McpHost(host, this);
+        host.Mcp = _mcp;
+        _mcp.Changed += UpdateMcpBadge;
+        _ = ApplyMcpAsync();
     }
+
+    /// <summary>The MCP server (Claude Code); <c>null</c> before <see cref="Attach"/>.</summary>
+    internal McpHost? Mcp => _mcp;
 
     public FilePanelView LeftPanel => _left;
 
@@ -205,6 +218,7 @@ public sealed class MainWindow : Window
         catch (Exception ex)
         {
             Content = new SelectableTextBlock().Text(Loc.T("Nie udało się uruchomić Commander4K:\n\n") + ex).Margin(20).TextWrapping(TextWrapping.Wrap);
+            _started.TrySetResult();
         }
     }
 
@@ -284,12 +298,15 @@ public sealed class MainWindow : Window
                     .Margin(0, 6, 0, 0)
                     .Height(30)
                     .Padding(12, 0)
-                    .Child(new Grid().Cols("Auto,*,Auto").Children(
+                    .Child(new Grid().Cols("Auto,*,Auto,Auto").Children(
                         new TextBlock().Ref(out _prompt).VerticalAlignment(VerticalAlignment.Center),
                         new TextBox().Ref(out _commandLine).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(8, 2)
                             .VerticalContentAlignment(VerticalAlignment.Center),
                         new TextBlock().Ref(out _notification).Col(2).VerticalAlignment(VerticalAlignment.Center).Margin(8, 0)
-                            .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis))),
+                            .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis),
+                        new Button().Ref(out _mcpBadge).Col(3).IsVisible(false).Height(22).Padding(8, 0).Margin(4, 0, 0, 0)
+                            .VerticalAlignment(VerticalAlignment.Center).VerticalContentAlignment(VerticalAlignment.Center)
+                            .OnClick(click => OpenMcpConnect()))),
                 _keyBar.Row(3));
 
         // Menu bar with the command-palette search box on the right (design system).
@@ -416,8 +433,14 @@ public sealed class MainWindow : Window
             case var column when column.StartsWith(ColumnSettingPrefix, StringComparison.Ordinal):
                 ApplyColumns();
                 break;
+            case var mcp when mcp.StartsWith("mcp", StringComparison.Ordinal):
+                // mcp.enabled / mcp.port / mcp.roots and the per-tool modes (mcp:<tool>): new snapshot, restart if needed.
+                _ = ApplyMcpAsync();
+                break;
         }
     }
+
+    private const string McpSettingPrefix = "mcp:";
 
     private const string ColumnSettingPrefix = "column:";
 
@@ -453,8 +476,123 @@ public sealed class MainWindow : Window
                     s.Columns.Add(column.Key);
                 }
             },
-            ["kolumna", "kolumny", "wdx", column.Definition.Header, column.Plugin.DisplayName]))];
+            ["kolumna", "kolumny", "wdx", column.Definition.Header, column.Plugin.DisplayName])), .. McpToolSettings()];
     }
+
+    /// <summary>
+    /// Every MCP tool the app offers (file, plugin and window tools). Definitions only; handlers are never called here,
+    /// so this works without a running server.
+    /// </summary>
+    internal IReadOnlyList<McpToolDefinition> McpToolDefinitions() =>
+        [.. McpTools(() => _host!.Settings.Mcp.AllowedRoots, () => McpHost.ProtectedRootsOf(_host!)).Select(t => t.Definition)];
+
+    /// <summary>The tools the MCP server runs (<see cref="McpHost"/>); the settings list the same set.</summary>
+    internal IReadOnlyList<McpTool> McpTools(Func<IReadOnlyList<string>> allowedRoots, Func<IReadOnlyList<string>> protectedRoots) =>
+    [
+        .. McpFileTools.Create(_host!.Router),
+        .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit,
+            id => _host.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, id, StringComparison.OrdinalIgnoreCase))),
+        .. McpAppTools.Create(this, _host, AiContext, allowedRoots, protectedRoots),
+        .. McpConfigTools.Create(McpConfigContext()),
+        .. McpSkinTools.Create(this, _host, () => _skins!),
+    ];
+
+    /// <summary>What the configuration tools change: the same settings, key bindings and skins as the settings window.</summary>
+    private McpConfigContext McpConfigContext() => new(
+        () => _host!.SettingsCatalog,
+        _host!.Settings,
+        action => Dispatcher.UIThread.InvokeAsync(action),
+        async key =>
+        {
+            OnSettingChanged(key);
+            await _host.SaveSettingsAsync();
+        },
+        () => _host.KeyBindings,
+        async bindings =>
+        {
+            await _host.SaveKeyBindingsAsync(bindings);
+            RebuildMenu(); // The menu shows the shortcuts.
+        },
+        id => _host.ListCommands().FirstOrDefault(c => string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase))?.Description,
+        _host.Config.ConfigDirectory,
+        () => _host.Skins,
+        () => _host.Settings.Skin);
+
+    private async Task ApplyMcpAsync()
+    {
+        try
+        {
+            await _mcp!.ApplySettingsAsync();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Notify(Loc.T("Nie udało się zapisać ustawień MCP: {0}", ex.Message), isError: true);
+        }
+    }
+
+    /// <summary>Stops the listener on exit so no call starts while the window and the host go away.</summary>
+    private void StopMcp()
+    {
+        if (_mcp is { } mcp)
+        {
+            _ = mcp.DisposeAsync().AsTask();
+        }
+    }
+
+    /// <summary>Status bar: hidden while the server is off, the problem when it could not start, otherwise the clients.</summary>
+    private void UpdateMcpBadge()
+    {
+        if (_mcp is not { } mcp || _skins is null)
+        {
+            return;
+        }
+
+        var b = _skins.Current;
+        _mcpBadge.IsVisible = mcp.Status is not null;
+        _mcpBadge.Content = mcp.Status switch
+        {
+            McpStartResult.PortBusy => Loc.T("MCP: port {0} zajęty", _host!.Settings.Mcp.Port),
+            McpStartResult.Failed => Loc.T("MCP: błąd"),
+            _ when mcp.Sessions > 0 => Loc.T("AI podłączone ({0})", mcp.Sessions),
+            _ => Loc.T("MCP: gotowy"),
+        };
+        _mcpBadge.Foreground = mcp.Status is McpStartResult.Started ? (mcp.Sessions > 0 ? b.Accent : b.StatusForeground) : b.Error;
+        ToolTip.SetTip(_mcpBadge, mcp.StatusText());
+    }
+
+    private void OpenMcpConnect()
+    {
+        if (_mcpConnect is { } open)
+        {
+            open.Activate();
+            return;
+        }
+
+        if (_mcp is null)
+        {
+            return;
+        }
+
+        _mcpConnect = new McpConnectWindow(_host!, _mcp, _skins!.Current, () => _active.ActiveTab.Path);
+        FollowSkin(_mcpConnect, _mcpConnect.ApplySkin);
+        _mcpConnect.Closed += (sender, args) => _mcpConnect = null;
+        _mcpConnect.Show(this);
+    }
+
+    private IEnumerable<SettingDescriptor> McpToolSettings() => McpToolDefinitions().Select(tool => new SettingDescriptor(
+        McpSettingPrefix + tool.Name,
+        SettingsCatalog.Mcp,
+        Loc.T("Narzędzie MCP „{0}”", tool.Name),
+        Loc.T("Co robi AI z Claude Code, gdy użyje tego narzędzia: zezwalaj, pytaj albo zablokuj. {0}", tool.Description),
+        SettingKind.Choice,
+        s => McpToolDispatcher.EffectiveMode(tool, s.Mcp.ToolModes.GetValueOrDefault(tool.Name), s.Mcp.ToolModes.ContainsKey(tool.Name)).ToString().ToLowerInvariant(),
+        (s, v) => s.Mcp.ToolModes[tool.Name] = (string)v!,
+        ["mcp", "claude", "claude code", "ai", tool.Name])
+    {
+        Choices = () => tool.AlwaysAsk
+            ? [new("ask", Loc.T("Pytaj")), new("block", Loc.T("Zablokuj"))]
+            : [new("allow", Loc.T("Zezwalaj")), new("ask", Loc.T("Pytaj")), new("block", Loc.T("Zablokuj"))],
+    });
 
     /// <summary>
     /// Right click / Shift+F10: the Windows Explorer menu for files on disks and shares (marked set if the row is
@@ -565,6 +703,9 @@ public sealed class MainWindow : Window
 
     private AiChatWindow? _aiChat;
     private AiProvidersWindow? _aiProviders;
+    private McpHost? _mcp;
+    private McpConnectWindow? _mcpConnect;
+    private Button _mcpBadge = null!;
 
     /// <summary>One chat window; it knows the active folder so questions can refer to "here".</summary>
     private void OpenAiChat()
@@ -589,6 +730,7 @@ public sealed class MainWindow : Window
             CreatePreviewPlugin = CreatePreviewPluginAsync,
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
             AskFolderTrust = AskFolderTrustAsync,
+            RunShortcut = RunShortcut,
         };
 
     /// <summary>
@@ -1311,7 +1453,8 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>AI outside the app goes through Claude Code: the prompt is copied and shown.</summary>
-    private Task UseClaudeCodeAsync(string prompt) => new Mcp.UseClaudeCodeDialog(_skins!.Current, prompt).ShowAsync(this);
+    private Task UseClaudeCodeAsync(string prompt) =>
+        new Mcp.UseClaudeCodeDialog(_skins!.Current, prompt, _mcp?.StatusText() ?? string.Empty, OpenMcpConnect).ShowAsync(this);
 
     /// <summary>
     /// A preview plugin for the unknown file's type: the wish (editable) plus a sample of the file goes to the chat in
@@ -1338,15 +1481,13 @@ public sealed class MainWindow : Window
             return;
         }
 
-        await UseClaudeCodeAsync(request + PluginMcpHint);
+        await UseClaudeCodeAsync(request + McpPrompts.PluginHint);
     }
 
     /// <summary>What the AI chat is told about the app.</summary>
-    private AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
+    internal AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
 
     private AiAppContext? _aiContext;
-
-    private const string PluginMcpHint = "\n\nUse the commander4k MCP tools (get_plugin_guide, check_plugin, install_plugin) to write and install it.";
 
     private Task OpenPluginManagerAsync() => ExecuteAsync(CommandIds.PanelPrefix + PluginManagerPanel.PluginId);
 
@@ -1364,7 +1505,7 @@ public sealed class MainWindow : Window
             Loc.T("Co ma robić wtyczka? (prośba trafi do Claude Code)")).ShowAsync(this);
         if (!string.IsNullOrWhiteSpace(wish))
         {
-            await UseClaudeCodeAsync(wish + PluginMcpHint);
+            await UseClaudeCodeAsync(wish + McpPrompts.PluginHint);
         }
     }
 
@@ -1606,6 +1747,8 @@ public sealed class MainWindow : Window
         _commandLine.CaretBrush = b.Accent;
         _notification.Foreground = b.StatusForeground;
         _notification.FontSize = Math.Max(11, b.FontSize - 1);
+        _mcpBadge.FontSize = Math.Max(11, b.FontSize - 1);
+        UpdateMcpBadge();
         ApplyMenuSkin(b);
 
         _keyBar.Background = b.WindowBackground;
@@ -1748,6 +1891,7 @@ public sealed class MainWindow : Window
          .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (czat z darmowymi dostawcami lub Claude Code)"), _ => new ValueTask(AskAiAsync()))
          .Register(CommandIds.AiProviders, Loc.T("Dostawcy AI — logowanie, kolejność, limity"), _ => { OpenAiProviders(); return ValueTask.CompletedTask; })
          .Register(CommandIds.AiWritePlugin, Loc.T("Napisz wtyczkę z AI (według przewodnika, z instalacją)"), _ => new ValueTask(WritePluginWithAiAsync()))
+         .Register(CommandIds.McpConnect, Loc.T("Połącz Claude Code lub innego klienta MCP z Commander4K"), OpenMcpConnect)
          .Register(CommandIds.Edit, Loc.T("Edycja"), EditCurrentAsync)
          .Register(CommandIds.Copy, Loc.T("Kopiuj"), _ => TransferAsync(TransferMode.Copy))
          .Register(CommandIds.Move, Loc.T("Przenieś"), _ => TransferAsync(TransferMode.Move))
@@ -1783,6 +1927,146 @@ public sealed class MainWindow : Window
 
     /// <summary>Runs any command id (built-in, <c>panel:</c>, <c>plugin:</c>) as if invoked from the keymap; for automation and tests.</summary>
     public Task ExecuteCommandAsync(string commandId) => ExecuteAsync(commandId);
+
+    // MCP tools (Mcp/McpAppTools) call these on the UI thread, through Dispatcher.UIThread.InvokeAsync. Messages are English (for the model).
+
+    /// <summary>The current skin's brushes, for dialogs the MCP tools show.</summary>
+    internal SkinBrushes McpBrushes => _skins!.Current;
+
+    /// <summary><c>left</c>, <c>right</c>, <c>active</c> or <c>other</c>.</summary>
+    internal FilePanelView McpPanel(string which) => which.Trim().ToLowerInvariant() switch
+    {
+        "left" => _left,
+        "right" => _right,
+        "active" => _active,
+        "other" => Other,
+        _ => throw new ArgumentException($"Unknown panel '{which}': use left, right, active or other."),
+    };
+
+    /// <summary>Plain navigation (no c4k.dir action runs); completes when the listing has loaded or failed.</summary>
+    internal Task McpNavigateAsync(FilePanelView panel, string path) => panel.NavigateAsync(path);
+
+    /// <summary>Marks exactly <paramref name="names"/> (replacing earlier marks) and moves the cursor.</summary>
+    /// <returns>How many entries are marked, the names not found (once each) and whether the cursor name was found.</returns>
+    internal (int Marked, IReadOnlyList<string> Missing, bool CursorFound) McpSelect(FilePanelView panel, IReadOnlyList<string> names, string? cursor)
+    {
+        var tab = panel.ActiveTab;
+        var missing = new List<string>();
+        tab.Marked.Clear();
+        foreach (var name in names)
+        {
+            if (FindRow(name) is { } index)
+            {
+                tab.Marked.Add(tab.Entries[index].Path);
+            }
+            else if (!missing.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                missing.Add(name);
+            }
+        }
+
+        var target = tab.Cursor;
+        var cursorFound = true;
+        if (cursor is not null)
+        {
+            if (FindRow(cursor) is { } index)
+            {
+                target = index;
+            }
+            else
+            {
+                cursorFound = false;
+            }
+        }
+
+        tab.MoveCursor(target); // Raises Changed, which repaints the marks too.
+        return (tab.Marked.Count, missing, cursorFound);
+
+        int? FindRow(string name)
+        {
+            var index = tab.Entries.FindIndex(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action)
+                && string.Equals(e.Name, name, StringComparison.OrdinalIgnoreCase));
+            return index >= 0 ? index : null;
+        }
+    }
+
+    /// <summary><c>files</c>, <c>preview</c> or <c>panel:&lt;id&gt;</c>; false when the mode is unknown or could not open.</summary>
+    internal async Task<bool> McpSetModeAsync(FilePanelView panel, string mode)
+    {
+        var source = panel == _left ? _right : _left;
+        switch (mode.Trim())
+        {
+            case var files when files.Equals("files", StringComparison.OrdinalIgnoreCase):
+                panel.CloseMode();
+                return true;
+            case var preview when preview.Equals("preview", StringComparison.OrdinalIgnoreCase):
+                if (panel.Mode is not PreviewPanelView)
+                {
+                    panel.ShowMode(CreatePreview(source));
+                }
+
+                return true;
+            case var id when id.StartsWith(CommandIds.PanelPrefix, StringComparison.OrdinalIgnoreCase):
+                var pluginId = id[CommandIds.PanelPrefix.Length..];
+                if (_host!.FindPanel(pluginId) is null)
+                {
+                    return false;
+                }
+
+                var before = panel.Mode;
+                await OpenPanelInAsync(pluginId, null, panel);
+                return panel.Mode is PluginPanelView && panel.Mode != before;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// What plugin code is told (<c>ExternalPlugin.Context</c>, via <see cref="PluginHostAdapter"/>): the visible file
+    /// panel's path, the other path and the marked entries (or the cursor).
+    /// </summary>
+    internal Mcp.McpPanelContext McpPluginContext()
+    {
+        var panel = _active.Mode is null ? _active : Other;
+        var other = (_active.Mode is null ? Other : _active).ActiveTab.Path;
+        return new Mcp.McpPanelContext(panel.ActiveTab.Path, other, [.. panel.ActiveTab.MarkedOrCurrent()]);
+    }
+
+    /// <summary>What a built-in command acts on: the active panel (location and selection) and the other panel (copy/move target).</summary>
+    internal Mcp.McpPanelContext McpCommandContext() =>
+        new(_active.ActiveTab.Path, Other.ActiveTab.Path, [.. _active.ActiveTab.MarkedOrCurrent()]);
+
+    /// <summary>Runs a plugin's command like the menu does; <c>null</c> on success, otherwise why it did not run.</summary>
+    internal async Task<string?> McpRunPluginCommandAsync(string pluginId, string commandId, CancellationToken cancellationToken = default)
+    {
+        if (_host!.FindCommandPlugin(pluginId) is not { } plugin)
+        {
+            return $"No plugin with commands has the id '{pluginId}'. Call list_plugins or list_commands.";
+        }
+
+        var command = plugin.Commands.FirstOrDefault(c => string.Equals(c.Id, commandId, StringComparison.OrdinalIgnoreCase));
+        if (command is null)
+        {
+            return $"Plugin '{pluginId}' has no command '{commandId}'. Its commands: {string.Join(", ", plugin.Commands.Select(c => c.Id).DefaultIfEmpty("none"))}.";
+        }
+
+        var host = _host.HostFor(plugin.Manifest);
+        if (!plugin.CanExecute(command.Id, host))
+        {
+            return $"The command {pluginId}:{command.Id} cannot run in the current context.";
+        }
+
+        try
+        {
+            await plugin.ExecuteAsync(command.Id, host, cancellationToken);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Like the keymap path (ExecuteAsync): a failing plugin is a result, not a crash.
+            return $"The command {pluginId}:{command.Id} failed: {ex.Message}";
+        }
+    }
 
     private async Task ExecuteAsync(string commandId)
     {

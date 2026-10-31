@@ -36,6 +36,46 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
 
     public IPanelSession CreateSession(PanelRequest request, IPluginHost host) => new Session(app, host);
 
+    /// <summary>
+    /// What the user is asked before enabling a plugin: name, version, author, runtime, each permission with its
+    /// description and whether the code bypasses the SDK. Shared by the plugin manager and the MCP <c>enable_plugin</c> tool.
+    /// </summary>
+    public static async Task<string> ApprovalMessageAsync(DiscoveredPlugin plugin, CancellationToken cancellationToken)
+    {
+        var manifest = plugin.Manifest ?? throw new InvalidOperationException("The plugin has no valid manifest.");
+        var permissions = manifest.Permissions.Count == 0
+            ? Loc.T("żadnych (tylko interfejs)")
+            : string.Join("\n", manifest.Permissions.Select(p => $"  • {p} — {Loc.T(PluginPermissions.Describe(p))}"));
+        var bypass = await Task.Run(() => SafeScan(plugin.Folder), cancellationToken);
+        var sdkNote = bypass.Count == 0
+            ? Loc.T("Wtyczka działa jako osobny proces i wszystko robi przez API aplikacji, która sprawdza te uprawnienia i zapisuje każde wywołanie w dzienniku.")
+            : Loc.T("⚠ UWAGA: kod omija SDK w {0} miejscach (np. {1}). Tych operacji aplikacja nie sprawdzi ani nie zapisze w dzienniku — włącz tylko, jeśli ufasz autorowi.", bypass.Count, bypass[0]);
+        return Loc.T("„{0}” {1} ({2})\nŚrodowisko: {3}\n\nUprawnienia:\n{4}\n\n", manifest.Name, manifest.Version, manifest.Author, manifest.Runtime.Type, permissions) + sdkNote;
+    }
+
+    /// <summary>Records the user's consent, audits it and restarts plugins; returns why it still cannot run, if anything.</summary>
+    public static async Task<string?> ApproveAsync(AppHost app, DiscoveredPlugin plugin)
+    {
+        var manifest = plugin.Manifest ?? throw new InvalidOperationException("The plugin has no valid manifest.");
+        app.Approvals.Approve(manifest);
+        app.Audit.Record(manifest.Id, "approve", string.Join(",", manifest.Permissions), AuditOutcome.Info);
+        await app.ReloadExternalPluginsAsync();
+        return app.PluginBlocker(plugin);
+    }
+
+    /// <summary>SDK lint of an installed plugin; an unreadable folder counts as clean (the manifest check reports it).</summary>
+    private static IReadOnlyList<SourceFinding> SafeScan(string folder)
+    {
+        try
+        {
+            return PluginSourceCheck.ScanFolder(folder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
     private sealed class Session(AppHost app, IPluginHost host) : IPanelSession
     {
         private static readonly ColumnDefinition[] Columns =
@@ -185,42 +225,18 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
             return null;
         }
 
-        /// <summary>SDK lint of an installed plugin; an unreadable folder counts as clean (the manifest check reports it).</summary>
-        private static IReadOnlyList<SourceFinding> SafeScan(string folder)
-        {
-            try
-            {
-                return PluginSourceCheck.ScanFolder(folder);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                return [];
-            }
-        }
-
         public async Task<string?> ExecuteActionAsync(string actionId, IReadOnlyList<string> rowIds, CancellationToken cancellationToken)
         {
             var plugin = rowIds.Count > 0 ? Find(rowIds[0]) : null;
             switch (actionId)
             {
-                case "enable" when plugin is { IsValid: true, Manifest: { } manifest }:
-                    var permissions = manifest.Permissions.Count == 0
-                        ? Loc.T("żadnych (tylko interfejs)")
-                        : string.Join("\n", manifest.Permissions.Select(p => $"  • {p} — {Loc.T(PluginPermissions.Describe(p))}"));
-                    var bypass = await Task.Run(() => SafeScan(plugin.Folder), cancellationToken);
-                    var sdkNote = bypass.Count == 0
-                        ? Loc.T("Wtyczka działa jako osobny proces i wszystko robi przez API aplikacji, która sprawdza te uprawnienia i zapisuje każde wywołanie w dzienniku.")
-                        : Loc.T("⚠ UWAGA: kod omija SDK w {0} miejscach (np. {1}). Tych operacji aplikacja nie sprawdzi ani nie zapisze w dzienniku — włącz tylko, jeśli ufasz autorowi.", bypass.Count, bypass[0]);
-                    if (!await host.ConfirmAsync(Loc.T("Włącz wtyczkę"),
-                            Loc.T("„{0}” {1} ({2})\nŚrodowisko: {3}\n\nUprawnienia:\n{4}\n\n", manifest.Name, manifest.Version, manifest.Author, manifest.Runtime.Type, permissions) + sdkNote))
+                case "enable" when plugin is { IsValid: true, Manifest: { } }:
+                    if (!await host.ConfirmAsync(Loc.T("Włącz wtyczkę"), await ApprovalMessageAsync(plugin, cancellationToken)))
                     {
                         return null;
                     }
 
-                    app.Approvals.Approve(manifest);
-                    app.Audit.Record(manifest.Id, "approve", string.Join(",", manifest.Permissions), AuditOutcome.Info);
-                    await app.ReloadExternalPluginsAsync();
-                    return app.PluginBlocker(plugin) is { } still ? Loc.T("Zgoda zapisana, ale wtyczka nie może się uruchomić: {0}", still) : null;
+                    return await ApproveAsync(app, plugin) is { } still ? Loc.T("Zgoda zapisana, ale wtyczka nie może się uruchomić: {0}", still) : null;
 
                 case "install" when rowIds.FirstOrDefault() is { } row && row.StartsWith("catalog:", StringComparison.Ordinal) && app.InstallFromCatalog is { } install:
                     await install(row[8..]);

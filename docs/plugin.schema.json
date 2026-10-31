@@ -85,7 +85,8 @@
               "title": { "type": "string" },
               "extensions": { "type": "array", "items": { "type": "string" }, "description": "An extension with the dot (\".csv\"), a file name (\"package.json\"), a pattern with * or ? (\"*.openapi.json\"), or \"/\" for folders." },
               "priority": { "type": "integer", "default": 10, "description": "Highest wins; built-ins: markdown 50, images 40, folders 10, text 0. Folder views meant only for c4k.dir use a negative value." },
-              "card": { "type": "boolean", "default": false, "description": "The plugin answers preview.card, so c4k.dir dashboards can show this preview as a live card." }
+              "card": { "type": "boolean", "default": false, "description": "The plugin answers preview.card, so c4k.dir dashboards can show this preview as a live card." },
+              "webRoot": { "type": "string", "description": "Folder inside the plugin (relative, no ..) with the HTML/JS pages shown when preview.render returns kind \"web\". Required for that kind." }
             },
             "additionalProperties": false
           }

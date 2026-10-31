@@ -4,8 +4,18 @@ using Commander4K.PluginSdk;
 
 namespace Commander4K.Core.Plugins;
 
-/// <summary>One file of a plugin written by an AI assistant.</summary>
-public sealed record GeneratedFile(string Path, string Content);
+/// <summary>One file of a plugin. When <paramref name="Bytes"/> is set the file is binary: written as-is and <paramref name="Content"/> is empty.</summary>
+public sealed record GeneratedFile(string Path, string Content, byte[]? Bytes = null);
+
+/// <summary>Size limits for a set of plugin files.</summary>
+public sealed record PluginLimits(int MaxFiles, long MaxFileBytes, long MaxTotalBytes)
+{
+    /// <summary>An AI answer or catalog download.</summary>
+    public static readonly PluginLimits Answer = new(30, 1024 * 1024, 30L * 1024 * 1024);
+
+    /// <summary>A plugin folder with assets (e.g. a bundled PDF viewer).</summary>
+    public static readonly PluginLimits Folder = new(500, 8L * 1024 * 1024, 64L * 1024 * 1024);
+}
 
 /// <summary>A parsed and validated plugin, ready to be written to the plugins folder.</summary>
 public sealed record PluginDraft(PluginManifest Manifest, IReadOnlyList<GeneratedFile> Files, string TargetFolder, bool TargetExists);
@@ -109,18 +119,20 @@ public static partial class PluginAuthoring
     /// Validates the files in a staging folder (paths, sizes, manifest) and returns where they would go. Throws
     /// <see cref="InvalidOperationException"/> with a readable reason.
     /// </summary>
-    public static PluginDraft Prepare(IReadOnlyList<GeneratedFile> files, string pluginsRoot, Func<string, string?> sdkClient)
+    public static PluginDraft Prepare(IReadOnlyList<GeneratedFile> files, string pluginsRoot, Func<string, string?> sdkClient, PluginLimits? limits = null)
     {
+        limits ??= PluginLimits.Answer;
         if (files.Count == 0)
         {
             throw new InvalidOperationException("No files found. Each file needs a line \"File: <path>\" followed by a code block.");
         }
 
-        if (files.Count > MaxFiles)
+        if (files.Count > limits.MaxFiles)
         {
-            throw new InvalidOperationException($"Too many files ({files.Count}, at most {MaxFiles}).");
+            throw new InvalidOperationException($"Too many files ({files.Count}, at most {limits.MaxFiles}).");
         }
 
+        long total = 0;
         foreach (var file in files)
         {
             if (!IsSafeRelativePath(file.Path))
@@ -128,10 +140,18 @@ public static partial class PluginAuthoring
                 throw new InvalidOperationException($"Unsafe file path \"{file.Path}\": only relative paths inside the plugin folder are allowed.");
             }
 
-            if (Encoding.UTF8.GetByteCount(file.Content) > MaxFileBytes)
+            var size = file.Bytes?.Length ?? Encoding.UTF8.GetByteCount(file.Content);
+            if (size > limits.MaxFileBytes)
             {
-                throw new InvalidOperationException($"\"{file.Path}\" is larger than 1 MB.");
+                throw new InvalidOperationException($"\"{file.Path}\" is larger than {limits.MaxFileBytes / (1024 * 1024)} MB.");
             }
+
+            total += size;
+        }
+
+        if (total > limits.MaxTotalBytes)
+        {
+            throw new InvalidOperationException($"The files are larger than {limits.MaxTotalBytes / (1024 * 1024)} MB in total.");
         }
 
         var manifestFile = files.FirstOrDefault(f => string.Equals(Normalize(f.Path), ManifestReader.FileName, StringComparison.OrdinalIgnoreCase))
@@ -144,16 +164,14 @@ public static partial class PluginAuthoring
             File.WriteAllText(Path.Combine(staging, ManifestReader.FileName), manifestFile.Content);
             foreach (var file in files)
             {
-                var path = Path.Combine(staging, Normalize(file.Path));
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                File.WriteAllText(path, file.Content);
+                WriteFile(Path.Combine(staging, Normalize(file.Path)), file);
             }
 
             var result = new List<GeneratedFile>(files.Select(f => f with { Path = Normalize(f.Path) }));
             var discovered = ManifestReader.Read(staging);
             if (discovered.Manifest is { Runtime.Type: { } runtime } && SdkClients.TryGetValue(runtime, out var client)
                 && !result.Any(f => string.Equals(f.Path, client, StringComparison.OrdinalIgnoreCase))
-                && result.Any(f => f.Content.Contains(Path.GetFileNameWithoutExtension(client), StringComparison.Ordinal))
+                && result.Any(f => f.Bytes is null && f.Content.Contains(Path.GetFileNameWithoutExtension(client), StringComparison.Ordinal))
                 && sdkClient(runtime) is { } sdk)
             {
                 File.WriteAllText(Path.Combine(staging, client), sdk);
@@ -192,9 +210,7 @@ public static partial class PluginAuthoring
         var temporary = draft.TargetFolder + ".new-" + Guid.NewGuid().ToString("N")[..8];
         foreach (var file in draft.Files)
         {
-            var path = Path.Combine(temporary, file.Path);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, file.Content);
+            WriteFile(Path.Combine(temporary, file.Path), file);
         }
 
         if (Directory.Exists(draft.TargetFolder))
@@ -203,6 +219,130 @@ public static partial class PluginAuthoring
         }
 
         Directory.Move(temporary, draft.TargetFolder);
+    }
+
+    private static void WriteFile(string path, GeneratedFile file)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        if (file.Bytes is { } bytes)
+        {
+            File.WriteAllBytes(path, bytes);
+        }
+        else
+        {
+            File.WriteAllText(path, file.Content);
+        }
+    }
+
+    private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".json", ".js", ".mjs", ".cjs", ".ts", ".py", ".ps1", ".psm1", ".md", ".txt", ".html", ".css", ".csv", ".xml", ".yml", ".yaml", ".svg",
+    };
+
+    /// <summary>
+    /// Reads a local plugin folder: known text extensions as UTF-8 text (when valid and free of NUL), everything else as
+    /// bytes. Skips <c>.git</c>, <c>__pycache__</c>, <c>node_modules/.cache</c> and links. Blocking; throws
+    /// <see cref="InvalidOperationException"/> when a limit is exceeded.
+    /// </summary>
+    public static IReadOnlyList<GeneratedFile> FromFolder(string folder, PluginLimits limits, CancellationToken ct = default)
+    {
+        var result = new List<GeneratedFile>();
+        long total = 0;
+        var strict = new UTF8Encoding(false, throwOnInvalidBytes: true);
+        var pending = new Stack<string>();
+        pending.Push(folder);
+        while (pending.Count > 0)
+        {
+            var dir = pending.Pop();
+            foreach (var entry in new DirectoryInfo(dir).EnumerateFileSystemInfos())
+            {
+                ct.ThrowIfCancellationRequested();
+                if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    continue;
+                }
+
+                if (entry is DirectoryInfo sub)
+                {
+                    var rel = Path.GetRelativePath(folder, sub.FullName).Replace('\\', '/');
+                    if (sub.Name.Equals(".git", StringComparison.OrdinalIgnoreCase) || sub.Name == "__pycache__"
+                        || rel.Equals("node_modules/.cache", StringComparison.OrdinalIgnoreCase)
+                        || rel.EndsWith("/node_modules/.cache", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    pending.Push(sub.FullName);
+                    continue;
+                }
+
+                if (entry.Name.Equals(".git", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var info = (FileInfo)entry;
+                var relative = Path.GetRelativePath(folder, info.FullName);
+                if (result.Count + 1 > limits.MaxFiles)
+                {
+                    throw new InvalidOperationException($"Too many files (more than {limits.MaxFiles}).");
+                }
+
+                if (info.Length > limits.MaxFileBytes)
+                {
+                    throw new InvalidOperationException($"\"{relative}\" is larger than {limits.MaxFileBytes / (1024 * 1024)} MB.");
+                }
+
+                total += info.Length;
+                if (total > limits.MaxTotalBytes)
+                {
+                    throw new InvalidOperationException($"The files are larger than {limits.MaxTotalBytes / (1024 * 1024)} MB in total.");
+                }
+
+                var bytes = File.ReadAllBytes(info.FullName);
+                if (LintedExtensions.Contains(info.Extension))
+                {
+                    // Code the lint must see: never binary, whatever its encoding.
+                    result.Add(new GeneratedFile(relative, DecodeLeniently(bytes)));
+                }
+                else if (TextExtensions.Contains(info.Extension) && Array.IndexOf(bytes, (byte)0) < 0 && TryDecode(strict, bytes) is { } text)
+                {
+                    result.Add(new GeneratedFile(relative, text));
+                }
+                else
+                {
+                    result.Add(new GeneratedFile(relative, string.Empty, bytes));
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static readonly HashSet<string> LintedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".py", ".js", ".mjs", ".cjs", ".ts", ".ps1", ".psm1",
+    };
+
+    /// <summary>Honours a UTF-8 / UTF-16 BOM, otherwise UTF-8 with replacement characters.</summary>
+    private static string DecodeLeniently(byte[] b) => b switch
+    {
+        [0xEF, 0xBB, 0xBF, ..] => Encoding.UTF8.GetString(b, 3, b.Length - 3),
+        [0xFF, 0xFE, ..] => Encoding.Unicode.GetString(b, 2, b.Length - 2),
+        [0xFE, 0xFF, ..] => Encoding.BigEndianUnicode.GetString(b, 2, b.Length - 2),
+        _ => Encoding.UTF8.GetString(b),
+    };
+
+    private static string? TryDecode(UTF8Encoding strict, byte[] bytes)
+    {
+        try
+        {
+            return strict.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            return null;
+        }
     }
 
     public static bool IsSafeRelativePath(string path)

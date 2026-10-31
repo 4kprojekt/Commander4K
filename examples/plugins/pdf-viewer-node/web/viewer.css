@@ -1,0 +1,150 @@
+/* Colours come from the app's skin (c4k.skin, set by viewer.js); these are fallbacks. */
+:root {
+  --bg: #1e1e1e;
+  --fg: #e0e0e0;
+  --accent: #3b82f6;
+  --muted: #9a9a9a;
+  --selection: #264f78;
+  --border: #3a3a3a;
+  --font: "Segoe UI", sans-serif;
+  --font-size: 13px;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: var(--font-size);
+}
+
+#app {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.group.end {
+  margin-left: auto;
+}
+
+button, input, select {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+
+button:hover, select:hover {
+  border-color: var(--accent);
+}
+
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+button:disabled {
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+#pageNumber {
+  width: 4em;
+  text-align: right;
+}
+
+#findInput {
+  width: 14em;
+}
+
+#pageCount, #findCount, #status {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+#findCount.none {
+  color: #e5484d;
+}
+
+/* PDF.js: the container must be absolutely positioned and scrollable. */
+#viewerContainer {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  outline: none;
+}
+
+#main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.pdfViewer .page {
+  border-color: var(--bg);
+}
+
+::selection {
+  background: var(--selection);
+}
+
+.message {
+  padding: 24px;
+  color: var(--muted);
+}
+
+/* Printing: only the rendered page images. */
+#printContainer {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 0;
+  }
+
+  html, body {
+    height: auto;
+    background: #fff;
+  }
+
+  #app {
+    display: none;
+  }
+
+  #printContainer {
+    display: block;
+  }
+
+  #printContainer img {
+    display: block;
+    width: 100%;
+    height: auto;
+    break-after: page;
+  }
+
+  #printContainer img:last-child {
+    break-after: auto;
+  }
+}
