@@ -24,6 +24,23 @@ public sealed class MailServiceTests : IDisposable
         return Task.FromResult(answer);
     });
 
+    /// <summary>Answers the prompts in order; <c>null</c> = the user cancelled.</summary>
+    private MailCredentials Scripted(SecretStore secrets, params string?[] answers)
+    {
+        var queue = new Queue<string?>(answers);
+        return new MailCredentials(secrets, (_, _) =>
+        {
+            Interlocked.Increment(ref _prompts);
+            return Task.FromResult(queue.Count > 0 ? queue.Dequeue() : null);
+        });
+    }
+
+    /// <summary>The fake server's self-signed certificate is confirmed; its port counts as implicit TLS.</summary>
+    private MailService Service(MailCredentials credentials, FakeImapServer server) => new(
+        credentials,
+        new MailCertificateStore(Path.Combine(_dir, "mail_certificates.json"), (_, _) => Task.FromResult(true)),
+        options: new MailServiceOptions { OperationTimeout = TimeSpan.FromSeconds(10), ImplicitTlsPorts = new HashSet<int> { server.Port } });
+
     private MailCertificateStore Certificates() => new(Path.Combine(_dir, "mail_certificates.json"), (_, _) => Task.FromResult(false));
 
     [Fact]
@@ -58,21 +75,84 @@ public sealed class MailServiceTests : IDisposable
     [Fact]
     public async Task Interactive_login_stores_both_secrets()
     {
+        await using var server = await FakeImapServer.StartAsync(acceptedPassword: "pw");
         var secrets = Secrets();
-        var credentials = Credentials(secrets);
-        var account = new MailAccount("imap.example.com:993", "smtp.example.com:587", "jan@example.com");
-
-        Assert.Equal("pw", await credentials.GetImapPasswordAsync("a", account, afterRefusal: false, Token));
-
-        Assert.Equal("mail:a:jan@example.com@imap.example.com", MailCredentials.ImapSecretName("a", account));
+        var credentials = Scripted(secrets, "pw", "pw");
+        var account = new MailAccount($"127.0.0.1:{server.Port}", "smtp.example.com:587", "jan@example.com");
+        Assert.Equal("mail:a:jan@example.com@127.0.0.1", MailCredentials.ImapSecretName("a", account));
         Assert.Equal("mail-smtp:a:jan@example.com@smtp.example.com", MailCredentials.SmtpSecretName("a", account));
-        Assert.Equal("pw", secrets.Get(MailCredentials.ImapSecretName("a", account), "imap.example.com"));
+
+        // Typed but not yet accepted by a server: nothing stored.
+        Assert.Equal("pw", await credentials.GetImapPasswordAsync("a", account, afterRefusal: false, Token));
+        Assert.False(secrets.Exists(MailCredentials.ImapSecretName("a", account)));
+        Assert.False(secrets.Exists(MailCredentials.SmtpSecretName("a", account)));
+
+        await using var service = Service(credentials, server);
+        var folders = await service.FoldersAsync("a", account, Token);
+
+        Assert.Contains(folders, f => f.Special == MailSpecialFolder.Inbox);
+        Assert.Equal("pw", secrets.Get(MailCredentials.ImapSecretName("a", account), "127.0.0.1"));
         Assert.Equal("pw", secrets.Get(MailCredentials.SmtpSecretName("a", account), "smtp.example.com"));
         Assert.Null(secrets.Get(MailCredentials.ImapSecretName("a", account), "smtp.example.com"));
 
-        // Stored now: no second prompt.
+        // Stored now: no further prompt for either server.
         Assert.Equal("pw", await credentials.GetSmtpPasswordAsync("a", account, afterRefusal: false, Token));
-        Assert.Equal(1, _prompts);
+        Assert.Equal(2, _prompts);
+    }
+
+    [Fact]
+    public async Task Refused_or_cancelled_login_stores_nothing()
+    {
+        await using var server = await FakeImapServer.StartAsync(acceptedPassword: "right");
+        var secrets = Secrets();
+        var account = new MailAccount($"127.0.0.1:{server.Port}", "smtp.example.com:587", "jan");
+
+        // A typo, then the re-prompt is cancelled.
+        await using (var service = Service(Scripted(secrets, "typo", null), server))
+        {
+            await Assert.ThrowsAsync<MailAuthenticationRequiredException>(() => service.FoldersAsync("a", account, Token));
+        }
+
+        Assert.Equal(2, _prompts);
+        Assert.False(secrets.Exists(MailCredentials.ImapSecretName("a", account)));
+        Assert.False(secrets.Exists(MailCredentials.SmtpSecretName("a", account)));
+
+        // Two typos: refused twice, still nothing stored, and a background call afterwards never prompts.
+        await using (var service = Service(Scripted(secrets, "typo", "typo2"), server))
+        {
+            await Assert.ThrowsAsync<MailAuthenticationRequiredException>(() => service.FoldersAsync("a", account, Token));
+            Assert.False(secrets.Exists(MailCredentials.ImapSecretName("a", account)));
+            await Assert.ThrowsAsync<MailAuthenticationRequiredException>(() => service.FoldersAsync("a", account with { Interactive = false }, Token));
+        }
+
+        Assert.Equal(4, _prompts);
+        Assert.Equal(3, server.RefusedLogins); // typo, typo, typo2; the background call never reached the server.
+
+        // A typo, then the right one: only the accepted password is stored.
+        await using (var service = Service(Scripted(secrets, "typo", "right"), server))
+        {
+            await service.FoldersAsync("a", account, Token);
+        }
+
+        Assert.Equal("right", secrets.Get(MailCredentials.ImapSecretName("a", account), "127.0.0.1"));
+        Assert.Equal("right", secrets.Get(MailCredentials.SmtpSecretName("a", account), "smtp.example.com"));
+    }
+
+    [Fact]
+    public async Task Imap_login_keeps_a_different_smtp_secret()
+    {
+        await using var server = await FakeImapServer.StartAsync(acceptedPassword: "imap-pw");
+        var secrets = Secrets();
+        var account = new MailAccount($"127.0.0.1:{server.Port}", "smtp.example.com:587", "jan");
+        secrets.Set(MailCredentials.SmtpSecretName("a", account), "smtp-pw", "smtp.example.com");
+
+        await using (var service = Service(Scripted(secrets, "imap-pw"), server))
+        {
+            await service.FoldersAsync("a", account, Token);
+        }
+
+        Assert.Equal("imap-pw", secrets.Get(MailCredentials.ImapSecretName("a", account), "127.0.0.1"));
+        Assert.Equal("smtp-pw", secrets.Get(MailCredentials.SmtpSecretName("a", account), "smtp.example.com"));
     }
 
     [Fact]

@@ -134,6 +134,50 @@ public sealed class MailServerTests : IDisposable
             r => r.New.Any(h => h.Subject == $"{tag} sent"));
     }
 
+    [Fact]
+    public async Task Send_succeeds_when_sent_copy_fails()
+    {
+        var imapUrl = Environment.GetEnvironmentVariable("C4K_TEST_IMAP");
+        var smtpUrl = Environment.GetEnvironmentVariable("C4K_TEST_SMTP");
+        Assert.SkipWhen(string.IsNullOrEmpty(imapUrl) || string.IsNullOrEmpty(smtpUrl), "C4K_TEST_IMAP / C4K_TEST_SMTP are not set");
+
+        var imap = new Uri(imapUrl!);
+        var smtp = new Uri(smtpUrl!);
+        var login = imap.UserInfo.Split(':', 2);
+        var user = Uri.UnescapeDataString(login[0]);
+        var password = Uri.UnescapeDataString(login[1]);
+        var credentials = new MailCredentials(new SecretStore(Path.Combine(_dir, "secrets.json")), (_, _) => Task.FromResult<string?>(password));
+        var certificates = new MailCertificateStore(Path.Combine(_dir, "mail_certificates.json"), (_, _) => Task.FromResult(true));
+        var warnings = new List<string>();
+        var implicitTls = smtp.Scheme == "smtps" ? new HashSet<int> { smtp.Port } : new HashSet<int>();
+        await using var service = new MailService(credentials, certificates, options: new MailServiceOptions { ImplicitTlsPorts = implicitTls }, warning: w =>
+        {
+            lock (warnings)
+            {
+                warnings.Add(w);
+            }
+        });
+
+        // GreenMail's plain IMAP port offers no STARTTLS: the copy to Sent fails with NotSupportedException after delivery.
+        var account = new MailAccount($"{imap.Host}:3143", $"{smtp.Host}:{smtp.Port}", user);
+        var message = new MimeMessage();
+        message.From.Add(MailboxAddress.Parse(Address));
+        message.To.Add(MailboxAddress.Parse(Address));
+        message.Subject = "copy fails " + Guid.NewGuid().ToString("N")[..8];
+        message.Body = new TextPart("plain") { Text = "Delivered anyway." };
+        using var draft = new MemoryStream();
+        await message.WriteToAsync(draft, Token);
+        draft.Position = 0;
+
+        var messageId = await service.SendAsync("t", account, draft, Token);
+
+        Assert.Equal(message.MessageId, messageId);
+        var warning = Assert.Single(warnings);
+        Assert.Contains(messageId, warning);
+        Assert.Contains("copy to Sent failed", warning);
+        Assert.Contains(nameof(NotSupportedException), warning);
+    }
+
     private static async Task SendRawAsync(Uri smtp, string user, string password, IEnumerable<string> subjects)
     {
         using var client = new SmtpClient { ServerCertificateValidationCallback = (_, _, _, _) => true };

@@ -10,10 +10,12 @@ namespace Commander4K.Core.Mail;
 /// The password never leaves the host process.
 /// </summary>
 /// <param name="askPassword">(realm, user) → password or <c>null</c>; called only for interactive accounts. The realm text names
-/// both hosts when the account has an SMTP server.</param>
+/// both hosts when the account has an SMTP server. A typed password is stored only after the server accepts it
+/// (<see cref="Accept"/>).</param>
 public sealed class MailCredentials(SecretStore secrets, Func<string, string, Task<string?>> askPassword)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _prompts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _pending = new(StringComparer.Ordinal);
 
     public static string ImapSecretName(string pluginId, MailAccount a) => $"mail:{pluginId}:{a.User}@{ImapHost(a)}";
 
@@ -67,17 +69,8 @@ public sealed class MailCredentials(SecretStore secrets, Func<string, string, Ta
                 throw new MailAuthenticationRequiredException(Realm(a));
             }
 
-            // An interactive login fills both secrets; a second SMTP-only prompt (different SMTP password) keeps the IMAP one.
-            if (!smtp || secrets.Get(ImapSecretName(pluginId, a), ImapHost(a)) is null)
-            {
-                secrets.Set(ImapSecretName(pluginId, a), typed, ImapHost(a));
-            }
-
-            if (a.Smtp is not null)
-            {
-                secrets.Set(SmtpSecretName(pluginId, a), typed, SmtpHost(a));
-            }
-
+            // Pending until the server accepts it (Accept); a refused or abandoned password is never stored.
+            _pending[name] = typed;
             return typed;
         }
         finally
@@ -85,4 +78,32 @@ public sealed class MailCredentials(SecretStore secrets, Func<string, string, Ta
             gate.Release();
         }
     }
+
+    /// <summary>
+    /// The server accepted <paramref name="password"/>. When the user typed it, it is stored now: under the secret of the
+    /// server that accepted it, and under the other server's secret only when that one has none (an existing, different SMTP
+    /// password is overwritten only by a password typed for SMTP). A stored password that was used as is changes nothing.
+    /// </summary>
+    internal void Accept(string pluginId, MailAccount a, bool smtp, string password)
+    {
+        var name = smtp ? SmtpSecretName(pluginId, a) : ImapSecretName(pluginId, a);
+        if (!_pending.TryRemove(new KeyValuePair<string, string>(name, password)))
+        {
+            return;
+        }
+
+        secrets.Set(name, password, smtp ? SmtpHost(a) : ImapHost(a));
+        if (smtp && secrets.Get(ImapSecretName(pluginId, a), ImapHost(a)) is null)
+        {
+            secrets.Set(ImapSecretName(pluginId, a), password, ImapHost(a));
+        }
+        else if (!smtp && a.Smtp is not null && secrets.Get(SmtpSecretName(pluginId, a), SmtpHost(a)) is null)
+        {
+            secrets.Set(SmtpSecretName(pluginId, a), password, SmtpHost(a));
+        }
+    }
+
+    /// <summary>The server refused <paramref name="password"/>: forget it if it was waiting for <see cref="Accept"/>.</summary>
+    internal void Reject(string pluginId, MailAccount a, bool smtp, string password) =>
+        _pending.TryRemove(new KeyValuePair<string, string>(smtp ? SmtpSecretName(pluginId, a) : ImapSecretName(pluginId, a), password));
 }

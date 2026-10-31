@@ -68,10 +68,19 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
     private readonly MailServiceOptions _options;
     private readonly ConcurrentDictionary<(string Plugin, string Server, string User), Pool> _pools = new();
     private readonly ITimer _sweeper;
+    private readonly Action<string>? _warning;
     private volatile bool _disposed;
 
-    public MailService(MailCredentials credentials, MailCertificateStore certificates, TimeProvider? time = null, MailServiceOptions? options = null)
+    /// <param name="warning">Receives problems that do not fail the call, in English (for the audit log): today only a
+    /// failed copy to Sent after a successful send. Never receives a password.</param>
+    public MailService(
+        MailCredentials credentials,
+        MailCertificateStore certificates,
+        TimeProvider? time = null,
+        MailServiceOptions? options = null,
+        Action<string>? warning = null)
     {
+        _warning = warning;
         _credentials = credentials;
         _certificates = certificates;
         _time = time ?? TimeProvider.System;
@@ -265,7 +274,10 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
         }, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Sends over SMTP, then appends the message to the Sent folder (created when the account has none) as \Seen.</summary>
+    /// <summary>
+    /// Sends over SMTP, then appends the message to the Sent folder (created when the account has none) as \Seen. Once SMTP
+    /// accepted the message this never throws: a failed copy to Sent is reported through the constructor's warning hook.
+    /// </summary>
     public async Task<string> SendAsync(string pluginId, MailAccount account, Stream message, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -310,10 +322,12 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
                 return (await sent.AppendAsync(new AppendRequest(parsed, MessageFlags.Seen), op.Token).ConfigureAwait(false))?.Id;
             }, ct).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is CommandException or ProtocolException or IOException or SocketException or TimeoutException
-            or FolderNotFoundException or MailAuthenticationRequiredException or MailCertificateUntrustedException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            // Sent stays without this copy.
+            // Any failure here (refused login, certificate, timeout, even the caller's cancellation) leaves Sent without the
+            // copy; the send itself succeeded, so the Message-ID is still returned and the failure goes to the warning hook.
+            Warn(string.Create(CultureInfo.InvariantCulture,
+                $"Mail {parsed.MessageId} was sent for {MailCredentials.Realm(account)} (plugin {pluginId}), but the copy to Sent failed: {ex.GetType().Name}: {ex.Message}"));
         }
 
         return parsed.MessageId;
@@ -501,16 +515,19 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
                     await client.AuthenticateAsync(account.User, password, op.Token).ConfigureAwait(false);
                     return true;
                 }, ct).ConfigureAwait(false);
+                _credentials.Accept(pluginId, account, isSmtp, password);
                 return;
             }
             catch (MailKitAuthenticationException) when (account.Interactive && !refused)
             {
+                _credentials.Reject(pluginId, account, isSmtp, password);
                 password = isSmtp
                     ? await _credentials.GetSmtpPasswordAsync(pluginId, account, afterRefusal: true, ct).ConfigureAwait(false)
                     : await _credentials.GetImapPasswordAsync(pluginId, account, afterRefusal: true, ct).ConfigureAwait(false);
             }
             catch (MailKitAuthenticationException)
             {
+                _credentials.Reject(pluginId, account, isSmtp, password);
                 throw new MailAuthenticationRequiredException(MailCredentials.Realm(account));
             }
         }
@@ -623,7 +640,19 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
         }
     }
 
-    /// <summary>LOGOUT/QUIT with a short limit, then dispose; never throws.</summary>
+    private void Warn(string message)
+    {
+        try
+        {
+            _warning?.Invoke(message);
+        }
+        catch (Exception)
+        {
+            // A failing hook must not turn a delivered message into a failed send.
+        }
+    }
+
+    /// <summary>LOGOUT/QUIT with a short limit, then dispose; never throws (it runs fire-and-forget from the pool and the timer).</summary>
     private static async Task CloseQuietlyAsync(MailKitService client)
     {
         try
@@ -634,14 +663,20 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
                 await client.DisconnectAsync(quit: true, cts.Token).ConfigureAwait(false);
             }
         }
-        catch (Exception ex) when (ex is ProtocolException or CommandException or IOException or SocketException or OperationCanceledException
-            or InvalidOperationException or ObjectDisposedException)
+        catch (Exception)
         {
-            // Closing anyway.
+            // Closing anyway: nothing on this disposal path may fault an unobserved task.
         }
         finally
         {
-            client.Dispose();
+            try
+            {
+                client.Dispose();
+            }
+            catch (Exception)
+            {
+                // Already broken; nothing left to release.
+            }
         }
     }
 
