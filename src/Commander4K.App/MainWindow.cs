@@ -1914,6 +1914,7 @@ public sealed class MainWindow : Window
          .Register(CommandIds.CancelCurrentOperation, Loc.T("Przerwij"), CancelCurrent)
          .Register(CommandIds.SelectSkin, Loc.T("Wybór skórki"), _ => new ValueTask(new SkinPickerDialog(_host, _skins!).ShowAsync(this)))
          .Register(CommandIds.NextSkin, Loc.T("Następna skórka"), NextSkin)
+         .Register(CommandIds.EditSkin, Loc.T("Edytor skórki (JSON)"), _ => new ValueTask(new SkinEditorDialog(_host, _skins!).ShowAsync(this)))
          .Register(CommandIds.ToggleHidden, Loc.T("Pokaż / ukryj pliki ukryte"), ToggleHiddenAsync)
          .Register(CommandIds.CommandPalette, Loc.T("Paleta komend"), ShowCommandPaletteAsync)
          .Register(CommandIds.Settings, Loc.T("Ustawienia"), () => OpenSettings())
@@ -3024,7 +3025,7 @@ public sealed class MainWindow : Window
         _menu.Items.Add(Group(Loc.T("Pa_nele"), [Item(CommandIds.LeftDriveMenu), Item(CommandIds.RightDriveMenu), Item(CommandIds.OpenNetwork), Item(CommandIds.OpenRegistry), new Separator(),
             .. host.PanelPlugins.Select(p => Item(CommandIds.PanelPrefix + p.Id, p.Title))]));
         _menu.Items.Add(pluginMenu);
-        _menu.Items.Add(Group(Loc.T("_Konfiguracja"), [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.CommandPalette),
+        _menu.Items.Add(Group(Loc.T("_Konfiguracja"), [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.EditSkin), Item(CommandIds.CommandPalette),
             new Separator(), Item(CommandIds.AskAi), Item(CommandIds.AiWritePlugin), Item(CommandIds.AiProviders)]));
         _menu.Items.Add(Group(Loc.T("Pomo_c"), [Item(CommandIds.Help), Item(CommandIds.CheckForUpdates), Item(CommandIds.About)]));
         if (_skins is not null)

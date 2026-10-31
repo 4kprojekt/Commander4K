@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -6,6 +7,7 @@ using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Commander4K.App.Composition;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
@@ -41,7 +43,7 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
             new WrapPanel().Margin(0, 10, 0, 0).Children(
                 Action(Loc.T("✨ Generuj z AI…"), GenerateWithAiAsync),
                 Action(Loc.T("📋 Kopiuj prompt dla Claude"), CopyPromptAsync),
-                Action(Loc.T("📤 Eksportuj do edycji"), ExportSelectedAsync),
+                Action(Loc.T("✏ Edytor JSON (wklej, sprawdź, nowa na podstawie)…"), EditJsonAsync),
                 Action(Loc.T("📂 Otwórz folder skórek"), () =>
                 {
                     OpenFolder(host.Config.SkinsDirectory);
@@ -136,22 +138,15 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
     private async Task CopyPromptAsync()
     {
         await CopyToClipboardAsync(this, SkinPrompt.ForChat(null));
-        _info.Text = Loc.T("Skopiowano prompt. Wklej go w Claude.ai lub Claude Design, opisz swój pomysł, a gotowy plik JSON ") +
-            Loc.T("zapisz w {0} i kliknij „Przeładuj”.", _host.Config.SkinsDirectory);
+        _info.Text = Loc.T("Skopiowano prompt ze schematem JSON. Wklej go w Claude.ai lub Claude Design, opisz swój pomysł, ") +
+            Loc.T("a odpowiedź wklej w „Edytorze JSON” (sprawdzi ją i zapisze).");
     }
 
-    private async Task ExportSelectedAsync()
+    private async Task EditJsonAsync()
     {
-        if (Selected is not { } skin)
-        {
-            return;
-        }
-
-        var copy = skin with { Id = skin.Id + "-wlasna", DisplayName = skin.DisplayName + Loc.T(" (kopia)") };
-        var path = Path.Combine(_host.Config.SkinsDirectory, copy.Id + ".json");
-        await SkinCatalog.ExportAsync(copy, path);
-        await ReloadAsync();
-        _info.Text = Loc.T("Zapisano {0}. Edytuj plik i kliknij „Przeładuj”.", path);
+        var saved = await new SkinEditorDialog(_host, _skins, Selected).ShowAsync(this);
+        Fill(saved?.Id ?? Selected?.Id ?? _original.Id);
+        PreviewSelected();
     }
 
     private async Task ReloadAsync()
@@ -326,5 +321,238 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
     {
         _status.Text = text;
         _busy.IsVisible = busy;
+    }
+}
+
+/// <summary>
+/// Skin JSON editor: open a skin (as is, or as the base of a new one), a file or the clipboard, validate it against the
+/// model with a live preview, copy a prompt that carries the schema and this JSON, and save into config/skins.
+/// </summary>
+public sealed class SkinEditorDialog : DialogWindow<Skin?>
+{
+    private readonly AppHost _host;
+    private readonly SkinManager _skins;
+    private readonly Skin _original;
+    private readonly ComboBox _source;
+    private readonly TextBox _json;
+    private readonly TextBlock _status;
+    private Skin? _valid;
+
+    public SkinEditorDialog(AppHost host, SkinManager skins, Skin? start = null) : base(Loc.T("Edytor skórki (JSON)"), skins.Current, 760)
+    {
+        _host = host;
+        _skins = skins;
+        _original = skins.Current.Skin;
+        var all = host.Skins.Skins;
+        _source = new ComboBox().MinWidth(260)
+            .ItemsSource(all.Select(s => new ComboBoxItem { Content = s.DisplayName + " (" + s.Id + ")", Tag = s }).ToList());
+        _source.SelectedIndex = Math.Max(0, all.ToList().FindIndex(s => s.Id.Equals((start ?? _original).Id, StringComparison.OrdinalIgnoreCase)));
+        _json = new TextBox()
+            .AcceptsReturn(true)
+            .TextWrapping(TextWrapping.NoWrap)
+            .Height(380)
+            .FontFamily(FontFamily.Parse("Cascadia Mono, Consolas"))
+            .FontSize(12)
+            .PlaceholderText(Loc.T("Wklej tutaj JSON skórki…"));
+        _json.TextChanged += (_, _) => Validate(preview: false);
+        _status = new TextBlock().TextWrapping(TextWrapping.Wrap).Margin(0, 8, 0, 0);
+
+        SetBody(
+            new WrapPanel().Children(
+                Label(Loc.T("Skórka:")).VerticalAlignment(VerticalAlignment.Center).Margin(0, 0, 8, 6),
+                _source.Margin(0, 0, 6, 6),
+                Action(Loc.T("📂 Otwórz"), () => Load(SelectedSkin, asNew: false)),
+                Action(Loc.T("➕ Nowa na podstawie"), () => Load(SelectedSkin, asNew: true)),
+                Action(Loc.T("📄 Z pliku…"), OpenFileAsync),
+                Action(Loc.T("📋 Wklej ze schowka"), PasteAsync)),
+            _json,
+            new WrapPanel().Margin(0, 8, 0, 0).Children(
+                Action(Loc.T("✔ Sprawdź i pokaż podgląd"), () => Validate(preview: true)),
+                Action(Loc.T("📋 Kopiuj prompt dla Claude (ze schematem)"), CopyPromptAsync),
+                Action(Loc.T("📂 Otwórz folder skórek"), () => SkinPickerDialog.OpenFolder(host.Config.SkinsDirectory))),
+            _status,
+            ButtonRow((Loc.T("💾 Zapisz i użyj"), () => _ = SaveAsync(), true), (Loc.T("Zamknij"), Discard, false)));
+        Load(start ?? _original, asNew: false);
+        Opened += (_, _) => _json.Focus();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            Discard();
+            e.Handled = true;
+            return;
+        }
+
+        base.OnKeyDown(e);
+    }
+
+    private Skin? SelectedSkin => (_source.SelectedItem as ComboBoxItem)?.Tag as Skin;
+
+    private static Button Action(string text, Action onClick) =>
+        new Button().Content(text).Margin(0, 0, 6, 6).OnClick(_ => onClick());
+
+    private static Button Action(string text, Func<Task> onClick) =>
+        new Button().Content(text).Margin(0, 0, 6, 6).OnClick(async _ => await onClick());
+
+    private void Load(Skin? skin, bool asNew)
+    {
+        if (skin is null)
+        {
+            return;
+        }
+
+        if (asNew)
+        {
+            skin = skin with { Id = UniqueId(skin.Id + "-wlasna"), DisplayName = skin.DisplayName + Loc.T(" (kopia)") };
+        }
+
+        _json.Text = SkinJson.Serialize(skin);
+        Validate(preview: true);
+    }
+
+    private string UniqueId(string id)
+    {
+        var candidate = id;
+        for (var n = 2; _host.Skins.Skins.Any(s => s.Id.Equals(candidate, StringComparison.OrdinalIgnoreCase)); n++)
+        {
+            candidate = id + "-" + n;
+        }
+
+        return candidate;
+    }
+
+    private async Task OpenFileAsync()
+    {
+        var start = Directory.Exists(_host.Config.SkinsDirectory) ? await StorageProvider.TryGetFolderFromPathAsync(_host.Config.SkinsDirectory) : null;
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = Loc.T("Otwórz plik skórki"),
+            AllowMultiple = false,
+            SuggestedStartLocation = start,
+            FileTypeFilter = [new FilePickerFileType("JSON") { Patterns = ["*.json"] }],
+        });
+        if (files.FirstOrDefault()?.TryGetLocalPath() is not { } path)
+        {
+            return;
+        }
+
+        try
+        {
+            _json.Text = await File.ReadAllTextAsync(path);
+            Validate(preview: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowError(Loc.T("Nie można odczytać {0}: {1}", path, ex.Message));
+        }
+    }
+
+    private async Task PasteAsync()
+    {
+        if (Clipboard is not { } clipboard || await clipboard.TryGetTextAsync() is not { Length: > 0 } text)
+        {
+            ShowError(Loc.T("Schowek nie zawiera tekstu."));
+            return;
+        }
+
+        _json.Text = SkinJson.Extract(text);
+        Validate(preview: true);
+    }
+
+    /// <summary>Parses the editor text; on success shows the contrast warnings and, with <paramref name="preview"/>, paints the skin live.</summary>
+    private void Validate(bool preview)
+    {
+        _valid = null;
+        var text = _json.Text;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            SetStatus(Loc.T("Wklej lub otwórz JSON skórki."), Brushes.FileForeground);
+            return;
+        }
+
+        Skin skin;
+        try
+        {
+            skin = SkinJson.Deserialize(text);
+        }
+        catch (JsonException ex)
+        {
+            ShowError(Loc.T("✗ JSON niezgodny ze schematem: {0}", ex.Message));
+            return;
+        }
+
+        if (!Core.Mcp.McpConfigTools.IsSkinId(skin.Id))
+        {
+            ShowError(Loc.T("✗ Identyfikator „{0}” musi składać się z małych liter, cyfr i myślników (np. „solarized-dark”).", skin.Id));
+            return;
+        }
+
+        _valid = skin;
+        var warnings = SkinValidator.Validate(skin);
+        SetStatus(
+            Loc.T("✓ „{0}” ({1}) jest poprawna.", skin.DisplayName, skin.Id) +
+            (warnings.Count == 0 ? " " + Loc.T("Kontrast i czytelność w porządku.") : "\n⚠ " + string.Join("\n⚠ ", warnings)),
+            warnings.Count == 0 ? Brushes.FileForeground : Brushes.Warning);
+        if (preview)
+        {
+            _skins.Preview(skin);
+        }
+    }
+
+    private async Task CopyPromptAsync()
+    {
+        Validate(preview: false);
+        await SkinPickerDialog.CopyToClipboardAsync(this, SkinPrompt.ForChat(null, _valid ?? SelectedSkin));
+        SetStatus(Loc.T("Skopiowano prompt ze schematem JSON i bieżącą skórką. Wklej go w Claude.ai lub Claude Design, ") +
+            Loc.T("a odpowiedź wklej tutaj przyciskiem „Wklej ze schowka”."), Brushes.FileForeground);
+    }
+
+    private async Task SaveAsync()
+    {
+        Validate(preview: false);
+        if (_valid is not { } skin)
+        {
+            return;
+        }
+
+        var path = Path.Combine(_host.Config.SkinsDirectory, skin.Id + ".json");
+        var builtIn = BuiltInSkins.All.Any(b => b.Id.Equals(skin.Id, StringComparison.OrdinalIgnoreCase));
+        var question = builtIn
+            ? Loc.T("„{0}” to wbudowana skórka. Zapisać własną wersję, która ją zastąpi?", skin.Id)
+            : File.Exists(path) ? Loc.T("Plik {0} już istnieje. Zastąpić go?", path) : null;
+        if (question is not null && !await new ConfirmDialog(Brushes, Loc.T("Zapisz skórkę"), question, Loc.T("Zapisz")).ShowAsync(this))
+        {
+            return;
+        }
+
+        try
+        {
+            await SkinCatalog.ExportAsync(skin, path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowError(Loc.T("Nie można zapisać {0}: {1}", path, ex.Message));
+            return;
+        }
+
+        await _host.ReloadSkinsAsync();
+        _skins.Apply(_host.Skins.Get(skin.Id));
+        Complete(skin);
+    }
+
+    private void Discard()
+    {
+        _skins.Preview(_original);
+        Complete(null);
+    }
+
+    private void ShowError(string text) => SetStatus(text, Brushes.Error);
+
+    private void SetStatus(string text, IBrush foreground)
+    {
+        _status.Text = text;
+        _status.Foreground = foreground;
     }
 }
