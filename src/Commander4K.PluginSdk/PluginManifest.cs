@@ -59,7 +59,8 @@ public sealed record PanelContribution(
 
 /// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
 /// <param name="WebRoot">Folder inside the plugin (relative) with the HTML/JS shown for <c>kind: "web"</c> results.</param>
-public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, string? WebRoot = null);
+/// <param name="Card">The plugin answers <c>preview.card</c>, so dashboards can show this preview as a live card.</param>
+public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, string? WebRoot = null, bool Card = false);
 
 public sealed record PaletteActionContribution(string Id, string Title, string? Icon = null, bool ForItem = false);
 

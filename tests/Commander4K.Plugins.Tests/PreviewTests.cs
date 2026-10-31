@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Commander4K.Core.Execution;
+using Commander4K.Core.Folders;
 using Commander4K.Core.Plugins;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
@@ -181,6 +182,91 @@ public sealed class PreviewTests : IAsyncDisposable
     [InlineData("sftp://jan@serwer:22", "sftp://jan@serwer:22")]
     public void Saved_logins_are_keyed_like_the_sessions(string path, string realm) =>
         Assert.Equal(realm, Commander4K.Plugins.BuiltIn.Remote.RemoteTransferVfsPlugin.RealmFor(path));
+
+    [Fact]
+    public async Task Folder_card_counts_top_level_and_fills_size_later()
+    {
+        var plugin = new FolderPreviewPlugin();
+        var completed = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        plugin.Sizes.Completed += path => completed.TrySetResult(path);
+        var host = Host(plugin.Manifest);
+
+        var first = await plugin.LoadCardAsync(new PreviewCardRequest(Dir(_root), null, null), host, TestToken);
+
+        Assert.Equal("2", Value(first, "Pliki"));
+        Assert.Equal("2", Value(first, "Foldery"));
+        Assert.Equal("liczę…", Value(first, "Rozmiar"));
+        Assert.Contains(first.Actions, a => a.Target == _root);
+
+        Assert.Equal(_root, await completed.Task.WaitAsync(TimeSpan.FromSeconds(10), TestToken));
+        var second = await plugin.LoadCardAsync(new PreviewCardRequest(Dir(_root), null, first), host, TestToken);
+        var total = 300_000 + 200_000 + 1_000 + new FileInfo(Path.Combine(_root, "readme.md")).Length + 5;
+        Assert.Equal(FolderCards.FormatBytes(total), Value(second, "Rozmiar"));
+    }
+
+    [Fact]
+    public async Task Folder_size_is_recomputed_only_when_folder_changes()
+    {
+        var plugin = new FolderPreviewPlugin();
+        var host = Host(plugin.Manifest);
+        var folder = Dir(_root) with { LastWriteTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+        var done = new SemaphoreSlim(0);
+        plugin.Sizes.Completed += _ => done.Release();
+
+        Assert.Null(plugin.Sizes.GetOrStart(host, folder));
+        Assert.True(await done.WaitAsync(TimeSpan.FromSeconds(10), TestToken));
+        Assert.NotNull(plugin.Sizes.GetOrStart(host, folder));
+        Assert.Single(_audit.Recent(plugin.Id), e => e.Operation == "fs.size");
+
+        Assert.Null(plugin.Sizes.GetOrStart(host, folder with { LastWriteTime = folder.LastWriteTime.AddMinutes(1) }));
+        Assert.True(await done.WaitAsync(TimeSpan.FromSeconds(10), TestToken));
+        Assert.Equal(2, _audit.Recent(plugin.Id).Count(e => e.Operation == "fs.size"));
+    }
+
+    [Fact]
+    public async Task Gallery_card_reads_only_four_images()
+    {
+        var gallery = Path.Combine(_root, "photos");
+        Directory.CreateDirectory(gallery);
+        for (var i = 0; i < 6; i++)
+        {
+            File.WriteAllBytes(Path.Combine(gallery, $"p{i}.png"), [137, 80, 78, 71, (byte)i]);
+        }
+
+        var plugin = new FolderPreviewPlugin();
+        var card = await FolderCards.LoadAsync(FolderViewIds.Gallery, Dir(gallery), null, Host(plugin.Manifest),
+            new PreviewCardRequest(Dir(gallery), null, null), plugin.Sizes, TestToken);
+
+        Assert.Equal(4, Assert.Single(card.Items.OfType<CardThumbnails>()).Images.Count);
+        Assert.Equal("6", Value(card, "Obrazy"));
+        Assert.Equal(4, _audit.Recent(plugin.Id).Count(e => e.Operation == "fs.read"));
+        Assert.Contains(card.Actions, a => a.Target == gallery);
+    }
+
+    [Fact]
+    public async Task Dashboard_card_lists_first_three_tiles_without_loading_them()
+    {
+        var config = Commander4K.Core.Folders.FolderConfig.Parse(_root, """
+            { "title": "Serwery", "description": "Moje maszyny", "preview": { "view": "dashboard", "tiles": [
+              { "title": "A", "open": "nowhere-a", "card": true },
+              { "title": "B", "open": "nowhere-b" },
+              { "title": "C", "url": "https://example.com" },
+              { "title": "D", "open": "nowhere-d" }
+            ] } }
+            """);
+        var plugin = new FolderPreviewPlugin();
+
+        var card = await FolderCards.LoadAsync(FolderViewIds.Dashboard, Dir(_root), config, Host(plugin.Manifest),
+            new PreviewCardRequest(Dir(_root), null, null), plugin.Sizes, TestToken);
+
+        Assert.Equal("Serwery", card.Title);
+        Assert.Equal("Moje maszyny", card.Subtitle);
+        Assert.Equal("4", Value(card, "Kafelki"));
+        Assert.Equal("A · B · C", Assert.Single(card.Items.OfType<CardText>()).Text);
+        Assert.DoesNotContain(_audit.Recent(plugin.Id), e => e.Detail.Contains("nowhere", StringComparison.Ordinal));
+    }
+
+    private static string? Value(PreviewCard card, string label) => card.Items.OfType<CardValue>().FirstOrDefault(v => v.Label == label)?.Value;
 
     private ScopedPluginHost Host(PluginManifest manifest) => new(manifest, new NullUi(), _router, _http, _audit);
 

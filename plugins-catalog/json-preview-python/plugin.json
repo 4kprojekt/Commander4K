@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "official.json-preview",
+  "name": "Podgląd JSON",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Oficjalna wtyczka: pliki JSON sprawdzone (błąd z numerem linii), sformatowane i opisane w zarysie; karta na dashboard pokazuje, czy plik jest poprawny i co zawiera.",
+  "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+  "permissions": ["fs.read"],
+  "contributes": {
+    "previews": [
+      { "id": "json", "title": "JSON", "extensions": [".json", ".jsonc", ".geojson"], "priority": 55, "card": true }
+    ]
+  }
+}

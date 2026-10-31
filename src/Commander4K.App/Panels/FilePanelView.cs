@@ -51,6 +51,7 @@ public sealed class FilePanelView : ViewBase
         };
         Canvas.RowActivated += Open;
         Canvas.HeaderClicked += column => ActiveTab.SetSort(ActiveTab.Sort.Toggle(column));
+        Canvas.ColumnWidths = host.Settings.ColumnWidths;
         Canvas.RightClicked += entry =>
         {
             LeavePathBar();

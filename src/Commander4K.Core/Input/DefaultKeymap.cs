@@ -13,6 +13,9 @@ public static class DefaultKeymap
         ("F2", CommandIds.SelectSkin, CommandIds.PanelModes),
     ];
 
+    /// <summary>Commands that no longer exist (the docked palettes); their bindings are dropped from existing keymap.json files.</summary>
+    public static IReadOnlyList<string> RemovedCommands { get; } = ["cm_TogglePalettes", "cm_Palettes", "cm_AddFavorite"];
+
     public static IReadOnlyDictionary<string, string> Bindings { get; } = new Dictionary<string, string>
     {
         ["F1"] = CommandIds.Settings,
@@ -23,14 +26,12 @@ public static class DefaultKeymap
         ["Ctrl+Alt+P"] = CommandIds.PanelPrefix + "builtin.powershell",
         ["Ctrl+,"] = CommandIds.Settings,
         ["F2"] = CommandIds.PanelModes,
-        ["Ctrl+B"] = CommandIds.TogglePalettes,
         ["Shift+F10"] = CommandIds.ContextMenu,
         ["Apps"] = CommandIds.ContextMenu,
         ["Alt+F5"] = CommandIds.Pack,
         ["Alt+F9"] = CommandIds.Unpack,
         ["Ctrl+Alt+W"] = CommandIds.Browser,
         ["Ctrl+Alt+A"] = CommandIds.AskAi,
-        ["Ctrl+D"] = CommandIds.AddFavorite,
         ["F10"] = CommandIds.Exit,
         ["Ctrl+H"] = CommandIds.ToggleHidden,
         ["Tab"] = CommandIds.SwitchPanel,

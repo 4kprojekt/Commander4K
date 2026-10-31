@@ -40,7 +40,6 @@ public static class SettingsCatalog
     // Category names are display texts (translated), so they cannot be constants.
     public static string Appearance => Loc.T("Wygląd");
     public static string Panels => Loc.T("Panele");
-    public static string Palettes => Loc.T("Palety");
     public static string Columns => Loc.T("Kolumny");
     public static string Network => Loc.T("Sieć");
     public static string Preview => Loc.T("Podgląd");
@@ -86,9 +85,10 @@ public static class SettingsCatalog
         new("shellContextMenu", Panels, Loc.T("Prawy przycisk: menu Windows"),
             Loc.T("Prawy przycisk myszy pokazuje menu kontekstowe Eksploratora (Otwórz za pomocą, Wyślij do, Właściwości…). Wyłączone: prawy przycisk zaznacza pliki jak w Total Commanderze. Z klawiatury: Shift+F10 lub klawisz menu."),
             SettingKind.Toggle, s => s.ShellContextMenu, (s, v) => s.ShellContextMenu = (bool)v!, ["kontekstowe", "context", "explorer", "eksplorator", "mysz", "mouse", "prawy"]),
-
-        new("showPalettes", Palettes, Loc.T("Pokazuj palety"), Loc.T("Palety z szybkimi akcjami, ulubionymi folderami, zapisanymi widokami i palety wtyczek (Ctrl+B). Położenie każdej palety ustawisz poniżej."),
-            SettingKind.Toggle, s => s.ShowPalettes, (s, v) => s.ShowPalettes = (bool)v!, [Loc.T("paleta"), "pasek", "przyciski", "ulubione", "widoki", "toolbar"]),
+        new("columnWidths", Columns, Loc.T("Szerokości kolumn"),
+            Loc.T("Przeciągnij krawędź kolumny w nagłówku listy plików, aby zmienić jej szerokość; podwójne kliknięcie krawędzi przywraca domyślną. Tutaj zapisane szerokości (np. size=96, date=140); puste pole przywraca wszystkie domyślne."),
+            SettingKind.Text, s => FormatColumnWidths(s.ColumnWidths), (s, v) => ParseColumnWidths(v as string, s.ColumnWidths),
+            ["szerokosc", "width", "kolumna", "column", "rozmiar", "data", "naglowek", "header", "resize"]),
 
         new("markdownEdit", Preview, Loc.T("Markdown: od razu edycja"), Loc.T("Podgląd (Ctrl+Q) otwiera pliki .md w edycji z podglądem na żywo obok, zamiast samego widoku sformatowanego (F4 przełącza)."),
             SettingKind.Toggle, s => s.MarkdownEditByDefault, (s, v) => s.MarkdownEditByDefault = (bool)v!, ["markdown", "md", "edytor", Loc.T("podgląd"), "quick view"]),
@@ -192,4 +192,22 @@ public static class SettingsCatalog
     private static readonly string[] McpKeywords = ["mcp", "claude", "claude code", "ai", "serwer", "port", "foldery", "dostęp"];
 
     private static string? NullIfEmpty(object? value) => value is string s && !string.IsNullOrWhiteSpace(s) ? s.Trim() : null;
+
+    /// <summary><c>key=width</c> pairs separated by commas, as shown in the settings window.</summary>
+    public static string FormatColumnWidths(IReadOnlyDictionary<string, double> widths) =>
+        string.Join(", ", widths.OrderBy(w => w.Key, StringComparer.OrdinalIgnoreCase).Select(w => w.Key + "=" + w.Value.ToString(CultureInfo.InvariantCulture)));
+
+    /// <summary>Replaces <paramref name="widths"/> in place (the panels hold that dictionary); malformed pairs are skipped.</summary>
+    public static void ParseColumnWidths(string? text, IDictionary<string, double> widths)
+    {
+        widths.Clear();
+        foreach (var pair in (text ?? string.Empty).Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = pair.Split('=', 2, StringSplitOptions.TrimEntries);
+            if (parts is [{ Length: > 0 } key, var value] && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var width) && width > 0)
+            {
+                widths[key] = width;
+            }
+        }
+    }
 }

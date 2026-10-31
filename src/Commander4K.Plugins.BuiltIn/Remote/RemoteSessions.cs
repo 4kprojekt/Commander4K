@@ -70,7 +70,7 @@ internal sealed class SftpSession(SftpClient client) : IRemoteSession
         }
     }
 
-    private static IEnumerable<AuthenticationMethod> AuthenticationMethods(RemoteLogin login)
+    internal static IEnumerable<AuthenticationMethod> AuthenticationMethods(RemoteLogin login)
     {
         // An explicit key file, or else the default ~/.ssh keys when there is no password either. Keys that need a
         // passphrase we do not have are skipped instead of failing the whole connection.

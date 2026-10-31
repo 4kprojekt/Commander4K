@@ -41,15 +41,6 @@ public static class CommandIds
     /// <summary>Connects Claude Code (or another MCP client): the MCP server, its token and the allowed folders.</summary>
     public const string McpConnect = "cm_McpConnect";
     public const string OpenInVsCode = "cm_OpenInVsCode";
-
-    /// <summary>Shows or hides all docked palettes (Ctrl+B).</summary>
-    public const string TogglePalettes = "cm_TogglePalettes";
-
-    /// <summary>Settings filtered to palette positions.</summary>
-    public const string Palettes = "cm_Palettes";
-
-    /// <summary>Adds the active folder to the favourites palette (Ctrl+D).</summary>
-    public const string AddFavorite = "cm_AddFavorite";
     public const string CheckForUpdates = "cm_CheckForUpdates";
     public const string About = "cm_About";
     public const string AddConnection = "cm_AddConnection";
@@ -62,6 +53,9 @@ public static class CommandIds
 
     /// <summary>Create or edit the current folder's c4k.dir (how it is previewed and what entering it does).</summary>
     public const string FolderView = "cm_FolderView";
+
+    /// <summary>Asks an API for a sample response, lets the user pick fields and adds an API card to the folder's dashboard.</summary>
+    public const string AddApiCard = "cm_AddApiCard";
     public const string GoToParent = "cm_GoToParent";
     public const string Refresh = "cm_Refresh";
     public const string NewTab = "cm_NewTab";

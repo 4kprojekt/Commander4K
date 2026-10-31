@@ -24,6 +24,17 @@ public sealed class FileViewportCanvas : Control
     private PanelTab? _tab;
     private SkinBrushes? _brushes;
     private bool _isActive;
+    private ColumnDrag? _drag;
+    private string? _hoverDivider;
+
+    /// <summary>Keys of the built-in columns in <see cref="ColumnWidths"/>; plugin columns use <see cref="ActiveColumn.Key"/>.</summary>
+    public const string SizeColumnKey = "size";
+
+    public const string DateColumnKey = "date";
+
+    private const double MinColumnWidth = 32;
+    private const double MaxColumnWidth = 480;
+    private static readonly Cursor ResizeCursor = new(StandardCursorType.SizeWestEast);
 
     public FileViewportCanvas()
     {
@@ -43,6 +54,15 @@ public sealed class FileViewportCanvas : Control
 
     /// <summary>Right click on a row (the cursor has moved there unless the row is part of the marked set).</summary>
     public event Action<VfsEntry>? RightClicked;
+
+    /// <summary>
+    /// Column key → width dragged by the user (at the 13 px font size), shared with the settings; <c>null</c> = fixed
+    /// widths. The canvas writes into it while dragging a header divider.
+    /// </summary>
+    public IDictionary<string, double>? ColumnWidths { get; set; }
+
+    /// <summary>Raised when a drag of a header divider ends, or a double-click on one restores the default width.</summary>
+    public event Action? ColumnWidthsChanged;
 
     /// <summary>Screen position just below the cursor row (for the context menu opened from the keyboard).</summary>
     public PixelPoint? CursorRowScreenPoint()
@@ -141,7 +161,7 @@ public sealed class FileViewportCanvas : Control
         var tab = _tab;
         if (b.Skin.Chrome.ShowColumnHeaders)
         {
-            DrawHeader(context, b, layout, tab?.Sort ?? SortOrder.Default);
+            DrawHeader(context, b, layout, tab?.Sort ?? SortOrder.Default, _drag?.Key ?? _hoverDivider);
         }
 
         if (tab is null)
@@ -194,6 +214,28 @@ public sealed class FileViewportCanvas : Control
 
         var point = e.GetPosition(this);
         var layout = Layout();
+        if (DividerAt(layout, point) is { } divider && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            if (e.ClickCount == 2)
+            {
+                // Double-click on the edge, as in Explorer: back to the default width.
+                _drag = null;
+                ColumnWidths!.Remove(divider.Key);
+                ColumnWidthsChanged?.Invoke();
+                InvalidateVisual();
+            }
+            else
+            {
+                // The name keeps at least as much room as plugin columns need to stay visible.
+                var spare = Math.Max(0, layout.NameRight - layout.Inner.X - (140 * layout.Scale));
+                _drag = new ColumnDrag(divider.Key, point.X, divider.Width, divider.Width + spare, layout.Scale);
+                e.Pointer.Capture(this);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         if (layout.HeaderArea.Contains(point))
         {
             if (point.X < layout.NameRight || point.X >= layout.SizeX)
@@ -237,6 +279,69 @@ public sealed class FileViewportCanvas : Control
         }
 
         e.Handled = true;
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+        var point = e.GetPosition(this);
+        if (_drag is { } drag && ColumnWidths is { } widths)
+        {
+            // Columns are anchored on the right, so dragging their left edge to the left widens them.
+            var width = Math.Clamp(drag.StartWidth + (drag.StartX - point.X), MinColumnWidth * drag.Scale, Math.Max(drag.StartWidth, drag.MaxWidth));
+            widths[drag.Key] = Math.Round(Math.Clamp(width / drag.Scale, MinColumnWidth, MaxColumnWidth));
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+
+        var hover = _brushes is null ? null : DividerAt(Layout(), point)?.Key;
+        if (hover != _hoverDivider)
+        {
+            _hoverDivider = hover;
+            Cursor = hover is null ? null : ResizeCursor;
+            InvalidateVisual();
+        }
+    }
+
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+        if (_drag is not null)
+        {
+            e.Pointer.Capture(null);
+            EndDrag();
+            e.Handled = true;
+        }
+    }
+
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        base.OnPointerCaptureLost(e);
+        EndDrag();
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        if (_drag is null && _hoverDivider is not null)
+        {
+            _hoverDivider = null;
+            Cursor = null;
+            InvalidateVisual();
+        }
+    }
+
+    private void EndDrag()
+    {
+        if (_drag is null)
+        {
+            return;
+        }
+
+        _drag = null;
+        ColumnWidthsChanged?.Invoke();
+        InvalidateVisual();
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
@@ -313,8 +418,8 @@ public sealed class FileViewportCanvas : Control
         var scale = b.FontSize / 13.0;
         var gap = b.IsModern ? 8 * scale : 6;
         var right = inner.Right - (b.IsModern ? 13 : 6);
-        var dateWidth = inner.Width > 420 ? (b.IsModern ? 124 * scale : b.FontSize * 0.6 * 17) : 0;
-        var sizeWidth = inner.Width > 260 ? (b.IsModern ? 84 * scale : b.FontSize * 0.6 * 11) : 0;
+        var dateWidth = inner.Width > 420 ? CustomWidth(DateColumnKey, scale) ?? (b.IsModern ? 124 * scale : b.FontSize * 0.6 * 17) : 0;
+        var sizeWidth = inner.Width > 260 ? CustomWidth(SizeColumnKey, scale) ?? (b.IsModern ? 84 * scale : b.FontSize * 0.6 * 11) : 0;
         var dateX = right - dateWidth;
         var sizeX = dateX - sizeWidth - gap;
 
@@ -324,7 +429,7 @@ public sealed class FileViewportCanvas : Control
         var nameRight = sizeX - gap;
         foreach (var column in _tab?.ColumnData.Columns ?? [])
         {
-            var width = column.Definition.DefaultWidth * scale;
+            var width = CustomWidth(column.Key, scale) ?? column.Definition.DefaultWidth * scale;
             if (room - width - gap < 0)
             {
                 break;
@@ -340,7 +445,50 @@ public sealed class FileViewportCanvas : Control
             nameRight -= extras[i].Width + gap;
         }
 
-        return new CanvasLayout(inner, header, rows, sizeX, sizeWidth, dateX, dateWidth, extras, nameRight);
+        return new CanvasLayout(inner, header, rows, sizeX, sizeWidth, dateX, dateWidth, extras, nameRight, gap, scale);
+    }
+
+    /// <summary>A width the user dragged, stored at the 13 px font size so it follows the density setting.</summary>
+    private double? CustomWidth(string key, double scale) =>
+        ColumnWidths is { } widths && widths.TryGetValue(key, out var width) && width > 0
+            ? Math.Clamp(width, MinColumnWidth, MaxColumnWidth) * scale
+            : null;
+
+    private static IEnumerable<ColumnDivider> Dividers(CanvasLayout layout)
+    {
+        foreach (var extra in layout.Extras)
+        {
+            yield return new ColumnDivider(extra.Column.Key, extra.X, extra.Width);
+        }
+
+        if (layout.SizeWidth > 0)
+        {
+            yield return new ColumnDivider(SizeColumnKey, layout.SizeX, layout.SizeWidth);
+        }
+
+        if (layout.DateWidth > 0)
+        {
+            yield return new ColumnDivider(DateColumnKey, layout.DateX, layout.DateWidth);
+        }
+    }
+
+    /// <summary>The divider under the pointer: within 4 px of the middle of the gap left of a column, in the header.</summary>
+    private ColumnDivider? DividerAt(CanvasLayout layout, Point point)
+    {
+        if (ColumnWidths is null || !layout.HeaderArea.Contains(point))
+        {
+            return null;
+        }
+
+        foreach (var divider in Dividers(layout))
+        {
+            if (Math.Abs(point.X - (divider.X - (layout.Gap / 2))) <= 4)
+            {
+                return divider;
+            }
+        }
+
+        return null;
     }
 
     private static void DrawFrame(DrawingContext context, SkinBrushes b, Rect bounds)
@@ -363,7 +511,7 @@ public sealed class FileViewportCanvas : Control
         }
     }
 
-    private static void DrawHeader(DrawingContext context, SkinBrushes b, CanvasLayout layout, SortOrder sort)
+    private static void DrawHeader(DrawingContext context, SkinBrushes b, CanvasLayout layout, SortOrder sort, string? highlightedDivider)
     {
         context.FillRectangle(b.HeaderBackground, layout.HeaderArea);
         var y = layout.HeaderArea.Y;
@@ -425,6 +573,14 @@ public sealed class FileViewportCanvas : Control
         }
 
         context.DrawLine(b.BorderPen, layout.HeaderArea.BottomLeft + new Vector(0, -0.5), layout.HeaderArea.BottomRight + new Vector(0, -0.5));
+        foreach (var divider in Dividers(layout))
+        {
+            if (divider.Key == highlightedDivider)
+            {
+                var x = Math.Round(divider.X - (layout.Gap / 2)) + 0.5;
+                context.DrawLine(new Pen(b.Accent, 2), new Point(x, layout.HeaderArea.Y + 3), new Point(x, layout.HeaderArea.Bottom - 3));
+            }
+        }
     }
 
     /// <summary>Row inset + padding + icon + gap: where names start (36 px in the design system at 13 px).</summary>
@@ -797,9 +953,16 @@ public sealed class FileViewportCanvas : Control
         double DateX,
         double DateWidth,
         IReadOnlyList<ExtraColumnLayout> Extras,
-        double NameRight);
+        double NameRight,
+        double Gap,
+        double Scale);
 
     private readonly record struct ExtraColumnLayout(ActiveColumn Column, double X, double Width);
+
+    /// <summary>A draggable column edge in the header: the left edge of a right-anchored column (the name fills the rest).</summary>
+    private readonly record struct ColumnDivider(string Key, double X, double Width);
+
+    private sealed record ColumnDrag(string Key, double StartX, double StartWidth, double MaxWidth, double Scale);
 
     private static TextAlignment Align(ColumnAlignment alignment) => alignment switch
     {

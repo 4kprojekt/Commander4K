@@ -109,6 +109,12 @@ public sealed class ConfigStore(string configDirectory)
 
         file.AppliedMigrations = [.. applied.Order(StringComparer.Ordinal)];
 
+        foreach (var sequence in file.Bindings.Where(b => DefaultKeymap.RemovedCommands.Contains(b.Value, StringComparer.OrdinalIgnoreCase)).Select(b => b.Key).ToList())
+        {
+            file.Bindings.Remove(sequence);
+            changed = true;
+        }
+
         foreach (var (sequence, command) in DefaultKeymap.Bindings)
         {
             if (!known.Contains(command) && !bound.Contains(sequence))

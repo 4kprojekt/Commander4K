@@ -59,12 +59,21 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     /// <summary>A folder's own view shown on entering it (<c>c4k.dir</c> <c>"enter"</c>), instead of following the cursor.</summary>
     public sealed record PinnedFolder(VfsEntry Folder, FolderConfig Config, FolderAction Action);
 
-    private readonly PinnedFolder? _pinned;
+    /// <summary>Folder views opened one from another (a dashboard picked on a dashboard); empty when following the cursor.</summary>
+    private readonly ViewHistory<PinnedFolder> _history = new();
+    private readonly Button _backButton;
+    private readonly StackPanel _trail = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
     private readonly Dictionary<string, Bitmap?> _thumbnails = new(StringComparer.Ordinal);
+
+    private PinnedFolder? _pinned => _history.Trail.Count > 0 ? _history.Current : null;
 
     public PreviewPanelView(AppHost app, FilePanelView source, SkinBrushes brushes, Action<string, bool> notify, PinnedFolder? pinned = null)
     {
-        _pinned = pinned;
+        if (pinned is not null)
+        {
+            _history.Push(pinned);
+        }
+
         _app = app;
         _source = source;
         _brushes = brushes;
@@ -73,11 +82,16 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _title = new TextBlock().FontWeight(FontWeight.SemiBold).VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
         _editButton = new Button().Content(Loc.T("Edytuj (F4)")).Padding(8, 2).FontSize(12).IsVisible(false).OnClick(_ => ToggleEdit());
         _saveButton = new Button().Content(Loc.T("Zapisz (Ctrl+S)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).IsVisible(false).OnClick(async _ => await SaveAsync());
-        _header = new Border().Padding(8, 4).Child(new Grid().Cols("*,Auto,Auto,Auto").Children(
-            _title,
-            _editButton.Col(1),
-            _saveButton.Col(2),
-            new Button().Col(3).Content(Loc.T("Zamknij (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
+        // A folder's own view always offers the way back (←, Alt+←, Backspace) and the way to its files (Esc).
+        _backButton = new Button().Content("←").Padding(8, 2).FontSize(12).Margin(0, 0, 6, 0).IsVisible(pinned is not null).OnClick(async _ => await BackAsync());
+        ToolTip.SetTip(_backButton, Loc.T("Wstecz (Alt+←, Backspace)"));
+        _header = new Border().Padding(8, 4).Child(new Grid().Cols("Auto,*,Auto,Auto,Auto").Children(
+            _backButton,
+            _title.Col(1).IsVisible(pinned is null),
+            _trail.Col(1).IsVisible(pinned is not null),
+            _editButton.Col(2),
+            _saveButton.Col(3),
+            new Button().Col(4).Content(pinned is null ? Loc.T("Zamknij (Esc)") : Loc.T("📄 Pliki (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
         _status = new TextBlock().Margin(8, 2).TextTrimming(TextTrimming.CharacterEllipsis);
 
         RowDefinitions = new RowDefinitions("Auto,*,Auto");
@@ -89,6 +103,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         ApplySkin(brushes);
         if (pinned is not null)
         {
+            RefreshTrail();
             _ = LoadAsync(pinned.Folder);
             return;
         }
@@ -113,6 +128,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     /// <summary>App shortcuts pressed inside a web preview page (Avalonia never sees those keys); Esc closes the preview first.</summary>
     public Func<Core.Input.KeyStroke, bool>? RunShortcut { get; init; }
+    /// <summary>Asks the user to trust a <c>c4k.dir</c> whose cards sign in or change something (POST, SSH); locked when null.</summary>
+    public Func<FolderConfig, Task<bool>>? AskFolderTrust { get; init; }
 
     public string Title => _pinned is { } pinned ? pinned.Config.Title ?? pinned.Folder.Name : Loc.T("Podgląd");
 
@@ -126,6 +143,70 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         set { }
     }
 
+    /// <summary>Opens another folder's view inside this one (a dashboard card); Back returns here.</summary>
+    public async Task OpenPinnedAsync(PinnedFolder next)
+    {
+        if (_dirty || _pinned is null)
+        {
+            return;
+        }
+
+        _history.Push(next);
+        await ShowPinnedAsync(next);
+    }
+
+    private async Task BackAsync()
+    {
+        if (!_dirty && _history.CanGoBack)
+        {
+            await ShowPinnedAsync(_history.Back());
+        }
+    }
+
+    private async Task JumpToAsync(int index)
+    {
+        if (!_dirty && index < _history.Trail.Count - 1)
+        {
+            await ShowPinnedAsync(_history.JumpTo(index));
+        }
+    }
+
+    /// <summary>The file panel underneath follows, so Esc shows the files of the folder on screen.</summary>
+    private async Task ShowPinnedAsync(PinnedFolder view)
+    {
+        RefreshTrail();
+        _ = _source.NavigateAsync(view.Folder.Path);
+        await LoadAsync(view.Folder);
+    }
+
+    /// <summary>Breadcrumbs of the views opened so far; a click goes back to that one.</summary>
+    private void RefreshTrail()
+    {
+        _trail.Children.Clear();
+        var trail = _history.Trail;
+        for (var i = 0; i < trail.Count; i++)
+        {
+            var name = trail[i].Config.Title ?? trail[i].Folder.Name;
+            if (i > 0)
+            {
+                _trail.Children.Add(new TextBlock { Text = " › ", Foreground = _brushes.MutedForeground, VerticalAlignment = VerticalAlignment.Center });
+            }
+
+            if (i == trail.Count - 1)
+            {
+                _trail.Children.Add(new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, Foreground = _brushes.HeaderForeground, VerticalAlignment = VerticalAlignment.Center });
+                continue;
+            }
+
+            var index = i;
+            var crumb = new Button { Content = name, Padding = new Thickness(4, 0), FontSize = 12, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Foreground = _brushes.HeaderForeground };
+            crumb.Click += async (_, _) => await JumpToAsync(index);
+            _trail.Children.Add(crumb);
+        }
+
+        _backButton.IsEnabled = _history.CanGoBack;
+    }
+
     public void ApplySkin(SkinBrushes brushes)
     {
         _brushes = brushes;
@@ -134,6 +215,10 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _title.Foreground = brushes.HeaderForeground;
         _status.Foreground = brushes.StatusForeground;
         _busy.Foreground = brushes.StatusForeground;
+        if (_history.Trail.Count > 0)
+        {
+            RefreshTrail();
+        }
         if (_shown is { } shown)
         {
             Show(shown);
@@ -151,6 +236,13 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         if (e.Key == Key.S && e.KeyModifiers.HasFlag(KeyModifiers.Control) && _dirty)
         {
             _ = SaveAsync();
+            return true;
+        }
+
+        var back = (e.Key == Key.Left && e.KeyModifiers == KeyModifiers.Alt) || (e.Key == Key.Back && e.KeyModifiers == KeyModifiers.None && _editor is not { IsFocused: true });
+        if (back && !_dirty && _history.CanGoBack)
+        {
+            _ = BackAsync();
             return true;
         }
 
@@ -184,6 +276,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _loading?.Cancel();
         _debounce?.Cancel();
         DisposeWeb();
+        StopDashboard();
         if (_pinned is not null)
         {
             return ValueTask.CompletedTask;
@@ -271,6 +364,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private async Task LoadAsync(VfsEntry? entry)
     {
         _loading?.Cancel();
+        StopDashboard();
         _editing = false;
         if (_entry?.Path != entry?.Path)
         {
@@ -411,6 +505,12 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
                 Loc.T("Ten podgląd z c4k.dir otwiera się po wejściu do folderu (Enter)."))));
         }
 
+        if (action.Plugin is null && action.View is FolderViewIds.Api && action.Api is { } request)
+        {
+            var api = _app.ApiCards;
+            return (folderPlugin, (_, _, ct) => api.LoadViewAsync(request, _app.HostFor(api.Manifest), ct));
+        }
+
         if (action.Plugin is not { } pluginId)
         {
             return (folderPlugin, (host, progress, ct) => Plugins.BuiltIn.Previews.FolderViews.LoadAsync(config, action, section, folder, host, progress, ct));
@@ -438,6 +538,18 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private void Show(PreviewContent content)
     {
+        // The same dashboard shown again (a skin change) keeps its live cards; anything else stops them.
+        if (_dashboard is { } live)
+        {
+            if (ReferenceEquals(_shown, content))
+            {
+                live.ApplySkin(_brushes);
+                return;
+            }
+
+            StopDashboard();
+        }
+
         _shown = content;
         _editor = null;
         _livePreview = null;
@@ -462,6 +574,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             HexPreview hex => Monospace(TextHexViewerPlugin.FormatHex(hex.Data.Span), Loc.T("Hex · pokazano {0:N0} z {1:N0} B", hex.Data.Length, hex.TotalLength)),
             FolderPreview folder => FolderView(folder),
             TilesPreview tiles => TilesView(tiles),
+            Plugins.BuiltIn.Dashboard.DashboardPreview dashboard => DashboardView(dashboard),
+            ChartPreview chart => ChartView(chart),
             MessagePreview message => new TextBlock { Text = message.Message, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap },
             _ => null,
         };
@@ -827,69 +941,111 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
 
         var wrap = new WrapPanel { Margin = new Thickness(-6, 4, 0, 0) };
-        var imageHeight = Math.Round(tiles.TileWidth * 0.5);
-        var folder = _entry;
         foreach (var tile in tiles.Tiles)
         {
-            Control picture;
-            if (tile.Image is { } data)
-            {
-                var image = new Image { Stretch = Stretch.UniformToFill, Height = imageHeight, Width = tiles.TileWidth - 14 };
-                var key = $"{tile.Target}|{tile.Title}|{data.Length}";
-                if (_thumbnails.TryGetValue(key, out var cached))
-                {
-                    image.Source = cached;
-                }
-                else
-                {
-                    _thumbnails[key] = null;
-                    _ = DecodeThumbnailAsync(key, data, (int)Math.Min(tiles.TileWidth * 2, 800), image);
-                }
-
-                picture = new Border { CornerRadius = new CornerRadius(_brushes.ControlRadius), ClipToBounds = true, Child = image, Background = _brushes.Skeleton };
-            }
-            else
-            {
-                picture = new Border
-                {
-                    Height = Math.Min(imageHeight, 72),
-                    Background = _brushes.Surface2,
-                    CornerRadius = new CornerRadius(_brushes.ControlRadius),
-                    Child = new TextBlock { Text = tile.Icon ?? "▪", FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
-                };
-            }
-
-            var content = new StackPanel { Spacing = 3 };
-            content.Children.Add(picture);
-            content.Children.Add(new TextBlock { Text = tile.Title, FontWeight = FontWeight.SemiBold, Foreground = _brushes.FileForeground, TextTrimming = TextTrimming.CharacterEllipsis });
-            if (tile.Subtitle is { Length: > 0 } subtitle)
-            {
-                content.Children.Add(new TextBlock { Text = subtitle, FontSize = _brushes.FontSize - 1, Foreground = _brushes.MutedForeground, TextTrimming = TextTrimming.CharacterEllipsis });
-            }
-
-            var button = new Button
-            {
-                Content = content,
-                Width = tiles.TileWidth,
-                Margin = new Thickness(6),
-                Padding = new Thickness(6),
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Background = _brushes.PanelBackground,
-                BorderBrush = _brushes.PanelBorder,
-                BorderThickness = new Thickness(1),
-                IsEnabled = tile.Target is not null && OpenTile is not null,
-            };
-            if (tile.Target is { } target)
-            {
-                ToolTip.SetTip(button, target);
-                button.Click += async (_, _) => await OpenTile!(tile, folder);
-            }
-
-            wrap.Children.Add(button);
+            wrap.Children.Add(TileButton(tile, tiles.TileWidth));
         }
 
         stack.Children.Add(wrap);
-        SetStatus(Loc.P(tiles.Tiles.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty));
+        SetStatus(Loc.P(tiles.Tiles.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (_entry is { } shown ? " · " + shown.Path : string.Empty));
+        return Scroll(stack);
+    }
+
+    /// <summary>One tile: its picture (or icon), title and subtitle; a click goes to <see cref="OpenTile"/>.</summary>
+    private Button TileButton(PreviewTile tile, double width)
+    {
+        var folder = _entry;
+        var imageHeight = Math.Round(width * 0.5);
+        Control picture;
+        if (tile.Image is { } data)
+        {
+            var image = new Image { Stretch = Stretch.UniformToFill, Height = imageHeight, Width = width - 14 };
+            var key = $"{tile.Target}|{tile.Title}|{data.Length}";
+            if (_thumbnails.TryGetValue(key, out var cached))
+            {
+                image.Source = cached;
+            }
+            else
+            {
+                _thumbnails[key] = null;
+                _ = DecodeThumbnailAsync(key, data, (int)Math.Min(width * 2, 800), image);
+            }
+
+            picture = new Border { CornerRadius = new CornerRadius(_brushes.ControlRadius), ClipToBounds = true, Child = image, Background = _brushes.Skeleton };
+        }
+        else
+        {
+            picture = new Border
+            {
+                Height = Math.Min(imageHeight, 72),
+                Background = _brushes.Surface2,
+                CornerRadius = new CornerRadius(_brushes.ControlRadius),
+                Child = new TextBlock { Text = tile.Icon ?? "▪", FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+            };
+        }
+
+        var content = new StackPanel { Spacing = 3 };
+        content.Children.Add(picture);
+        content.Children.Add(new TextBlock { Text = tile.Title, FontWeight = FontWeight.SemiBold, Foreground = _brushes.FileForeground, TextTrimming = TextTrimming.CharacterEllipsis });
+        if (tile.Subtitle is { Length: > 0 } subtitle)
+        {
+            content.Children.Add(new TextBlock { Text = subtitle, FontSize = _brushes.FontSize - 1, Foreground = _brushes.MutedForeground, TextTrimming = TextTrimming.CharacterEllipsis });
+        }
+
+        var button = new Button
+        {
+            Content = content,
+            Width = width,
+            Margin = new Thickness(6),
+            Padding = new Thickness(6),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Background = _brushes.PanelBackground,
+            BorderBrush = _brushes.PanelBorder,
+            BorderThickness = new Thickness(1),
+            IsEnabled = tile.Target is not null && OpenTile is not null,
+        };
+        if (tile.Target is { } target)
+        {
+            ToolTip.SetTip(button, target);
+            button.Click += async (_, _) => await OpenTile!(tile, folder);
+        }
+
+        return button;
+    }
+
+    private DashboardView? _dashboard;
+
+    /// <summary>A dashboard's cards stay live while it is shown; <see cref="StopDashboard"/> ends them.</summary>
+    private Control DashboardView(Plugins.BuiltIn.Dashboard.DashboardPreview dashboard)
+    {
+        var folder = _entry;
+        _dashboard = new DashboardView(_app, dashboard, _brushes,
+            tile => OpenTile is { } open ? open(tile, folder) : Task.CompletedTask,
+            TileButton,
+            AskFolderTrust);
+        SetStatus(Loc.P(dashboard.Slots.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty));
+        return _dashboard;
+    }
+
+    private void StopDashboard()
+    {
+        if (_dashboard is { } dashboard)
+        {
+            _dashboard = null;
+            _ = dashboard.StopAsync();
+        }
+    }
+
+    private Control ChartView(ChartPreview chart)
+    {
+        var stack = new StackPanel { Margin = new Thickness(12, 8), Spacing = 6 };
+        stack.Children.Add(new TextBlock { Text = chart.Title, FontSize = _brushes.FontSize + 4, FontWeight = FontWeight.Bold, Foreground = _brushes.DirectoryForeground });
+        if (chart.Description is { Length: > 0 } description)
+        {
+            stack.Children.Add(new TextBlock { Text = description, Foreground = _brushes.MutedForeground, TextWrapping = TextWrapping.Wrap });
+        }
+
+        stack.Children.Add(new ChartControl(_brushes) { Chart = chart.Chart, Height = 240 });
         return Scroll(stack);
     }
 
