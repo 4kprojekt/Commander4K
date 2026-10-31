@@ -22,16 +22,17 @@ namespace Commander4K.App.Preview;
 /// A preview plugin's HTML page (<see cref="WebPreview"/>) in WebView2, sandboxed:
 /// <list type="bullet">
 /// <item>its own profile (<c>data/webview2-previews</c>, no cookies from the browser panel) whose network goes to a dead proxy, so nothing the page starts can leave the machine;</item>
-/// <item>every request is answered here: <c>https://&lt;plugin&gt;.plugin.c4k/</c> serves files under the preview's <c>webRoot</c> (with a CSP that only allows that origin),
-/// <c>/__entry/&lt;token&gt;/…</c> the previewed file through the plugin's own <see cref="IPluginHost"/> (fs.read, audited, byte ranges), anything else is 403;</item>
-/// <item>navigation away is cancelled (http(s) opens in the browser panel), new windows and downloads too, permission prompts are denied.</item>
+/// <item>every request is answered here: <c>https://&lt;plugin&gt;.plugin.c4k/</c> (<see cref="WebPreviewOrigin"/>, one origin per exact plugin id)
+/// serves files under the preview's <c>webRoot</c> (with a CSP that only allows that origin), <c>/__entry/&lt;token&gt;/…</c> the previewed
+/// file through the plugin's own <see cref="IPluginHost"/> (fs.read, audited, byte ranges); service worker scripts and anything else are 403;</item>
+/// <item>navigation away is cancelled, new windows and downloads too, permission prompts are denied; only an http(s) link the user
+/// clicks opens in the browser panel (a script's own <c>location.href</c> or <c>window.open</c> opens nothing).</item>
 /// </list>
 /// The page talks to the app only through <c>window.c4k</c> (<c>WebBridge.js</c>). Moving to another file the same page
 /// shows posts an <c>entry</c> event instead of reloading. All members run on the UI thread.
 /// </summary>
 public sealed class WebPreviewView : UserControl, IDisposable
 {
-    private const string HostSuffix = ".plugin.c4k";
     private const string EntryPrefix = "/__entry/";
     private const long MaxBufferedBytes = 4 * 1024 * 1024;
     private const int MaxNotifyChars = 500;
@@ -75,6 +76,7 @@ public sealed class WebPreviewView : UserControl, IDisposable
     private CancellationTokenSource? _showing;
     private string? _scriptId;
     private string? _hostName;
+    private IPluginHost? _pageHost;
     private string? _root;
     private long _lastExternalOpen;
     private long _lastAcceleratorEscape = long.MinValue / 2;
@@ -289,7 +291,7 @@ public sealed class WebPreviewView : UserControl, IDisposable
             return;
         }
 
-        var hostName = HostName(state.Preview.PluginId);
+        var hostName = WebPreviewOrigin.HostName(state.Preview.PluginId);
         if (!await RegisterBridgeAsync(core, state, hostName) || _current != state)
         {
             return;
@@ -315,6 +317,7 @@ public sealed class WebPreviewView : UserControl, IDisposable
             }
 
             _hostName = hostName;
+            _pageHost = state.Host;
             _root = state.Preview.RootFolder;
             _pageUrl = pageUrl;
             core.Navigate(pageUrl);
@@ -364,7 +367,7 @@ public sealed class WebPreviewView : UserControl, IDisposable
 
     private async Task RefreshSkinAsync(CoreWebView2 core, EntryState state)
     {
-        if (await RegisterBridgeAsync(core, state, HostName(state.Preview.PluginId)))
+        if (await RegisterBridgeAsync(core, state, WebPreviewOrigin.HostName(state.Preview.PluginId)))
         {
             Post(core, writer =>
             {
@@ -412,6 +415,13 @@ public sealed class WebPreviewView : UserControl, IDisposable
         if (_disposed || !IsOwn(uri) || _current is not { } state || _root is not { } root)
         {
             e.Response = environment.CreateWebResourceResponse(null, 403, "Forbidden", string.Empty);
+            return;
+        }
+
+        // A service worker would outlive the page and answer its later requests itself; previews get none.
+        if (request.Headers.Contains("Service-Worker"))
+        {
+            e.Response = environment.CreateWebResourceResponse(null, 403, "Forbidden", "Cache-Control: no-store");
             return;
         }
 
@@ -613,7 +623,10 @@ public sealed class WebPreviewView : UserControl, IDisposable
         }
 
         e.Cancel = true;
-        OpenInBrowser(e.Uri);
+        if (e.IsUserInitiated)
+        {
+            OpenInBrowser(e.Uri);
+        }
     }
 
     private void OnFrameNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
@@ -630,13 +643,19 @@ public sealed class WebPreviewView : UserControl, IDisposable
     private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
     {
         e.Handled = true;
-        OpenInBrowser(e.Uri);
+        if (e.IsUserInitiated)
+        {
+            OpenInBrowser(e.Uri);
+        }
     }
 
-    /// <summary>http(s) pages leave the preview for the browser panel, through the plugin's host (audited), at most once a second.</summary>
+    /// <summary>
+    /// A link the user clicked leaves the preview for the browser panel, through the host of the plugin whose page is on
+    /// screen (audited), at most once a second. Navigations a script starts on its own never get here: they could carry data out.
+    /// </summary>
     private void OpenInBrowser(string url)
     {
-        if (_current is not { } state || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || IsOwn(uri))
+        if (_disposed || _pageHost is not { } host || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || IsOwn(uri))
         {
             return;
         }
@@ -648,7 +667,7 @@ public sealed class WebPreviewView : UserControl, IDisposable
         }
 
         _lastExternalOpen = now;
-        _ = OpenUrlAsync(state.Host, uri.AbsoluteUri);
+        _ = OpenUrlAsync(host, uri.AbsoluteUri);
     }
 
     private static async Task OpenUrlAsync(IPluginHost host, string url)
@@ -877,18 +896,6 @@ public sealed class WebPreviewView : UserControl, IDisposable
     };
 
     // ---- data ----
-
-    /// <summary><c>https://&lt;id&gt;.plugin.c4k</c>: the plugin id in lower case, characters outside <c>[a-z0-9-]</c> replaced by <c>-</c>.</summary>
-    internal static string HostName(string pluginId)
-    {
-        var builder = new StringBuilder(pluginId.Length + HostSuffix.Length);
-        foreach (var c in pluginId.ToLowerInvariant())
-        {
-            builder.Append(c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' ? c : '-');
-        }
-
-        return builder.Append(HostSuffix).ToString();
-    }
 
     private static void WriteEntryData(Utf8JsonWriter writer, EntryState state, string hostName)
     {
