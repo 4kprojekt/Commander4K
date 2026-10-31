@@ -21,29 +21,7 @@ public static class McpPluginTools
                 "check_plugin",
                 "Validates a plugin without installing it: manifest, file limits and SDK bypasses (open(), fs, subprocess, fetch, stdout…). "
                 + "Give exactly one of: files (array of {path, content}) or folder (local plugin folder on disk).",
-                new JsonObject
-                {
-                    ["type"] = "object",
-                    ["properties"] = new JsonObject
-                    {
-                        ["files"] = new JsonObject
-                        {
-                            ["type"] = "array",
-                            ["description"] = "Plugin files: objects with path (relative) and content (text).",
-                            ["items"] = new JsonObject
-                            {
-                                ["type"] = "object",
-                                ["properties"] = new JsonObject
-                                {
-                                    ["path"] = new JsonObject { ["type"] = "string" },
-                                    ["content"] = new JsonObject { ["type"] = "string" },
-                                },
-                                ["required"] = new JsonArray("path", "content"),
-                            },
-                        },
-                        ["folder"] = new JsonObject { ["type"] = "string", ["description"] = "Local plugin folder (disk path)." },
-                    },
-                },
+                FilesOrFolderSchema(),
                 McpToolMode.Allow,
                 PathArguments: ["folder"]),
             (call, ct) => Task.Run(() => Check(call, sdkClient, pluginsRoot, ct), ct),
@@ -88,14 +66,9 @@ public static class McpPluginTools
             }
             else
             {
-                if (VfsPath.GetScheme(folder!) != VfsPath.FileScheme || !Path.IsPathFullyQualified(folder!))
+                if (LocalFolderError(folder!) is { } error)
                 {
-                    return McpToolResult.Error("Only local folders are supported (a disk path such as C:\\plugins\\mine).");
-                }
-
-                if (!Directory.Exists(folder))
-                {
-                    return McpToolResult.Error($"Folder not found: {folder}");
+                    return McpToolResult.Error(error);
                 }
 
                 files = PluginAuthoring.FromFolder(folder!, PluginLimits.Folder, ct);
@@ -121,7 +94,44 @@ public static class McpPluginTools
         }
     }
 
-    private static List<GeneratedFile> ReadFiles(JsonArray array)
+    /// <summary>Why <paramref name="folder"/> cannot be read as a plugin folder (not a local disk path, missing), or <c>null</c>.</summary>
+    public static string? LocalFolderError(string folder)
+    {
+        if (VfsPath.GetScheme(folder) != VfsPath.FileScheme || !Path.IsPathFullyQualified(folder))
+        {
+            return "Only local folders are supported (a disk path such as C:\\plugins\\mine).";
+        }
+
+        return Directory.Exists(folder) ? null : $"Folder not found: {folder}";
+    }
+
+    /// <summary>Input schema of tools that take a plugin as <c>files</c> ({path, content}) or a local <c>folder</c>.</summary>
+    public static JsonObject FilesOrFolderSchema() => new()
+    {
+        ["type"] = "object",
+        ["properties"] = new JsonObject
+        {
+            ["files"] = new JsonObject
+            {
+                ["type"] = "array",
+                ["description"] = "Plugin files: objects with path (relative) and content (text).",
+                ["items"] = new JsonObject
+                {
+                    ["type"] = "object",
+                    ["properties"] = new JsonObject
+                    {
+                        ["path"] = new JsonObject { ["type"] = "string" },
+                        ["content"] = new JsonObject { ["type"] = "string" },
+                    },
+                    ["required"] = new JsonArray("path", "content"),
+                },
+            },
+            ["folder"] = new JsonObject { ["type"] = "string", ["description"] = "Local plugin folder (disk path)." },
+        },
+    };
+
+    /// <summary>Reads the <c>files</c> argument; throws <see cref="ArgumentException"/> on a malformed entry.</summary>
+    public static List<GeneratedFile> ReadFiles(JsonArray array)
     {
         var files = new List<GeneratedFile>();
         foreach (var node in array)

@@ -1284,7 +1284,7 @@ public sealed class MainWindow : Window, IShell
     }
 
     /// <summary>What the AI chat is told about the app.</summary>
-    private AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
+    internal AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
 
     private AiAppContext? _aiContext;
 
@@ -1796,6 +1796,136 @@ public sealed class MainWindow : Window, IShell
 
     /// <summary>Runs any command id (built-in, <c>panel:</c>, <c>plugin:</c>) as if invoked from the keymap; for automation and tests.</summary>
     public Task ExecuteCommandAsync(string commandId) => ExecuteAsync(commandId);
+
+    // MCP tools (Mcp/McpAppTools) call these on the UI thread, through Dispatcher.UIThread.InvokeAsync. Messages are English (for the model).
+
+    /// <summary>The current skin's brushes, for dialogs the MCP tools show.</summary>
+    internal SkinBrushes McpBrushes => _skins!.Current;
+
+    /// <summary><c>left</c>, <c>right</c>, <c>active</c> or <c>other</c>.</summary>
+    internal FilePanelView McpPanel(string which) => which.Trim().ToLowerInvariant() switch
+    {
+        "left" => _left,
+        "right" => _right,
+        "active" => _active,
+        "other" => Other,
+        _ => throw new ArgumentException($"Unknown panel '{which}': use left, right, active or other."),
+    };
+
+    /// <summary>Plain navigation (no c4k.dir action runs); completes when the listing has loaded or failed.</summary>
+    internal Task McpNavigateAsync(FilePanelView panel, string path) => panel.NavigateAsync(path);
+
+    /// <summary>Marks exactly <paramref name="names"/> (replacing earlier marks) and moves the cursor; returns the names not found.</summary>
+    internal IReadOnlyList<string> McpSelect(FilePanelView panel, IReadOnlyList<string> names, string? cursor)
+    {
+        var tab = panel.ActiveTab;
+        var missing = new List<string>();
+        tab.Marked.Clear();
+        foreach (var name in names)
+        {
+            if (FindRow(name) is { } index)
+            {
+                tab.Marked.Add(tab.Entries[index].Path);
+            }
+            else
+            {
+                missing.Add(name);
+            }
+        }
+
+        var target = tab.Cursor;
+        if (cursor is not null)
+        {
+            if (FindRow(cursor) is { } index)
+            {
+                target = index;
+            }
+            else
+            {
+                missing.Add(cursor);
+            }
+        }
+
+        tab.MoveCursor(target); // Raises Changed, which repaints the marks too.
+        return missing;
+
+        int? FindRow(string name)
+        {
+            var index = tab.Entries.FindIndex(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action)
+                && string.Equals(e.Name, name, StringComparison.OrdinalIgnoreCase));
+            return index >= 0 ? index : null;
+        }
+    }
+
+    /// <summary><c>files</c>, <c>preview</c> or <c>panel:&lt;id&gt;</c>; false when the mode is unknown or could not open.</summary>
+    internal async Task<bool> McpSetModeAsync(FilePanelView panel, string mode)
+    {
+        var source = panel == _left ? _right : _left;
+        switch (mode.Trim())
+        {
+            case var files when files.Equals("files", StringComparison.OrdinalIgnoreCase):
+                panel.CloseMode();
+                return true;
+            case var preview when preview.Equals("preview", StringComparison.OrdinalIgnoreCase):
+                if (panel.Mode is not PreviewPanelView)
+                {
+                    panel.ShowMode(CreatePreview(source));
+                }
+
+                return true;
+            case var id when id.StartsWith(CommandIds.PanelPrefix, StringComparison.OrdinalIgnoreCase):
+                var pluginId = id[CommandIds.PanelPrefix.Length..];
+                if (_host!.FindPanel(pluginId) is null)
+                {
+                    return false;
+                }
+
+                var before = panel.Mode;
+                await OpenPanelInAsync(pluginId, null, panel);
+                return panel.Mode is PluginPanelView && panel.Mode != before;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>What a plugin command would work on: the visible file panel's path and its marked entries (or the cursor).</summary>
+    internal (string Path, IReadOnlyList<string> Selected) McpPluginContext()
+    {
+        var panel = _active.Mode is null ? _active : Other;
+        return (panel.ActiveTab.Path, [.. panel.ActiveTab.MarkedOrCurrent().Select(e => e.Path)]);
+    }
+
+    /// <summary>Runs a plugin's command like the menu does; <c>null</c> on success, otherwise why it did not run.</summary>
+    internal async Task<string?> McpRunPluginCommandAsync(string pluginId, string commandId, CancellationToken cancellationToken = default)
+    {
+        if (_host!.FindCommandPlugin(pluginId) is not { } plugin)
+        {
+            return $"No plugin with commands has the id '{pluginId}'. Call list_plugins or list_commands.";
+        }
+
+        var command = plugin.Commands.FirstOrDefault(c => string.Equals(c.Id, commandId, StringComparison.OrdinalIgnoreCase));
+        if (command is null)
+        {
+            return $"Plugin '{pluginId}' has no command '{commandId}'. Its commands: {string.Join(", ", plugin.Commands.Select(c => c.Id).DefaultIfEmpty("none"))}.";
+        }
+
+        var host = _host.HostFor(plugin.Manifest);
+        if (!plugin.CanExecute(command.Id, host))
+        {
+            return $"The command {pluginId}:{command.Id} cannot run in the current context.";
+        }
+
+        try
+        {
+            await plugin.ExecuteAsync(command.Id, host, cancellationToken);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Like the keymap path (ExecuteAsync): a failing plugin is a result, not a crash.
+            return $"The command {pluginId}:{command.Id} failed: {ex.Message}";
+        }
+    }
 
     private async Task ExecuteAsync(string commandId)
     {

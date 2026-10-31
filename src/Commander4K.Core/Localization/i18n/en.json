@@ -1050,5 +1050,7 @@
   "📄 README": "📄 README",
   "🔐 Połączenie SSH": "🔐 SSH connection",
   "🖼 Galeria": "🖼 Gallery",
-  "🗒 Notatki": "🗒 Notes"
+  "🗒 Notatki": "🗒 Notes",
+  "Zainstalować wtyczkę od klienta MCP?": "Install the plugin from the MCP client?",
+  "Klient MCP „{0}” prosi o włączenie wtyczki {1}.": "The MCP client \"{0}\" asks to enable the plugin {1}."
 }
