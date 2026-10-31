@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http.Headers;
 using System.Text;
 using Commander4K.Core.Execution;
 using Commander4K.Core.Localization;
@@ -164,10 +165,31 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
                 throw new ArgumentException(Loc.T("Dozwolone są tylko adresy http i https."), nameof(request));
             }
 
+            if ((request.Body is not null ? 1 : 0) + (request.BodyFile is not null ? 1 : 0) + (request.Part is not null ? 1 : 0) > 1)
+            {
+                throw new ArgumentException("Use only one of body, bodyFile and multipart.", nameof(request));
+            }
+
             using var message = new HttpRequestMessage(new HttpMethod(request.Method.ToUpperInvariant()), request.Url);
             if (request.Body is not null)
             {
                 message.Content = new StringContent(request.Body, Encoding.UTF8, request.ContentType ?? "application/json");
+            }
+            else if (request.BodyFile is { } bodyFile)
+            {
+                // Streamed through the router (disk, share, SFTP, archive), never loaded into memory. The read is gated
+                // like fs.read, so it works with fs.read or while the file is granted (panel.receive).
+                var content = new StreamContent(await OpenReadAsync(bodyFile, cancellationToken).ConfigureAwait(false));
+                content.Headers.ContentType = MediaTypeHeaderValue.Parse(request.ContentType ?? "application/octet-stream");
+                message.Content = content;
+            }
+            else if (request.Part is { } part)
+            {
+                var form = new MultipartFormDataContent();
+                message.Content = form;
+                var content = new StreamContent(await OpenReadAsync(part.Path, cancellationToken).ConfigureAwait(false));
+                content.Headers.ContentType = MediaTypeHeaderValue.Parse(request.ContentType ?? "application/octet-stream");
+                form.Add(content, part.Field, part.FileName ?? FileNameOf(part.Path));
             }
 
             foreach (var (name, value) in request.Headers ?? new Dictionary<string, string>())
@@ -311,6 +333,10 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
             }
         }
     }
+
+    /// <summary>Last segment of any VFS path (<c>C:\a\b.txt</c>, <c>sftp://h/a/b.txt</c>, <c>zip://x.zip::/b.txt</c>).</summary>
+    private static string FileNameOf(string path) =>
+        Path.GetFileName(path.TrimEnd('/', '\\')) is { Length: > 0 } name ? name : "file";
 
     private static string DescribeCommand(ProcessRunRequest request) =>
         request.FileName + " " + string.Join(' ', request.Arguments.Select(a => a.Contains(' ', StringComparison.Ordinal) ? $"\"{a}\"" : a));

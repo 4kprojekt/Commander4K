@@ -150,6 +150,10 @@ Ask for the fewest permissions that do the job.
 | `panel.load` | `{ panel, argument, filter, context, options }` | `{ columns: [{ id, header, align?: "left"\|"right"\|"center", width? }], rows: [{ id, parentId?, cells: [string], severity?: "normal"\|"muted"\|"highlight"\|"warning"\|"error", sortKeys?: [number\|null], expanded? }], status? }` |
 | `panel.details` | `{ panel, rowId }` | `{ sections: [{ title, items: [[key, value]] }] }` or `null` |
 | `panel.action` | `{ panel, action, rowIds, context }` | `{ text?: string }`. Text is shown in a viewer, and the panel reloads afterwards. |
+| `panel.receivers` | `{ panel, files: [{ path, name, kind: "file"\|"folder", size }], context }` | `[{ id, title, description?, extensions?, multiple?, folders?, returnsMessage? }]`. Panels with `accepts` only; answer within 5 s. See [Receiving and providing files](#receiving-and-providing-files). |
+| `panel.receive` | `{ panel, receiver, jobId, files, context }` | `{ text?, results?: [{ path, ok, error? }] }`. One call for the whole selection; no time limit. |
+| `panel.providers` | `{ panel, rowIds, context }` | `[{ id, title, description? }]`. Panels with `provides` only; answer within 5 s. |
+| `panel.provide` | `{ panel, provider, jobId, rowIds, context }` | `{ files: [{ name, text? \| base64? \| url? }], text? }`. No time limit. |
 | `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }`. A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). |
 | `palette.items` | `{ palette, context }` | `{ items: [{ id, title, icon?, tooltip? }] }`. Buttons of a docked palette. Asked again after every navigation and after every `palette.action`, so items may depend on `context.activePath`. |
 | `palette.invoke` | `{ palette, item, context }` | Same as `command.execute`. The user clicked an item. |
@@ -164,7 +168,7 @@ Ask for the fewest permissions that do the job.
 
 Rows form a tree through `parentId`. The app handles sorting (column header click), filtering (typing), expand and collapse, marking (`Insert`) and the details pane. A plugin only describes data.
 
-Long loads are fine: the panel shows a spinner and stays responsive. Requests time out after 60 s.
+Long loads are fine: the panel shows a spinner and stays responsive. Requests time out after 60 s, except `panel.receivers`/`panel.providers` (5 s, a dialog is waiting) and `panel.receive`/`panel.provide` (no limit; the user cancels them).
 
 ### Requests from the plugin to the app
 
@@ -197,7 +201,8 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `shell.run` | `{ file, args: [string], cwd?, elevated? }` | `{ exitCode, output, error }` | `shell.run` |
 | `system.info` | — | `{ os, osVersion, architecture, machine, user, processors, memoryBytes, drives: [{ name, type, format, label, totalBytes, freeBytes }] }` | `system.info` |
 | `net.get` | `{ url }` (http/https, max 5 MB) | string (error on non-2xx) | `net` |
-| `net.request` | `{ url, method?, headers?, body?, contentType? }` (http/https, max 5 MB) | `{ status, headers, body }` (any status) | `net` |
+| `net.request` | `{ url, method?, headers?, body?, contentType?, bodyFile?, multipart?: { field, path, fileName? } }` (http/https, response max 5 MB) | `{ status, headers, body }` (any status) | `net`; `bodyFile`/`multipart` also need `fs.read` or a [read grant](#receiving-and-providing-files) for that path |
+| `job.progress` | `{ jobId, done, total, bytes?, text? }` — a **notification** (no `id`, no answer) | — | — |
 
 `entry` = `{ name, path, kind, size, modified, hidden }`:
 - `kind`: `file`, `directory`, `drive`, `archive`, `share`, `host`, `registrykey`…;
@@ -210,6 +215,40 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 - `-32602`: invalid parameters.
 
 The SDK clients turn these into exceptions.
+
+### Receiving and providing files
+
+A panel can take files from a file panel (`"accepts": true` in its `contributes.panels` entry) and hand rows back
+as files (`"provides": true`).
+
+**Receiving** — the user marks files in one panel, your panel is open in the other, and presses F5:
+1. The app calls `panel.receivers` with the selection and shows the receivers that fit. It checks `extensions`
+   (`.ext`, file names, `*`/`?` patterns, as in previews), `multiple` (more than one item) and `folders` itself, so
+   you may return every receiver and let the app filter.
+2. The user picks one and the app calls `panel.receive` **once for the whole selection** as a background job.
+3. **While that call runs, your plugin may read the offered files** — and everything under offered folders — with
+   `fs.readBytes`/`fs.readText`/`fs.list`/`fs.stat`, even without `fs.read`. The grant ends with the call (also when
+   it is cancelled). It covers every request your process makes meanwhile.
+4. To upload without loading the file into memory, pass the path to `net.request` as `bodyFile` (raw body, sent
+   with `contentType`, default `application/octet-stream`) or as `multipart: { field, path, fileName? }`. The app
+   streams it through its own file system layer, so it works for shares, SFTP and archives too.
+5. Return `{ text?, results? }`: `text` is shown to the user (set `returnsMessage` on the receiver), `results` lists
+   per-file failures (`{ path, ok: false, error }`). Your panel reloads afterwards.
+
+**Providing** — your panel is active and the user presses F5:
+1. The app calls `panel.providers` with the selected row ids; the user picks one (no choice when there is one) and
+   the target folder (the other panel, editable) and overwrite policy.
+2. The app calls `panel.provide` and writes each returned file itself: `text` (UTF-8) or `base64` inline, up to
+   16 MB per file; larger files as an `http`/`https` `url` the app downloads (other schemes are refused). `name` may
+   contain subfolders (`docs/a.txt`), never `..` or an absolute path.
+
+**Progress:** `panel.receive` and `panel.provide` carry a `jobId`. Send `job.progress { jobId, done, total, bytes?,
+text? }` as a notification (`report_progress` in the SDKs) and the job's progress bar follows it; without it the bar
+is indeterminate. Unknown ids are ignored. Cancelling the job sends `$/cancelRequest`.
+
+**Keys:** in a panel with `provides`, F5 (or whatever key the user bound to copying) provides files and **Ctrl+R**
+refreshes; panels without `provides` keep F5 = refresh. A panel action declared with `"shortcut": "F5"` still wins
+over both, so do not bind F5 to an action in a panel that provides files.
 
 ## SDK clients
 
@@ -259,7 +298,8 @@ Every helper maps to one protocol method above:
 | `shell.run` | `run(file, args=(), cwd=None, elevated=False)` | `run(file, args, cwd, elevated)` | `Invoke-C4KProcess $File $Arguments [$WorkingDirectory] [-Elevated]` |
 | `system.info` | `system_info()` | `systemInfo()` | `Get-C4KSystemInfo` |
 | `net.get` | `http_get(url)` | `httpGet(url)` | `Invoke-C4KHttpGet $Url` |
-| `net.request` | `http_request(url, method="GET", headers=None, body=None, content_type=None)` | `httpRequest(url, { method, headers, body, contentType })` | `Invoke-C4KHttpRequest $Url [$Method] [$Headers] [$Body] [$ContentType]` |
+| `net.request` | `http_request(url, method="GET", headers=None, body=None, content_type=None, body_file=None, multipart=None)` | `httpRequest(url, { method, headers, body, contentType, bodyFile, multipart })` | `Invoke-C4KHttpRequest $Url [$Method] [$Headers] [$Body] [$ContentType] [-BodyFile] [-MultipartField -MultipartPath [-MultipartFileName]]` |
+| `job.progress` | `report_progress(job_id, done, total, bytes=0, text=None)` | `reportProgress(jobId, done, total, { bytes, text })` | `Send-C4KProgress -JobId -Done -Total [-Bytes] [-Text]` |
 | any other | `call("method", **params)` | `call('method', params)` | `Invoke-C4K 'method' @{ … }` |
 
 Minimal plugin (Python): a quick view for `.ini` files:

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
@@ -25,6 +26,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
     private JsonRpcConnection? _connection;
 
     private readonly PluginStorage? _storage;
+    private readonly ConcurrentDictionary<string, IProgress<TransferProgress>> _jobs = new(StringComparer.Ordinal);
 
     /// <param name="storage">Backs <c>storage.get/set</c>; without it those calls fail with "not available".</param>
     public ExternalPlugin(DiscoveredPlugin discovered, RuntimeInfo runtime, ScopedPluginHost host, AuditLog audit, PluginStorage? storage = null)
@@ -56,6 +58,21 @@ public sealed class ExternalPlugin : IAsyncDisposable
         {
             throw new TimeoutException(Loc.T("Wtyczka „{0}” nie odpowiedziała na „{1}” w ciągu {2:0} s.", Manifest.Name, method, (timeout ?? DefaultTimeout).TotalSeconds));
         }
+    }
+
+    /// <summary>
+    /// Routes <c>job.progress</c> notifications carrying <paramref name="jobId"/> to <paramref name="progress"/> until
+    /// the result is disposed. The id travels in the params of <c>panel.receive</c>/<c>panel.provide</c>.
+    /// </summary>
+    public IDisposable RegisterProgress(string jobId, IProgress<TransferProgress> progress)
+    {
+        _jobs[jobId] = progress;
+        return new JobRegistration(_jobs, jobId, progress);
+    }
+
+    private sealed class JobRegistration(ConcurrentDictionary<string, IProgress<TransferProgress>> jobs, string jobId, IProgress<TransferProgress> progress) : IDisposable
+    {
+        public void Dispose() => jobs.TryRemove(new KeyValuePair<string, IProgress<TransferProgress>>(jobId, progress));
     }
 
     public async ValueTask DisposeAsync()
@@ -127,6 +144,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
         string? OptStr(string name) => p?.TryGetProperty(name, out var v) == true && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         bool Bool(string name) => p?.TryGetProperty(name, out var v) == true && v.ValueKind == JsonValueKind.True;
         long Long(string name, long fallback) => p?.TryGetProperty(name, out var v) == true && v.TryGetInt64(out var number) ? number : fallback;
+        int Int(string name) => (int)Math.Clamp(Long(name, 0), 0, int.MaxValue);
 
         switch (method)
         {
@@ -182,9 +200,24 @@ public sealed class ExternalPlugin : IAsyncDisposable
                 var headers = p?.TryGetProperty("headers", out var h) == true && h.ValueKind == JsonValueKind.Object
                     ? h.EnumerateObject().ToDictionary(x => x.Name, x => x.Value.ToString())
                     : null;
+                var part = p?.TryGetProperty("multipart", out var mp) == true && mp.ValueKind == JsonValueKind.Object
+                    ? new HttpFilePart(
+                        mp.TryGetProperty("field", out var field) && field.GetString() is { Length: > 0 } fieldName ? fieldName : throw new ArgumentException(Loc.T("Brak parametru „{0}”.", "multipart.field")),
+                        mp.TryGetProperty("path", out var partPath) && partPath.GetString() is { Length: > 0 } partFile ? partFile : throw new ArgumentException(Loc.T("Brak parametru „{0}”.", "multipart.path")),
+                        mp.TryGetProperty("fileName", out var partName) && partName.ValueKind == JsonValueKind.String ? partName.GetString() : null)
+                    : null;
                 var response = await _host.HttpRequestAsync(
-                    new HttpRequestSpec(OptStr("method") ?? "GET", new Uri(Str("url")), headers, OptStr("body"), OptStr("contentType")), cancellationToken).ConfigureAwait(false);
+                    new HttpRequestSpec(OptStr("method") ?? "GET", new Uri(Str("url")), headers, OptStr("body"), OptStr("contentType"), OptStr("bodyFile"), part),
+                    cancellationToken).ConfigureAwait(false);
                 return new { status = response.Status, headers = response.Headers, body = response.Body };
+            case "job.progress":
+                // A notification (no answer): progress of a panel.receive/panel.provide call. Unknown ids are ignored.
+                if (OptStr("jobId") is { } jobId && _jobs.TryGetValue(jobId, out var job))
+                {
+                    job.Report(new TransferProgress(Int("done"), Int("total"), Math.Max(0, Long("bytes", 0)), OptStr("text")));
+                }
+
+                return null;
             case "storage.get":
                 return (_storage ?? throw new InvalidOperationException("Plugin storage is not available.")).Get(Manifest.Id, Str("key"));
             case "storage.set":

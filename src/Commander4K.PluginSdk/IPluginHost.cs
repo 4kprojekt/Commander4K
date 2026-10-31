@@ -28,7 +28,21 @@ public sealed record SystemSnapshot(
 
 /// <param name="Method">GET, POST, PUT, PATCH, DELETE or HEAD.</param>
 /// <param name="Body">Request body as text (JSON, form data…), sent with <paramref name="ContentType"/>.</param>
-public sealed record HttpRequestSpec(string Method, Uri Url, IReadOnlyDictionary<string, string>? Headers = null, string? Body = null, string? ContentType = null);
+/// <param name="BodyFile">A file (any VFS path) streamed as the body; reading it needs <c>fs.read</c> or a read grant.</param>
+/// <param name="Part">A file streamed as one <c>multipart/form-data</c> part; same read rule as <paramref name="BodyFile"/>.</param>
+/// <remarks>At most one of <paramref name="Body"/>, <paramref name="BodyFile"/> and <paramref name="Part"/>.</remarks>
+public sealed record HttpRequestSpec(
+    string Method,
+    Uri Url,
+    IReadOnlyDictionary<string, string>? Headers = null,
+    string? Body = null,
+    string? ContentType = null,
+    string? BodyFile = null,
+    HttpFilePart? Part = null);
+
+/// <param name="Field">Form field name.</param>
+/// <param name="FileName">File name sent in the part; defaults to the name of <paramref name="Path"/>.</param>
+public sealed record HttpFilePart(string Field, string Path, string? FileName = null);
 
 /// <summary>Any status is returned (no exception for 4xx/5xx); the body is text, at most 5 MB.</summary>
 public sealed record HttpResponseData(int Status, IReadOnlyDictionary<string, string> Headers, string Body);

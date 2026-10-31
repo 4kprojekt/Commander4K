@@ -85,8 +85,17 @@ function Invoke-C4KProcess([string] $File, [string[]] $Arguments = @(), [string]
 }
 function Get-C4KSystemInfo { Invoke-C4K 'system.info' }                                                             # system.info -> os, machine, user, processors, memoryBytes, drives
 function Invoke-C4KHttpGet([string] $Url) { Invoke-C4K 'net.get' @{ url = $Url } }                                 # net -> body text
-function Invoke-C4KHttpRequest([string] $Url, [string] $Method = 'GET', [hashtable] $Headers = @{}, [string] $Body, [string] $ContentType) {  # net -> status, headers, body
-    Invoke-C4K 'net.request' @{ url = $Url; method = $Method; headers = $Headers; body = $(if ($Body) { $Body } else { $null }); contentType = $(if ($ContentType) { $ContentType } else { $null }) }
+# -BodyFile streams a file as the body; -MultipartField/-MultipartPath [-MultipartFileName] send it as a form part. The app
+# reads the file (fs.read, or the files granted to panel.receive) — it never passes through the plugin.
+function Invoke-C4KHttpRequest([string] $Url, [string] $Method = 'GET', [hashtable] $Headers = @{}, [string] $Body, [string] $ContentType,
+                               [string] $BodyFile, [string] $MultipartField, [string] $MultipartPath, [string] $MultipartFileName) {  # net -> status, headers, body
+    $multipart = if ($MultipartPath) { @{ field = $MultipartField; path = $MultipartPath; fileName = $(if ($MultipartFileName) { $MultipartFileName } else { $null }) } } else { $null }
+    Invoke-C4K 'net.request' @{ url = $Url; method = $Method; headers = $Headers; body = $(if ($Body) { $Body } else { $null }); contentType = $(if ($ContentType) { $ContentType } else { $null })
+                                bodyFile = $(if ($BodyFile) { $BodyFile } else { $null }); multipart = $multipart }
+}
+# Progress of panel.receive/panel.provide ($p.jobId); a notification, nothing comes back.
+function Send-C4KProgress([string] $JobId, [int] $Done, [int] $Total, [long] $Bytes = 0, [string] $Text) {
+    Send-C4KMessage @{ jsonrpc = '2.0'; method = 'job.progress'; params = @{ jobId = $JobId; done = $Done; total = $Total; bytes = $Bytes; text = $(if ($Text) { $Text } else { $null }) } }
 }
 
 function Start-C4KPlugin {
