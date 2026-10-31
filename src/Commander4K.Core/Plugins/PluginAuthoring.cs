@@ -349,9 +349,31 @@ public static partial class PluginAuthoring
     {
         var normalized = Normalize(path);
         return normalized.Length is > 0 and < 200
+            && !path.EndsWith(' ')
             && !Path.IsPathRooted(normalized)
             && !normalized.Contains(':')
-            && normalized.Split(Path.DirectorySeparatorChar).All(part => part.Length > 0 && part != "." && part != ".." && part.IndexOfAny(Path.GetInvalidFileNameChars()) < 0);
+            && normalized.Split(Path.DirectorySeparatorChar).All(IsSafeSegment);
+    }
+
+    /// <summary>The segments of a relative path, normalised exactly as <see cref="IsSafeRelativePath"/> does.</summary>
+    public static string[] SplitRelativePath(string path) => Normalize(path).Split(Path.DirectorySeparatorChar);
+
+    private static readonly HashSet<string> ReservedDeviceNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+
+    private static bool IsSafeSegment(string part)
+    {
+        if (part.Length == 0 || part is "." or ".." || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || part[^1] is '.' or ' ')
+        {
+            return false;
+        }
+
+        var dot = part.IndexOf('.');
+        return !ReservedDeviceNames.Contains((dot < 0 ? part : part[..dot]).TrimEnd());
     }
 
     /// <summary>Platform separators, without a leading <c>./</c>; <c>..</c> and rooted paths are left for <see cref="IsSafeRelativePath"/> to reject.</summary>

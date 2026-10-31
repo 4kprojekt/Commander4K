@@ -108,6 +108,11 @@ module.exports = {
   run: (file, args = [], cwd = null, elevated = false) => call('shell.run', { file, args, cwd, elevated }), // shell.run -> {exitCode, output, error}
   systemInfo: () => call('system.info'),                                         // system.info -> {os, machine, user, processors, memoryBytes, drives}
   httpGet: url => call('net.get', { url }),                                      // net -> body text (error on non-2xx)
-  httpRequest: (url, { method = 'GET', headers = {}, body = null, contentType = null } = {}) => // net -> {status, headers, body}
-    call('net.request', { url, method, headers, body, contentType }),
+  // bodyFile: path streams a file as the body; multipart: { field, path, fileName } sends it as a form part. The app
+  // reads the file (fs.read, or the files granted to panel.receive) — it never passes through the plugin.
+  httpRequest: (url, { method = 'GET', headers = {}, body = null, contentType = null, bodyFile = null, multipart = null } = {}) => // net -> {status, headers, body}
+    call('net.request', { url, method, headers, body, contentType, bodyFile, multipart }),
+  // Progress of panel.receive/panel.provide (jobId comes in their params); a notification, nothing to await.
+  reportProgress: (jobId, done, total, { bytes = 0, text = null } = {}) =>
+    send({ jsonrpc: '2.0', method: 'job.progress', params: { jobId, done, total, bytes, text } }),
 };

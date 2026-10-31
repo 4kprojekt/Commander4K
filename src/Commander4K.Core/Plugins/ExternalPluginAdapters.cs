@@ -97,8 +97,183 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
             return result.ValueKind == JsonValueKind.Object && result.TryGetProperty("text", out var text) ? text.GetString() : null;
         }
 
+        public bool CanReceive => panel.Accepts;
+
+        public bool CanProvide => panel.Provides;
+
+        /// <remarks>Result: <c>[{ id, title, description?, extensions?, multiple?, folders?, returnsMessage? }]</c>; a repeated id keeps its first entry.</remarks>
+        public async Task<IReadOnlyList<PanelReceiver>> GetReceiversAsync(IReadOnlyList<TransferItem> items, CancellationToken ct)
+        {
+            var result = await plugin.CallAsync("panel.receivers",
+                new { panel = panel.Id, files = items.Select(FileDto).ToList(), context = ExternalPlugin.Context(host) },
+                ct, QuestionTimeout).ConfigureAwait(false);
+            return [.. Objects(result).Select(r => new PanelReceiver(
+                RequiredString(r, "id"),
+                RequiredString(r, "title"),
+                OptionalString(r, "description"),
+                r.TryGetProperty("extensions", out var extensions) && extensions.ValueKind == JsonValueKind.Array
+                    ? [.. extensions.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!)]
+                    : null,
+                Flag(r, "multiple"),
+                Flag(r, "folders"),
+                Flag(r, "returnsMessage"))).DistinctBy(r => r.Id, StringComparer.Ordinal)];
+        }
+
+        /// <remarks>
+        /// No time limit, only the token: uploads may take long. While the call runs, the plugin may read the offered
+        /// files (folders: everything under them) even without <c>fs.read</c>; the grant ends with the call.
+        /// Result: <c>{ text?, results?: [{ path, ok, error? }] }</c>.
+        /// </remarks>
+        public async Task<ReceiveResult> ReceiveAsync(string receiverId, IReadOnlyList<TransferItem> items, IProgress<TransferProgress>? progress, CancellationToken ct)
+        {
+            var jobId = Guid.NewGuid().ToString("N");
+            // Granted by the plugin itself, on the host that serves its requests, so the grant cannot miss them.
+            using var grant = plugin.GrantRead(items);
+            var registration = progress is null ? null : plugin.RegisterProgress(jobId, progress);
+            try
+            {
+                var result = await plugin.CallAsync("panel.receive",
+                    new { panel = panel.Id, receiver = receiverId, jobId, files = items.Select(FileDto).ToList(), context = ExternalPlugin.Context(host) },
+                    ct, Timeout.InfiniteTimeSpan).ConfigureAwait(false);
+                if (result.ValueKind != JsonValueKind.Object)
+                {
+                    return new ReceiveResult(null);
+                }
+
+                var results = result.TryGetProperty("results", out var list) && list.ValueKind == JsonValueKind.Array
+                    ? list.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).Select(ParseItemResult).ToList()
+                    : null;
+                return new ReceiveResult(OptionalString(result, "text"), results);
+            }
+            finally
+            {
+                registration?.Dispose();
+            }
+        }
+
+        /// <remarks>Result: <c>[{ id, title, description? }]</c>; a repeated id keeps its first entry.</remarks>
+        public async Task<IReadOnlyList<PanelProvider>> GetProvidersAsync(IReadOnlyList<string> rowIds, CancellationToken ct)
+        {
+            var result = await plugin.CallAsync("panel.providers",
+                new { panel = panel.Id, rowIds, context = ExternalPlugin.Context(host) },
+                ct, QuestionTimeout).ConfigureAwait(false);
+            return [.. Objects(result).Select(r => new PanelProvider(RequiredString(r, "id"), RequiredString(r, "title"), OptionalString(r, "description")))
+                .DistinctBy(p => p.Id, StringComparer.Ordinal)];
+        }
+
+        /// <remarks>
+        /// No time limit, only the token. Result: <c>{ files: [{ name, text? | base64? | url? | error? }], text? }</c>;
+        /// inline content is limited to <see cref="PanelTransferLimits.MaxInlineBytes"/> per file and the whole reply to
+        /// <see cref="JsonRpcConnection.MaxMessageLength"/> characters; larger files come as an http(s) <c>url</c>.
+        /// </remarks>
+        public async Task<ProvideResult> ProvideAsync(string providerId, IReadOnlyList<string> rowIds, IProgress<TransferProgress>? progress, CancellationToken ct)
+        {
+            var jobId = Guid.NewGuid().ToString("N");
+            using var registration = progress is null ? null : plugin.RegisterProgress(jobId, progress);
+            var result = await plugin.CallAsync("panel.provide",
+                new { panel = panel.Id, provider = providerId, jobId, rowIds, context = ExternalPlugin.Context(host) },
+                ct, Timeout.InfiniteTimeSpan).ConfigureAwait(false);
+            if (result.ValueKind != JsonValueKind.Object)
+            {
+                return new ProvideResult([]);
+            }
+
+            var files = result.TryGetProperty("files", out var list) && list.ValueKind == JsonValueKind.Array
+                ? list.EnumerateArray().Select(ParseProvidedFile).ToList()
+                : [];
+            return new ProvideResult(files, OptionalString(result, "text"));
+        }
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+
+    /// <summary>Questions asked while a dialog waits (receivers, providers) give up quickly.</summary>
+    private static readonly TimeSpan QuestionTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>Inline <c>text</c>/<c>base64</c> limit per provided file.</summary>
+    public const int MaxInlineBytes = PanelTransferLimits.MaxInlineBytes;
+
+    private static object FileDto(TransferItem item) => new
+    {
+        path = item.Path,
+        name = item.Name,
+        kind = item.Kind == TransferItemKind.Folder ? "folder" : "file",
+        size = item.Size,
+    };
+
+    /// <summary>
+    /// One entry of <c>panel.provide</c>'s <c>files</c>. Problems with one file become its <see cref="ProvidedFile.Error"/>
+    /// (shown to the user), so the other files of the reply still come through.
+    /// </summary>
+    private static ProvidedFile ParseProvidedFile(JsonElement file, int index)
+    {
+        if (file.ValueKind != JsonValueKind.Object || OptionalString(file, "name") is not { Length: > 0 } name)
+        {
+            var placeholder = (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return new ProvidedFile(placeholder, Error: Loc.T("Wtyczka nie podała nazwy pliku nr {0}.", placeholder));
+        }
+
+        // The plugin's own per-file failure (a download that failed, a row without data): shown, nothing written.
+        if (OptionalString(file, "error") is { Length: > 0 } error)
+        {
+            return new ProvidedFile(name, Error: error);
+        }
+
+        if (OptionalString(file, "url") is { } url)
+        {
+            return Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
+                ? new ProvidedFile(name, Url: uri)
+                : new ProvidedFile(name, Error: Loc.T("Plik „{0}”: dozwolone są tylko adresy http i https.", name));
+        }
+
+        if (OptionalString(file, "base64") is { } base64)
+        {
+            // Checked before decoding, so an oversized reply never allocates the decoded copy.
+            if (base64.Length / 4 * 3 > MaxInlineBytes)
+            {
+                return TooLarge(name);
+            }
+
+            try
+            {
+                return new ProvidedFile(name, Data: Convert.FromBase64String(base64));
+            }
+            catch (FormatException)
+            {
+                return new ProvidedFile(name, Error: Loc.T("Plik „{0}”: uszkodzona treść base64.", name));
+            }
+        }
+
+        if (OptionalString(file, "text") is { } text)
+        {
+            return System.Text.Encoding.UTF8.GetByteCount(text) <= MaxInlineBytes ? new ProvidedFile(name, Text: text) : TooLarge(name);
+        }
+
+        return new ProvidedFile(name, Error: Loc.T("Plik „{0}”: wtyczka nie podała treści (text, base64 ani url).", name));
+    }
+
+    private static ProvidedFile TooLarge(string name) =>
+        new(name, Error: Loc.T("Plik „{0}” przekracza {1} MB; wtyczka powinna podać go jako adres url.", name, MaxInlineBytes / (1024 * 1024)));
+
+    /// <summary>An entry without <c>path</c> does not fail the whole receive: it becomes a failed result.</summary>
+    private static TransferItemResult ParseItemResult(JsonElement entry) =>
+        OptionalString(entry, "path") is { } path
+            ? new TransferItemResult(path, entry.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True, OptionalString(entry, "error"))
+            : new TransferItemResult(string.Empty, false, OptionalString(entry, "error") ?? Loc.T("Wtyczka zwróciła wynik bez ścieżki pliku."));
+
+    private static IEnumerable<JsonElement> Objects(JsonElement result) =>
+        result.ValueKind == JsonValueKind.Array ? result.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object) : [];
+
+    private static string RequiredString(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()!
+            : throw new FormatException($"Plugin result is missing the string '{name}'.");
+
+    private static string? OptionalString(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static bool Flag(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
 
     /// <summary>
     /// <c>{ columns: [{id, header, align?, width?}], rows: [{id, parentId?, cells: [], severity?, sortKeys?, expanded?}], status? }</c>.

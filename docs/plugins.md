@@ -144,6 +144,10 @@ Ask for the fewest permissions that do the job.
 | `panel.load` | `{ panel, argument, filter, context, options }` | `{ columns: [{ id, header, align?: "left"\|"right"\|"center", width? }], rows: [{ id, parentId?, cells: [string], severity?: "normal"\|"muted"\|"highlight"\|"warning"\|"error", sortKeys?: [number\|null], expanded? }], status? }` |
 | `panel.details` | `{ panel, rowId }` | `{ sections: [{ title, items: [[key, value]] }] }` or `null` |
 | `panel.action` | `{ panel, action, rowIds, context }` | `{ text?: string }`. Text is shown in a viewer, and the panel reloads afterwards. |
+| `panel.receivers` | `{ panel, files: [{ path, name, kind: "file"\|"folder", size }], context }` | `[{ id, title, description?, extensions?, multiple?, folders?, returnsMessage? }]`. Panels with `accepts` only; answer within 5 s. See [Receiving and providing files](#receiving-and-providing-files). |
+| `panel.receive` | `{ panel, receiver, jobId, files, context }` | `{ text?, results?: [{ path, ok, error? }] }`. One call for the whole selection; no time limit. |
+| `panel.providers` | `{ panel, rowIds, context }` | `[{ id, title, description? }]`. Panels with `provides` only; answer within 5 s. |
+| `panel.provide` | `{ panel, provider, jobId, rowIds, context }` | `{ files: [{ name, text? \| base64? \| url? \| error? }], text? }`. No time limit; the whole reply must stay under 16 MB. |
 | `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }` or `{ kind: "web", page, state? }` (an HTML page from the preview's `webRoot`, see "Web previews"). A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). A preview may also return `{ kind: "chart", title, description?, chart }` (see `preview.card` for `chart`). |
 | `preview.message` | `{ preview, entry, method, params, context }` | Any JSON value. A web preview page called `c4k.request(method, params)`; answer it here (30 s limit). See "Web previews". |
 | `preview.card` | `{ preview, entry: { … } \| null, context, options, previous }` | Only for previews with `"card": true` in `contributes.previews`. The small form shown on a `c4k.dir` dashboard: `{ title?, subtitle?, icon?, status?: "ok"\|"warning"\|"error", items: [...], actions: [{ label, target }] }`. Items: `{ kind: "value", label, value, status? }`, `{ kind: "progress", label, fraction (0–1), text? }`, `{ kind: "text", text }`, `{ kind: "thumbnails", images: [path] }` (at most 4, read with your `fs.read`), `{ kind: "chart", chart: { kind: "line"\|"bar", unit?, min?, max?, series: [{ name, points: [{ x, y, label? }] }] } }`. `previous` is the card you returned last time (thumbnails as a count), so a card refreshed on a timer can add a point to its chart; keep at most 120 points. An action `target` is a path, a URL, or `c4k:refresh` (read the card again). Previews without `"card": true` get a plain card with their title and an Open button. |
@@ -160,7 +164,7 @@ Ask for the fewest permissions that do the job.
 
 Rows form a tree through `parentId`. The app handles sorting (column header click), filtering (typing), expand and collapse, marking (`Insert`) and the details pane. A plugin only describes data.
 
-Long loads are fine: the panel shows a spinner and stays responsive. Requests time out after 60 s.
+Long loads are fine: the panel shows a spinner and stays responsive. Requests time out after 60 s, except `panel.receivers`/`panel.providers` (5 s, a dialog is waiting) and `panel.receive`/`panel.provide` (no limit; the user cancels them).
 
 ### Requests from the plugin to the app
 
@@ -193,7 +197,8 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `shell.run` | `{ file, args: [string], cwd?, elevated? }` | `{ exitCode, output, error }` | `shell.run` |
 | `system.info` | — | `{ os, osVersion, architecture, machine, user, processors, memoryBytes, drives: [{ name, type, format, label, totalBytes, freeBytes }] }` | `system.info` |
 | `net.get` | `{ url }` (http/https, max 5 MB) | string (error on non-2xx) | `net` |
-| `net.request` | `{ url, method?, headers?, body?, contentType? }` (http/https, max 5 MB) | `{ status, headers, body }` (any status) | `net` |
+| `net.request` | `{ url, method?, headers?, body?, contentType?, bodyFile?, multipart?: { field, path, fileName? } }` (http/https, response max 5 MB) | `{ status, headers, body }` (any status) | `net`; `bodyFile`/`multipart` also need `fs.read` or a [read grant](#receiving-and-providing-files) for that path |
+| `job.progress` | `{ jobId, done, total, bytes?, text? }` — a **notification** (no `id`, no answer) | — | — |
 
 `entry` = `{ name, path, kind, size, modified, hidden }`:
 - `kind`: `file`, `directory`, `drive`, `archive`, `share`, `host`, `registrykey`…;
@@ -206,6 +211,56 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 - `-32602`: invalid parameters.
 
 The SDK clients turn these into exceptions.
+
+### Receiving and providing files
+
+A panel can take files from a file panel (`"accepts": true` in its `contributes.panels` entry) and hand rows back
+as files (`"provides": true`).
+
+**Receiving** — the user marks files in one panel, your panel is open in the other, and presses F5:
+1. The app calls `panel.receivers` with the selection and shows the receivers that fit. It checks `extensions`
+   (`.ext`, file names, `*`/`?` patterns, as in previews), `multiple` (more than one item) and `folders` itself, so
+   you may return every receiver and let the app filter. A missing or empty `extensions` (`[]`) means any file.
+   Folders are judged only by `folders`: `extensions` never applies to them. Receiver ids must be unique; a
+   repeated id keeps its first entry (the same goes for provider ids).
+2. The user picks one and the app calls `panel.receive` **once for the whole selection** as a background job.
+3. **While that call runs, your plugin may read the offered files** — and everything under offered folders — with
+   `fs.readBytes`/`fs.readText`/`fs.list`/`fs.stat`, even without `fs.read`. The grant ends with the call (also when
+   it is cancelled). It covers every request your process makes meanwhile. The grant is by path: links (junctions,
+   symbolic links) inside an offered folder are followed, so whatever they point to is readable too. Every granted
+   path is written to the audit log.
+4. To upload without loading the file into memory, pass the path to `net.request` as `bodyFile` (raw body, sent
+   with `contentType`, default `application/octet-stream`) or as `multipart: { field, path, fileName? }`. The app
+   streams it through its own file system layer, so it works for shares, SFTP and archives too. Such uploads have
+   no time limit (other `net.*` calls stop after 10 minutes); they end when the job is cancelled, which also ends
+   the read grant.
+5. Return `{ text?, results? }`: `text` is shown to the user (set `returnsMessage` on the receiver), `results` lists
+   per-file failures (`{ path, ok: false, error }`). Your panel reloads afterwards.
+
+**Providing** — your panel is active and the user presses F5:
+1. The app calls `panel.providers` with the selected row ids; the user picks one (no choice when there is one) and
+   the target folder (the other panel, editable; created when missing) and overwrite policy.
+2. The app calls `panel.provide` and writes each returned file itself: `text` (UTF-8) or `base64` inline, up to
+   8 MB per file; larger files as an `http`/`https` `url` the app downloads (other schemes are refused). **The whole
+   reply is one protocol message and must stay under 16 MB** (base64 adds a third): a longer reply closes the
+   connection, fails the job with "the reply exceeds 16 MB" and restarts your plugin on its next call — return big
+   or many files as `url`. `name` may contain subfolders (`docs/a.txt`), never `..` or an absolute path. A file that
+   breaks these rules (too large, no content, another URL scheme, no name) is reported to the user; the other files
+   are still written.
+3. When one row cannot become a file (its download failed, it has no data), return `{ name, error: "why" }` for it:
+   the app shows the reason and writes nothing for that entry. Every written, skipped or failed file is audited
+   under your plugin's id.
+
+Only copying works this way: F6 (move) into or out of a plugin panel is refused with a message, and so is F5 onto a
+panel without `accepts` (or onto the browser) — nothing is copied into the folder hidden under it.
+
+**Progress:** `panel.receive` and `panel.provide` carry a `jobId`. Send `job.progress { jobId, done, total, bytes?,
+text? }` as a notification (`report_progress` in the SDKs) and the job's progress bar follows it; without it the bar
+is indeterminate. Unknown ids are ignored. Cancelling the job sends `$/cancelRequest`.
+
+**Keys:** in a panel with `provides`, F5 (or whatever key the user bound to copying) provides files and **Ctrl+R**
+refreshes; panels without `provides` keep F5 = refresh. A panel action declared with `"shortcut": "F5"` still wins
+over both, so do not bind F5 to an action in a panel that provides files.
 
 ## SDK clients
 
@@ -256,7 +311,8 @@ Every helper maps to one protocol method above:
 | `shell.run` | `run(file, args=(), cwd=None, elevated=False)` | `run(file, args, cwd, elevated)` | `Invoke-C4KProcess $File $Arguments [$WorkingDirectory] [-Elevated]` |
 | `system.info` | `system_info()` | `systemInfo()` | `Get-C4KSystemInfo` |
 | `net.get` | `http_get(url)` | `httpGet(url)` | `Invoke-C4KHttpGet $Url` |
-| `net.request` | `http_request(url, method="GET", headers=None, body=None, content_type=None)` | `httpRequest(url, { method, headers, body, contentType })` | `Invoke-C4KHttpRequest $Url [$Method] [$Headers] [$Body] [$ContentType]` |
+| `net.request` | `http_request(url, method="GET", headers=None, body=None, content_type=None, body_file=None, multipart=None)` | `httpRequest(url, { method, headers, body, contentType, bodyFile, multipart })` | `Invoke-C4KHttpRequest $Url [$Method] [$Headers] [$Body] [$ContentType] [-BodyFile] [-MultipartField -MultipartPath [-MultipartFileName]]` |
+| `job.progress` | `report_progress(job_id, done, total, bytes=0, text=None)` | `reportProgress(jobId, done, total, { bytes, text })` | `Send-C4KProgress -JobId -Done -Total [-Bytes] [-Text]` |
 | any other | `call("method", **params)` | `call('method', params)` | `Invoke-C4K 'method' @{ … }` |
 
 Minimal plugin (Python): a quick view for `.ini` files:
@@ -311,6 +367,7 @@ These are in [`examples/plugins`](../examples/plugins), and the app embeds them 
 - **`site-check-node`** (`net`): a command, and a panel that refreshes itself every 60 s.
 - **`git-powershell`** (`shell.run`): `git status`, and a commit history panel. `git` runs through the app, so each command line is audited.
 - **`project-modules-python`** (`fs.read`): a dedicated quick view for chosen files. It shows the dependencies of `package.json`, `*.csproj`, `pyproject.toml`, `requirements*.txt`, `go.mod`, `Cargo.toml` and `composer.json`, and the modules of an HTTP API from OpenAPI/Swagger files (endpoints grouped by tag, plus data models). It shows file names and patterns in `extensions`.
+- **`upload-client-python`** (`net`): a panel that takes and gives files (`accepts`/`provides`, see [Receiving and providing files](#receiving-and-providing-files)). F5 from a file panel POSTs the marked files to a saved HTTP endpoint (multipart, with progress and a result message), and F5 on an endpoint saves its GET response as a file. It needs no `fs.read`: the app grants reading the offered files during the call.
 - `site-check-node` keeps its site list in the plugin's storage (`storageGet`/`storageSet`), not in a file.
 
 [`pdf-viewer-node`](../examples/plugins/pdf-viewer-node) (`fs.read`) is the web preview example. It is not embedded as a template (PDF.js is ~6 MB) and is not in the catalog; copy the folder into `plugins/`. `main.js` only returns `webPreview("index.html", { zoom })` and stores the zoom that the page sends with `c4k.request("saveZoom", { zoom })`. The page (`web/`) runs PDF.js 5 (`PDFViewer`, `PDFFindController`) under the page CSP:

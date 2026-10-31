@@ -56,6 +56,8 @@
               "description": { "type": "string" },
               "requiresArgument": { "type": "boolean", "description": "Opened for the file under the cursor (in the other panel)." },
               "refreshSeconds": { "type": "integer", "minimum": 1 },
+              "accepts": { "type": "boolean", "default": false, "description": "The panel can receive files sent from a file panel with F5; the host asks it which receivers fit the selection." },
+              "provides": { "type": "boolean", "default": false, "description": "The panel can provide the selected rows as files for a file panel." },
               "actions": {
                 "type": "array",
                 "items": {

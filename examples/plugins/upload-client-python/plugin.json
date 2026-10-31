@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "examples.upload-client",
+  "name": "Klient wysyłki plików (Python)",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Przykład przekazywania plików między panelami: zaznaczone pliki (F5) są wysyłane na zapisane adresy HTTP, a odpowiedź GET adresu można zapisać jako plik.",
+  "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+  "permissions": ["net"],
+  "contributes": {
+    "panels": [
+      {
+        "id": "endpoints",
+        "title": "Adresy wysyłki",
+        "description": "Zapisane adresy HTTP. Skopiuj tu pliki (F5), aby je wysłać; F5 na adresie zapisuje jego odpowiedź jako plik.",
+        "accepts": true,
+        "provides": true,
+        "actions": [
+          { "id": "add", "title": "Dodaj endpoint", "shortcut": "Insert" },
+          { "id": "remove", "title": "Usuń", "shortcut": "Delete" }
+        ]
+      }
+    ]
+  }
+}

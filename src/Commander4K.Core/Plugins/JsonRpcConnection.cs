@@ -18,6 +18,18 @@ public sealed class JsonRpcException(int code, string message) : Exception(messa
 }
 
 /// <summary>
+/// A message from the plugin was longer than <see cref="JsonRpcConnection.MaxMessageLength"/>. The connection closes (the
+/// plugin is restarted on its next call) and the calls waiting for an answer fail with this exception.
+/// </summary>
+public sealed class PluginMessageTooLargeException(string message) : IOException(message)
+{
+    public PluginMessageTooLargeException()
+        : this(Loc.T("Odpowiedź wtyczki przekracza {0} MB; duże pliki wtyczka musi zwracać jako adres url.", JsonRpcConnection.MaxMessageLength / (1024 * 1024)))
+    {
+    }
+}
+
+/// <summary>
 /// JSON-RPC 2.0 over a pair of streams, one message per line (NDJSON) — the plugin protocol transport. Both sides may
 /// send requests; incoming requests are handled concurrently by <c>handler</c>.
 /// </summary>
@@ -36,6 +48,9 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     private readonly CancellationTokenSource _closed = new();
     private Task _readLoop = Task.CompletedTask;
     private long _nextId;
+
+    /// <summary>Why the connection closed, when there is a better explanation than "the plugin exited".</summary>
+    private Exception? _closeReason;
 
     /// <param name="input">Messages from the other side (the plugin's stdout).</param>
     /// <param name="output">Messages to the other side (the plugin's stdin).</param>
@@ -65,7 +80,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
                 _ = NotifyAsync("$/cancelRequest", new { id });
                 pending.TrySetCanceled(cancellationToken);
             });
-            using var closed = _closed.Token.Register(() => pending.TrySetException(new IOException(Loc.T("Wtyczka zakończyła działanie."))));
+            using var closed = _closed.Token.Register(() => pending.TrySetException(ClosedError()));
             return await pending.Task.ConfigureAwait(false);
         }
         finally
@@ -106,7 +121,10 @@ public sealed class JsonRpcConnection : IAsyncDisposable
 
                 if (line.Length > MaxMessageLength)
                 {
-                    throw new InvalidDataException(Loc.T("Wiadomość wtyczki przekracza 16 MB."));
+                    // Pending calls (most likely the one this reply answers) fail with the reason, not with "the plugin exited".
+                    var reason = new PluginMessageTooLargeException();
+                    Volatile.Write(ref _closeReason, reason);
+                    throw reason;
                 }
 
                 Dispatch(JsonDocument.Parse(line).RootElement.Clone());
@@ -120,10 +138,14 @@ public sealed class JsonRpcConnection : IAsyncDisposable
             _closed.Cancel();
             foreach (var pending in _pending.Values)
             {
-                pending.TrySetException(new IOException(Loc.T("Wtyczka zakończyła działanie.")));
+                pending.TrySetException(ClosedError());
             }
         }
     }
+
+    private Exception ClosedError() => Volatile.Read(ref _closeReason) is PluginMessageTooLargeException tooLarge
+        ? new PluginMessageTooLargeException(tooLarge.Message)
+        : new IOException(Loc.T("Wtyczka zakończyła działanie."));
 
     private void Dispatch(JsonElement message)
     {
