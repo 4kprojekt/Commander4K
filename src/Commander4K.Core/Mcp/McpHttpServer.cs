@@ -41,7 +41,7 @@ public sealed class McpHttpServer(McpServer server, Func<string?> token) : IAsyn
             }
 
             var listener = new HttpListener();
-            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/mcp/");
             try
             {
                 listener.Start();
@@ -57,7 +57,8 @@ public sealed class McpHttpServer(McpServer server, Func<string?> token) : IAsyn
             _port = port;
             _listener = listener;
             _cts = new CancellationTokenSource();
-            _loop = Task.Run(() => AcceptLoopAsync(listener, _cts.Token));
+            var loopToken = _cts.Token;
+            _loop = Task.Run(() => AcceptLoopAsync(listener, loopToken));
             return McpStartResult.Started;
         }
     }
@@ -220,7 +221,6 @@ public sealed class McpHttpServer(McpServer server, Func<string?> token) : IAsyn
         if (isInitialize)
         {
             session = server.CreateSession();
-            response.AddHeader(SessionHeader, session.Id);
         }
         else if (sessionId is null)
         {
@@ -233,7 +233,36 @@ public sealed class McpHttpServer(McpServer server, Func<string?> token) : IAsyn
             return;
         }
 
-        var reply = await server.HandleAsync(message, session, ct).ConfigureAwait(false);
+        JsonObject? reply;
+        try
+        {
+            reply = await server.HandleAsync(message, session, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (isInitialize)
+            {
+                server.CloseSession(session.Id);
+            }
+
+            message.TryGetPropertyValue("id", out var failedId);
+            await WriteJsonAsync(response, 500, McpJson.Error(failedId, McpJson.InternalError, "Internal error: " + ex.Message), ct)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (isInitialize)
+        {
+            if (reply is null || reply["error"] is not null)
+            {
+                server.CloseSession(session.Id);
+            }
+            else
+            {
+                response.AddHeader(SessionHeader, session.Id);
+            }
+        }
+
         if (reply is null)
         {
             response.StatusCode = 202;

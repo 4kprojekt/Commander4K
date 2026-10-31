@@ -9,6 +9,7 @@ internal static class McpJson
     public const int InvalidRequest = -32600;
     public const int MethodNotFound = -32601;
     public const int InvalidParams = -32602;
+    public const int InternalError = -32603;
 
     public static JsonObject Result(JsonNode? id, JsonObject result) =>
         new() { ["jsonrpc"] = "2.0", ["id"] = id?.DeepClone(), ["result"] = result };

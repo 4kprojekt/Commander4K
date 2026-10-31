@@ -25,7 +25,8 @@ public sealed class McpSession
 
     internal void Register(string requestId, CancellationTokenSource source) => _inFlight[requestId] = source;
 
-    internal void Unregister(string requestId) => _inFlight.TryRemove(requestId, out _);
+    internal void Unregister(string requestId, CancellationTokenSource source) =>
+        _inFlight.TryRemove(new KeyValuePair<string, CancellationTokenSource>(requestId, source));
 
     internal void Cancel(string requestId)
     {
@@ -57,7 +58,7 @@ public sealed class McpSession
 public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPrompt>> prompts, string serverVersion)
 {
     private const string LatestProtocol = "2025-06-18";
-    private static readonly string[] SupportedProtocols = [LatestProtocol, "2025-03-26", "2024-11-05"];
+    private static readonly string[] SupportedProtocols = [LatestProtocol, "2025-03-26"];
 
     private readonly ConcurrentDictionary<string, McpSession> _sessions = new();
 
@@ -111,23 +112,51 @@ public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPromp
             return null;
         }
 
-        return method switch
+        try
         {
-            "initialize" => McpJson.Result(id, Initialize(parameters, session)),
-            "ping" => McpJson.Result(id, new JsonObject()),
-            "tools/list" => McpJson.Result(id, ListTools()),
-            "tools/call" => await CallToolAsync(id, parameters, session, ct).ConfigureAwait(false),
-            "prompts/list" => McpJson.Result(id, ListPrompts()),
-            "prompts/get" => await GetPromptAsync(id, parameters, ct).ConfigureAwait(false),
-            _ => McpJson.Error(id, McpJson.MethodNotFound, $"Method not found: {method}"),
-        };
+            return method switch
+            {
+                "initialize" => McpJson.Result(id, Initialize(parameters, session)),
+                "ping" => McpJson.Result(id, new JsonObject()),
+                "tools/list" => McpJson.Result(id, ListTools()),
+                "tools/call" => await CallToolAsync(id, parameters, session, ct).ConfigureAwait(false),
+                "prompts/list" => McpJson.Result(id, ListPrompts()),
+                "prompts/get" => await GetPromptAsync(id, parameters, ct).ConfigureAwait(false),
+                _ => McpJson.Error(id, McpJson.MethodNotFound, $"Method not found: {method}"),
+            };
+        }
+        catch (ArgumentException ex)
+        {
+            return McpJson.Error(id, McpJson.InvalidParams, ex.Message);
+        }
+    }
+
+    /// <summary>Reads an optional string parameter; any other JSON type is invalid params.</summary>
+    private static string? StringParam(JsonNode? node, string name)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        return node is JsonValue value && value.TryGetValue<string>(out var text)
+            ? text
+            : throw new ArgumentException($"Parameter '{name}' must be a string.");
     }
 
     private JsonObject Initialize(JsonObject parameters, McpSession session)
     {
-        var requested = (string?)parameters["protocolVersion"];
+        var requested = StringParam(parameters["protocolVersion"], "protocolVersion");
+        string? client = null;
+        if (parameters["clientInfo"] is { } info)
+        {
+            client = info is JsonObject infoObject
+                ? StringParam(infoObject["name"], "clientInfo.name")
+                : throw new ArgumentException("Parameter 'clientInfo' must be an object.");
+        }
+
         session.ProtocolVersion = requested is not null && SupportedProtocols.Contains(requested) ? requested : LatestProtocol;
-        if ((string?)parameters["clientInfo"]?["name"] is { Length: > 0 } client)
+        if (client is { Length: > 0 })
         {
             session.ClientName = client;
         }
@@ -195,7 +224,7 @@ public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPromp
         }
         finally
         {
-            session.Unregister(key);
+            session.Unregister(key, source);
         }
     }
 
@@ -251,7 +280,7 @@ public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPromp
         catch (Exception ex) when (ex is OperationCanceledException or IOException or UnauthorizedAccessException
             or InvalidOperationException or ArgumentException)
         {
-            return McpJson.Error(id, McpJson.InvalidRequest, ex.Message);
+            return McpJson.Error(id, McpJson.InternalError, ex.Message);
         }
 
         return McpJson.Result(id, new JsonObject

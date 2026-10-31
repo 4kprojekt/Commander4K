@@ -9,10 +9,12 @@ namespace Commander4K.Core.Tests;
 public sealed class McpHttpServerTests : IAsyncDisposable
 {
     private const string Token = "secret-token";
+    private string? _tokenValue = Token;
 
     private sealed class CountingTools : IMcpToolHandler
     {
         public int Calls;
+        public Func<CancellationToken, Task<McpToolResult>>? Hold;
 
         public IReadOnlyList<McpToolDefinition> List() =>
             [new McpToolDefinition("echo", "Echo", McpSchema.Object(), McpToolMode.Allow)];
@@ -20,7 +22,7 @@ public sealed class McpHttpServerTests : IAsyncDisposable
         public Task<McpToolResult> CallAsync(string name, McpCall call, CancellationToken ct)
         {
             Interlocked.Increment(ref Calls);
-            return Task.FromResult(new McpToolResult("hi"));
+            return Hold is { } hold ? hold(ct) : Task.FromResult(new McpToolResult("hi"));
         }
     }
 
@@ -33,7 +35,7 @@ public sealed class McpHttpServerTests : IAsyncDisposable
     public McpHttpServerTests()
     {
         _server = new McpServer(_tools, () => [], "1.0.0");
-        _http = new McpHttpServer(_server, () => Token);
+        _http = new McpHttpServer(_server, () => _tokenValue);
         _port = FreePort();
         Assert.Equal(McpStartResult.Started, _http.Start(_port));
     }
@@ -180,10 +182,116 @@ public sealed class McpHttpServerTests : IAsyncDisposable
     [Fact]
     public async Task Second_server_on_the_same_port_reports_PortBusy()
     {
-        await using var second = new McpHttpServer(_server, () => Token);
+        await using var second = new McpHttpServer(_server, () => _tokenValue);
 
         Assert.Equal(McpStartResult.PortBusy, second.Start(_port));
         Assert.False(second.IsRunning);
         Assert.True(_http.IsRunning);
+    }
+
+    [Fact]
+    public async Task Path_with_and_without_trailing_slash_works_and_other_paths_are_not_served()
+    {
+        const string ping = """{"jsonrpc":"2.0","id":1,"method":"ping"}""";
+        var sessionId = await InitializeAsync();
+        var slash = Post(ping, session: sessionId);
+        slash.RequestUri = new Uri(_http.Url + "/");
+        using var withSlash = await _client.SendAsync(slash, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, withSlash.StatusCode);
+
+        var other = Post(ping, session: sessionId);
+        other.RequestUri = new Uri($"http://127.0.0.1:{_port}/other");
+        using var elsewhere = await _client.SendAsync(other, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.NotFound, elsewhere.StatusCode);
+    }
+
+    [Fact]
+    public async Task Body_over_the_limit_is_413()
+    {
+        var huge = new string('x', 9 * 1024 * 1024);
+        using var response = await _client.SendAsync(Post(huge), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Bad_json_is_400_with_parse_error_and_batch_is_invalid_request()
+    {
+        using var bad = await _client.SendAsync(Post("{not json"), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        var parseJson = JsonNode.Parse(await bad.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!;
+        Assert.Equal(-32700, (int)parseJson["error"]!["code"]!);
+
+        using var batch = await _client.SendAsync(Post("""[{"jsonrpc":"2.0","id":1,"method":"ping"}]"""), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, batch.StatusCode);
+        var batchJson = JsonNode.Parse(await batch.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!;
+        Assert.Equal(-32600, (int)batchJson["error"]!["code"]!);
+    }
+
+    [Fact]
+    public async Task Origin_null_is_403()
+    {
+        using var response = await _client.SendAsync(Post(InitializeBody, origin: "null"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task Unset_token_rejects_every_request(string? configured)
+    {
+        var sessionId = await InitializeAsync();
+        _tokenValue = configured;
+
+        using var withToken = await _client.SendAsync(Post(InitializeBody), TestContext.Current.CancellationToken);
+        using var emptyBearer = await _client.SendAsync(Post(InitializeBody, token: ""), TestContext.Current.CancellationToken);
+        var delete = new HttpRequestMessage(HttpMethod.Delete, _http.Url);
+        delete.Headers.TryAddWithoutValidation("Mcp-Session-Id", sessionId);
+        using var deleted = await _client.SendAsync(delete, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, withToken.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, emptyBearer.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, deleted.StatusCode);
+    }
+
+    [Fact]
+    public async Task Initialize_with_non_string_version_is_invalid_params_and_creates_no_session()
+    {
+        const string body = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":5}}""";
+        using var response = await _client.SendAsync(Post(body), TestContext.Current.CancellationToken);
+
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!;
+        Assert.Equal(-32602, (int)json["error"]!["code"]!);
+        Assert.False(response.Headers.Contains("Mcp-Session-Id"));
+        Assert.Equal(0, _server.SessionCount);
+    }
+
+    [Fact]
+    public async Task Cancelled_notification_over_http_ends_the_held_call()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _tools.Hold = async ct =>
+        {
+            started.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+            return new McpToolResult("never");
+        };
+        var sessionId = await InitializeAsync();
+
+        var held = _client.SendAsync(
+            Post("""{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"echo"}}""", session: sessionId),
+            TestContext.Current.CancellationToken);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        using var cancel = await _client.SendAsync(
+            Post("""{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":5}}""", session: sessionId),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Accepted, cancel.StatusCode);
+
+        using var response = await held.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))!;
+        Assert.True((bool)json["result"]!["isError"]!);
+        Assert.Contains("cancelled", (string?)json["result"]!["content"]![0]!["text"], StringComparison.Ordinal);
     }
 }
