@@ -178,7 +178,11 @@ public sealed class MainWindow : Window, IShell
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         Opened += async (_, _) => await StartAsync();
-        Closing += (_, _) => SaveState();
+        Closing += (_, _) =>
+        {
+            SaveState();
+            StopMcp();
+        };
     }
 
     /// <summary>For tests and screenshots: builds the shell around an existing host without the async start-up.</summary>
@@ -187,7 +191,14 @@ public sealed class MainWindow : Window, IShell
         _host = host;
         _skins = new SkinManager(host, host.Skins.Get(host.Settings.Skin));
         BuildShell();
+        _mcp = new McpHost(host, this);
+        host.Mcp = _mcp;
+        _mcp.Changed += UpdateMcpBadge;
+        _ = ApplyMcpAsync();
     }
+
+    /// <summary>The MCP server (Claude Code); <c>null</c> before <see cref="Attach"/>.</summary>
+    internal McpHost? Mcp => _mcp;
 
     public FilePanelView LeftPanel => _left;
 
@@ -295,12 +306,15 @@ public sealed class MainWindow : Window, IShell
                     .Margin(0, 6, 0, 0)
                     .Height(30)
                     .Padding(12, 0)
-                    .Child(new Grid().Cols("Auto,*,Auto").Children(
+                    .Child(new Grid().Cols("Auto,*,Auto,Auto").Children(
                         new TextBlock().Ref(out _prompt).VerticalAlignment(VerticalAlignment.Center),
                         new TextBox().Ref(out _commandLine).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(8, 2)
                             .VerticalContentAlignment(VerticalAlignment.Center),
                         new TextBlock().Ref(out _notification).Col(2).VerticalAlignment(VerticalAlignment.Center).Margin(8, 0)
-                            .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis))),
+                            .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis),
+                        new Button().Ref(out _mcpBadge).Col(3).IsVisible(false).Height(22).Padding(8, 0).Margin(4, 0, 0, 0)
+                            .VerticalAlignment(VerticalAlignment.Center).VerticalContentAlignment(VerticalAlignment.Center)
+                            .OnClick(click => OpenMcpConnect()))),
                 _keyBar.Row(4));
 
         // Menu bar with the command-palette search box on the right (design system).
@@ -429,6 +443,10 @@ public sealed class MainWindow : Window, IShell
             case var column when column.StartsWith(ColumnSettingPrefix, StringComparison.Ordinal):
                 ApplyColumns();
                 break;
+            case var mcp when mcp.StartsWith("mcp", StringComparison.Ordinal):
+                // mcp.enabled / mcp.port / mcp.roots and the per-tool modes (mcp:<tool>): new snapshot, restart if needed.
+                _ = ApplyMcpAsync();
+                break;
         }
     }
 
@@ -520,11 +538,76 @@ public sealed class MainWindow : Window, IShell
     /// so this works without a running server.
     /// </summary>
     internal IReadOnlyList<McpToolDefinition> McpToolDefinitions() =>
+        [.. McpTools(() => _host!.Settings.Mcp.AllowedRoots).Select(t => t.Definition)];
+
+    /// <summary>The tools the MCP server runs (<see cref="McpHost"/>); the settings list the same set.</summary>
+    internal IReadOnlyList<McpTool> McpTools(Func<IReadOnlyList<string>> allowedRoots) =>
     [
-        .. McpFileTools.Create(_host!.Router).Select(t => t.Definition),
-        .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit).Select(t => t.Definition),
-        .. McpAppTools.Create(this, _host, AiContext, () => _host.Settings.Mcp.AllowedRoots).Select(t => t.Definition),
+        .. McpFileTools.Create(_host!.Router),
+        .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit),
+        .. McpAppTools.Create(this, _host, AiContext, allowedRoots),
     ];
+
+    private async Task ApplyMcpAsync()
+    {
+        try
+        {
+            await _mcp!.ApplySettingsAsync();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Notify(Loc.T("Nie udało się zapisać ustawień MCP: {0}", ex.Message), isError: true);
+        }
+    }
+
+    /// <summary>Stops the listener on exit so no call starts while the window and the host go away.</summary>
+    private void StopMcp()
+    {
+        if (_mcp is { } mcp)
+        {
+            _ = mcp.DisposeAsync().AsTask();
+        }
+    }
+
+    /// <summary>Status bar: hidden while the server is off, the problem when it could not start, otherwise the clients.</summary>
+    private void UpdateMcpBadge()
+    {
+        if (_mcp is not { } mcp || _skins is null)
+        {
+            return;
+        }
+
+        var b = _skins.Current;
+        _mcpBadge.IsVisible = mcp.Status is not null;
+        _mcpBadge.Content = mcp.Status switch
+        {
+            McpStartResult.PortBusy => Loc.T("MCP: port {0} zajęty", _host!.Settings.Mcp.Port),
+            McpStartResult.Failed => Loc.T("MCP: błąd"),
+            _ when mcp.Sessions > 0 => Loc.T("AI podłączone ({0})", mcp.Sessions),
+            _ => Loc.T("MCP: gotowy"),
+        };
+        _mcpBadge.Foreground = mcp.Status is McpStartResult.Started ? (mcp.Sessions > 0 ? b.Accent : b.StatusForeground) : b.Error;
+        ToolTip.SetTip(_mcpBadge, mcp.StatusText());
+    }
+
+    private void OpenMcpConnect()
+    {
+        if (_mcpConnect is { } open)
+        {
+            open.Activate();
+            return;
+        }
+
+        if (_mcp is null)
+        {
+            return;
+        }
+
+        _mcpConnect = new McpConnectWindow(_host!, _mcp, _skins!.Current, () => _active.ActiveTab.Path);
+        FollowSkin(_mcpConnect, _mcpConnect.ApplySkin);
+        _mcpConnect.Closed += (sender, args) => _mcpConnect = null;
+        _mcpConnect.Show(this);
+    }
 
     private IEnumerable<SettingDescriptor> McpToolSettings() => McpToolDefinitions().Select(tool => new SettingDescriptor(
         McpSettingPrefix + tool.Name,
@@ -755,6 +838,9 @@ public sealed class MainWindow : Window, IShell
 
     private AiChatWindow? _aiChat;
     private AiProvidersWindow? _aiProviders;
+    private McpHost? _mcp;
+    private McpConnectWindow? _mcpConnect;
+    private Button _mcpBadge = null!;
 
     /// <summary>One chat window; it knows the active folder so questions can refer to "here".</summary>
     private void OpenAiChat()
@@ -1282,7 +1368,8 @@ public sealed class MainWindow : Window, IShell
     }
 
     /// <summary>AI outside the app goes through Claude Code: the prompt is copied and shown.</summary>
-    private Task UseClaudeCodeAsync(string prompt) => new Mcp.UseClaudeCodeDialog(_skins!.Current, prompt).ShowAsync(this);
+    private Task UseClaudeCodeAsync(string prompt) =>
+        new Mcp.UseClaudeCodeDialog(_skins!.Current, prompt, _mcp?.StatusText() ?? string.Empty, OpenMcpConnect).ShowAsync(this);
 
     /// <summary>
     /// A preview plugin for the unknown file's type: the wish (editable) plus a sample of the file goes to the chat in
@@ -1626,6 +1713,8 @@ public sealed class MainWindow : Window, IShell
         _commandLine.CaretBrush = b.Accent;
         _notification.Foreground = b.StatusForeground;
         _notification.FontSize = Math.Max(11, b.FontSize - 1);
+        _mcpBadge.FontSize = Math.Max(11, b.FontSize - 1);
+        UpdateMcpBadge();
         ApplyMenuSkin(b);
 
         _keyBar.Background = b.WindowBackground;
@@ -1785,6 +1874,7 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (czat z darmowymi dostawcami lub Claude Code)"), _ => new ValueTask(AskAiAsync()))
          .Register(CommandIds.AiProviders, Loc.T("Dostawcy AI — logowanie, kolejność, limity"), _ => { OpenAiProviders(); return ValueTask.CompletedTask; })
          .Register(CommandIds.AiWritePlugin, Loc.T("Napisz wtyczkę z AI (według przewodnika, z instalacją)"), _ => new ValueTask(WritePluginWithAiAsync()))
+         .Register(CommandIds.McpConnect, Loc.T("Połącz Claude Code lub innego klienta MCP z Commander4K"), OpenMcpConnect)
          .Register(CommandIds.TogglePalettes, Loc.T("Palety: pokaż / ukryj"), _ => new ValueTask(TogglePalettesAsync()))
          .Register(CommandIds.Palettes, Loc.T("Palety: położenie (szybkie akcje, ulubione, widoki, wtyczki)"), () => OpenSettings(Loc.T("paleta")))
          .Register(CommandIds.AddFavorite, Loc.T("Dodaj bieżący folder do ulubionych"), _ => new ValueTask(AddFavoriteAsync()))

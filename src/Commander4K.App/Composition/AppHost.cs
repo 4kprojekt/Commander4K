@@ -403,8 +403,16 @@ public sealed class AppHost : IAsyncDisposable
     public ISearchProviderPlugin? FindSearchProvider(string rootPath) =>
         SearchProviders.FirstOrDefault(p => p.CanSearch(rootPath));
 
+    /// <summary>The MCP server, set by the window; disposed first, so no tool call runs while the rest shuts down.</summary>
+    public IAsyncDisposable? Mcp { get; set; }
+
     public async ValueTask DisposeAsync()
     {
+        if (Mcp is not null)
+        {
+            await Mcp.DisposeAsync();
+        }
+
         foreach (var plugin in ExternalPlugins)
         {
             await plugin.DisposeAsync();

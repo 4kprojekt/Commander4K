@@ -120,7 +120,7 @@ public static class SettingsCatalog
                 {
                     s.Mcp.Port = port;
                 }
-            }, McpKeywords) { RequiresRestart = true },
+            }, McpKeywords),
         new("mcp.roots", Mcp, Loc.T("Foldery dostępne dla MCP"), Loc.T("Foldery (dowolna ścieżka: dysk, udział sieciowy, sftp://…), do których AI może zaglądać i w których może pisać; kilka oddziel średnikiem. Pusta lista: żaden."),
             SettingKind.Text, s => string.Join(';', s.Mcp.AllowedRoots),
             (s, v) => s.Mcp.AllowedRoots = [.. (v as string ?? string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal)],

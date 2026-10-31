@@ -332,7 +332,7 @@ To add a plugin, put its folder in `plugins-catalog/` (official) or `examples/pl
 Commander4K helps with this (*Konfiguracja ▸ Napisz wtyczkę z AI*):
 
 - **In-app AI chat** ("🧩 Napisz wtyczkę"): the model gets this guide, an example in a runtime you have installed and the app's current state. It can also call `get_context`, `list_directory`, `read_text_file` (only with your consent) and `get_plugin_guide`. An answer containing a plugin gets a "🧩 Zainstaluj wtyczkę" button.
-- **Claude Code over MCP:** Claude Code connected to Commander4K can write the plugin itself with the MCP tools `get_plugin_guide`, `check_plugin` and `install_plugin`. Without a signed-in provider, "Napisz wtyczkę z AI" copies the request for Claude Code.
+- **Claude Code over MCP:** Claude Code connected to Commander4K can write the plugin itself with the MCP tools `get_plugin_guide`, `check_plugin` and `install_plugin`. Without a signed-in provider, "Napisz wtyczkę z AI" copies the request for Claude Code. See [Writing plugins with Claude Code over MCP](#writing-plugins-with-claude-code-over-mcp).
 
 Either way the installer checks the paths and the manifest, shows the permissions before writing anything, and puts the plugin into `plugins/<id>` **disabled**. You enable it in the plugin manager after reviewing it. It also adds the SDK client when the answer leaves it out.
 
@@ -345,3 +345,47 @@ To do it by hand, give the assistant this file, one example plugin and a descrip
 3. keep the plugin in one folder: `plugin.json`, the entry file and the copied SDK client.
 
 Then copy the folder into `plugins/`. Open the plugin manager and check the permissions it asks for before you enable it.
+
+## Writing plugins with Claude Code over MCP
+
+Commander4K is also an MCP server (Model Context Protocol, Streamable HTTP, protocol 2025-06-18). Claude Code connected to it can look at your panels, write a plugin into a folder you chose, check it, install it and try it, while you confirm each risky step in the app.
+
+**Connect.** Open *Połącz Claude Code* (command `cm_McpConnect`, or click the MCP badge in the status bar), switch the server on and add at least one allowed folder. The window shows the command to run once in a terminal:
+
+```
+claude mcp add --transport http commander4k http://127.0.0.1:47800/mcp --header "Authorization: Bearer <token>"
+```
+
+It also shows the same server as a `.mcp.json` entry for a project. Use `127.0.0.1` exactly: the listener is bound to that address and HTTP.sys rejects requests whose `Host` header says `localhost`. Every request needs the bearer token. "Nowy token" replaces it, and the old token stops working at once. The server listens on loopback only and refuses browser origins other than localhost. The badge shows "AI podłączone (n)" while clients are connected, and says so when the port is in use.
+
+**Tools.** Each tool has a mode, set per tool in the settings (`Ctrl+,`, search "mcp"): allow, ask or block. The defaults are:
+
+| Tool | Default | What it does |
+|---|---|---|
+| `get_context`, `list_commands`, `list_plugins`, `get_plugin_guide` | allow | The app's state, commands, installed plugins, this guide with the schema and an example. |
+| `list_directory`, `stat` | allow | Folder listings and entry details, inside the allowed folders. |
+| `navigate`, `select`, `set_panel_mode` | allow | Drive the panels. |
+| `check_plugin`, `get_plugin_log` | allow | Validate a plugin without installing it (manifest, limits, SDK bypasses); read a plugin's recent log lines. |
+| `read_file`, `write_file`, `make_directory` | ask | Read and write files inside the allowed folders. |
+| `move`, `delete` | always ask | No "yes for this session" for these. |
+| `run_command`, `run_plugin_command`, `load_plugin_panel`, `render_preview`, `reload_plugin` | ask | Run app or plugin commands, open plugin panels, render a preview, restart a plugin's process. |
+| `install_plugin`, `enable_plugin` | always ask | Show the plugin's permissions in their own dialog. |
+
+A blocked tool is still listed, with "(Disabled by the user in Commander4K.)" at the end of its description, and calling it returns an error. Prompts: `write_plugin`, `preview_plugin_for_file`, `explain_file_format`.
+
+**Allowed folders.** File tools only work inside the folders listed in the connect window (or the setting "Foldery dostępne dla MCP"). Any VFS path can be one: a disk folder, `\server\share`, `sftp://…`. With an empty list no file can be touched. A path outside them is refused with a message that tells the model to ask you. The same applies to folders the app tools take from the panels: `get_context` shows a panel's contents only when its folder is allowed, and `run_command`, `run_plugin_command` and `load_plugin_panel` need both panels' folders and the marked entries inside the allowed folders.
+
+**Protected folders.** Writing tools (`write_file`, `make_directory`, `move`, `delete`) never change the `plugins/` folders (next to the exe and in the data folder), `config/` (approvals, credentials, keymap) or `data/` (audit logs, plugin storage, the browser profile), even when they sit inside an allowed folder. Plugins get into `plugins/` only through `install_plugin`.
+
+**Confirmations.** A tool in "ask" mode opens a dialog in Commander4K: "Tak", "Nie" or "Tak do końca sesji" (yes for this tool and client until the server stops or you press "Cofnij zgody z tej sesji"). Esc, Enter and closing the dialog mean "Nie". Only one dialog is shown at a time, and parallel calls wait their turn. A call that the client cancels, or that is still waiting when the server stops, closes its dialog as "Nie". A declined call returns "The user declined this action in Commander4K." The client name in the dialog and the log is what the client reported about itself; do not rely on it.
+
+**Audit.** Every call is written to `data/logs/plugins-YYYYMMDD.log` as `mcp:<client>` with the tool, a summary and the outcome. The connect window lists the last 50 calls.
+
+**The plugin flow.**
+
+1. `get_plugin_guide` (optionally with `runtime` or `example`) returns this guide, the manifest schema and an example plugin.
+2. Write the files into a folder inside the allowed folders with `write_file`.
+3. `check_plugin` with `folder` (or `files`) reports manifest errors and SDK bypasses. Fix them until it is clean.
+4. `install_plugin` shows its permissions to the user and installs it into `plugins/<id>`, disabled. Code that bypasses the SDK is not installed.
+5. `enable_plugin` shows the permissions again; on "yes" the plugin starts.
+6. Try it with `run_plugin_command`, `load_plugin_panel` or `render_preview`. Read problems with `get_plugin_log`. After editing the code, install again and call `reload_plugin`. Grown permissions need `enable_plugin` again.
