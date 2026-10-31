@@ -45,6 +45,12 @@ public sealed record PreviewAction(string Label, string Target, string? Shortcut
 /// <summary>Another preview with a row of actions under it.</summary>
 public sealed record ActionsPreview(PreviewContent Content, IReadOnlyList<PreviewAction> Actions) : PreviewContent;
 
+/// <summary>
+/// The plugin renamed or moved the entry it shows (a message marked read), or the view is now about another entry (the
+/// draft of a reply): the host follows <paramref name="Entry"/> for later renders, actions and form edits.
+/// </summary>
+public sealed record MovedPreview(PreviewContent Content, VfsEntry Entry) : PreviewContent;
+
 public sealed record FormField(string Id, string Label, string Value, bool Multiline = false);
 
 public sealed record FormFile(string Name, string Path, long Size);

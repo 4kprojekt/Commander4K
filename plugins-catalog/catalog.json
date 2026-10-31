@@ -347,8 +347,12 @@
           "sha256": "fd7b20333cbc254db5457fbe8dddf24805499c3d716fc3d069fd7f110c177ec3"
         },
         {
+          "path": "compose.ps1",
+          "sha256": "eed83547c1d9f37020ca2f0e5dbe8ce5fba13a1691ebbbef1a285a960d556109"
+        },
+        {
           "path": "main.ps1",
-          "sha256": "52c64bf9ec1b5faeaafef66103ef4211b12fb1dbe1322acda33823779357e076"
+          "sha256": "a579b3cebd5a994dfa39cb9c240264f56ddf55417a1c4b343b8e2977f08f7e9e"
         },
         {
           "path": "plugin.json",

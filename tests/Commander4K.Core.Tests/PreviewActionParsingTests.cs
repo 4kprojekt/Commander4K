@@ -74,6 +74,25 @@ public sealed class PreviewActionParsingTests
     }
 
     [Fact]
+    public async Task A_result_with_another_path_tells_the_host_to_follow_the_entry()
+    {
+        var result = await ParseAsync("""{"kind":"markdown","content":"x","path":"C:\\mail\\read.eml","actions":[{"label":"R","target":"c4k:plugin/reply"}]}""");
+
+        var moved = Assert.IsType<MovedPreview>(result);
+        Assert.Equal(@"C:\mail\read.eml", moved.Entry.Path);
+        Assert.Equal("read.eml", moved.Entry.Name);
+        Assert.Equal(VfsEntryKind.File, moved.Entry.Kind);
+        Assert.IsType<ActionsPreview>(moved.Content);
+    }
+
+    [Theory]
+    [InlineData("""{"kind":"text","content":"t","path":"C:\\mail\\list.eml"}""")]
+    [InlineData("""{"kind":"text","content":"t","path":""}""")]
+    [InlineData("""{"kind":"text","content":"t","path":"relative.eml"}""")]
+    public async Task The_same_empty_or_relative_path_is_not_a_move(string json) =>
+        Assert.Equal(new TextPreview("t", false), await ParseAsync(json));
+
+    [Fact]
     public async Task Unknown_kind_still_falls_back_to_text()
     {
         var result = await ParseAsync("""{"kind":"hologram","content":"zwykły tekst"}""");

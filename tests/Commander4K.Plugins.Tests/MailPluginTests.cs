@@ -525,7 +525,256 @@ public sealed class MailPluginTests : IAsyncLifetime
         Assert.Equal(InboxFolder(account), target);
     }
 
+    // ---------------------------------------------------------------- reading, actions, composing (server-backed)
+
+    [Fact]
+    public async Task Reply_flow_sends_and_marks_answered()
+    {
+        var server = await MailboxAsync();
+        await server.SendAsync(["Reply me"]);
+        await server.WaitForCountAsync(1);
+        var plugin = Start(server.Service);
+        var account = WriteAccount("Test", server.ImapHostPort, server.User, smtp: server.SmtpHostPort);
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var inbox = InboxFolder(account);
+        var unread = Assert.Single(Directory.GetFiles(inbox, "*.eml"));
+        Assert.StartsWith(Unread, Path.GetFileName(unread), StringComparison.Ordinal);
+        var uid = (uint)await server.HighestUidAsync();
+        var originalId = MimeMessage.Load(unread, Token).MessageId;
+        Assert.False(string.IsNullOrEmpty(originalId));
+
+        // 1. Enter: marked read on the server, renamed, and the host is told to follow the new name.
+        var opened = Assert.IsType<MovedPreview>(await MessagePreview(plugin).LoadWithOptionsAsync(FileEntry(unread), Host(plugin), null, pinned: true, Token));
+        var read = Assert.Single(Directory.GetFiles(inbox, "*.eml"));
+        Assert.False(Path.GetFileName(read).StartsWith(Unread, StringComparison.Ordinal), read);
+        Assert.Equal(read, opened.Entry.Path);
+        var shown = Assert.IsType<ActionsPreview>(opened.Content);
+        Assert.Contains("Reply me", Assert.IsType<MarkdownPreview>(shown.Content).Markdown);
+        Assert.Contains(shown.Actions, a => a.Target == "c4k:plugin/reply" && a.Shortcut == "R");
+        Assert.True((await server.FlagsAsync(uid) & MessageFlags.Seen) != 0);
+
+        // 2. Reply: a form for a new draft in Szkice.
+        var replied = Assert.IsType<MovedPreview>(await ActAsync(plugin, read, "reply"));
+        var draft = replied.Entry.Path;
+        Assert.Equal("Szkice", Path.GetFileName(Path.GetDirectoryName(draft)));
+        Assert.True(File.Exists(draft));
+        var form = Assert.IsType<FormPreview>(replied.Content);
+        Assert.Contains("sender@localhost", Field(form, "to"), StringComparison.Ordinal);
+        Assert.StartsWith("Re: ", Field(form, "subject"), StringComparison.Ordinal);
+        Assert.Contains(form.Buttons, b => b.Target == "c4k:plugin/send" && b.Shortcut == "Ctrl+Enter");
+
+        // 3. Typing keeps the draft.
+        var values = Values(form);
+        values["body"] = "Dzięki\n" + values["body"];
+        await MessagePreview(plugin).FormChangedAsync(FileEntry(draft), null, values, Host(plugin), Token);
+        Assert.Contains("Dzięki", MimeMessage.Load(draft, Token).TextBody, StringComparison.Ordinal);
+
+        // 4. Send: delivered with In-Reply-To, copied to Sent, original answered, draft gone; the original is shown again.
+        var sent = Assert.IsType<MovedPreview>(await ActAsync(plugin, draft, "send", values));
+        Assert.Equal(read, sent.Entry.Path);
+        Assert.IsType<ActionsPreview>(sent.Content);
+        var delivered = await server.FindAsync("sender@localhost", sentFolder: false, originalId);
+        Assert.NotNull(delivered);
+        Assert.Contains("Dzięki", delivered!.TextBody, StringComparison.Ordinal);
+        Assert.NotNull(await server.FindAsync(server.User, sentFolder: true, originalId));
+        Assert.True((await server.FlagsAsync(uid) & MessageFlags.Answered) != 0);
+        Assert.False(File.Exists(draft));
+    }
+
+    [Fact]
+    public async Task Cursor_preview_does_not_mark_read()
+    {
+        var server = await MailboxAsync();
+        await server.SendAsync(["Just looking"]);
+        await server.WaitForCountAsync(1);
+        var plugin = Start(server.Service);
+        var account = WriteAccount("Test", server.ImapHostPort, server.User);
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var file = Assert.Single(Directory.GetFiles(InboxFolder(account), "*.eml"));
+        var uid = (uint)await server.HighestUidAsync();
+
+        var content = await MessagePreview(plugin).LoadWithOptionsAsync(FileEntry(file), Host(plugin), null, pinned: false, Token);
+
+        Assert.IsNotType<MovedPreview>(content);
+        Assert.True(File.Exists(file));
+        Assert.StartsWith(Unread, Path.GetFileName(file), StringComparison.Ordinal);
+        Assert.Equal(MessageFlags.None, await server.FlagsAsync(uid) & MessageFlags.Seen);
+    }
+
+    [Fact]
+    public async Task Delete_moves_to_trash_on_server_and_locally()
+    {
+        var server = await MailboxAsync();
+        await server.CreateFolderAsync("Trash");
+        await server.SendAsync(["Delete me"]);
+        await server.WaitForCountAsync(1);
+        var plugin = Start(server.Service);
+        var account = WriteAccount("Test", server.ImapHostPort, server.User);
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var inbox = InboxFolder(account);
+        var file = Assert.Single(Directory.GetFiles(inbox, "*.eml"));
+        var trash = Path.Combine(account, "Kosz");
+        Assert.True(Directory.Exists(trash));
+
+        var deleted = Assert.IsType<MovedPreview>(await ActAsync(plugin, file, "delete"));
+
+        Assert.Empty(Directory.GetFiles(inbox, "*.eml"));
+        var moved = Assert.Single(Directory.GetFiles(trash, "*.eml"));
+        Assert.Equal(moved, deleted.Entry.Path);
+        Assert.Empty(await server.UidsAsync());
+        var trashUid = Assert.Single(await server.UidsAsync("Trash"));
+        Assert.EndsWith($"[uid {trashUid}].eml", moved, StringComparison.Ordinal);
+
+        // The next sync adopts the moved file instead of downloading a second copy.
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+        Assert.Equal([moved], Directory.GetFiles(trash, "*.eml"));
+        Assert.Empty(Directory.GetFiles(inbox, "*.eml"));
+
+        // Deleting inside Kosz expunges it and removes the file.
+        await ActAsync(plugin, moved, "delete");
+        Assert.Empty(Directory.GetFiles(trash, "*.eml"));
+        Assert.Empty(await server.UidsAsync("Trash"));
+    }
+
+    [Fact]
+    public async Task Send_failure_keeps_draft_and_shows_error()
+    {
+        var server = await MailboxAsync();
+        await server.SendAsync(["Cannot answer"]);
+        await server.WaitForCountAsync(1);
+        var plugin = Start(server.Service);
+        var account = WriteAccount("Test", server.ImapHostPort, server.User, smtp: "127.0.0.1:1");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var file = Assert.Single(Directory.GetFiles(InboxFolder(account), "*.eml"));
+        var replied = Assert.IsType<MovedPreview>(await ActAsync(plugin, file, "reply"));
+        var values = Values(Assert.IsType<FormPreview>(replied.Content));
+        values["body"] = "Odpowiedź";
+
+        var result = await ActAsync(plugin, replied.Entry.Path, "send", values);
+
+        var form = Assert.IsType<FormPreview>(Inner(result));
+        Assert.True(form.MessageIsError);
+        Assert.False(string.IsNullOrWhiteSpace(form.Message));
+        Assert.Equal("Odpowiedź", Field(form, "body"));
+        Assert.True(File.Exists(replied.Entry.Path));
+        Assert.Contains("Odpowiedź", MimeMessage.Load(replied.Entry.Path, Token).TextBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Html_message_renders_without_remote_content()
+    {
+        var server = await MailboxAsync();
+        await server.AppendHtmlAsync("Newsletter", "<p>Hej&nbsp;<b>Jan</b></p><script>alert(1)</script><img src=\"https://t.example/p.gif\" alt=\"logo\"><a href=\"javascript:x()\">klik</a><a href=\"https://ok.example/a\">tu</a><style>p{}</style>");
+        var plugin = Start(server.Service);
+        var account = WriteAccount("Test", server.ImapHostPort, server.User);
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var file = Assert.Single(Directory.GetFiles(InboxFolder(account), "*.eml"));
+
+        var content = await MessagePreview(plugin).LoadWithOptionsAsync(FileEntry(file), Host(plugin), null, pinned: false, Token);
+
+        var markdown = Assert.IsType<MarkdownPreview>(Assert.IsType<ActionsPreview>(content).Content).Markdown;
+        Assert.Contains("Hej Jan", markdown, StringComparison.Ordinal);
+        Assert.Contains("Newsletter", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("t.example", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("alert", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("javascript:", markdown, StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------- composing (offline)
+
+    [Fact]
+    public async Task Attachments_are_added_from_the_selection_and_removed_and_the_draft_reopens_as_the_form()
+    {
+        var backend = new FakeMailServer();
+        backend.Inbox.Add();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var message = Assert.Single(Directory.GetFiles(InboxFolder(account), "*.eml"));
+        var attachment = Path.Combine(_dir, "raport.txt");
+        File.WriteAllText(attachment, "liczby");
+
+        var replied = Assert.IsType<MovedPreview>(await ActAsync(plugin, message, "forward"));
+        var draft = replied.Entry.Path;
+        var values = Values(Assert.IsType<FormPreview>(replied.Content));
+        values["to"] = "Jan Kowalski <jan@example.org>, ewa@example.org";
+        values["bcc"] = "ukryty@example.org";
+        _ui.Selection = [FileEntry(attachment)];
+
+        var attached = Assert.IsType<FormPreview>(Inner(await ActAsync(plugin, draft, "attachSelected", values)));
+        Assert.Equal(["raport.txt"], attached.Files.Select(f => f.Name));
+        Assert.Contains(attached.Buttons, b => b.Target == "c4k:plugin/removeAttachment?i=0");
+        var saved = MimeMessage.Load(draft, Token);
+        Assert.Equal(["jan@example.org", "ewa@example.org"], saved.To.Mailboxes.Select(m => m.Address));
+        Assert.Equal("Jan Kowalski", saved.To.Mailboxes.First().Name);
+        Assert.Equal(["raport.txt"], saved.Attachments.Select(a => a.ContentDisposition?.FileName ?? a.ContentType.Name));
+
+        // Opening the draft file again shows the same form (including the blind copy).
+        var reopened = Assert.IsType<FormPreview>(Inner(await MessagePreview(plugin).LoadWithOptionsAsync(FileEntry(draft), Host(plugin), null, pinned: true, Token)));
+        Assert.Equal("ukryty@example.org", Field(reopened, "bcc"));
+        Assert.Contains("jan@example.org", Field(reopened, "to"), StringComparison.Ordinal);
+        Assert.Single(reopened.Files);
+
+        var removed = Assert.IsType<FormPreview>(Inner(await ActAsync(plugin, draft, "removeAttachment", Values(reopened), new() { ["i"] = "0" })));
+        Assert.Empty(removed.Files);
+        Assert.Empty(MimeMessage.Load(draft, Token).Attachments);
+
+        await ActAsync(plugin, draft, "discard", Values(removed));
+        Assert.False(File.Exists(draft));
+    }
+
+    [Fact]
+    public async Task Save_attachment_goes_to_the_other_file_panel()
+    {
+        var backend = new FakeMailServer();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var inbox = InboxFolder(account);
+        var mail = new MimeMessage { Subject = "Z plikiem" };
+        mail.From.Add(MailboxAddress.Parse("jan@example.org"));
+        var body = new BodyBuilder { TextBody = "w załączniku" };
+        body.Attachments.Add("..\\zły:plik.txt", Encoding.UTF8.GetBytes("treść"));
+        mail.Body = body.ToMessageBody();
+        var file = Path.Combine(inbox, "2026-10-31 1200 Jan - Z plikiem.eml");
+        mail.WriteTo(file, Token);
+        var target = Directory.CreateDirectory(Path.Combine(_dir, "Pobrane")).FullName;
+        _ui.Active = inbox;
+        _ui.Other = target;
+
+        var content = await MessagePreview(plugin).LoadWithOptionsAsync(FileEntry(file), Host(plugin), null, pinned: false, Token);
+        var save = Assert.Single(Assert.IsType<ActionsPreview>(content).Actions, a => a.Target.StartsWith("c4k:plugin/saveAttachment", StringComparison.Ordinal));
+        Assert.Equal("c4k:plugin/saveAttachment?i=0", save.Target);
+        await ActAsync(plugin, file, "saveAttachment", args: new() { ["i"] = "0" });
+
+        var saved = Assert.Single(Directory.GetFiles(target));
+        Assert.Equal("treść", File.ReadAllText(saved));
+        Assert.DoesNotContain("..", Path.GetFileName(saved), StringComparison.Ordinal);
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    private static ExternalPreviewPlugin MessagePreview(ExternalPlugin plugin) =>
+        new(plugin, plugin.Manifest.Contributes!.Previews!.Single(p => p.Id == "message"));
+
+    private static VfsEntry FileEntry(string path) => new(Path.GetFileName(path), path, VfsEntryKind.File, new FileInfo(path).Length);
+
+    private Task<PreviewContent?> ActAsync(ExternalPlugin plugin, string path, string action, Dictionary<string, string>? values = null, Dictionary<string, string>? args = null) =>
+        MessagePreview(plugin).InvokeActionAsync(new PreviewActionRequest(FileEntry(path), null, action, args ?? [], values), Host(plugin), Token);
+
+    private static PreviewContent? Inner(PreviewContent? content) => content is MovedPreview moved ? moved.Content : content;
+
+    private static string Field(FormPreview form, string id) => form.Fields.Single(f => f.Id == id).Value;
+
+    private static Dictionary<string, string> Values(FormPreview form) => form.Fields.ToDictionary(f => f.Id, f => f.Value, StringComparer.Ordinal);
 
     private async Task TickUntilDoneAsync(ExternalPlugin plugin)
     {
@@ -590,11 +839,11 @@ public sealed class MailPluginTests : IAsyncLifetime
         info.SetAccessControl(security);
     }
 
-    private string WriteAccount(string name, string imap, string user, string? since = null, string refresh = "1m")
+    private string WriteAccount(string name, string imap, string user, string? since = null, string refresh = "1m", string? smtp = null)
     {
         var folder = Path.Combine(_dir, "Poczta", name);
         Directory.CreateDirectory(folder);
-        var options = new JsonObject { ["imap"] = imap, ["smtp"] = null, ["user"] = user, ["refresh"] = refresh };
+        var options = new JsonObject { ["imap"] = imap, ["smtp"] = smtp, ["user"] = user, ["refresh"] = refresh };
         if (since is not null)
         {
             options["since"] = since;
@@ -668,6 +917,8 @@ public sealed class MailPluginTests : IAsyncLifetime
 
         public string ImapHostPort => $"{_imap.Host}:{_imap.Port}";
 
+        public string SmtpHostPort => $"{_smtp.Host}:{_smtp.Port}";
+
         public MailService Service { get; }
 
         public ValueTask DisposeAsync() => Service.DisposeAsync();
@@ -685,6 +936,7 @@ public sealed class MailPluginTests : IAsyncLifetime
                 message.From.Add(MailboxAddress.Parse("sender@localhost"));
                 message.To.Add(MailboxAddress.Parse(User));
                 message.Subject = subject;
+                message.MessageId = MimeKit.Utils.MimeUtils.GenerateMessageId("localhost");
                 message.Body = new TextPart("plain") { Text = subject };
                 await client.SendAsync(message, Token);
             }
@@ -717,6 +969,78 @@ public sealed class MailPluginTests : IAsyncLifetime
 
         public async Task<List<uint>> UidsAsync() =>
             await WithInboxAsync(async inbox => (await inbox.SearchAsync(MailKit.Search.SearchQuery.All, Token)).Select(u => u.Id).Order().ToList());
+
+        public async Task<List<uint>> UidsAsync(string folder) => await WithClientAsync(User, async client =>
+        {
+            var f = await client.GetFolderAsync(folder, Token);
+            await f.OpenAsync(FolderAccess.ReadOnly, Token);
+            return (await f.SearchAsync(MailKit.Search.SearchQuery.All, Token)).Select(u => u.Id).Order().ToList();
+        });
+
+        public async Task<MessageFlags> FlagsAsync(uint uid) => await WithInboxAsync(async inbox =>
+            (await inbox.FetchAsync([new UniqueId(uid)], MessageSummaryItems.Flags, Token)).Single().Flags ?? MessageFlags.None);
+
+        public Task CreateFolderAsync(string name) => WithClientAsync(User, async client =>
+        {
+            var root = await client.GetFolderAsync(client.PersonalNamespaces[0].Path, Token);
+            await root.CreateAsync(name, isMessageFolder: true, Token);
+            return true;
+        });
+
+        public async Task AppendHtmlAsync(string subject, string html)
+        {
+            var message = new MimeMessage { Subject = subject, Body = new TextPart("html") { Text = html } };
+            message.From.Add(MailboxAddress.Parse("sender@localhost"));
+            message.To.Add(MailboxAddress.Parse(User));
+            await WithInboxAsync(inbox => inbox.AppendAsync(new AppendRequest(message), Token));
+        }
+
+        /// <summary>A message answering <paramref name="inReplyTo"/> in a user's Inbox (or Sent), waiting a little for delivery.</summary>
+        public async Task<MimeMessage?> FindAsync(string user, bool sentFolder, string inReplyTo)
+        {
+            for (var i = 0; i < 50; i++)
+            {
+                var found = await WithClientAsync(user, async client =>
+                {
+                    IMailFolder folder = client.Inbox;
+                    if (sentFolder)
+                    {
+                        var root = await client.GetFolderAsync(client.PersonalNamespaces[0].Path, Token);
+                        folder = (await root.GetSubfoldersAsync(false, Token)).First(f => f.Name.Equals("Sent", StringComparison.OrdinalIgnoreCase) || (f.Attributes & FolderAttributes.Sent) != 0);
+                    }
+
+                    await folder.OpenAsync(FolderAccess.ReadOnly, Token);
+                    foreach (var id in await folder.SearchAsync(MailKit.Search.SearchQuery.All, Token))
+                    {
+                        var message = await folder.GetMessageAsync(id, Token);
+                        if (message.InReplyTo == inReplyTo)
+                        {
+                            return message;
+                        }
+                    }
+
+                    return null;
+                });
+                if (found is not null)
+                {
+                    return found;
+                }
+
+                await Task.Delay(100, Token);
+            }
+
+            return null;
+        }
+
+        private async Task<T> WithClientAsync<T>(string user, Func<ImapClient, Task<T>> action)
+        {
+            using var client = new ImapClient { ServerCertificateValidationCallback = (_, _, _, _) => true };
+            await client.ConnectAsync(_imap.Host, _imap.Port, _imap.Scheme == "imaps" ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls, Token);
+            await client.AuthenticateAsync(user, user, Token);
+            var result = await action(client);
+            await client.DisconnectAsync(true, Token);
+            return result;
+        }
 
         public async Task<long> HighestUidAsync() => (await UidsAsync()).DefaultIfEmpty(0u).Max();
 
@@ -885,11 +1209,17 @@ public sealed class MailPluginTests : IAsyncLifetime
     {
         public List<(string Message, string? Target)> Notifications { get; } = [];
 
-        public string? ActivePath => null;
+        public string? Active { get; set; }
 
-        public string? OtherPath => null;
+        public string? Other { get; set; }
 
-        public IReadOnlyList<VfsEntry> SelectedEntries => [];
+        public IReadOnlyList<VfsEntry> Selection { get; set; } = [];
+
+        public string? ActivePath => Active;
+
+        public string? OtherPath => Other;
+
+        public IReadOnlyList<VfsEntry> SelectedEntries => Selection;
 
         public Task NavigateAsync(string path, string? focusName) => Task.CompletedTask;
 

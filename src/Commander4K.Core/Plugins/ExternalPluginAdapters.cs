@@ -221,6 +221,8 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
     /// <c>{ "kind": "chart", … }</c> or
     /// <c>{ "kind": "form", "title", "fields": [{ id, label, value, multiline? }], "files": [{ name, path, size }], "buttons": [{ label, target, shortcut? }], "message"?, "messageError"? }</c>.
     /// Any kind may add <c>"actions": [{ label, target, shortcut? }]</c>, shown as a bar above it. Unknown kinds are text.
+    /// <c>"path"</c> (an absolute path other than the entry's) says the plugin renamed the entry or the view is now about
+    /// another file: the result becomes a <see cref="MovedPreview"/> and the host follows that path.
     /// A tile's <c>image</c> is a path the host reads with the plugin's own fs.read permission (skipped without a host).
     /// </summary>
     public static async Task<PreviewContent> ParseRenderAsync(JsonElement result, VfsEntry entry, IPluginHost? host, CancellationToken cancellationToken)
@@ -254,8 +256,16 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
         }
 
         var actions = ParseActions(result, "actions");
-        return actions.Count > 0 ? new ActionsPreview(content, actions) : content;
+        PreviewContent shown = actions.Count > 0 ? new ActionsPreview(content, actions) : content;
+        return CardString(result, "path") is { } path && IsOtherEntry(path, entry)
+            ? new MovedPreview(shown, new VfsEntry(path.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries)[^1], path, VfsEntryKind.File))
+            : shown;
     }
+
+    /// <summary>A <c>path</c> in a result that is absolute (a drive/UNC path or a <c>scheme://</c> one) and not the entry being shown.</summary>
+    private static bool IsOtherEntry(string path, VfsEntry entry) =>
+        path.Length > 0 && (Path.IsPathFullyQualified(path) || path.Contains("://", StringComparison.Ordinal))
+        && !string.Equals(path, entry.Path, StringComparison.OrdinalIgnoreCase);
 
     private static FormPreview ParseForm(JsonElement result, VfsEntry entry)
     {

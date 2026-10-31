@@ -351,11 +351,16 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private bool CanEdit => Inner(_shown) is MarkdownPreview { CanEdit: true } or TextPreview { CanEdit: true };
 
     /// <summary>The content under any action bars.</summary>
-    private static PreviewContent? Inner(PreviewContent? content) => content is ActionsPreview actions ? Inner(actions.Content) : content;
+    private static PreviewContent? Inner(PreviewContent? content) => content switch { ActionsPreview actions => Inner(actions.Content), MovedPreview moved => Inner(moved.Content), _ => content };
 
     /// <summary>Changes the content under the action bars and keeps the bars.</summary>
     private static PreviewContent MapInner(PreviewContent content, Func<PreviewContent, PreviewContent> change) =>
-        content is ActionsPreview actions ? actions with { Content = MapInner(actions.Content, change) } : change(content);
+        content switch
+        {
+            ActionsPreview actions => actions with { Content = MapInner(actions.Content, change) },
+            MovedPreview moved => moved with { Content = MapInner(moved.Content, change) },
+            _ => change(content),
+        };
 
     private TextBox? FocusedTextBox() =>
         TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox box && this.IsVisualAncestorOf(box) ? box : null;
@@ -618,6 +623,13 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private void Show(PreviewContent content)
     {
+        // The plugin renamed the entry (a message marked read) or switched to another file (a draft): follow it.
+        while (content is MovedPreview moved)
+        {
+            _entry = moved.Entry;
+            content = moved.Content;
+        }
+
         // The same dashboard shown again (a skin change) keeps its live cards; anything else stops them.
         if (_dashboard is { } live)
         {
