@@ -865,6 +865,7 @@ public sealed class MainWindow : Window, IShell
             AskAiAboutFile = AskAiAboutFileAsync,
             CreatePreviewPlugin = CreatePreviewPluginAsync,
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
+            RunShortcut = RunShortcut,
         };
 
     /// <summary>

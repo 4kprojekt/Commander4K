@@ -664,6 +664,7 @@ public static class McpAppTools
         HexPreview hex => $"Binary file, {hex.TotalLength.ToString("N0", CultureInfo.InvariantCulture)} bytes; first bytes: {Convert.ToHexString(hex.Data.Span[..Math.Min(32, hex.Data.Length)]).ToLowerInvariant()}",
         FolderPreview folder => FolderText(folder),
         MessagePreview message => message.Message,
+        WebPreview web => $"Web preview: page {web.Page} of plugin {web.PluginId} (shown in the app window; not available as text).",
         _ => $"({content.GetType().Name}: no text form)",
     };
 
