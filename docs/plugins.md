@@ -318,6 +318,12 @@ These are in [`examples/plugins`](../examples/plugins), and the app embeds them 
 - **`project-modules-python`** (`fs.read`): a dedicated quick view for chosen files. It shows the dependencies of `package.json`, `*.csproj`, `pyproject.toml`, `requirements*.txt`, `go.mod`, `Cargo.toml` and `composer.json`, and the modules of an HTTP API from OpenAPI/Swagger files (endpoints grouped by tag, plus data models). It shows file names and patterns in `extensions`.
 - `site-check-node` keeps its site list in the plugin's storage (`storageGet`/`storageSet`), not in a file.
 
+[`pdf-viewer-node`](../examples/plugins/pdf-viewer-node) (`fs.read`) is the web preview example. It is not embedded as a template (PDF.js is ~6 MB) and is not in the catalog; copy the folder into `plugins/`. `main.js` only returns `webPreview("index.html", { zoom })` and stores the zoom that the page sends with `c4k.request("saveZoom", { zoom })`. The page (`web/`) runs PDF.js 5 (`PDFViewer`, `PDFFindController`) under the page CSP:
+- ES modules and the worker load from the page's own origin (`GlobalWorkerOptions.workerSrc`, `cMapUrl`, `standardFontDataUrl`, `wasmUrl` as absolute URLs built from `import.meta.url`, since PDF.js does not resolve relative ones).
+- `getDocument({ url: c4k.fileUrl, rangeChunkSize: 65536, disableAutoFetch: true })` reads the file in ranges; on `c4k.on("entry")` the page destroys the old loading task and opens the new file without a reload.
+- Colours come from `c4k.skin` as CSS variables and follow `c4k.on("skin")`. `Ctrl+F` stays in the page and focuses the search box.
+- Printing renders every page at 150 dpi into a container that only `@media print` shows, calls `window.print()` and empties it on `afterprint`.
+
 When the quick view cannot recognise a file (only hex is left), it offers to ask an AI what the format is. It can then have an AI write a preview plugin for that type, from a sample of the file.
 
 ## Folder files (`c4k.dir`)

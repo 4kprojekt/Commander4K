@@ -219,6 +219,61 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Pdf_viewer_returns_a_web_preview()
+    {
+        await using var plugin = Start("pdf-viewer-node");
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var path = Path.Combine(_folder, "one.pdf");
+        var pdf = MinimalPdf();
+        await File.WriteAllBytesAsync(path, pdf, TestToken);
+        var entry = new VfsEntry("one.pdf", path, VfsEntryKind.File, pdf.Length);
+        var host = HostFor(plugin);
+
+        Assert.True(preview.CanPreview(entry));
+        Assert.False(preview.CanPreview(entry with { Name = "one.txt" }));
+        var web = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, host, null, TestToken));
+
+        Assert.Equal("examples.pdf-viewer", web.PluginId);
+        Assert.Equal("index.html", web.Page);
+        Assert.EndsWith("web", web.RootFolder, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(web.RootFolder, "index.html")));
+        Assert.Equal("{\"zoom\":\"page-width\"}", web.StateJson);
+
+        using var zoom = JsonDocument.Parse("{\"zoom\": 1.5}");
+        await preview.MessageAsync(entry, "saveZoom", zoom.RootElement, host, TestToken);
+        var again = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, host, null, TestToken));
+        Assert.Equal("{\"zoom\":1.5}", again.StateJson);
+    }
+
+    /// <summary>A valid one-page PDF with a correct cross-reference table.</summary>
+    private static byte[] MinimalPdf()
+    {
+        const string content = "BT /F1 24 Tf 20 100 Td (Hello PDF) Tj ET";
+        string[] objects =
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            $"<< /Length {content.Length} >>\nstream\n{content}\nendstream",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ];
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        var text = new StringBuilder("%PDF-1.4\n");
+        var offsets = new List<int>();
+        for (var i = 0; i < objects.Length; i++)
+        {
+            offsets.Add(text.Length);
+            text.Append(invariant, $"{i + 1} 0 obj\n{objects[i]}\nendobj\n");
+        }
+        var xref = text.Length;
+        text.Append(invariant, $"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
+        foreach (var offset in offsets)
+            text.Append(invariant, $"{offset:D10} 00000 n \n");
+        text.Append(invariant, $"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return Encoding.ASCII.GetBytes(text.ToString());
+    }
+
+    [Fact]
     public async Task Preview_message_round_trip()
     {
         var folder = Path.Combine(_folder, "web-msg");
@@ -439,6 +494,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("site-check-node", "node", "c4k.js")]
     [InlineData("git-powershell", "powershell", "c4k.ps1")]
     [InlineData("project-modules-python", "python", "c4k.py")]
+    [InlineData("pdf-viewer-node", "node", "c4k.js")]
     [InlineData("../../plugins-catalog/steam-library-powershell", "powershell", "c4k.ps1")]
     public void Example_sdk_clients_match_plugins_sdk(string example, string language, string file) =>
         Assert.Equal(
