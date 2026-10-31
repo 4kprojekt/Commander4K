@@ -69,6 +69,50 @@ public sealed class McpPolicyTests
     public void Normalize_resolves_segments(string path, string expected) =>
         Assert.Equal(expected, McpPathPolicy.Normalize(path));
 
+    [Theory]
+    [InlineData(@"C:\Repo\config::$INDEX_ALLOCATION\ai\credentials.json")]
+    [InlineData(@"C:\Repo\plugins::$INDEX_ALLOCATION\my-plugin\main.py")]
+    [InlineData(@"C:\Repo\config:$I30:$INDEX_ALLOCATION\settings.json")]
+    [InlineData(@"C:\Repo\notes.txt:secret")]
+    [InlineData(@"C:\Repo\notes.txt::$DATA")]
+    [InlineData(@"C:/Repo/src::$INDEX_ALLOCATION/a.cs")]
+    [InlineData(@"\\?\C:\Repo\config::$INDEX_ALLOCATION\x")]
+    [InlineData(@"\\srv\share\config::$INDEX_ALLOCATION\x")]
+    [InlineData(@"zip://C:\Repo\x.zip:hidden::/inner/f")]
+    public void Stream_syntax_paths_are_never_inside_anything(string path)
+    {
+        Assert.False(McpPathPolicy.IsInside(path, @"C:\Repo"));
+        Assert.False(McpPathPolicy.IsInside(path, @"\\srv\share"));
+        Assert.False(McpPathPolicy.IsAllowed(path, [@"C:\", @"C:\Repo", @"\\srv\share"]));
+        Assert.NotNull(McpToolDispatcher.Refusal(path, [@"C:\Repo", @"\\srv\share"], [@"C:\Repo\config", @"C:\Repo\plugins"]));
+    }
+
+    [Fact]
+    public void Drive_root_colon_is_still_allowed()
+    {
+        Assert.True(McpPathPolicy.IsInside(@"C:\Repo\a.cs", @"C:\"));
+        Assert.True(McpPathPolicy.IsInside(@"zip://C:\Repo\x.zip::/a:b", @"C:\Repo")); // ':' inside an archive entry is just a name
+    }
+
+    [Fact]
+    public async Task Stream_syntax_is_refused_for_every_tool_including_names_only()
+    {
+        var f = new Fixture();
+        f.Protected.Add(@"C:\Repo\config");
+        var reader = f.Add("read_file", McpToolMode.Allow);
+        var lister = f.Add("list_directory", McpToolMode.Allow, namesOnly: true);
+
+        var read = await f.CallAsync("read_file", Args(@"C:\Repo\config::$INDEX_ALLOCATION\ai\credentials.json"));
+        var plain = await f.CallAsync("read_file", Args(@"C:\Repo\notes.txt:stream"));
+        var list = await f.CallAsync("list_directory", Args(@"C:\Repo\config::$INDEX_ALLOCATION"));
+
+        Assert.True(read.IsError);
+        Assert.True(plain.IsError);
+        Assert.True(list.IsError);
+        Assert.Equal(0, reader.Runs);
+        Assert.Equal(0, lister.Runs);
+    }
+
     [Fact]
     public void Empty_roots_allow_nothing()
     {
