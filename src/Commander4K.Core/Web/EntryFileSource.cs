@@ -9,6 +9,7 @@ public sealed class EntryFileSource : IAsyncDisposable
 {
     private readonly Func<CancellationToken, Task<Stream>> _open;
     private readonly string? _spoolPath;
+    private volatile bool _disposed;
 
     private EntryFileSource(Func<CancellationToken, Task<Stream>> open, long length, string? spoolPath)
     {
@@ -29,9 +30,10 @@ public sealed class EntryFileSource : IAsyncDisposable
         {
             if (stream.CanSeek)
             {
-                return new EntryFileSource(open, knownLength ?? stream.Length, null);
+                return new EntryFileSource(open, stream.Length, null);
             }
 
+            Directory.CreateDirectory(tempFolder);
             var path = Path.Combine(tempFolder, "c4k-web-" + Guid.NewGuid().ToString("N") + ".bin");
             long size;
             try
@@ -50,7 +52,7 @@ public sealed class EntryFileSource : IAsyncDisposable
             }
 
             return new EntryFileSource(
-                _ => Task.FromResult<Stream>(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan)),
+                _ => Task.FromResult<Stream>(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan)),
                 size,
                 path);
         }
@@ -63,6 +65,7 @@ public sealed class EntryFileSource : IAsyncDisposable
     /// <summary>A stream over the range (the whole file for null); the caller disposes it.</summary>
     public async Task<Stream> OpenRangeAsync(ByteRange? range, CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         var stream = await _open(cancellationToken).ConfigureAwait(false);
         if (range is not { } r)
         {
@@ -83,6 +86,7 @@ public sealed class EntryFileSource : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        _disposed = true;
         if (_spoolPath is not null)
         {
             TryDelete(_spoolPath);

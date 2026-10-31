@@ -2,59 +2,114 @@ using System.Globalization;
 
 namespace Commander4K.Core.Web;
 
+/// <summary>How to answer a request's <c>Range</c> header.</summary>
+public enum ByteRangeKind : byte
+{
+    /// <summary>No header: 200 with the whole file.</summary>
+    None,
+
+    /// <summary>Malformed, another unit or several ranges: ignore the header, 200 with the whole file (RFC 9110).</summary>
+    Ignore,
+
+    /// <summary>416 with <c>Content-Range: bytes */length</c>.</summary>
+    Unsatisfiable,
+
+    /// <summary>206 with <c>Content-Range: bytes start-end/length</c>.</summary>
+    Satisfiable,
+}
+
+public readonly record struct ByteRangeResult(ByteRangeKind Kind, ByteRange Range);
+
 /// <summary>An inclusive byte range of a resource, from an HTTP <c>Range</c> header.</summary>
 public readonly record struct ByteRange(long Start, long End)
 {
+    private static readonly ByteRangeResult NoRange = new(ByteRangeKind.None, default);
+    private static readonly ByteRangeResult IgnoreRange = new(ByteRangeKind.Ignore, default);
+    private static readonly ByteRangeResult Unsatisfiable = new(ByteRangeKind.Unsatisfiable, default);
+
     public long Length => End - Start + 1;
 
-    /// <summary>Parses a single <c>bytes=a-b</c>, <c>a-</c> or <c>-n</c> range; null for a missing, malformed, multi-range or unsatisfiable header.</summary>
-    public static ByteRange? Parse(string? header, long length)
+    /// <summary>Evaluates a single <c>bytes=a-b</c>, <c>a-</c> or <c>-n</c> range against a resource of <paramref name="length"/> bytes.</summary>
+    public static ByteRangeResult Evaluate(string? header, long length)
     {
+        if (header is null)
+        {
+            return NoRange;
+        }
+
         const string prefix = "bytes=";
-        if (header is null || length <= 0 || !header.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        if (!header.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            return IgnoreRange;
         }
 
-        var spec = header.AsSpan(prefix.Length).Trim();
-        if (spec.Contains(','))
-        {
-            return null;
-        }
-
+        var spec = header.AsSpan(prefix.Length);
         var dash = spec.IndexOf('-');
         if (dash < 0)
         {
-            return null;
+            return IgnoreRange;
         }
 
-        var first = spec[..dash].Trim();
-        var last = spec[(dash + 1)..].Trim();
+        var first = spec[..dash];
+        var last = spec[(dash + 1)..];
+        if ((first.IsEmpty && last.IsEmpty) || !IsDigits(first) || !IsDigits(last))
+        {
+            return IgnoreRange;
+        }
+
         if (first.IsEmpty)
         {
-            if (!long.TryParse(last, NumberStyles.None, CultureInfo.InvariantCulture, out var suffix) || suffix <= 0)
+            // Suffix: the last n bytes; a number beyond long means "more than the file".
+            var suffix = Parse(last);
+            if (suffix < 0)
             {
-                return null;
+                suffix = long.MaxValue;
             }
 
-            return new ByteRange(Math.Max(0, length - suffix), length - 1);
+            if (suffix == 0 || length <= 0)
+            {
+                return Unsatisfiable;
+            }
+
+            return Satisfiable(Math.Max(0, length - suffix), length - 1);
         }
 
-        if (!long.TryParse(first, NumberStyles.None, CultureInfo.InvariantCulture, out var start) || start >= length)
+        var start = Parse(first);
+        if (start < 0 || start >= length)
         {
-            return null;
+            return Unsatisfiable;
         }
 
         if (last.IsEmpty)
         {
-            return new ByteRange(start, length - 1);
+            return Satisfiable(start, length - 1);
         }
 
-        if (!long.TryParse(last, NumberStyles.None, CultureInfo.InvariantCulture, out var end) || end < start)
+        var end = Parse(last);
+        if (end >= 0 && end < start)
         {
-            return null;
+            return IgnoreRange;
         }
 
-        return new ByteRange(start, Math.Min(end, length - 1));
+        return Satisfiable(start, end < 0 ? length - 1 : Math.Min(end, length - 1));
     }
+
+    private static ByteRangeResult Satisfiable(long start, long end) => new(ByteRangeKind.Satisfiable, new ByteRange(start, end));
+
+    private static bool IsDigits(ReadOnlySpan<char> text)
+    {
+        foreach (var c in text)
+        {
+            if (c is < '0' or > '9')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>The value, or -1 when it does not fit a long (digits only).</summary>
+    private static long Parse(ReadOnlySpan<char> digits) =>
+        long.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var value) ? value : -1;
 }

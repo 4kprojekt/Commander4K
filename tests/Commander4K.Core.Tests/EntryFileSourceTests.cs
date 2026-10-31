@@ -91,4 +91,72 @@ public sealed class EntryFileSourceTests : IDisposable
         Assert.Equal(32, a.Token.Length);
         Assert.NotEqual(a.Token, b.Token);
     }
+
+    private sealed class FailingStream(bool cancel) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new IOException("boom");
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            if (cancel)
+            {
+                throw new OperationCanceledException();
+            }
+
+            throw new IOException("boom");
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Failed_or_cancelled_spool_leaves_no_temp_file(bool cancel)
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        if (cancel)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => EntryFileSource.OpenAsync(_ => Task.FromResult<Stream>(new FailingStream(true)), null, _temp, ct));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<IOException>(() => EntryFileSource.OpenAsync(_ => Task.FromResult<Stream>(new FailingStream(false)), null, _temp, ct));
+        }
+
+        Assert.Empty(Directory.GetFiles(_temp));
+    }
+
+    [Fact]
+    public async Task Dispose_during_an_open_range_removes_the_file_and_blocks_new_ranges()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var source = await EntryFileSource.OpenAsync(_ => Task.FromResult<Stream>(new ForwardOnlyStream(Data)), null, _temp, ct);
+        var reader = await source.OpenRangeAsync(new ByteRange(0, 9), ct);
+
+        await source.DisposeAsync();
+        await source.DisposeAsync();
+
+        Assert.Empty(Directory.GetFiles(_temp));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => source.OpenRangeAsync(null, ct));
+        Assert.Equal(Data[..10], await ReadAsync(reader, ct));
+    }
+
+    [Fact]
+    public async Task Missing_temp_folder_is_created()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var folder = Path.Combine(_temp, "nested", "deeper");
+        await using var source = await EntryFileSource.OpenAsync(_ => Task.FromResult<Stream>(new ForwardOnlyStream(Data)), null, folder, ct);
+
+        Assert.Single(Directory.GetFiles(folder));
+    }
 }
