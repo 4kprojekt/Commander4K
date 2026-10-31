@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using Commander4K.Core.Execution;
 using Commander4K.Core.Plugins;
 using Commander4K.Core.Updates;
@@ -38,6 +39,11 @@ public sealed class ExternalPluginTests : IAsyncLifetime
 
     public async ValueTask DisposeAsync()
     {
+        foreach (var plugin in _started)
+        {
+            await plugin.DisposeAsync();
+        }
+
         await _audit.DisposeAsync();
         _http.Dispose();
         Directory.Delete(_folder, recursive: true);
@@ -85,6 +91,293 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Contains("| miasto | ludność |", result.Markdown, StringComparison.Ordinal);
         Assert.Contains("| Gdańsk | 470000 |", result.Markdown, StringComparison.Ordinal);
         Assert.False(result.CanEdit);
+    }
+
+    [Fact]
+    public async Task Json_preview_formats_and_outlines()
+    {
+        var (preview, host, entry) = await CatalogPreviewAsync("json-preview-python", "data.json", """{"name":"Kraków","tags":["a","b"],"geo":{"lat":50.06,"lon":19.94}}""");
+
+        var result = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken));
+
+        Assert.Contains("✅", result.Markdown, StringComparison.Ordinal);
+        Assert.Contains("\"lat\": 50.06", result.Markdown, StringComparison.Ordinal);
+        Assert.Contains("`tags` — tablica (2)", result.Markdown, StringComparison.Ordinal);
+        Assert.Contains("`geo.lat` — liczba", result.Markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Json_preview_reports_error_position()
+    {
+        var (preview, host, entry) = await CatalogPreviewAsync("json-preview-python", "bad.jsonc", "{\n  // komentarz\n  \"a\": 1,\n  \"b\": ,\n}");
+
+        var result = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken));
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        Assert.Contains("linia 4", result.Markdown, StringComparison.Ordinal);
+        Assert.Equal(CardStatus.Error, card.Status);
+    }
+
+    [Fact]
+    public async Task Json_and_openapi_files_with_a_bom_are_valid()
+    {
+        var (json, jsonHost, jsonEntry) = await CatalogPreviewAsync("json-preview-python", "bom.json", "{\"a\": 1}", new UTF8Encoding(true));
+        var (openapi, openapiHost, openapiEntry) = await CatalogPreviewAsync("openapi-preview-python", "openapi.yaml", "openapi: 3.0.0\ninfo:\n  title: Bom\npaths: {}\n", new UTF8Encoding(true));
+
+        var card = await json.LoadCardAsync(new PreviewCardRequest(jsonEntry, null, null), jsonHost, TestToken);
+        var markdown = Assert.IsType<MarkdownPreview>(await openapi.LoadAsync(openapiEntry, openapiHost, null, TestToken)).Markdown;
+
+        Assert.Equal(CardStatus.Ok, card.Status);
+        Assert.Contains("# Bom", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Json_file_over_the_limit_is_not_called_invalid()
+    {
+        var big = "[" + string.Join(",", Enumerable.Repeat("\"" + new string('x', 100) + "\"", 45_000)) + "]";
+        var (preview, host, entry) = await CatalogPreviewAsync("json-preview-python", "big.json", big);
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        Assert.Equal(CardStatus.Warning, card.Status);
+    }
+
+    [Fact]
+    public async Task Json_card_shows_status_and_keys()
+    {
+        var (preview, host, entry) = await CatalogPreviewAsync("json-preview-python", "data.json", """{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6}""");
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        Assert.Equal(CardStatus.Ok, card.Status);
+        Assert.Equal("obiekt, 6 kluczy", card.Items.OfType<CardValue>().Single(v => v.Label == "Zawartość").Value);
+        Assert.Equal("a · b · c · d · e · …", Assert.Single(card.Items.OfType<CardText>()).Text);
+    }
+
+    private const string PetStoreYaml = """
+        openapi: 3.0.3
+        info:
+          title: Pet Store
+          version: "1.2.0"
+          description: |
+            Sklep ze zwierzętami.
+            Druga linia.
+        servers:
+          - url: https://api.example.com/v1   # produkcja
+        paths:
+          /pets:
+            get:
+              tags: [pets]
+              summary: Lista zwierząt
+            post:
+              tags: [pets]
+              summary: 'Dodaj: zwierzę'
+          /pets/{petId}:
+            get:
+              tags:
+                - pets
+              summary: Jedno zwierzę
+            delete:
+              summary: Usuń
+          /health:
+            get: { summary: Stan }
+        components:
+          schemas:
+            Pet:
+              type: object
+            Error:
+              type: object
+        """;
+
+    [Fact]
+    public async Task Openapi3_yaml_lists_endpoints_by_tag()
+    {
+        var (preview, host, entry) = await CatalogPreviewAsync("openapi-preview-python", "petstore.openapi.yaml", PetStoreYaml);
+
+        var markdown = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+
+        Assert.Contains("# Pet Store", markdown, StringComparison.Ordinal);
+        Assert.Contains("1.2.0", markdown, StringComparison.Ordinal);
+        Assert.Contains("https://api.example.com/v1", markdown, StringComparison.Ordinal);
+        Assert.Contains("## pets", markdown, StringComparison.Ordinal);
+        Assert.Contains("| POST | `/pets` | Dodaj: zwierzę |", markdown, StringComparison.Ordinal);
+        Assert.Contains("| DELETE | `/pets/{petId}` | Usuń |", markdown, StringComparison.Ordinal);
+        Assert.Contains("| GET | `/health` | Stan |", markdown, StringComparison.Ordinal);
+        Assert.Contains("`Pet`", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Swagger2_json_reads_host_and_definitions()
+    {
+        var (preview, host, entry) = await CatalogPreviewAsync("openapi-preview-python", "swagger.json", """
+            { "swagger": "2.0", "info": { "title": "Old API", "version": "0.9" }, "host": "old.example.com", "basePath": "/api", "schemes": ["https"],
+              "paths": { "/users": { "get": { "summary": "Users" } } }, "definitions": { "User": {} } }
+            """);
+
+        var markdown = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+
+        Assert.Contains("https://old.example.com/api", markdown, StringComparison.Ordinal);
+        Assert.Contains("| GET | `/users` | Users |", markdown, StringComparison.Ordinal);
+        Assert.Contains("`User`", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Openapi_card_has_method_chart()
+    {
+        var (preview, host, entry) = await CatalogPreviewAsync("openapi-preview-python", "openapi.yaml", PetStoreYaml);
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        Assert.Equal("Pet Store", card.Title);
+        Assert.Equal("5", card.Items.OfType<CardValue>().Single(v => v.Label == "Endpointy").Value);
+        Assert.Equal("2", card.Items.OfType<CardValue>().Single(v => v.Label == "Schematy").Value);
+        var chart = Assert.Single(card.Items.OfType<CardChart>()).Chart;
+        Assert.Equal(ChartKind.Bar, chart.Kind);
+        Assert.Equal(["GET", "POST", "DELETE"], chart.Series.Select(s => s.Name));
+        Assert.Equal(3, chart.Series[0].Points.Single().Y);
+    }
+
+    [Fact]
+    public async Task Openapi_preview_explains_unsupported_yaml()
+    {
+        var (preview, host, entry) = await CatalogPreviewAsync("openapi-preview-python", "openapi.yml", "openapi: 3.0.0\npaths: &anchor\n  /a: *anchor\n");
+
+        var result = await preview.LoadAsync(entry, host, null, TestToken);
+
+        Assert.Contains("YAML", Assert.IsType<MarkdownPreview>(result).Markdown, StringComparison.Ordinal);
+    }
+
+    private const string Page = """
+        <!doctype html>
+        <html><head><meta charset="utf-8"><title>Strona testowa</title>
+        <meta name="description" content="Opis strony">
+        <style>body { color: red }</style><script>var x = "<h1>nie</h1>";</script></head>
+        <body><nav><a href="/menu">Menu</a></nav>
+        <h1>Nagłówek</h1><p>Pierwszy <b>akapit</b>.</p>
+        <h2>Sekcja</h2><ul><li>punkt</li></ul>
+        <a href="https://example.com">Example</a> <a href="docs.html">Docs</a>
+        <img src="logo.png" alt="Logo"><footer>stopka</footer></body></html>
+        """;
+
+    [Fact]
+    public async Task Html_preview_extracts_title_headings_links()
+    {
+        var (preview, host, entry) = await CatalogPreviewAsync("html-preview-python", "index.html", Page);
+
+        var markdown = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+
+        Assert.Contains("# Strona testowa", markdown, StringComparison.Ordinal);
+        Assert.Contains("Opis strony", markdown, StringComparison.Ordinal);
+        Assert.Contains("- Nagłówek", markdown, StringComparison.Ordinal);
+        Assert.Contains("  - Sekcja", markdown, StringComparison.Ordinal);
+        Assert.Contains("Pierwszy akapit.", markdown, StringComparison.Ordinal);
+        Assert.Contains("[Example](https://example.com)", markdown, StringComparison.Ordinal);
+        Assert.Contains("`logo.png` — Logo", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("color: red", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("stopka", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("nie</h1>", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Html_preview_decodes_cp1250_meta_charset()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var (preview, host, entry) = await CatalogPreviewAsync("html-preview-python", "stara.htm",
+            "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1250\"><title>Zażółć gęślą jaźń</title></head><body><p>Łódź</p></body></html>",
+            Encoding.GetEncoding(1250));
+
+        var markdown = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+
+        Assert.Contains("Zażółć gęślą jaźń", markdown, StringComparison.Ordinal);
+        Assert.Contains("Łódź", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Html_card_counts_links_and_images()
+    {
+        var (preview, host, entry) = await CatalogPreviewAsync("html-preview-python", "index.html", Page);
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        Assert.Equal("Strona testowa", card.Title);
+        Assert.Equal("3", card.Items.OfType<CardValue>().Single(v => v.Label == "Linki").Value);
+        Assert.Equal("1", card.Items.OfType<CardValue>().Single(v => v.Label == "Obrazy").Value);
+        Assert.Equal(new Uri(entry.Path).AbsoluteUri, card.Actions.Single(a => a.Label == "Otwórz w przeglądarce").Target);
+    }
+
+    /// <summary>A catalog plugin started from its folder, with one sample file written to the test folder.</summary>
+    private async Task<(ExternalPreviewPlugin Preview, IPluginHost Host, VfsEntry Entry)> CatalogPreviewAsync(string folder, string fileName, string content, Encoding? encoding = null)
+    {
+        var plugin = StartFrom(Path.Combine(RepositoryRoot(), "plugins-catalog", folder));
+        _started.Add(plugin);
+        var path = Path.Combine(_folder, fileName);
+        await File.WriteAllTextAsync(path, content, encoding ?? new UTF8Encoding(false), TestToken);
+        var entry = new VfsEntry(fileName, path, VfsEntryKind.File, new FileInfo(path).Length);
+        var preview = plugin.Manifest.Contributes!.Previews!.Select(p => new ExternalPreviewPlugin(plugin, p)).First(p => p.CanPreview(entry));
+        return (preview, HostFor(plugin), entry);
+    }
+
+    private readonly List<ExternalPlugin> _started = [];
+
+    [Fact]
+    public async Task Python_preview_returns_a_card()
+    {
+        await using var plugin = Start("folder-stats-python");
+        var csvPath = Path.Combine(_folder, "dane.csv");
+        await File.WriteAllTextAsync(csvPath, "miasto;ludność\nKraków;800000\nGdańsk;470000\n", TestToken);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var entry = new VfsEntry("dane.csv", csvPath, VfsEntryKind.File, 40);
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), HostFor(plugin), TestToken);
+
+        Assert.Equal("2", card.Items.OfType<CardValue>().Single(v => v.Label == "Wiersze").Value);
+        Assert.Equal("2", card.Items.OfType<CardValue>().Single(v => v.Label == "Kolumny").Value);
+        Assert.Equal(CardStatus.Ok, card.Status);
+        Assert.Contains(card.Actions, a => a.Target == csvPath);
+    }
+
+    [Fact]
+    public async Task Card_and_chart_json_parse()
+    {
+        await using var plugin = Start("folder-stats-python");
+        using var json = JsonDocument.Parse("""
+            { "title": "T", "status": "warning", "items": [
+                { "kind": "value", "label": "A", "value": "1", "status": "error" },
+                { "kind": "progress", "label": "Dysk", "fraction": 0.5, "text": "50 %" },
+                { "kind": "text", "text": "hello" },
+                { "kind": "chart", "chart": { "kind": "bar", "unit": "req", "series": [ { "name": "GET", "points": [ { "x": 0, "y": 3, "label": "GET" } ] } ] } },
+                { "kind": "unknown" }
+              ], "actions": [ { "label": "Otwórz", "target": "https://example.com" } ] }
+            """);
+
+        var card = await ExternalPreviewPlugin.ParseCardAsync(json.RootElement, HostFor(plugin), TestToken);
+
+        Assert.Equal("T", card.Title);
+        Assert.Equal(CardStatus.Warning, card.Status);
+        Assert.Equal(CardStatus.Error, Assert.IsType<CardValue>(card.Items[0]).Status);
+        Assert.Equal(0.5, Assert.IsType<CardProgress>(card.Items[1]).Fraction);
+        Assert.Equal("hello", Assert.IsType<CardText>(card.Items[2]).Text);
+        var chart = Assert.IsType<CardChart>(card.Items[3]).Chart;
+        Assert.Equal(ChartKind.Bar, chart.Kind);
+        Assert.Equal(3, chart.Series[0].Points[0].Y);
+        Assert.Equal(4, card.Items.Count);
+        Assert.Equal("https://example.com", Assert.Single(card.Actions).Target);
+    }
+
+    [Fact]
+    public async Task Previews_without_card_flag_get_the_default_card()
+    {
+        await using var plugin = Start("project-modules-python");
+        var contribution = plugin.Manifest.Contributes!.Previews![0];
+        Assert.False(contribution.Card);
+        var preview = new ExternalPreviewPlugin(plugin, contribution);
+        var entry = new VfsEntry("package.json", Path.Combine(_folder, "package.json"), VfsEntryKind.File, 10);
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), HostFor(plugin), TestToken);
+
+        Assert.Empty(card.Items);
+        Assert.Equal(CardStatus.None, card.Status);
+        Assert.Contains(card.Actions, a => a.Target == entry.Path);
     }
 
     [Fact]
@@ -310,6 +603,59 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Git_repo_catalog_plugin_previews_a_repository()
+    {
+        Assert.SkipWhen(!(Environment.GetEnvironmentVariable("PATH") ?? "").Split(';').Any(d => File.Exists(Path.Combine(d.Trim(), "git.exe"))), "git is not installed");
+        var repository = Path.Combine(_folder, "repo");
+        Directory.CreateDirectory(repository);
+        await GitAsync(repository, "init", "-b", "main");
+        await File.WriteAllTextAsync(Path.Combine(repository, "readme.md"), "x", TestToken);
+        await GitAsync(repository, "add", ".");
+        await GitAsync(repository, "-c", "user.name=Ala", "-c", "user.email=a@b.c", "commit", "-m", "Pierwszy | commit");
+        await GitAsync(repository, "tag", "v1.0");
+        await GitAsync(repository, "remote", "add", "origin", "https://user:secret@example.com/r.git");
+        await File.WriteAllTextAsync(Path.Combine(repository, "zażółć.txt"), "y", TestToken);
+
+        await using var plugin = StartFrom(Path.Combine(RepositoryRoot(), "plugins-catalog", "git-repo-powershell"));
+        var host = HostFor(plugin);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+
+        var markdown = Assert.IsType<MarkdownPreview>(await preview.LoadWithOptionsAsync(new VfsEntry("repo", repository, VfsEntryKind.Directory), host, null, TestToken));
+
+        Assert.Contains("**main**", markdown.Markdown, StringComparison.Ordinal);
+        Assert.Contains(@"Pierwszy \| commit", markdown.Markdown, StringComparison.Ordinal);
+        Assert.Contains("| nieśledzony | zażółć.txt |", markdown.Markdown, StringComparison.Ordinal);
+        Assert.Contains("`v1.0`", markdown.Markdown, StringComparison.Ordinal);
+        Assert.Contains("https://example.com/r.git", markdown.Markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", markdown.Markdown, StringComparison.Ordinal);
+
+        var plain = Assert.IsType<MarkdownPreview>(await preview.LoadWithOptionsAsync(new VfsEntry("plugin-data", _folder, VfsEntryKind.Directory), host, null, TestToken));
+        Assert.Contains("nie jest repozytorium", plain.Markdown, StringComparison.Ordinal);
+        Assert.All(_audit.Recent("official.git-repo"), e => Assert.NotEqual(AuditOutcome.Denied, e.Outcome));
+
+        // git's object files are read-only, which Directory.Delete refuses.
+        foreach (var file in Directory.EnumerateFiles(repository, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(file, FileAttributes.Normal);
+        }
+    }
+
+    private static async Task GitAsync(string folder, params string[] arguments)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = folder, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in arguments)
+        {
+            start.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var error = process.StandardError.ReadToEndAsync(TestToken);
+        await process.StandardOutput.ReadToEndAsync(TestToken);
+        await process.WaitForExitAsync(TestToken);
+        Assert.True(process.ExitCode == 0, await error);
+    }
+
+    [Fact]
     public async Task Folder_views_show_a_gallery_and_a_dashboard()
     {
         var photos = Path.Combine(_folder, "photos");
@@ -331,8 +677,8 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Equal(4, gallery.Tiles[1].Image!.Value.Length);
         Assert.Equal(Path.Combine(photos, "a.jpg"), gallery.Tiles[0].Target);
 
-        var dashboard = Assert.IsType<TilesPreview>(await BuiltIn.Previews.FolderViews.LoadAsync(config, config.Enter!, "enter", folder, host, null, TestToken));
-        Assert.Equal([Path.Combine(photos, "logs"), "c4k:run/enter/1"], dashboard.Tiles.Select(t => t.Target));
+        var dashboard = Assert.IsType<BuiltIn.Dashboard.DashboardPreview>(await BuiltIn.Previews.FolderViews.LoadAsync(config, config.Enter!, "enter", folder, host, null, TestToken));
+        Assert.Equal([Path.Combine(photos, "logs"), "c4k:run/enter/1"], dashboard.Slots.Select(s => s.Shortcut.Target));
 
         Assert.Null(await Core.Folders.FolderConfig.ReadAsync(_router, _folder, TimeSpan.FromSeconds(5), TestToken));
     }
@@ -364,6 +710,10 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("git-powershell", "powershell", "c4k.ps1")]
     [InlineData("project-modules-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/steam-library-powershell", "powershell", "c4k.ps1")]
+    [InlineData("../../plugins-catalog/json-preview-python", "python", "c4k.py")]
+    [InlineData("../../plugins-catalog/openapi-preview-python", "python", "c4k.py")]
+    [InlineData("../../plugins-catalog/html-preview-python", "python", "c4k.py")]
+    [InlineData("../../plugins-catalog/git-repo-powershell", "powershell", "c4k.ps1")]
     public void Example_sdk_clients_match_plugins_sdk(string example, string language, string file) =>
         Assert.Equal(
             File.ReadAllText(Path.Combine(RepositoryRoot(), "plugins-sdk", language, file)),

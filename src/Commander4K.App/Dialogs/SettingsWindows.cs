@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Commander4K.App.Composition;
 using Commander4K.App.Panels;
+using Commander4K.App.Splash;
 using Commander4K.App.Theming;
 using Commander4K.Core.Configuration;
 using Commander4K.Core.Input;
@@ -365,7 +366,10 @@ public sealed class AboutDialog : DialogWindow<bool>
             Label(Loc.T("Dwupanelowy menedżer plików dla Windows 11 inspirowany Norton, Midnight i Total Commanderem.")).Margin(0, 12, 0, 6),
             Label(Loc.T("Oprogramowanie open source na licencji MIT. © 2026 4Kprojekt.")),
             Label(Loc.T("🤖 Projekt jest tworzony z pomocą sztucznej inteligencji (Claude Code). Kod generowany przez AI może zawierać błędy — zgłaszaj je na GitHubie.")),
-            ButtonRow(("GitHub", () => OpenUrl(RepositoryUrl), false), ("OK", () => Complete(true), true)));
+            ButtonRow(
+                (Loc.T("Animacja startowa"), () => _ = new SplashWindow(brushes, SplashMode.Demo).ShowDialog(this), false),
+                ("GitHub", () => OpenUrl(RepositoryUrl), false),
+                ("OK", () => Complete(true), true)));
     }
 
     public static void OpenUrl(string url)

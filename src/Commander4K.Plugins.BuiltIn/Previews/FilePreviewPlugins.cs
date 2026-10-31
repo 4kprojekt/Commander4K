@@ -104,10 +104,18 @@ public sealed class ImagePreviewPlugin : IPreviewPlugin
 /// Folder contents with sizes: files immediately, then every subfolder's recursive size computed in parallel through
 /// the host and pushed as it completes. Moving the cursor cancels the whole computation.
 /// </summary>
-public sealed class FolderPreviewPlugin : IPreviewPlugin
+public sealed class FolderPreviewPlugin : IPreviewCardPlugin
 {
     private const int MaxItems = 5000;
     private const int Parallelism = 4;
+
+    /// <summary>Recursive sizes shown on folder cards, computed once per folder version.</summary>
+    public FolderSizeCache Sizes { get; } = new();
+
+    public Task<PreviewCard> LoadCardAsync(PreviewCardRequest request, IPluginHost host, CancellationToken cancellationToken) =>
+        request.Target is { } folder
+            ? FolderCards.LoadAsync(Core.Folders.FolderViewIds.Files, folder, null, host, request, Sizes, cancellationToken)
+            : throw new ArgumentException("A folder card needs a target.", nameof(request));
 
     public string Id => "builtin.preview.folder";
 

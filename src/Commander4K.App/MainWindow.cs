@@ -12,7 +12,6 @@ using Commander4K.App.Browser;
 using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
 using Commander4K.App.Input;
-using Commander4K.App.Palettes;
 using Commander4K.App.Panels;
 using Commander4K.App.PluginPanels;
 using Commander4K.App.Preview;
@@ -40,7 +39,7 @@ namespace Commander4K.App;
 /// Dual-pane shell. The window shows immediately; <see cref="AppHost"/> (config, SQLite, plugins) is created in the
 /// background and the panels are built once it is ready.
 /// </summary>
-public sealed class MainWindow : Window, IShell
+public sealed class MainWindow : Window
 {
     private static readonly (string Key, string Label, string Command)[] FunctionKeys =
     [
@@ -77,16 +76,14 @@ public sealed class MainWindow : Window, IShell
     private Menu _menu = null!;
     private Grid _menuBar = null!;
     private Button _paletteButton = null!;
-    private Grid _leftDock = null!;
-    private Grid _rightDock = null!;
-    private Grid _betweenDock = null!;
-    private StackPanel _bottomDock = null!;
-    private readonly List<PaletteView> _paletteViews = [];
-    private IReadOnlyList<IPalettePlugin> _builtInPalettes = [];
-    private string? _navigationKey;
 
     /// <summary>Saved window state, read by <c>Program</c> before the window exists; <c>null</c> = first run → maximized.</summary>
     public static WindowPlacement? StartupPlacement { get; set; }
+
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once the shell is built (or start-up failed and shows its error); the splash waits for it.</summary>
+    public Task Started => _started.Task;
 
     private PixelPoint? _normalPosition;
     private Size _normalSize = new(1360, 860);
@@ -185,6 +182,7 @@ public sealed class MainWindow : Window, IShell
         _host = host;
         _skins = new SkinManager(host, host.Skins.Get(host.Settings.Skin));
         BuildShell();
+        _started.TrySetResult();
     }
 
     public FilePanelView LeftPanel => _left;
@@ -227,6 +225,13 @@ public sealed class MainWindow : Window, IShell
             p.AddConnectionRequested += sender => _ = ExecuteAsync(CommandIds.AddConnection);
             p.LocationMenuRequested += sender => _ = ShowDriveMenuAsync(sender).AsTask();
             p.AuthenticationRequired += request => _ = LoginAndRetryAsync(request);
+            p.Canvas.ColumnWidthsChanged += () =>
+            {
+                // Both panels share the widths.
+                _left.Canvas.InvalidateVisual();
+                _right.Canvas.InvalidateVisual();
+                _ = host.SaveSettingsAsync();
+            };
         }
 
         _keyBar = BuildKeyBar();
@@ -250,38 +255,24 @@ public sealed class MainWindow : Window, IShell
         host.PluginsChanged += () => Dispatcher.UIThread.Post(() =>
         {
             RebuildMenu();
-            RegisterPaletteSettings();
-            RebuildPalettes();
+            RegisterColumnSettings();
         });
         _menu = new Menu();
 
-        // The between-panels dock sits inside the right half so the splitter keeps resizing two star columns.
         // Design system: panels are cards 6 px apart on the window background.
-        var rightHalf = new DockPanel().Col(2);
-        _betweenDock = new Grid().Margin(0, 0, 6, 0);
-        DockPanel.SetDock(_betweenDock, Dock.Left);
-        rightHalf.Children.Add(_betweenDock);
-        rightHalf.Children.Add(_right.Margin(0, 0, 6, 0));
         var shell = new Grid()
-            .Rows("*,Auto,Auto,Auto,Auto")
+            .Rows("*,Auto,Auto,Auto")
             .Children(
                 new Grid()
                     .Row(0)
-                    .Cols("Auto,*,Auto")
+                    .Cols("*,6,*")
                     .Children(
-                        new Grid().Ref(out _leftDock).Col(0).Margin(6, 0, 0, 0),
-                        new Grid()
-                            .Col(1)
-                            .Cols("*,6,*")
-                            .Children(
-                                _left.Col(0).Margin(6, 0, 0, 0),
-                                new GridSplitter().Ref(out _splitter).Col(1).ResizeDirection(GridResizeDirection.Columns),
-                                rightHalf),
-                        new Grid().Ref(out _rightDock).Col(2).Margin(0, 0, 6, 0)),
-                new StackPanel().Ref(out _bottomDock).Row(1).Margin(6, 6, 6, 0),
+                        _left.Col(0).Margin(6, 0, 0, 0),
+                        new GridSplitter().Ref(out _splitter).Col(1).ResizeDirection(GridResizeDirection.Columns),
+                        _right.Col(2).Margin(0, 0, 6, 0)),
                 new Border()
                     .Ref(out _jobsBar)
-                    .Row(2)
+                    .Row(1)
                     .IsVisible(false)
                     .Margin(6, 6, 6, 0)
                     .Padding(12, 4)
@@ -289,7 +280,7 @@ public sealed class MainWindow : Window, IShell
                     .Child(new StackPanel().Ref(out _jobsList).Spacing(4).VerticalAlignment(VerticalAlignment.Center)),
                 new Border()
                     .Ref(out _commandBar)
-                    .Row(3)
+                    .Row(2)
                     .Margin(0, 6, 0, 0)
                     .Height(30)
                     .Padding(12, 0)
@@ -299,7 +290,7 @@ public sealed class MainWindow : Window, IShell
                             .VerticalContentAlignment(VerticalAlignment.Center),
                         new TextBlock().Ref(out _notification).Col(2).VerticalAlignment(VerticalAlignment.Center).Margin(8, 0)
                             .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis))),
-                _keyBar.Row(4));
+                _keyBar.Row(3));
 
         // Menu bar with the command-palette search box on the right (design system).
         _paletteButton = new Button()
@@ -322,8 +313,7 @@ public sealed class MainWindow : Window, IShell
 
         RegisterCommands();
         RebuildMenu();
-        _builtInPalettes = [new QuickActionsPalette(this), new FavoritesPalette(this), new ViewsPalette(this), new RecentPalette(this)];
-        RegisterPaletteSettings();
+        RegisterColumnSettings();
         host.Jobs.JobChanged += _ => Dispatcher.UIThread.Post(() => _jobsDirty = true);
         host.Remote.HostKeyValidator = ValidateHostKey;
         // Mermaid diagrams in previews and the AI chat render in a hidden WebView2 parented to this window.
@@ -332,7 +322,6 @@ public sealed class MainWindow : Window, IShell
         skins.Changed += ApplySkin;
         ApplySkin(skins.Current);
         SetActive(_left);
-        RebuildPalettes();
         ApplyColumns();
 
         _notification.PointerPressed += async (_, _) =>
@@ -416,48 +405,19 @@ public sealed class MainWindow : Window, IShell
             case "density":
                 _skins!.Refresh();
                 break;
+            case "columnWidths":
+                _left.Canvas.InvalidateVisual();
+                _right.Canvas.InvalidateVisual();
+                break;
             case "showHidden":
                 _ = _left.ActiveTab.RefreshAsync();
                 _ = _right.ActiveTab.RefreshAsync();
-                break;
-            case "showPalettes":
-            case var palette when palette.StartsWith(PaletteSettingPrefix, StringComparison.Ordinal):
-                RebuildPalettes();
                 break;
             case var column when column.StartsWith(ColumnSettingPrefix, StringComparison.Ordinal):
                 ApplyColumns();
                 break;
         }
     }
-
-    private const string PaletteSettingPrefix = "palette:";
-
-    private IEnumerable<IPalettePlugin> AllPalettes => [.. _builtInPalettes, .. _host!.ExternalPalettes];
-
-    private static readonly IReadOnlyList<SettingChoice> DockChoices =
-    [
-        new("bottom", Loc.T("Na dole")), new("left", Loc.T("Po lewej")), new("right", Loc.T("Po prawej")), new("between", Loc.T("Między panelami")), new("hidden", Loc.T("Ukryta")),
-    ];
-
-    private static string DockName(PaletteDock dock) => dock switch
-    {
-        PaletteDock.Left => "left",
-        PaletteDock.Right => "right",
-        PaletteDock.BetweenPanels => "between",
-        PaletteDock.Hidden => "hidden",
-        _ => "bottom",
-    };
-
-    private PaletteDock DockOf(IPalettePlugin palette) =>
-        _host!.Settings.PaletteDocks.TryGetValue(palette.Id, out var name) ? name switch
-        {
-            "bottom" => PaletteDock.Bottom,
-            "left" => PaletteDock.Left,
-            "right" => PaletteDock.Right,
-            "between" => PaletteDock.BetweenPanels,
-            "hidden" => PaletteDock.Hidden,
-            _ => palette.DefaultDock,
-        } : palette.DefaultDock;
 
     private const string ColumnSettingPrefix = "column:";
 
@@ -475,13 +435,10 @@ public sealed class MainWindow : Window, IShell
         _right.Columns = columns;
     }
 
-    /// <summary>
-    /// Settings created at runtime: one on/off switch per plugin column and one position per palette (built-in and
-    /// from plugins), so they are searchable like the rest.
-    /// </summary>
-    private void RegisterPaletteSettings()
+    /// <summary>Settings created at runtime: one on/off switch per plugin column, so they are searchable like the rest.</summary>
+    private void RegisterColumnSettings()
     {
-        var columnSettings = _host!.ColumnPlugins.SelectMany(p => p.Columns.Select(c => new ActiveColumn(p, c))).Select(column => new SettingDescriptor(
+        _host!.ExtraSettings = [.. _host.ColumnPlugins.SelectMany(p => p.Columns.Select(c => new ActiveColumn(p, c))).Select(column => new SettingDescriptor(
             ColumnSettingPrefix + column.Key,
             SettingsCatalog.Columns,
             Loc.T("Kolumna „{0}”", column.Definition.Header),
@@ -496,77 +453,7 @@ public sealed class MainWindow : Window, IShell
                     s.Columns.Add(column.Key);
                 }
             },
-            ["kolumna", "kolumny", "wdx", column.Definition.Header, column.Plugin.DisplayName]));
-
-        _host.ExtraSettings = [.. columnSettings, .. AllPalettes.Select(p => new SettingDescriptor(
-            PaletteSettingPrefix + p.Id,
-            SettingsCatalog.Palettes,
-            Loc.T("Paleta „{0}”", p.Title),
-            p.Manifest.IsBuiltIn
-                ? Loc.T("Gdzie pokazywać paletę: na dole, po bokach, między panelami albo wcale. {0}", p.Manifest.Description)
-                : Loc.T("Paleta wtyczki {0} ({1}): na dole, po bokach, między panelami albo wcale.", p.Manifest.Name, p.Manifest.Id),
-            SettingKind.Choice,
-            s => s.PaletteDocks.TryGetValue(p.Id, out var dock) ? dock : DockName(p.DefaultDock),
-            (s, v) => s.PaletteDocks[p.Id] = (string)v!,
-            [Loc.T("paleta"), "pasek", Loc.T("położenie"), "dokowanie", "przyciski", p.Title])
-        { Choices = () => DockChoices })];
-    }
-
-    /// <summary>Recreates every palette view in its dock (after a dock change, skin-independent plugin reloads, Ctrl+B).</summary>
-    private void RebuildPalettes()
-    {
-        foreach (var view in _paletteViews)
-        {
-            view.Detach();
-        }
-
-        _paletteViews.Clear();
-        Panel[] docks = [_leftDock, _rightDock, _betweenDock, _bottomDock];
-        foreach (var dock in docks)
-        {
-            dock.Children.Clear();
-        }
-
-        if (_host!.Settings.ShowPalettes)
-        {
-            foreach (var palette in AllPalettes)
-            {
-                var position = DockOf(palette);
-                if (position == PaletteDock.Hidden)
-                {
-                    continue;
-                }
-
-                var id = palette.Id;
-                var view = new PaletteView(palette, _host.HostFor(palette.Manifest), position, _skins!.Current, Notify,
-                    _host.Settings.PaletteSizes.TryGetValue(id, out var size) ? size : null,
-                    resized: newSize =>
-                    {
-                        _host.Settings.PaletteSizes[id] = Math.Round(newSize);
-                        _ = _host.SaveSettingsAsync();
-                    },
-                    close: () => _ = HidePaletteAsync(palette));
-                _paletteViews.Add(view);
-                (position switch
-                {
-                    PaletteDock.Left => _leftDock,
-                    PaletteDock.Right => _rightDock,
-                    PaletteDock.BetweenPanels => _betweenDock,
-                    _ => (Panel)_bottomDock,
-                }).Children.Add(view);
-            }
-        }
-
-        // Several palettes in one side dock share its height.
-        foreach (var grid in new[] { _leftDock, _rightDock, _betweenDock })
-        {
-            grid.RowDefinitions.Clear();
-            for (var i = 0; i < grid.Children.Count; i++)
-            {
-                grid.RowDefinitions.Add(new RowDefinition(GridLength.Star));
-                Grid.SetRow(grid.Children[i], i);
-            }
-        }
+            ["kolumna", "kolumny", "wdx", column.Definition.Header, column.Plugin.DisplayName]))];
     }
 
     /// <summary>
@@ -623,54 +510,6 @@ public sealed class MainWindow : Window, IShell
 
         menu.Open(panel.Canvas);
     }
-
-    /// <summary>✕ on a palette: only that one is hidden (its position becomes "hidden"); the settings bring it back.</summary>
-    private async Task HidePaletteAsync(IPalettePlugin palette)
-    {
-        _host!.Settings.PaletteDocks[palette.Id] = "hidden";
-        RebuildPalettes();
-        Notify(Loc.T("Paleta „{0}” ukryta — przywrócisz ją w ustawieniach (F1 → Palety).", palette.Title));
-        await _host.SaveSettingsAsync();
-    }
-
-    private async Task TogglePalettesAsync()
-    {
-        _host!.Settings.ShowPalettes = !_host.Settings.ShowPalettes;
-        RebuildPalettes();
-        await _host.SaveSettingsAsync();
-    }
-
-    private async Task AddFavoriteAsync()
-    {
-        var favorites = (FavoritesPalette)_builtInPalettes.First(p => p is FavoritesPalette);
-        var host = _host!.HostFor(favorites.Manifest);
-        await favorites.InvokeActionAsync("add", null, host, CancellationToken.None);
-        if (DockOf(favorites) == PaletteDock.Hidden || !_host.Settings.ShowPalettes)
-        {
-            Notify(Loc.T("Dodano do ulubionych: {0} (paleta „Ulubione” jest ukryta — Ctrl+B / ustawienia).", host.ActivePath));
-        }
-    }
-
-    AppHost IShell.App => _host!;
-
-    public ViewSetting CaptureView(string name) => new()
-    {
-        Name = name,
-        LeftPath = _left.ActiveTab.Path,
-        RightPath = _right.ActiveTab.Path,
-        LeftMode = ModeId(_left),
-        RightMode = ModeId(_right),
-    };
-
-    private const string BrowserModePrefix = "browser:";
-
-    private static string? ModeId(FilePanelView panel) => panel.Mode switch
-    {
-        PreviewPanelView => "preview",
-        PluginPanelView view => CommandIds.PanelPrefix + view.Plugin.Id,
-        BrowserPanelView browser => BrowserModePrefix + browser.CurrentUrl,
-        _ => null,
-    };
 
     /// <summary>
     /// Shows the browser in the mode target (the opposite panel), reusing one that is already open there;
@@ -749,6 +588,7 @@ public sealed class MainWindow : Window, IShell
             AskAiAboutFile = AskAiAboutFileAsync,
             CreatePreviewPlugin = CreatePreviewPluginAsync,
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
+            AskFolderTrust = AskFolderTrustAsync,
         };
 
     /// <summary>
@@ -782,6 +622,177 @@ public sealed class MainWindow : Window, IShell
     /// cm_FolderView: writes a c4k.dir for the folder under the cursor (or the current one) from a short choice — a
     /// view, a catalog plugin, an SSH connection with a key, a web page or a script — for its preview, its Enter or both.
     /// </summary>
+    /// <summary>
+    /// cm_AddApiCard: a sample request to an API, a pick of fields from its answer, and a card added to the dashboard of
+    /// the current folder's c4k.dir. An Authorization value goes to the secret store; the file only names it.
+    /// </summary>
+    private async ValueTask AddApiCardAsync(CommandInvocation _)
+    {
+        var folder = _active.ActiveTab.Path;
+        if (VfsPath.GetScheme(folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme) || folder.Contains("://", StringComparison.Ordinal))
+        {
+            Notify(Loc.T("Plik c4k.dir można utworzyć na dysku albo w udziale sieciowym."), isError: true);
+            return;
+        }
+
+        var brushes = _skins!.Current;
+        var url = (await new InputDialog(brushes, Loc.T("Dodaj kartę API"), Loc.T("Adres API (GET):"), "https://").ShowAsync(this))?.Trim();
+        if (!Core.Ai.AiInstallInfo.IsWebUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return;
+        }
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var authorization = (await new InputDialog(brushes, Loc.T("Dodaj kartę API"), Loc.T("Nagłówek Authorization (np. Bearer …; puste = bez):")).ShowAsync(this))?.Trim();
+        var origin = Plugins.BuiltIn.Dashboard.ApiCards.Origin(uri);
+        string? secretName = null;
+        if (!string.IsNullOrEmpty(authorization))
+        {
+            // One secret per origin; a name already bound elsewhere gets a suffix, so another card's token is never replaced.
+            var stem = new string([.. $"{uri.Host}-{uri.Port}".Select(c => char.IsAsciiLetterOrDigit(c) ? c : '-')]);
+            secretName = await Task.Run(() =>
+            {
+                var name = stem;
+                for (var n = 2; _host!.Secrets.Exists(name) && _host.Secrets.Get(name, origin) is null; n++)
+                {
+                    name = $"{stem}-{n}";
+                }
+
+                return name;
+            });
+            headers["Authorization"] = "{secret:" + secretName + "}";
+        }
+
+        var api = _host!.ApiCards;
+        Notify(Loc.T("Pytam {0}…", uri.Host));
+        HttpResponseData? sample;
+        IReadOnlyList<(string Path, string Preview)> fields = [];
+        try
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var sampleHeaders = authorization is null ? new Dictionary<string, string>() : new Dictionary<string, string> { ["Authorization"] = authorization };
+            (sample, fields) = await Task.Run(async () =>
+            {
+                var response = await _host.HostFor(api.Manifest).HttpRequestAsync(new HttpRequestSpec("GET", uri, sampleHeaders), limit.Token);
+                try
+                {
+                    using var document = System.Text.Json.JsonDocument.Parse(response.Body);
+                    return (response, Plugins.BuiltIn.Dashboard.JsonFieldPath.Flatten(document.RootElement));
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    return (response, (IReadOnlyList<(string, string)>)[]);
+                }
+            });
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or InvalidOperationException or ArgumentException)
+        {
+            Notify(Loc.T("Zapytanie nie powiodło się: {0}", ex.Message), isError: true);
+            return;
+        }
+
+        var choice = await new ApiFieldsDialog(brushes, uri.Host, Loc.T("Odpowiedź: HTTP {0}, {1} znaków.", sample.Status, sample.Body.Length), fields).ShowAsync(this);
+        if (choice is null)
+        {
+            return;
+        }
+
+        var tile = new System.Text.Json.Nodes.JsonObject
+        {
+            ["title"] = choice.Title,
+            ["card"] = FolderViewIds.Api,
+            ["api"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["url"] = url,
+                ["headers"] = new System.Text.Json.Nodes.JsonObject([.. headers.Select(h => KeyValuePair.Create(h.Key, (System.Text.Json.Nodes.JsonNode?)h.Value))]),
+                ["fields"] = new System.Text.Json.Nodes.JsonArray([.. choice.Fields.Select(f => (System.Text.Json.Nodes.JsonNode?)new System.Text.Json.Nodes.JsonObject
+                {
+                    ["path"] = f.Path,
+                    ["label"] = f.Label,
+                    ["as"] = f.As.ToString().ToLowerInvariant(),
+                })]),
+            },
+        };
+        if (choice.Refresh is { } refresh)
+        {
+            tile["refresh"] = refresh;
+        }
+
+        var file = FolderConfig.ChildPath(folder, FolderConfig.FileName);
+        var existing = await Task.Run(() => File.Exists(file) ? File.ReadAllText(file) : null);
+        if (existing is not null && FolderConfigWriter.HasComments(existing)
+            && !await new ConfirmDialog(brushes, Loc.T("Zapisać c4k.dir?"), Loc.T("{0} ma komentarze; zapis nowej karty je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
+        {
+            return;
+        }
+
+        var wasTrusted = existing is null || await Task.Run(() => _host.FolderTrust.IsTrusted(FolderConfig.Parse(folder, existing)));
+        string text;
+        try
+        {
+            text = FolderConfigWriter.AppendTile(existing, tile, replacePreview: false);
+        }
+        catch (InvalidOperationException)
+        {
+            if (!await new ConfirmDialog(brushes, Loc.T("Zamienić podgląd na dashboard?"),
+                    Loc.T("{0} pokazuje teraz coś innego. Podgląd stanie się dashboardem z tą kartą; dotychczasowy podgląd zostanie po wejściu do folderu, jeśli nic tam nie ustawiono.", file), Loc.T("Zamień")).ShowAsync(this))
+            {
+                return;
+            }
+
+            text = FolderConfigWriter.AppendTile(existing, tile, replacePreview: true);
+        }
+
+        try
+        {
+            // The folder may be on a share: opening the file must not wait on the UI thread.
+            await Task.Run(() => File.WriteAllTextAsync(file, text));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Notify(ex.Message, isError: true);
+            return;
+        }
+
+        // The token is stored only once the card exists, bound to the origin it was entered for.
+        if (secretName is not null)
+        {
+            await Task.Run(() => _host.Secrets.Set(secretName, authorization!, origin));
+        }
+
+        // The user just wrote this file; trust carries over only from a file that was trusted (or did not exist).
+        if (wasTrusted)
+        {
+            await Task.Run(() => _host.FolderTrust.Trust(FolderConfig.Parse(folder, text)));
+        }
+
+        Notify(Loc.T("Dodano kartę „{0}” do {1}.", choice.Title, file));
+        await _active.ActiveTab.RefreshAsync();
+    }
+
+    /// <summary><c>c4k:secret/&lt;name&gt;</c>: asks for a secret an API card needs and binds it to the origin (scheme, host, port) of that card's request.</summary>
+    private async Task AskSecretAsync(string name, VfsEntry? folder)
+    {
+        var config = folder is { } f ? await Task.Run(() => _host!.ReadFolderConfigAsync(f.Path, CancellationToken.None)) : null;
+        var request = config is null ? null
+            : new[] { config.Enter, config.Preview }.Where(a => a is not null).SelectMany(a => a!.Tiles.Select(t => t.Api).Append(a.Api))
+                .FirstOrDefault(r => r is not null && (Core.Security.SecretStore.NamesIn(r.Url).Contains(name)
+                    || r.Headers.Values.Any(v => Core.Security.SecretStore.NamesIn(v).Contains(name))
+                    || (r.Body is { } body && Core.Security.SecretStore.NamesIn(body).Contains(name))));
+        if (request is null || !Uri.TryCreate(request.Url, UriKind.Absolute, out var uri))
+        {
+            Notify(Loc.T("Nie znaleziono zapytania, które używa sekretu „{0}”.", name), isError: true);
+            return;
+        }
+
+        var value = await new InputDialog(_skins!.Current, Loc.T("Sekret „{0}”", name), Loc.T("Wartość dla {0} (zapisana zaszyfrowana, tylko dla tego serwera):", Plugins.BuiltIn.Dashboard.ApiCards.Origin(uri))).ShowAsync(this);
+        if (!string.IsNullOrEmpty(value))
+        {
+            await Task.Run(() => _host!.Secrets.Set(name, value, Plugins.BuiltIn.Dashboard.ApiCards.Origin(uri)));
+            Notify(Loc.T("Zapisano sekret „{0}”. Odśwież kartę.", name));
+        }
+    }
+
     private async ValueTask ConfigureFolderViewAsync(CommandInvocation _)
     {
         var tab = _active.ActiveTab;
@@ -964,7 +975,7 @@ public sealed class MainWindow : Window, IShell
                 if (VfsPath.GetScheme(target) is "sftp" or "ftp" && (action.KeyFile is not null || action.User is not null))
                 {
                     // The login from c4k.dir is kept for this session only; saved connections remain the place for passwords.
-                    host.Remote.SetLogin(target, new RemoteLogin(action.User ?? Environment.UserName,
+                    host.Remote.SetLogin(target, new RemoteLogin(action.User ?? RemoteTransferVfsPlugin.UserNameOf(target) ?? Environment.UserName,
                         PrivateKeyFile: action.KeyFile is { } key ? config.Resolve(key) : null));
                 }
 
@@ -1010,6 +1021,29 @@ public sealed class MainWindow : Window, IShell
     /// Runs a command from a <c>c4k.dir</c>. The first time (and after every change of the file) the user sees the
     /// exact command and decides; a folder copied from elsewhere cannot run anything on its own. Disks and shares only.
     /// </summary>
+    /// <summary>
+    /// Dashboard cards that sign in (SSH) or may change something (POST…) wait for trust in their c4k.dir. The dialog
+    /// lists everything the trust unlocks, scripts included, because it is given to the whole file content.
+    /// </summary>
+    private async Task<bool> AskFolderTrustAsync(FolderConfig config)
+    {
+        if (VfsPath.GetScheme(config.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
+        {
+            return false;
+        }
+
+        var message = Loc.T("Plik {0} chce:", config.FilePath) + "\n\n" + string.Join("\n", config.TrustSummary().Select(line => "    " + line)) + "\n\n" +
+            Loc.T("Zgoda dotyczy tej treści pliku — gdy c4k.dir się zmieni, zapytam ponownie. Zezwalaj tylko na adresy i serwery, które znasz.");
+        if (!await new ConfirmDialog(_skins!.Current, Loc.T("Zezwolić na ten plik c4k.dir?"), message, Loc.T("Zezwól")).ShowAsync(this))
+        {
+            return false;
+        }
+
+        await Task.Run(() => _host!.FolderTrust.Trust(config));
+        _host!.Audit.Record("c4k.dir", "trust", config.FilePath);
+        return true;
+    }
+
     private async Task RunFolderCommandAsync(FolderConfig config, FolderRun run)
     {
         if (VfsPath.GetScheme(config.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
@@ -1093,18 +1127,42 @@ public sealed class MainWindow : Window, IShell
             {
                 await RunTileCommandAsync(target["c4k:run/".Length..], folder);
             }
+            else if (target.StartsWith(Plugins.BuiltIn.Dashboard.ApiCards.SecretActionPrefix, StringComparison.Ordinal))
+            {
+                await AskSecretAsync(target[Plugins.BuiltIn.Dashboard.ApiCards.SecretActionPrefix.Length..], folder);
+            }
             else if (Core.Ai.AiInstallInfo.IsWebUrl(target))
             {
                 OpenBrowser(target);
             }
+            else if (Uri.TryCreate(target, UriKind.Absolute, out var page) && page.IsFile
+                && Path.GetExtension(page.LocalPath).ToLowerInvariant() is ".htm" or ".html")
+            {
+                // A local page (the HTML preview's "open in browser"): shown in the browser panel, not by Windows.
+                OpenBrowser(page.AbsoluteUri);
+            }
             else if (_host!.Router.TryResolve(target, out _) && !IsForeignUri(target))
             {
+                var entry = await Task.Run(() => _host.Router.GetEntryAsync(target, CancellationToken.None));
+
+                // A folder with its own view, opened from a folder view (a dashboard picked on a dashboard), opens in
+                // place so Back returns to the dashboard it came from.
+                if (listPanel.Mode is PreviewPanelView { IsPinned: true } pinnedView && entry is { IsContainer: true } folderEntry
+                    && VfsPath.GetScheme(folderEntry.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
+                {
+                    var config = await Task.Run(() => _host.ReadFolderConfigAsync(folderEntry.Path, CancellationToken.None));
+                    if (config is { Error: null } && (config.Enter ?? config.Preview) is { IsPlainFiles: false, Kind: FolderActionKind.View } view)
+                    {
+                        await pinnedView.OpenPinnedAsync(new PreviewPanelView.PinnedFolder(folderEntry, config, view));
+                        return;
+                    }
+                }
+
                 if (listPanel.Mode is PreviewPanelView { IsPinned: true })
                 {
                     listPanel.CloseMode();
                 }
 
-                var entry = await Task.Run(() => _host.Router.GetEntryAsync(target, CancellationToken.None));
                 if (entry is null)
                 {
                     Notify(Loc.T("Nie znaleziono {0}.", target), isError: true);
@@ -1352,57 +1410,6 @@ public sealed class MainWindow : Window, IShell
         }
     }
 
-    /// <summary>Applies a saved view: modes switch at once, both panels navigate in parallel.</summary>
-    public async Task RestoreViewAsync(ViewSetting view)
-    {
-        _left.CloseMode();
-        _right.CloseMode();
-        var navigations = new List<Task>();
-        if (view.LeftPath is { Length: > 0 } leftPath)
-        {
-            navigations.Add(_left.NavigateAsync(leftPath));
-        }
-
-        if (view.RightPath is { Length: > 0 } rightPath)
-        {
-            navigations.Add(_right.NavigateAsync(rightPath));
-        }
-
-        await ApplyModeAsync(_left, view.LeftMode);
-        await ApplyModeAsync(_right, view.RightMode);
-        SetActive(_left.Mode is null || _right.Mode is not null ? _left : _right);
-        try
-        {
-            await Task.WhenAll(navigations);
-        }
-        catch (Exception ex)
-        {
-            Notify(Loc.T("Widok „{0}”: {1}", view.Name, ex.Message), isError: true);
-        }
-    }
-
-    private async Task ApplyModeAsync(FilePanelView target, string? mode)
-    {
-        var source = target == _left ? _right : _left;
-        switch (mode)
-        {
-            case null:
-                break;
-            case "preview":
-                target.ShowMode(CreatePreview(source));
-                break;
-            case var browser when browser.StartsWith(BrowserModePrefix, StringComparison.Ordinal):
-                OpenBrowser(browser[BrowserModePrefix.Length..] is { Length: > 0 } url ? url : null, target);
-                break;
-            case var panel when panel.StartsWith(CommandIds.PanelPrefix, StringComparison.OrdinalIgnoreCase):
-                await OpenPanelInAsync(panel[CommandIds.PanelPrefix.Length..], null, target);
-                break;
-        }
-    }
-
-    public Task<PickerItem?> PickAsync(string title, IReadOnlyList<PickerItem> items) =>
-        new PickerDialog(_skins!.Current, title, items, Loc.T("Wpisz, aby wyszukać:")).ShowAsync(this);
-
     /// <summary>Ctrl+Shift+P: every command, skin and setting in one searchable list.</summary>
     private async ValueTask ShowCommandPaletteAsync(CommandInvocation _)
     {
@@ -1621,11 +1628,6 @@ public sealed class MainWindow : Window, IShell
             label.FontSize = Math.Max(11, b.FontSize - 1);
         }
 
-        foreach (var palette in _paletteViews)
-        {
-            palette.ApplySkin(b);
-        }
-
         _jobsDirty = true;
     }
 
@@ -1645,19 +1647,6 @@ public sealed class MainWindow : Window, IShell
     private void RefreshJobsBar()
     {
         UpdatePrompt(); // Cheap; follows navigation and tab switches without per-tab subscriptions.
-        if (_left is not null && _active is not null)
-        {
-            var navigation = $"{_left.ActiveTab.Path}|{_right.ActiveTab.Path}|{_active == _left}";
-            if (navigation != _navigationKey)
-            {
-                _navigationKey = navigation;
-                foreach (var palette in _paletteViews.Where(p => p.FollowsNavigation))
-                {
-                    palette.Refresh();
-                }
-            }
-        }
-
         if (!_jobsDirty || _host is null)
         {
             return;
@@ -1739,6 +1728,7 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.Open, Loc.T("Otwórz / wejdź"), OpenCurrent)
          .Register(CommandIds.EnterFolderPlain, Loc.T("Wejdź do folderu jako lista plików (pomija c4k.dir)"), EnterFolderPlain)
          .Register(CommandIds.FolderView, Loc.T("Widok folderu (c4k.dir): galeria, kafelki, wtyczka, SSH, skrypt"), ConfigureFolderViewAsync)
+         .Register(CommandIds.AddApiCard, Loc.T("Dodaj kartę API do dashboardu folderu (wybór pól z odpowiedzi)"), AddApiCardAsync)
          .Register(CommandIds.GoToParent, Loc.T("Katalog wyżej"), () => _active.GoToParent())
          .Register(CommandIds.Refresh, Loc.T("Odśwież"), () => _ = _active.ActiveTab.RefreshAsync())
          .Register(CommandIds.NewTab, Loc.T("Nowa zakładka"), () => _active.AddTab(_active.ActiveTab.Path))
@@ -1758,9 +1748,6 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (czat z darmowymi dostawcami lub Claude Code)"), _ => new ValueTask(AskAiAsync()))
          .Register(CommandIds.AiProviders, Loc.T("Dostawcy AI — logowanie, kolejność, limity"), _ => { OpenAiProviders(); return ValueTask.CompletedTask; })
          .Register(CommandIds.AiWritePlugin, Loc.T("Napisz wtyczkę z AI (według przewodnika, z instalacją)"), _ => new ValueTask(WritePluginWithAiAsync()))
-         .Register(CommandIds.TogglePalettes, Loc.T("Palety: pokaż / ukryj"), _ => new ValueTask(TogglePalettesAsync()))
-         .Register(CommandIds.Palettes, Loc.T("Palety: położenie (szybkie akcje, ulubione, widoki, wtyczki)"), () => OpenSettings(Loc.T("paleta")))
-         .Register(CommandIds.AddFavorite, Loc.T("Dodaj bieżący folder do ulubionych"), _ => new ValueTask(AddFavoriteAsync()))
          .Register(CommandIds.Edit, Loc.T("Edycja"), EditCurrentAsync)
          .Register(CommandIds.Copy, Loc.T("Kopiuj"), _ => TransferAsync(TransferMode.Copy))
          .Register(CommandIds.Move, Loc.T("Przenieś"), _ => TransferAsync(TransferMode.Move))

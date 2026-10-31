@@ -1,4 +1,5 @@
 using System.Text;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -37,6 +38,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
     private readonly WrapPanel _actions;
     private readonly SelectableTextBlock _details;
     private readonly TextBlock _status;
+    private readonly WaveDots _busy = new() { IsVisible = false, Margin = new Thickness(6, 0, 0, 0) };
     private readonly Border _header;
     private readonly Border _detailsBorder;
     private readonly DispatcherTimer _detailsDelay;
@@ -92,7 +94,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         Children.Add(_table.Row(1));
         Children.Add(new GridSplitter().Row(2).ResizeDirection(GridResizeDirection.Rows));
         Children.Add(_detailsBorder.Row(3));
-        Children.Add(_status.Row(4));
+        Children.Add(new Grid().Row(4).Cols("Auto,*").Children(_busy, _status.Col(1)));
 
         _table.Activated += () => Activated?.Invoke();
         _table.RowClicked += index => MoveCursor(index);
@@ -169,6 +171,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         _details.FontFamily = brushes.FontFamily;
         _details.FontSize = brushes.FontSize - 1;
         _status.Foreground = brushes.StatusForeground;
+        _busy.Foreground = brushes.StatusForeground;
         Background = brushes.StatusBackground;
         foreach (var text in _header.GetLogicalDescendants().OfType<TextBlock>())
         {
@@ -271,10 +274,10 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         _loading = cts;
         if (!quiet)
         {
-            _status.Text = Loc.T("⏳ Ładowanie… (Esc – anuluj)");
+            SetStatus(Loc.T("Ładowanie… (Esc – anuluj)"), busy: true);
         }
 
-        var progress = new Progress<string>(message => _status.Text = "⏳ " + message);
+        var progress = new Progress<string>(message => SetStatus(message, busy: true));
         var request = _request with { Filter = _filter.Text };
         _ = Task.Run(() => _session.LoadAsync(request, progress, cts.Token), cts.Token).ContinueWith(
             task => Dispatcher.UIThread.Post(() =>
@@ -287,13 +290,13 @@ public sealed class PluginPanelView : Grid, IPanelModeView
                 _loading = null;
                 if (task.IsCanceled || (task.Exception?.InnerException is OperationCanceledException))
                 {
-                    _status.Text = Loc.T("Przerwano.");
+                    SetStatus(Loc.T("Przerwano."));
                     return;
                 }
 
                 if (task.Exception is { } error)
                 {
-                    _status.Text = "⚠ " + error.InnerException?.Message;
+                    SetStatus("⚠ " + error.InnerException?.Message);
                     _status.Foreground = _brushes.Error;
                     return;
                 }
@@ -319,7 +322,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
 
         _table.Marked.IntersectWith(snapshot.Rows.Select(r => r.Id));
         Rebuild(cursorId);
-        _status.Text = snapshot.Status ?? $"{snapshot.Rows.Count} pozycji";
+        SetStatus(snapshot.Status ?? $"{snapshot.Rows.Count} pozycji");
         ScheduleDetails();
     }
 
@@ -574,5 +577,12 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         {
             return null;
         }
+    }
+
+    /// <summary>Status line text; <paramref name="busy"/> shows the wave dots in front of it.</summary>
+    private void SetStatus(string? text, bool busy = false)
+    {
+        _status.Text = text;
+        _busy.IsVisible = busy;
     }
 }

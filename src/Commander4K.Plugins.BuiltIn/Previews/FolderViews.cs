@@ -1,6 +1,7 @@
 using Commander4K.Core.Folders;
 using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
+using Commander4K.Plugins.BuiltIn.Dashboard;
 
 namespace Commander4K.Plugins.BuiltIn.Previews;
 
@@ -16,6 +17,9 @@ public static class FolderViews
 
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico"];
 
+    internal static bool IsImage(VfsEntry entry) =>
+        entry.Kind == VfsEntryKind.File && ImageExtensions.Contains(Path.GetExtension(entry.Name), StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Link a dashboard tile uses for its <c>run</c>: the window looks the command up in the same <c>c4k.dir</c>.</summary>
     public static string RunTarget(string section, int tile) => $"c4k:run/{section}/{tile}";
 
@@ -29,7 +33,7 @@ public static class FolderViews
             case FolderViewIds.Gallery:
                 return await GalleryAsync(config, folder, host, progress, cancellationToken).ConfigureAwait(false);
             case FolderViewIds.Dashboard:
-                return await DashboardAsync(config, action, section, host, cancellationToken).ConfigureAwait(false);
+                return await WithPicturesAsync(Dashboard(config, action, section), config, host, cancellationToken).ConfigureAwait(false);
             case FolderViewIds.Notes:
                 progress?.Report(new MarkdownPreview(Loc.T("⏳ Czytam notatki i ich powiązania…"), CanEdit: false));
                 var listing = await host.ListAsync(folder.Path, cancellationToken).ConfigureAwait(false);
@@ -89,35 +93,51 @@ public static class FolderViews
         return new TilesPreview(title, tiles, description, 220);
     }
 
-    private static async Task<TilesPreview> DashboardAsync(FolderConfig config, FolderAction action, string section, IPluginHost host, CancellationToken cancellationToken)
+    /// <summary>The dashboard's tiles as shortcuts (no I/O); the window turns card tiles into live cards.</summary>
+    public static DashboardPreview Dashboard(FolderConfig config, FolderAction action, string section)
     {
-        var tiles = new List<PreviewTile>();
+        var slots = new List<DashboardSlot>();
         for (var i = 0; i < action.Tiles.Count; i++)
         {
             var tile = action.Tiles[i];
-            ReadOnlyMemory<byte>? image = null;
-            if (tile.Image is { } picture)
-            {
-                try
-                {
-                    var (data, length, truncated) = await PreviewReading.ReadHeadAsync(host, config.Resolve(picture), MaxImageBytes, cancellationToken).ConfigureAwait(false);
-                    image = truncated ? null : data.AsMemory(0, length);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-                {
-                }
-            }
-
             var target = tile.Run is not null ? RunTarget(section, i)
                 : tile.Url is { } url ? url
                 : tile.Open is { } open ? config.Resolve(open)
                 : null;
             var subtitle = tile.Subtitle ?? (tile.Run is { } run ? "▶ " + run : null);
-            tiles.Add(new PreviewTile(tile.Title, subtitle, tile.Icon ?? (tile.Run is not null ? "▶" : tile.Url is not null ? "🌐" : "📁"), image, target));
+            slots.Add(new DashboardSlot(i, tile, new PreviewTile(tile.Title, subtitle, tile.Icon ?? (tile.Run is not null ? "▶" : tile.Url is not null ? "🌐" : "📁"), null, target)));
         }
 
-        return new TilesPreview(config.Title ?? Path.GetFileName(config.Folder.TrimEnd('\\', '/')), tiles,
-            config.Description ?? (tiles.Count == 0 ? Loc.T("Dodaj kafelki w c4k.dir: lista „tiles” z polami title oraz open, url albo run.") : null), 200);
+        return new DashboardPreview(config.Title ?? Path.GetFileName(config.Folder.TrimEnd('\\', '/')),
+            config.Description ?? (slots.Count == 0 ? Loc.T("Dodaj kafelki w c4k.dir: lista „tiles” z polami title oraz open, url albo run.") : null),
+            config, section, slots);
+    }
+
+    /// <summary>Reads the tiles' own pictures (<c>image</c>).</summary>
+    private static async Task<DashboardPreview> WithPicturesAsync(DashboardPreview dashboard, FolderConfig config, IPluginHost host, CancellationToken cancellationToken)
+    {
+        var slots = dashboard.Slots.ToArray();
+        for (var i = 0; i < slots.Length; i++)
+        {
+            if (slots[i].Tile.Image is not { } picture)
+            {
+                continue;
+            }
+
+            try
+            {
+                var (data, length, truncated) = await PreviewReading.ReadHeadAsync(host, config.Resolve(picture), MaxImageBytes, cancellationToken).ConfigureAwait(false);
+                if (!truncated)
+                {
+                    slots[i] = slots[i] with { Shortcut = slots[i].Shortcut with { Image = data.AsMemory(0, length) } };
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+            }
+        }
+
+        return dashboard with { Slots = slots };
     }
 
     private static string? Size(long bytes) => bytes switch

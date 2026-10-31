@@ -13,7 +13,7 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "view": { "enum": ["files", "gallery", "dashboard", "notes", "markdown"] },
+    "view": { "enum": ["files", "gallery", "dashboard", "notes", "markdown", "api"] },
     "action": {
       "description": "A built-in view name, a plugin id (e.g. official.steam-library), or an object with one target.",
       "oneOf": [
@@ -33,7 +33,8 @@
             "run": { "$ref": "#/$defs/run" },
             "file": { "type": "string", "description": "Markdown file for the markdown view (README.md by default)." },
             "tiles": { "type": "array", "items": { "$ref": "#/$defs/tile" }, "description": "Tiles of the dashboard view." },
-            "options": { "type": "object", "description": "Passed to the plugin as options (preview.render, panel.load)." }
+            "options": { "type": "object", "description": "Passed to the plugin as options (preview.render, panel.load)." },
+            "api": { "$ref": "#/$defs/api" }
           },
           "additionalProperties": false
         }
@@ -63,11 +64,47 @@
         "subtitle": { "type": "string" },
         "icon": { "type": "string", "description": "An emoji shown when there is no image." },
         "image": { "type": "string", "description": "Picture file, relative to the folder." },
-        "open": { "type": "string" },
+        "open": { "type": "string", "description": "What a click opens; for a card also what it shows." },
         "url": { "type": "string" },
-        "run": { "$ref": "#/$defs/run" }
+        "run": { "$ref": "#/$defs/run" },
+        "card": {
+          "description": "Show the tile as a live card: true = the preview Ctrl+Q would pick for open; or a name: files, gallery, notes, markdown, dashboard, api, ssh, or a plugin id (plugin or plugin/preview).",
+          "oneOf": [{ "type": "boolean" }, { "type": "string" }]
+        },
+        "refresh": { "type": "string", "pattern": "^[0-9]+[smh]$", "description": "Read the card again every 10s, 5m, 1h… while the dashboard is visible (at least 2 s)." },
+        "options": { "type": "object", "description": "Passed to the card's preview." },
+        "size": { "enum": ["small", "wide"], "description": "Card width: one column or two." },
+        "api": { "$ref": "#/$defs/api" }
       },
       "required": ["title"],
+      "additionalProperties": false
+    },
+    "api": {
+      "type": "object",
+      "description": "An HTTP request. {secret:name} in a header or the body (not the url) is replaced with a secret stored by the app (never write tokens here). Methods other than GET/HEAD need the user's trust in this file.",
+      "properties": {
+        "url": { "type": "string" },
+        "method": { "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "get", "head", "post", "put", "patch", "delete"] },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "body": { "type": "string" },
+        "contentType": { "type": "string" },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "Path in the JSON response: a.b, items[0].name, $ for the whole value." },
+              "label": { "type": "string" },
+              "as": { "enum": ["value", "chart", "status"] },
+              "unit": { "type": "string" },
+              "ok": { "type": "array", "items": { "type": "string" }, "description": "For status: values that mean good." }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["url"],
       "additionalProperties": false
     }
   }

@@ -14,6 +14,8 @@ namespace Commander4K.App.Panels;
 public sealed class PanelTab
 {
     private readonly AppHost _host;
+    private readonly Dictionary<string, (long Generation, long Bytes)> _pendingSizes = new(StringComparer.OrdinalIgnoreCase);
+    private bool _sizesPosted;
     private CancellationTokenSource? _listing;
     private IDisposable? _watch;
     private long _generation;
@@ -76,6 +78,12 @@ public sealed class PanelTab
 
     /// <summary>Raised on the UI thread whenever rows, cursor or status change.</summary>
     public event Action? Changed;
+
+    /// <summary>
+    /// Raised on the UI thread when running directory totals change. Unlike <see cref="Changed"/> it only asks for a
+    /// repaint: the preview and the tab strip do not follow it.
+    /// </summary>
+    public event Action? SizesUpdated;
 
     /// <summary>Raised when the location asks for credentials; the window shows a login dialog and retries.</summary>
     public event Action<PanelTab, VfsAuthenticationRequiredException>? AuthenticationRequired;
@@ -145,15 +153,9 @@ public sealed class PanelTab
         Changed?.Invoke();
         try
         {
-            var progress = new Progress<DirectorySize>(size =>
-            {
-                if (generation == _generation)
-                {
-                    DirectorySizes[entry.Path] = size.Bytes;
-                    Changed?.Invoke();
-                }
-            });
-            var result = await _host.DirectorySizes.CalculateAsync(entry.Path, progress, token);
+            // Running totals stay off the UI thread; QueueSize coalesces every calculation of this tab into one post.
+            var progress = new InlineProgress<DirectorySize>(size => QueueSize(generation, entry.Path, size.Bytes));
+            var result = await Task.Run(() => _host.DirectorySizes.CalculateAsync(entry.Path, progress, token), token);
             if (generation == _generation)
             {
                 DirectorySizes[entry.Path] = result.Bytes;
@@ -172,6 +174,48 @@ public sealed class PanelTab
         {
             SizesInProgress.Remove(entry.Path);
             Changed?.Invoke();
+        }
+    }
+
+    private void QueueSize(long generation, string path, long bytes)
+    {
+        lock (_pendingSizes)
+        {
+            _pendingSizes[path] = (generation, bytes);
+            if (_sizesPosted)
+            {
+                return;
+            }
+
+            _sizesPosted = true;
+        }
+
+        Dispatcher.UIThread.Post(ApplyPendingSizes, DispatcherPriority.Background);
+    }
+
+    private void ApplyPendingSizes()
+    {
+        KeyValuePair<string, (long Generation, long Bytes)>[] pending;
+        lock (_pendingSizes)
+        {
+            pending = [.. _pendingSizes];
+            _pendingSizes.Clear();
+            _sizesPosted = false;
+        }
+
+        var any = false;
+        foreach (var (path, (generation, bytes)) in pending)
+        {
+            if (generation == _generation && SizesInProgress.Contains(path))
+            {
+                DirectorySizes[path] = bytes;
+                any = true;
+            }
+        }
+
+        if (any)
+        {
+            SizesUpdated?.Invoke();
         }
     }
 
@@ -398,4 +442,10 @@ public sealed class PanelTab
     }
 
     private static VfsEntry ParentRow(string parent) => new("..", parent, VfsEntryKind.ParentLink);
+
+    /// <summary>Reports on the calling thread (unlike <see cref="Progress{T}"/>, which posts every value to the UI).</summary>
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
+    }
 }

@@ -91,6 +91,50 @@ public sealed class LocalFileSystemPluginTests : IDisposable
         Assert.Equal(2, size.Directories);
     }
 
+    [Fact]
+    public async Task Directory_size_counts_unreadable_folders_without_throwing()
+    {
+        // Under a debugger every thrown exception suspends the whole process; C:\Windows has thousands of these.
+        var locked = Path.Combine(_root, "locked");
+        Directory.CreateDirectory(locked);
+        File.WriteAllBytes(Path.Combine(locked, "hidden.bin"), new byte[500]);
+        File.WriteAllBytes(Path.Combine(_root, "open.bin"), new byte[10]);
+        var deny = new System.Security.AccessControl.FileSystemAccessRule(
+            System.Security.Principal.WindowsIdentity.GetCurrent().User!,
+            System.Security.AccessControl.FileSystemRights.ListDirectory,
+            System.Security.AccessControl.AccessControlType.Deny);
+        var directory = new DirectoryInfo(locked);
+        var security = directory.GetAccessControl();
+        security.AddAccessRule(deny);
+        directory.SetAccessControl(security);
+
+        var thrown = 0;
+        void OnFirstChance(object? sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
+        {
+            if (e.Exception.Message.Contains(locked, StringComparison.OrdinalIgnoreCase))
+            {
+                Interlocked.Increment(ref thrown);
+            }
+        }
+
+        AppDomain.CurrentDomain.FirstChanceException += OnFirstChance;
+        try
+        {
+            var router = new VfsRouter(new ResilientAsyncExecutor(), [_plugin]);
+            var size = await new DirectorySizeCalculator(router).CalculateAsync(_root, cancellationToken: TestToken);
+
+            Assert.Equal(10, size.Bytes);
+            Assert.Equal(1, size.InaccessibleDirectories);
+            Assert.Equal(0, thrown);
+        }
+        finally
+        {
+            AppDomain.CurrentDomain.FirstChanceException -= OnFirstChance;
+            security.RemoveAccessRule(deny);
+            directory.SetAccessControl(security); // Dispose deletes the folder.
+        }
+    }
+
     private async Task<List<VfsEntry>> ListAsync(string path)
     {
         var result = new List<VfsEntry>();

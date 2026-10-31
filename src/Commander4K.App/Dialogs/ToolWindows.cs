@@ -29,6 +29,7 @@ public sealed class ViewerWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         var status = new TextBlock().Text(Loc.T("Wczytywanie…")).Margin(8, 4).Foreground(brushes.StatusForeground);
+        var busy = new WaveDots { Foreground = brushes.StatusForeground, Margin = new Avalonia.Thickness(8, 0, 0, 0) };
         var text = new TextBox()
             .IsReadOnly(true)
             .AcceptsReturn(true)
@@ -39,7 +40,7 @@ public sealed class ViewerWindow : Window
             .BorderThickness(new Avalonia.Thickness(0));
         Content = new Grid().Rows("*,Auto").Children(
             new ScrollViewer().Row(0).HorizontalScrollBarVisibility(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto).Content(text),
-            new Border().Row(1).Background(brushes.StatusBackground).Child(status));
+            new Border().Row(1).Background(brushes.StatusBackground).Child(new Grid().Cols("Auto,*").Children(busy, status.Col(1))));
 
         Closed += (_, _) => _loading.Cancel();
         Opened += async (_, _) =>
@@ -68,6 +69,10 @@ public sealed class ViewerWindow : Window
             {
                 status.Text = "⚠ " + ex.Message;
                 status.Foreground = brushes.Error;
+            }
+            finally
+            {
+                busy.IsVisible = false;
             }
         };
     }

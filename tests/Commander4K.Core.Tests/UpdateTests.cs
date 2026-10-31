@@ -150,8 +150,25 @@ public sealed class UpdateTests : IDisposable
 
         Assert.DoesNotContain("cm_Move", file.Bindings.Values);
         Assert.Equal("cm_Settings", file.Bindings["Ctrl+,"]);
-        Assert.Equal("cm_AddFavorite", file.Bindings["Ctrl+D"]);
+        Assert.Equal("cm_PanelModes", file.Bindings["F2"]);
         Assert.Contains("cm_Move", file.KnownCommands!);
+        Assert.False(ConfigStore.MergeNewDefaults(file));
+    }
+
+    [Fact]
+    public void Keymap_merge_drops_bindings_of_removed_commands()
+    {
+        var file = new KeymapFile
+        {
+            Bindings = new(StringComparer.OrdinalIgnoreCase) { ["Ctrl+B"] = "cm_TogglePalettes", ["Ctrl+D"] = "cm_AddFavorite", ["F5"] = "cm_Copy" },
+            KnownCommands = ["cm_TogglePalettes", "cm_AddFavorite", "cm_Copy"],
+        };
+
+        Assert.True(ConfigStore.MergeNewDefaults(file));
+
+        Assert.False(file.Bindings.ContainsKey("Ctrl+B"));
+        Assert.False(file.Bindings.ContainsKey("Ctrl+D"));
+        Assert.Equal("cm_Copy", file.Bindings["F5"]);
         Assert.False(ConfigStore.MergeNewDefaults(file));
     }
 
@@ -188,7 +205,7 @@ public sealed class UpdateTests : IDisposable
     [InlineData("zrodlo", "updateRepository")]
     [InlineData("AKTUALIZACJE beta", "includePrereleases")]
     [InlineData("motyw", "skin")]
-    [InlineData("palety ulubione", "showPalettes")]
+    [InlineData("KONTEKSTOWE eksplorator", "shellContextMenu")]
     public void Settings_search_ignores_case_and_polish_diacritics(string query, string expectedKey)
     {
         var catalog = SettingsCatalog.Create(() => []);
