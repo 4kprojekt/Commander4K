@@ -1138,7 +1138,7 @@ public sealed class MainWindow : Window, IShell
         {
             _ = _active.NavigateAsync(entry.Path);
         }
-        else if (_active.Mode is null && string.IsNullOrWhiteSpace(_commandLine.Text) && _active.ActiveTab.CurrentEntry is { IsContainer: false } file)
+        else if (_active.Mode is null && string.IsNullOrWhiteSpace(_commandLine.Text) && _active.ActiveTab.CurrentEntry is { IsContainer: false, Kind: not VfsEntryKind.Action } file)
         {
             OpenFile(_active, file, plain: true);
         }

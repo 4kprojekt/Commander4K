@@ -278,13 +278,13 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
             CardString(result, "message"), result.TryGetProperty("messageError", out var error) && error.ValueKind == JsonValueKind.True);
     }
 
-    /// <summary><c>[{ label, target, shortcut? }]</c>; entries without a target are dropped.</summary>
+    /// <summary><c>[{ label, target, shortcut? }]</c>; entries without a target are dropped, reserved or invalid shortcuts (<see cref="PreviewShortcuts"/>) too.</summary>
     private static List<PreviewAction> ParseActions(JsonElement result, string name) =>
         result.TryGetProperty(name, out var list) && list.ValueKind == JsonValueKind.Array
             ? [.. list.EnumerateArray()
                 .Where(a => CardString(a, "target") is not null)
                 .Take(MaxActions)
-                .Select(a => new PreviewAction(CardString(a, "label") ?? CardString(a, "target")!, CardString(a, "target")!, CardString(a, "shortcut")))]
+                .Select(a => new PreviewAction(CardString(a, "label") ?? CardString(a, "target")!, CardString(a, "target")!, PreviewShortcuts.Normalize(CardString(a, "shortcut")) is null ? null : CardString(a, "shortcut")))]
             : [];
 
     /// <summary>

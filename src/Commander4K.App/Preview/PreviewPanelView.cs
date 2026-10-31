@@ -77,14 +77,24 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     /// <summary>The <c>c4k.dir</c> options the current plugin was loaded with; passed to its actions too.</summary>
     private string? _options;
 
-    /// <summary>Buttons of the content on screen, for their shortcuts.</summary>
-    private readonly List<PreviewAction> _shortcuts = [];
+    /// <summary>Who runs a content's <c>c4k:plugin/…</c> buttons: fixed when the content is rendered, never read from the view's current state.</summary>
+    private sealed record ActionReceiver(IInteractivePreviewPlugin Plugin, VfsEntry Entry, string? Options);
+
+    /// <param name="Shortcut">The usable shortcut (<see cref="PreviewShortcuts.Normalize"/>), or <c>null</c>.</param>
+    private sealed record BoundAction(PreviewAction Action, ActionReceiver? Receiver, string? Shortcut);
+
+    /// <summary>The receiver of the content being rendered (<see cref="Show"/>).</summary>
+    private ActionReceiver? _receiver;
+
+    /// <summary>Buttons of the content on screen and their shortcuts; both are switched off as soon as another load starts.</summary>
+    private readonly List<BoundAction> _shortcuts = [];
+    private readonly List<Button> _actionButtons = [];
     private bool _acting;
 
     /// <summary>The form on screen, its current values and who hears about edits (fixed when the form appears).</summary>
     private FormPreview? _form;
     private Dictionary<string, string>? _formValues;
-    private (VfsEntry Entry, IInteractivePreviewPlugin Plugin, string? Options)? _formOwner;
+    private ActionReceiver? _formOwner;
     private DispatcherTimer? _formTimer;
     private bool _formPending;
 
@@ -271,10 +281,13 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
         // The window passes keys here only while this panel is active; inside a text field only Ctrl/Alt combos,
         // F-keys and Esc arrive, so a plain-letter shortcut never fires while the user types.
-        if (_shortcuts.Count > 0 && KeyMapping.ToStroke(e) is { } stroke)
+        // Reserved keys (Esc, Enter, Tab, Backspace, Alt+←/→) never reach a plugin, and while a field is being edited
+        // its own chords (Ctrl+C/V/Z, Ctrl+arrows…) stay with the field.
+        if (_shortcuts.Count > 0 && KeyMapping.ToStroke(e) is { } stroke && !PreviewShortcuts.IsReserved(stroke)
+            && !(FocusedTextBox() is { IsReadOnly: false } && PreviewShortcuts.IsTextEditing(stroke)))
         {
             var pressed = stroke.ToString();
-            if (_shortcuts.FirstOrDefault(a => a.Shortcut is { } shortcut && NormalizedShortcut(shortcut) == pressed) is { } action)
+            if (_shortcuts.FirstOrDefault(a => a.Shortcut == pressed) is { } action)
             {
                 _ = RunActionAsync(action);
                 return true;
@@ -346,18 +359,6 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private TextBox? FocusedTextBox() =>
         TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox box && this.IsVisualAncestorOf(box) ? box : null;
-
-    private static string? NormalizedShortcut(string shortcut)
-    {
-        try
-        {
-            return Commander4K.Core.Input.KeyStroke.Parse(shortcut).ToString();
-        }
-        catch (Exception ex) when (ex is FormatException or ArgumentException)
-        {
-            return null;
-        }
-    }
 
     private void Rebind()
     {
@@ -432,6 +433,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _loading?.Cancel();
         StopDashboard();
         _ = FlushFormAsync(); // a draft typed into the previous form is not lost by moving on
+        DisableActions(); // the old buttons stay on screen until the new content arrives, but no longer act
         _form = null;
         _options = null;
         _editing = false;
@@ -628,10 +630,16 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             StopDashboard();
         }
 
+        // The same content drawn again (a skin change) keeps its receiver even while another load is under way.
+        if (!ReferenceEquals(_shown, content))
+        {
+            _receiver = _plugin is IInteractivePreviewPlugin interactive && _entry is { } entry ? new ActionReceiver(interactive, entry, _options) : null;
+        }
+
         _shown = content;
         _editor = null;
         _livePreview = null;
-        _shortcuts.Clear();
+        DisableActions();
         var editable = CanEdit;
         _editButton.IsVisible = editable;
         _editButton.Content = _editing ? Loc.T("Podgląd (F4)") : Loc.T("Edytuj (F4)");
@@ -705,14 +713,27 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         return dock;
     }
 
-    /// <summary>A plugin button: <c>c4k:plugin/…</c> goes back to the plugin, anything else opens like a tile.</summary>
+    /// <summary>A plugin button bound to the content's receiver: <c>c4k:plugin/…</c> goes back to that plugin, anything else opens like a tile.</summary>
     private Button ActionButton(PreviewAction action, bool primary)
     {
-        _shortcuts.Add(action);
-        var button = BannerButton(action.Shortcut is { Length: > 0 } key ? Loc.T("{0} ({1})", action.Label, key) : action.Label, () => RunActionAsync(action), primary);
+        var bound = new BoundAction(action, _receiver, PreviewShortcuts.Normalize(action.Shortcut));
+        _shortcuts.Add(bound);
+        var button = BannerButton(bound.Shortcut is not null ? Loc.T("{0} ({1})", action.Label, action.Shortcut!) : action.Label, () => RunActionAsync(bound), primary);
         button.Margin = new Thickness(0, 2, 8, 2);
         ToolTip.SetTip(button, action.Target);
+        _actionButtons.Add(button);
         return button;
+    }
+
+    private void DisableActions()
+    {
+        _shortcuts.Clear();
+        foreach (var button in _actionButtons)
+        {
+            button.IsEnabled = false;
+        }
+
+        _actionButtons.Clear();
     }
 
     /// <summary>Fields, attached files and buttons of a plugin form (composing a message…); edits reach the plugin after a pause.</summary>
@@ -723,7 +744,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             _form = form;
             _formValues = form.Fields.GroupBy(f => f.Id, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().Value, StringComparer.Ordinal);
-            _formOwner = _plugin is IInteractivePreviewPlugin interactive && _entry is { } entry ? (entry, interactive, _options) : null;
+            _formOwner = _receiver;
             _formPending = false;
             _formTimer?.Stop();
         }
@@ -867,22 +888,24 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     }
 
     /// <summary>
-    /// A button or its shortcut. <c>c4k:plugin/…</c> runs in the plugin (after the last form edit reached it) and shows what
-    /// it returns, or renders the entry again; other targets open like a tile. One action at a time.
+    /// A button or its shortcut. <c>c4k:plugin/…</c> runs in the plugin the button was rendered for (after the last form
+    /// edit reached it) and shows what it returns, or renders the entry again; other targets open like a tile. One action
+    /// at a time; the busy status never outlives the action.
     /// </summary>
-    private async Task RunActionAsync(PreviewAction action)
+    private async Task RunActionAsync(BoundAction bound)
     {
+        var action = bound.Action;
         if (!PreviewActionTargets.TryParse(action.Target, out var name, out var arguments))
         {
             if (OpenTile is { } open)
             {
-                await open(new PreviewTile(action.Label, Target: action.Target), _entry);
+                await open(new PreviewTile(action.Label, Target: action.Target), bound.Receiver?.Entry ?? _entry);
             }
 
             return;
         }
 
-        if (_plugin is not IInteractivePreviewPlugin interactive || _entry is not { } entry)
+        if (bound.Receiver is not { } receiver)
         {
             _notify(Loc.T("Ten podgląd nie obsługuje akcji „{0}”.", name), true);
             return;
@@ -895,29 +918,31 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
         _acting = true;
         var status = _status.Text;
-        SetStatus(Loc.T("{0}: {1}…", interactive.DisplayName, action.Label), busy: true);
+        var busy = Loc.T("{0}: {1}…", receiver.Plugin.DisplayName, action.Label);
+        SetStatus(busy, busy: true);
         try
         {
             await FlushFormAsync();
-            var values = Inner(_shown) is FormPreview && _formValues is { } current ? new Dictionary<string, string>(current, StringComparer.Ordinal) : null;
-            var request = new PreviewActionRequest(entry, _options, name, arguments, values);
-            var host = _app.HostFor(interactive.Manifest);
+            var values = ReferenceEquals(_formOwner, receiver) && _formValues is { } current ? new Dictionary<string, string>(current, StringComparer.Ordinal) : null;
+            var request = new PreviewActionRequest(receiver.Entry, receiver.Options, name, arguments, values);
+            var host = _app.HostFor(receiver.Plugin.Manifest);
             var token = _lifetime.Token;
-            var result = await Task.Run(() => interactive.InvokeActionAsync(request, host, token), token);
-            if (_entry?.Path != entry.Path || _lifetime.IsCancellationRequested)
+            var result = await Task.Run(() => receiver.Plugin.InvokeActionAsync(request, host, token), token);
+            if (_entry?.Path != receiver.Entry.Path || _lifetime.IsCancellationRequested)
             {
                 return; // the view moved on meanwhile
             }
 
             if (result is null)
             {
-                await LoadAsync(entry);
+                await LoadAsync(receiver.Entry);
             }
             else
             {
                 _loading?.Cancel(); // a reload still running must not replace what the action returned
                 _editing = false;
-                Show(ViewOnlyWhereReadOnly(entry, result));
+                (_plugin, _options) = (receiver.Plugin, receiver.Options);
+                Show(ViewOnlyWhereReadOnly(receiver.Entry, result));
             }
         }
         catch (OperationCanceledException)
@@ -925,12 +950,16 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
         catch (Exception ex)
         {
-            SetStatus(status);
-            _notify(Loc.T("{0}: {1}", interactive.DisplayName, ex.Message), true);
+            _notify(Loc.T("{0}: {1}", receiver.Plugin.DisplayName, ex.Message), true);
         }
         finally
         {
             _acting = false;
+            // Whatever happened, the "working…" line goes away unless something newer already replaced it.
+            if (_status.Text == busy)
+            {
+                SetStatus(status);
+            }
         }
     }
 
