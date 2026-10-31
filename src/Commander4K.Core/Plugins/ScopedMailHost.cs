@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.RegularExpressions;
 using Commander4K.Core.Mail;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
@@ -12,7 +11,7 @@ namespace Commander4K.Core.Plugins;
 /// involved, and audits each call. The audit detail names the account and counts, never message content or passwords.
 /// Files are opened through the <see cref="VfsRouter"/>, so they may live anywhere the user can open.
 /// </summary>
-public sealed partial class ScopedMailHost(PluginManifest manifest, VfsRouter router, IMailBackend? backend, AuditLog audit) : IMailHost
+public sealed class ScopedMailHost(PluginManifest manifest, VfsRouter router, IMailBackend? backend, AuditLog audit) : IMailHost
 {
     private const string Read = PluginPermissions.FileRead;
     private const string Write = PluginPermissions.FileWrite;
@@ -135,7 +134,7 @@ public sealed partial class ScopedMailHost(PluginManifest manifest, VfsRouter ro
 
     /// <summary>The file behind an attachment path: <c>x.eml#2</c> (an attachment of a forwarded message) is read from <c>x.eml</c>.</summary>
     private static string AttachmentSource(string attachment) =>
-        EmlReference().Match(attachment) is { Success: true } m ? m.Groups[1].Value : attachment;
+        MailDrafts.TryParseEmlReference(attachment, out var emlPath, out _) ? emlPath : attachment;
 
     private static string Describe(MailAccount account) => $"{account.User}@{account.Imap}";
 
@@ -191,7 +190,4 @@ public sealed partial class ScopedMailHost(PluginManifest manifest, VfsRouter ro
             throw;
         }
     }
-
-    [GeneratedRegex(@"^(.+\.eml)#(\d+)$", RegexOptions.IgnoreCase)]
-    private static partial Regex EmlReference();
 }

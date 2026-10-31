@@ -71,6 +71,15 @@ public static partial class MailDrafts
         return new MailDraft(to, cc, [], subject, quote, inReplyTo, references, attachments);
     }
 
+    /// <summary>Splits the <c>&lt;file&gt;.eml#&lt;n&gt;</c> form (attachment <c>n</c> of that message file).</summary>
+    public static bool TryParseEmlReference(string path, out string emlPath, out int index)
+    {
+        var m = EmlReference().Match(path);
+        emlPath = m.Success ? m.Groups[1].Value : path;
+        index = 0;
+        return m.Success && int.TryParse(m.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out index);
+    }
+
     public static MimeMessage Build(MailDraft draft, Func<string, Stream> openAttachment)
     {
         var message = new MimeMessage();
@@ -90,12 +99,10 @@ public static partial class MailDrafts
         var body = new BodyBuilder { TextBody = draft.Body };
         foreach (var path in draft.AttachmentPaths)
         {
-            var m = EmlReference().Match(path);
-            if (m.Success)
+            if (TryParseEmlReference(path, out var emlPath, out var index))
             {
-                using var stream = openAttachment(m.Groups[1].Value);
+                using var stream = openAttachment(emlPath);
                 var source = MimeMessage.Load(stream);
-                var index = int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
                 var entity = source.Attachments.ElementAtOrDefault(index)
                     ?? throw new InvalidOperationException($"Attachment {index} not found.");
                 body.Attachments.Add(entity);

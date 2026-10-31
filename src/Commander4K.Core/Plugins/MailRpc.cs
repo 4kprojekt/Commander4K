@@ -48,9 +48,9 @@ public static class MailRpc
             case "mail.sync":
                 var request = new MailSyncRequest(
                     Str(p, "folder"),
-                    (uint)Long(p, "uidValidity", 0),
-                    (uint)Long(p, "lastUid", 0),
-                    (ulong)Long(p, "modSeq", 0),
+                    UInt(p, "uidValidity", required: false),
+                    UInt(p, "lastUid", required: false),
+                    (ulong)Long(p, "modSeq", 0, 0, long.MaxValue),
                     OptStr(p, "since") is { Length: > 0 } since
                         ? DateTimeOffset.Parse(since, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal)
                         : DateTimeOffset.UtcNow.AddMonths(-3),
@@ -75,7 +75,7 @@ public static class MailRpc
                     removed = sync.Removed,
                 };
             case "mail.fetch":
-                return new { bytes = await mail.FetchAsync(Account(p), Str(p, "folder"), (uint)Long(p, "uid", 0), Str(p, "path"), ct).ConfigureAwait(false) };
+                return new { bytes = await mail.FetchAsync(Account(p), Str(p, "folder"), UInt(p, "uid", required: true), Str(p, "path"), ct).ConfigureAwait(false) };
             case "mail.setFlags":
                 await mail.SetFlagsAsync(Account(p), Str(p, "folder"), Uids(p, "uids"), Flags(p, "add"), Flags(p, "remove"), ct).ConfigureAwait(false);
                 return null;
@@ -102,7 +102,7 @@ public static class MailRpc
                     attachments = view.Attachments.Select(a => new { index = a.Index, fileName = a.FileName, contentType = a.ContentType, size = a.Size }).ToList(),
                 };
             case "mail.saveAttachment":
-                await mail.SaveAttachmentAsync(Str(p, "path"), (int)Long(p, "index", 0), Str(p, "target"), ct).ConfigureAwait(false);
+                await mail.SaveAttachmentAsync(Str(p, "path"), (int)Long(p, "index", null, 0, int.MaxValue), Str(p, "target"), ct).ConfigureAwait(false);
                 return null;
             case "mail.reply":
                 var mode = Str(p, "mode").ToLowerInvariant() switch
@@ -216,6 +216,19 @@ public static class MailRpc
     private static string? OptStr(JsonElement p, string name) =>
         p.ValueKind == JsonValueKind.Object && p.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
-    private static long Long(JsonElement p, string name, long fallback) =>
-        p.ValueKind == JsonValueKind.Object && p.TryGetProperty(name, out var v) && v.TryGetInt64(out var n) ? n : fallback;
+    private static uint UInt(JsonElement p, string name, bool required) =>
+        (uint)Long(p, name, required ? null : 0, 0, uint.MaxValue);
+
+    /// <summary>An integer parameter in range; a missing one is an error unless <paramref name="fallback"/> is given.</summary>
+    private static long Long(JsonElement p, string name, long? fallback, long min, long max)
+    {
+        if (p.ValueKind != JsonValueKind.Object || !p.TryGetProperty(name, out var v) || v.ValueKind == JsonValueKind.Null)
+        {
+            return fallback ?? throw new ArgumentException(Loc.T("Brak parametru „{0}”.", name));
+        }
+
+        return v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) && n >= min && n <= max
+            ? n
+            : throw new ArgumentException(Loc.T("Nieprawidłowy parametr „{0}”.", name));
+    }
 }

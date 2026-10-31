@@ -579,6 +579,10 @@ public sealed class ExternalPluginTests : IAsyncLifetime
                 lines.append(attempt(lambda: c4k.mail_sync(ACCOUNT, "INBOX")))
                 lines.append(attempt(lambda: c4k.mail_set_flags(ACCOUNT, "INBOX", [1], ["seen"], [])))
                 lines.append(attempt(lambda: c4k.mail_set_flags(ACCOUNT, "INBOX", [1], ["bogus"], [])))
+                lines.append(attempt(lambda: c4k.call("mail.fetch", account=ACCOUNT, folder="INBOX", path="x")))
+                lines.append(attempt(lambda: c4k.mail_fetch(ACCOUNT, "INBOX", -1, "x")))
+                lines.append(attempt(lambda: c4k.call("mail.saveAttachment", path="x", target="y")))
+                lines.append(attempt(lambda: c4k.mail_set_flags(ACCOUNT, "INBOX", [-5], ["seen"], [])))
                 return {"text": {"title": "mail", "content": "|".join(lines)}}
 
             c4k.serve()
@@ -588,7 +592,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         await new ExternalCommandPlugin(plugin).ExecuteAsync("go", HostFor(plugin), TestToken);
 
         Assert.Equal(
-            "1|-32010 {'authRequired': True, 'realm': 'anna@imap.example.org'}|-32011 {'host': 'imap.example.org:993', 'fingerprint': 'AB12'}|-32602 None",
+            "1|-32010 {'authRequired': True, 'realm': 'anna@imap.example.org'}|-32011 {'host': 'imap.example.org:993', 'fingerprint': 'AB12'}|-32602 None|-32602 None|-32602 None|-32602 None|-32602 None",
             _ui.LastText);
         Assert.Contains(_audit.Recent("tests.mail-errors"), e => e.Operation == "mail.sync" && e.Outcome == AuditOutcome.Failed);
     }

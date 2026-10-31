@@ -2,6 +2,7 @@ using System.Text;
 using Commander4K.Core.Execution;
 using Commander4K.Core.Mail;
 using Commander4K.Core.Plugins;
+using Commander4K.Core.Security;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Local;
@@ -75,19 +76,42 @@ public sealed class ScopedMailHostTests : IAsyncLifetime
         var host = Host(PluginPermissions.Mail, PluginPermissions.FileRead);
         var draft = Path.Combine(_dir, "outgoing.eml");
         await File.WriteAllTextAsync(draft, $"Subject: {Subject}\r\n\r\n{Body}", Token);
-        var account = _account with { User = "pw-user" };
+        var account = _account with { User = "anna-user" };
+        const string secret = "S3cr3t-Pa55-xyz";
+        var secrets = new SecretStore(Path.Combine(_dir, "secrets.json"));
+        secrets.Set(MailCredentials.SmtpSecretName("test.mail", account), secret, "smtp.example.org");
+        var credentials = new MailCredentials(secrets, (_, _) => Task.FromResult<string?>(null));
+        _backend.OnSend = async () => _backend.SeenPassword = await credentials.GetSmtpPasswordAsync("test.mail", account, afterRefusal: false, Token);
 
         var id = await host.SendAsync(account, draft, Token);
 
         Assert.Equal("<sent@test>", id);
         var entry = Assert.Single(_audit.Recent("test.mail"), e => e.Operation == "mail.send");
         Assert.Equal(AuditOutcome.Allowed, entry.Outcome);
-        Assert.Contains("pw-user", entry.Detail, StringComparison.Ordinal);
+        Assert.Equal(secret, _backend.SeenPassword); // the password really was in play on the host side
+        Assert.Contains("anna-user", entry.Detail, StringComparison.Ordinal);
         Assert.Contains("imap.example.org", entry.Detail, StringComparison.Ordinal);
         Assert.DoesNotContain(Body, entry.Detail, StringComparison.Ordinal);
         Assert.DoesNotContain(Subject, entry.Detail, StringComparison.Ordinal);
-        Assert.DoesNotContain("pw\"", entry.Detail, StringComparison.Ordinal);
+        Assert.All(_audit.Recent("test.mail"), e => Assert.DoesNotContain(secret, e.ToString(), StringComparison.Ordinal));
         Assert.Equal(Body, _backend.SentBody);
+    }
+
+    [Fact]
+    public async Task Compose_with_attachments_requires_fs_read_and_reads_nothing()
+    {
+        var host = Host(PluginPermissions.Mail, PluginPermissions.FileWrite);
+        var attachment = Path.Combine(_dir, "secret.txt");
+        await File.WriteAllTextAsync(attachment, "x", Token);
+        var path = Path.Combine(_dir, "draft.eml");
+        var draft = new MailDraft([new MailAddress(null, "b@example.org")], [], [], "s", "b", null, [], [attachment]);
+
+        var ex = await Assert.ThrowsAsync<PluginPermissionException>(() => host.ComposeAsync(path, draft, Token));
+
+        Assert.Equal(PluginPermissions.FileRead, ex.Permission);
+        Assert.False(File.Exists(path));
+        Assert.Contains(_audit.Recent("test.mail"), e => e.Operation == "mail.compose" && e.Outcome == AuditOutcome.Denied);
+        Assert.DoesNotContain(_audit.Recent("test.mail"), e => e.Operation == "fs.read");
     }
 
     [Fact]
@@ -170,6 +194,10 @@ public sealed class ScopedMailHostTests : IAsyncLifetime
 
         public string? SentBody { get; private set; }
 
+        public Func<Task>? OnSend { get; set; }
+
+        public string? SeenPassword { get; set; }
+
         public MailFlags AppendFlags { get; private set; }
 
         public Task<IReadOnlyList<MailFolderInfo>> FoldersAsync(string pluginId, MailAccount account, CancellationToken ct)
@@ -220,6 +248,11 @@ public sealed class ScopedMailHostTests : IAsyncLifetime
         public async Task<string> SendAsync(string pluginId, MailAccount account, Stream message, CancellationToken ct)
         {
             Calls++;
+            if (OnSend is not null)
+            {
+                await OnSend();
+            }
+
             SentBody = (await MimeMessage.LoadAsync(message, ct)).TextBody?.Trim();
             return "<sent@test>";
         }
