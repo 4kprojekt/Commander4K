@@ -2042,7 +2042,7 @@ public sealed class MainWindow : Window, IShell
             }
             else
             {
-                await ProvideFromPanelAsync(source);
+                await GuardPanelTransferAsync(() => ProvideFromPanelAsync(_active, Other, source));
             }
 
             return;
@@ -2054,7 +2054,7 @@ public sealed class MainWindow : Window, IShell
                 Notify(MoveNotSupported);
                 return;
             case PluginPanelView panel:
-                await SendToPanelAsync(panel);
+                await GuardPanelTransferAsync(() => SendToPanelAsync(_active, Other, panel));
                 return;
             case BrowserPanelView browser:
                 Notify(DoesNotReceive(browser.Title));
@@ -2080,7 +2080,9 @@ public sealed class MainWindow : Window, IShell
     }
 
     /// <summary>F5 onto a plugin panel: ask it for receivers, keep the ones that fit, let the user pick, run the job.</summary>
-    private async Task SendToPanelAsync(PluginPanelView panel)
+    /// <param name="source">The file panel the files come from, captured when F5 was pressed.</param>
+    /// <param name="target">The panel showing <paramref name="panel"/>.</param>
+    private async Task SendToPanelAsync(FilePanelView source, FilePanelView target, PluginPanelView panel)
     {
         var session = panel.Session;
         if (!session.CanReceive)
@@ -2089,15 +2091,18 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
-        var sources = _active.ActiveTab.MarkedOrCurrent();
+        var sources = source.ActiveTab.MarkedOrCurrent();
         var items = sources.Select(ToTransferItem).ToList();
         if (items.Count == 0)
         {
             return; // TransferMatching.WhyNone would give a misleading reason for nothing.
         }
 
+        // The panel can be closed (session disposed) or the source can switch to a mode while we wait.
+        bool StillThere() => target.Mode == panel && source.Mode is null;
+
         var offered = await AskPanelAsync(panel.Title, ct => session.GetReceiversAsync(items, ct));
-        if (offered is null)
+        if (offered is null || !Unchanged(StillThere()))
         {
             return;
         }
@@ -2115,7 +2120,7 @@ public sealed class MainWindow : Window, IShell
             Loc.T("Wyślij {0} do:", DescribeSelection(sources)),
             [.. fitting.Select(r => (r.Id, r.Title, r.Description))],
             target: null).ShowAsync(this);
-        if (choice is null || fitting.FirstOrDefault(r => r.Id == choice.OptionId) is not { } receiver)
+        if (choice is null || fitting.FirstOrDefault(r => r.Id == choice.OptionId) is not { } receiver || !Unchanged(StillThere()))
         {
             return;
         }
@@ -2158,13 +2163,14 @@ public sealed class MainWindow : Window, IShell
                 panel.Reload(quiet: true);
             }
         });
-        _active.ActiveTab.Marked.Clear();
+        source.ActiveTab.Marked.Clear();
     }
 
     /// <summary>F5 in a plugin panel that provides files: pick a provider and a target folder, then write what it returns.</summary>
-    private async Task ProvideFromPanelAsync(PluginPanelView panel)
+    /// <param name="source">The panel showing <paramref name="panel"/>, captured when F5 was pressed.</param>
+    /// <param name="target">The panel whose folder receives the files.</param>
+    private async Task ProvideFromPanelAsync(FilePanelView source, FilePanelView target, PluginPanelView panel)
     {
-        var target = Other;
         if (target.Mode is PluginPanelView or BrowserPanelView)
         {
             Notify(DoesNotReceive(target.Mode.Title));
@@ -2177,9 +2183,12 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
+        // While we wait the target may turn into a plugin or the browser (its folder is then hidden) or the panel may close.
+        bool StillThere() => source.Mode == panel && target.Mode is not (PluginPanelView or BrowserPanelView);
+
         var session = panel.Session;
         var providers = await AskPanelAsync(panel.Title, ct => session.GetProvidersAsync(rowIds, ct));
-        if (providers is null)
+        if (providers is null || !Unchanged(StillThere()))
         {
             return;
         }
@@ -2196,7 +2205,7 @@ public sealed class MainWindow : Window, IShell
             Loc.T("Kopiuj {0} z panelu „{1}”:", Loc.P(rowIds.Count, "{0} wiersz|{0} wiersze|{0} wierszy"), panel.Title),
             [.. providers.Select(p => (p.Id, p.Title, p.Description))],
             target.ActiveTab.Path).ShowAsync(this);
-        if (choice?.Target is not { } folder || providers.FirstOrDefault(p => p.Id == choice.OptionId) is not { } provider)
+        if (choice?.Target is not { } folder || providers.FirstOrDefault(p => p.Id == choice.OptionId) is not { } provider || !Unchanged(StillThere()))
         {
             return;
         }
@@ -2238,23 +2247,66 @@ public sealed class MainWindow : Window, IShell
         });
     }
 
+    private bool _panelTransferPending;
+
+    /// <summary>One panel transfer question (and its dialog) at a time: a second F5 meanwhile would ask twice and could send the files twice.</summary>
+    private async Task GuardPanelTransferAsync(Func<Task> transfer)
+    {
+        if (_panelTransferPending)
+        {
+            Notify(Loc.T("Poczekaj — wtyczka jeszcze odpowiada."));
+            return;
+        }
+
+        _panelTransferPending = true;
+        try
+        {
+            await transfer();
+        }
+        finally
+        {
+            _panelTransferPending = false;
+        }
+    }
+
+    /// <summary>Returns <paramref name="unchanged"/>, with a message when the panels changed during a question or dialog.</summary>
+    private bool Unchanged(bool unchanged)
+    {
+        if (!unchanged)
+        {
+            Notify(Loc.T("Panele zmieniły się w międzyczasie — przerwano."));
+        }
+
+        return unchanged;
+    }
+
     /// <summary>
     /// Asks a plugin panel for its receivers or providers on the thread pool, with the 5 s limit a waiting dialog
     /// allows; failures become a message and <c>null</c>.
     /// </summary>
     private async Task<IReadOnlyList<T>?> AskPanelAsync<T>(string title, Func<CancellationToken, Task<IReadOnlyList<T>>> ask)
     {
-        using var cts = new CancellationTokenSource(PanelQuestionTimeout);
+        var asking = Loc.T("Pytam wtyczkę „{0}”…", title);
+        Notify(asking);
+        using var timeout = new CancellationTokenSource(PanelQuestionTimeout);
         try
         {
-            return await Task.Run(() => ask(cts.Token), cts.Token).WaitAsync(PanelQuestionTimeout);
+            // The executor turns a synchronous throw from the session into a faulted task (never out of a Task.Run lambda).
+            var answer = await _host!.Executor.RunAsync(ask, timeout.Token, PanelQuestionTimeout);
+            if (LastNotification == asking)
+            {
+                _notification.Text = string.Empty;
+            }
+
+            return answer;
         }
-        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        catch (Exception ex) when (ex is TimeoutException || (ex is OperationCanceledException && timeout.IsCancellationRequested))
         {
             Notify(Loc.T("Panel „{0}” nie odpowiedział w ciągu 5 s.", title), isError: true);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
+            // Includes a cancellation that comes from the plugin itself rather than from our time limit.
             Notify(Loc.T("{0}: {1}", title, ex.Message), isError: true);
         }
 

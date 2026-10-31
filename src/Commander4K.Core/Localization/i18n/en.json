@@ -1082,5 +1082,8 @@
   "{0} wiersz|{0} wiersze|{0} wierszy": "{0} row|{0} rows",
   "Nie zapisano:": "Not saved:",
   "Panel „{0}” nie odpowiedział w ciągu 5 s.": "The “{0}” panel did not answer within 5 s.",
-  "Do folderu:": "To folder:"
+  "Do folderu:": "To folder:",
+  "Poczekaj — wtyczka jeszcze odpowiada.": "Wait, the plugin is still answering.",
+  "Panele zmieniły się w międzyczasie — przerwano.": "The panels changed in the meantime; cancelled.",
+  "Pytam wtyczkę „{0}”…": "Asking the “{0}” plugin…"
 }
