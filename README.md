@@ -30,7 +30,7 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - The provider list ([`ai-providers.json`](src/Commander4K.Core/Ai/ai-providers.json)) is downloaded from this repository at start-up, so endpoints and free models can be updated without a new release. Add your own in `config/ai/providers.json`.
   - The AI knows where you are: it gets both panels' paths, the cursor, the marked files and the installed plugins. It can look into folders, and it reads a file only after you allow it.
   - **Plugins written by AI:** "Napisz wtyczkę z AI" gives the model the [plugin guide](docs/plugins.md) and installs the plugin from its answer. The plugin stays disabled until you approve its permissions.
-  - **Claude Code:** the question or plugin request is copied for you to paste there. An MCP server, so that Claude Code can read the app state and write and install plugins itself, is in progress (see [Claude Code and MCP](#claude-code-and-mcp-in-progress)).
+  - **Claude Code:** with the MCP server connected, Claude Code can read the app state and write and install plugins itself (see [Claude Code and MCP](#claude-code-and-mcp)); otherwise the question or plugin request is copied for you to paste there.
   - Keys are stored in `config/ai/credentials.json`, encrypted for the current Windows user (DPAPI). After moving a portable copy to another account or PC, sign in again.
   - The plugin manager's "Szukaj rozwiązania" sends a plugin's problem to that assistant, and plugins can open pages or searches here too.
 - **Claude Code over MCP:** Commander4K runs a local MCP server (127.0.0.1 only, with a token). Open "Połącz Claude Code" (command palette, or the MCP badge in the status bar), switch it on, add the folders the AI may use and run the `claude mcp add …` command it shows. Claude Code can then browse those folders, drive the panels, and write, check, install and try plugins. Every tool can be set to allow, ask or block. Risky calls (reading and writing files, running commands, installing or enabling a plugin) open a confirmation in the app. The app's own plugin, `config/` and `data/` folders cannot be read or written through MCP, and every call is logged. Details: [plugin guide](docs/plugins.md#writing-plugins-with-claude-code-over-mcp).
@@ -206,38 +206,44 @@ docker run -d --name c4k-ssh -p 127.0.0.1:2222:2222 -e USER_NAME=demo -e PASSWOR
 The weather card reads the free [Open-Meteo](https://open-meteo.com) API, which needs no key.
 </details>
 
-## Claude Code and MCP (in progress)
+## Claude Code and MCP
 
-Commander4K is becoming an [MCP](https://modelcontextprotocol.io) server, so Claude Code (or any MCP client) can work with the app directly: read where you are, move the panels, read and write files in every place the app can open (disks, shares, SFTP, archives, the registry), use plugins, and write, check and install new plugins in a loop until they work.
+Commander4K is an [MCP](https://modelcontextprotocol.io) server (Streamable HTTP, protocol 2025-06-18). Claude Code, or any other MCP client, connected to it can see both panels, move them, work with files in every place the app can open (disks, shares, SFTP, archives), use plugins, and write, check, install and try new plugins in a loop. It can also change settings and shortcuts, translate the interface and design skins. Each of these steps waits for your confirmation where the tool's mode says so.
 
-**Status:** the protocol (Streamable HTTP, MCP 2025-06-18), the loopback transport and the safety policy are done. The tools, the settings window and the "connect" dialog are not finished, so the server can't be switched on from the app yet.
+**Connect:** open "Połącz Claude Code" (command palette, or the MCP badge in the status bar). Switch the server on, add the folders the AI may use, then run once in a terminal the command the window shows:
 
-How it is designed to work:
+```powershell
+claude mcp add --transport http commander4k http://127.0.0.1:47800/mcp --header "Authorization: Bearer <token>"
+```
 
-- **Off by default.** It listens only on `127.0.0.1` (port `47800` by default) and every request needs a random bearer token, stored DPAPI-encrypted. Requests from web pages (a foreign `Origin`) are refused.
-- **Connecting:** a "Połącz Claude Code" command will show the line to paste:
+The window also gives the same server as a `.mcp.json` entry for a project. Use `127.0.0.1` exactly, not `localhost`. The server listens only on that address, and every request needs the token, which is stored DPAPI-encrypted. "Nowy token" cuts off old clients.
 
-  ```powershell
-  claude mcp add --transport http commander4k http://localhost:47800/mcp --header "Authorization: Bearer <token>"
-  ```
+**What the AI may do** is set per tool in the settings (`Ctrl+,`, search "mcp"):
 
-- **Allowed folders:** tools may touch only the folders you list (`allowedRoots`: any path the app understands, such as `C:\Projects` or `sftp://me@nas/srv`). Everything else is refused, whatever the tool's mode. The app's `config` folder and installed plugins can't be written over MCP.
-- **Per-tool mode:** each tool is *allow*, *ask* or *block* (`toolModes`). Reading the app context and listing folders are allowed by default; reading or writing files and running commands ask first. Moving, deleting, installing and enabling plugins always ask.
-- **Plugins:** `get_plugin_guide`, `check_plugin` and `install_plugin` give Claude the [plugin guide](docs/plugins.md), the app's own lint and the normal installer. A new plugin stays disabled until you approve its permissions.
-- **Audit:** every call is written to the log with its decision and result.
+| Tools | Default |
+|---|---|
+| `get_context`, `list_commands`, `list_plugins`, `get_plugin_guide`, `list_directory`, `stat`, `navigate`, `select`, `set_panel_mode`, `check_plugin`, `get_plugin_log`, `list_settings`, `list_key_bindings`, translation and skin guides and checks | allow |
+| `read_file`, `write_file`, `make_directory`, `run_command`, `run_plugin_command`, `load_plugin_panel`, `render_preview`, `reload_plugin`, `set_setting`, `set_key_binding`, `save_translation` | ask |
+| `move`, `delete`, `install_plugin`, `enable_plugin`, `save_skin` | always ask |
 
-The planned section of `config/settings.json`:
+- **Allowed folders:** file tools work only inside the folders you list. Any path the app understands can be one, for example `C:\Projects` or `sftp://demo@127.0.0.1:2222/config`. With an empty list, no file can be touched.
+- **Protected folders:** no tool can read or change the app's own `plugins/`, `config/` and `data/` folders, or the folder of `Commander4K.exe`, even inside an allowed folder.
+- **Confirmations:** "Tak", "Nie" or "Tak do końca sesji". A new plugin is installed disabled and runs only after you approve its permissions.
+- **Prompts:** `write_plugin`, `preview_plugin_for_file`, `explain_file_format`, `translate_ui` and `design_skin` show up in Claude Code as `/mcp__commander4k__…` commands.
+- **Audit:** every call is logged with its decision and result, and the connect window lists the last 50.
+
+The same settings in `config/settings.json`. The token is added by the app, never by hand:
 
 ```json
 "mcp": {
   "enabled": true,
   "port": 47800,
   "allowedRoots": [ "C:\\Projects", "sftp://demo@127.0.0.1:2222/config" ],
-  "toolModes": { "read_file": "allow", "write_file": "ask", "run_command": "block" }
+  "toolModes": { "read_file": "allow", "run_command": "block" }
 }
 ```
 
-Until then, "Ask AI" and "Write a plugin with AI" without a signed-in provider copy a ready prompt for Claude Code to the clipboard.
+Details, including the full plugin flow: [Writing plugins with Claude Code over MCP](docs/plugins.md#writing-plugins-with-claude-code-over-mcp).
 
 ## Install
 
@@ -303,7 +309,7 @@ Commander4K to szybki, dwupanelowy menedżer plików dla Windows 11 w stylu Nort
 - **Przeglądarka:** `Ctrl+Alt+W` otwiera stronę w panelu.
 - **Czat AI (`Ctrl+Alt+A`):** zaloguj się do kilku darmowych dostawców w „Konfiguracja → Dostawcy AI” (OpenRouter jednym kliknięciem, Groq, Cerebras, Mistral…) albo uruchom modele lokalnie w Ollamie lub LM Studio — okno pokazuje instrukcję i instaluje je przez winget. Gdy jeden wyczerpie limit, odpowiada następny. Bez logowania `Ctrl+Alt+A` otwiera asystenta w przeglądarce. AI zna stan aplikacji (ścieżki, zaznaczenie, wtyczki) i potrafi napisać wtyczkę według przewodnika, a aplikacja ją instaluje (wyłączoną do Twojej zgody). Gemini, ChatGPT i Claude otwarte w panelu przeglądarki dostają ten sam kontekst z menu „🤖 AI”.
 - **Foldery z własnym widokiem (`c4k.dir`):** pulpit z kartami (serwer SSH, API HTTP, galeria, notatki), SFTP z kluczem po `Enter`, galeria zdjęć, graf notatek. Zrzuty ekranu razem z plikami konfiguracji są w sekcji [Examples](#examples-folders-that-configure-themselves).
-- **MCP dla Claude Code (w przygotowaniu):** Claude Code będzie mógł czytać stan aplikacji, pracować na plikach w dozwolonych folderach i pisać wtyczki. Każde narzędzie ma tryb: zezwalaj, pytaj albo zablokuj ([szczegóły](#claude-code-and-mcp-in-progress)).
+- **MCP dla Claude Code:** „Połącz Claude Code” włącza lokalny serwer MCP. Claude Code czyta wtedy stan aplikacji, pracuje na plikach w dozwolonych folderach, pisze i instaluje wtyczki, zmienia ustawienia, tłumaczy interfejs i projektuje skórki. Każde narzędzie ma tryb: zezwalaj, pytaj albo zablokuj ([szczegóły](#claude-code-and-mcp)).
 - **Skórki:** są w `config/skins`. Możesz też wygenerować je z pomocą AI.
 - **Aktualizacje:** pobierane z GitHub Releases.
 
