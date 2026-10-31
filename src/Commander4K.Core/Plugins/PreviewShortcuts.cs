@@ -3,7 +3,7 @@ using Commander4K.Core.Input;
 namespace Commander4K.Core.Plugins;
 
 /// <summary>
-/// Which keys a plugin preview's buttons may take. Esc, Enter, Tab, Backspace and Alt+←/→ always belong to the app
+/// Which keys a plugin preview's buttons may take. Esc, Enter, Shift+Enter, Alt+Enter, Tab, Backspace and Alt+←/→ always belong to the app (Ctrl+Enter stays free)
 /// (close, open, focus, back), and while the user types in a field the text-editing chords belong to the field.
 /// </summary>
 public static class PreviewShortcuts
@@ -30,7 +30,8 @@ public static class PreviewShortcuts
     }
 
     public static bool IsReserved(KeyStroke stroke) =>
-        stroke.Key is "ESCAPE" or "ENTER" or "TAB" or "BACKSPACE"
+        stroke.Key is "ESCAPE" or "TAB" or "BACKSPACE"
+        || (stroke.Key == "ENTER" && stroke.Modifiers is KeyModifiers.None or KeyModifiers.Shift or KeyModifiers.Alt)
         || (stroke.Modifiers == KeyModifiers.Alt && stroke.Key is "LEFT" or "RIGHT");
 
     /// <summary>Ctrl+A/C/V/X/Z/Y, Ctrl+arrows, Ctrl+Backspace/Delete, Ctrl+Home/End (with or without Shift).</summary>

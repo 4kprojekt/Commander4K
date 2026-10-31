@@ -97,13 +97,14 @@ public sealed class PreviewShortcutTests
               {"label":"D","target":"c4k:plugin/d","shortcut":"Ctrl+Backspace"},
               {"label":"E","target":"c4k:plugin/e","shortcut":"Tab"},
               {"label":"F","target":"c4k:plugin/f","shortcut":"nonsense+"},
-              {"label":"G","target":"c4k:plugin/g","shortcut":"R"}]}
+              {"label":"G","target":"c4k:plugin/g","shortcut":"R"},
+              {"label":"H","target":"c4k:plugin/h","shortcut":"Ctrl+Enter"}]}
             """);
 
         var actions = Assert.IsType<ActionsPreview>(await ExternalPreviewPlugin.ParseRenderAsync(document.RootElement, new VfsEntry("x", "x", VfsEntryKind.File), null, TestToken)).Actions;
 
-        Assert.Equal(["A", "B", "C", "D", "E", "F", "G"], actions.Select(a => a.Label));
-        Assert.Equal([null, null, null, null, null, null, "R"], actions.Select(a => a.Shortcut));
+        Assert.Equal(["A", "B", "C", "D", "E", "F", "G", "H"], actions.Select(a => a.Label));
+        Assert.Equal([null, null, null, null, null, null, "R", "Ctrl+Enter"], actions.Select(a => a.Shortcut));
     }
 
     [Theory]
@@ -111,7 +112,6 @@ public sealed class PreviewShortcutTests
     [InlineData("Enter")]
     [InlineData("Shift+Enter")]
     [InlineData("Alt+Enter")]
-    [InlineData("Ctrl+Enter")]
     [InlineData("Tab")]
     [InlineData("Ctrl+Tab")]
     [InlineData("Back")]
@@ -124,6 +124,7 @@ public sealed class PreviewShortcutTests
     [InlineData("Delete", "DELETE")]
     [InlineData("ctrl+shift+r", "Ctrl+Shift+R")]
     [InlineData("F6", "F6")]
+    [InlineData("ctrl+enter", "Ctrl+ENTER")]
     public void Ordinary_shortcuts_are_normalised(string shortcut, string expected) => Assert.Equal(expected, PreviewShortcuts.Normalize(shortcut));
 
     [Theory]
