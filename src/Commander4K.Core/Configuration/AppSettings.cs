@@ -167,4 +167,7 @@ public sealed class AppSettings
 
     /// <summary>Palette id → dock (<c>hidden</c>, <c>bottom</c>, <c>left</c>, <c>right</c>, <c>between</c>); missing = the palette's default.</summary>
     public Dictionary<string, string> PaletteDocks { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Local MCP server for Claude Code: allowed folders, tool modes, port and token.</summary>
+    public Mcp.McpSettings Mcp { get; set => field = value ?? new(); } = new();
 }
