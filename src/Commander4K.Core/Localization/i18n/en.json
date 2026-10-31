@@ -1131,5 +1131,16 @@
   "📄 README": "📄 README",
   "🔐 Połączenie SSH": "🔐 SSH connection",
   "🖼 Galeria": "🖼 Gallery",
-  "🗒 Notatki": "🗒 Notes"
+  "🗒 Notatki": "🗒 Notes",
+  "_// Commander4K.Core/Mail": "",
+  "(bez tematu)": "(no subject)",
+  "Odebrane": "Inbox",
+  "Wysłane": "Sent",
+  "Szkice": "Drafts",
+  "Kosz": "Trash",
+  "Archiwum": "Archive",
+  "Spam": "Spam",
+  "[obraz]": "[image]",
+  "[obraz: {0}]": "[image: {0}]",
+  "{0}, {1} napisał(a):": "{0}, {1} wrote:"
 }
