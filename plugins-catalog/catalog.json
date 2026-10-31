@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-31",
+  "updated": "2026-11-01",
   "baseUrl": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/",
   "plugins": [
     {
@@ -317,6 +317,46 @@
         },
         {
           "sha256": "d08d2ac414c587f60f60f16867162fff53b27fbb4c5ac35ed595ac033160adf3",
+          "path": "plugin.json"
+        }
+      ]
+    },
+    {
+      "id": "official.pe-info",
+      "name": "Podgląd EXE i DLL",
+      "version": "1.0.0",
+      "author": "4Kprojekt",
+      "runtime": "python",
+      "description": {
+        "pl": "Nagłówki, zabezpieczenia (ASLR, DEP, CFG), sekcje, importy i eksporty plików EXE i DLL; tylko odczyt, nic nie jest uruchamiane.",
+        "en": "Headers, mitigations (ASLR, DEP, CFG), sections, imports and exports of EXE and DLL files; read-only, nothing is run."
+      },
+      "tags": [
+        "exe",
+        "dll",
+        "pe",
+        "zależności",
+        "dependencies",
+        "podpis",
+        "signature"
+      ],
+      "example": "{ \"preview\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Program\", \"open\": \"app.exe\", \"card\": true } ] } }",
+      "path": "plugins-catalog/pe-info-python",
+      "files": [
+        {
+          "sha256": "1483805fb31580f4d6099e979f06564530c90c62b2badf29d35d1b8dfa0aadd4",
+          "path": "c4k.py"
+        },
+        {
+          "sha256": "086cf5341c33c2b570f53faf83e593c3b6ed98a2df6958d397642f42e8ce8f0f",
+          "path": "main.py"
+        },
+        {
+          "sha256": "d542ff4979292bbbbc5dc820b121685fee99753fccf01646c1fdf09c5a3bf9c0",
+          "path": "pe.py"
+        },
+        {
+          "sha256": "64573df805583bcb3a0d431922aa5da98effaec444dff9944b938911936eab3f",
           "path": "plugin.json"
         }
       ]
