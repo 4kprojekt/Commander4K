@@ -812,6 +812,8 @@
   "uruchamianie programów i skryptów": "running programs and scripts",
   "dostęp do sieci (HTTP)": "network access (HTTP)",
   "odczyt informacji o systemie i sprzęcie": "reading system and hardware information",
+  "poczta (IMAP/SMTP) przez aplikację": "mail (IMAP/SMTP) through the app",
+  "praca w tle": "background work",
 
   "_// AI providers and chat": "",
   "Sztuczna inteligencja": "Artificial intelligence",

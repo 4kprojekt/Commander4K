@@ -136,7 +136,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
                 _host.Log(Str("message"));
                 return null;
             case "ui.notify":
-                _host.Notify(Str("message"), Bool("error"));
+                _host.Notify(Str("message"), Bool("error"), OptStr("target"));
                 return null;
             case "ui.showText":
                 await _host.ShowTextAsync(Str("title"), Str("text")).ConfigureAwait(false);

@@ -73,6 +73,7 @@ public sealed class MainWindow : Window, IShell
     private Grid _keyBar = null!;
     private bool _jobsDirty;
     private UpdateInfo? _pendingUpdate;
+    private string? _notificationTarget;
     private PluginHostAdapter? _pluginHost;
     private Menu _menu = null!;
     private Grid _menuBar = null!;
@@ -171,6 +172,7 @@ public sealed class MainWindow : Window, IShell
         {
             _notificationTimer.Stop();
             _notification.Text = string.Empty;
+            _notificationTarget = null;
         };
 
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
@@ -347,6 +349,12 @@ public sealed class MainWindow : Window, IShell
             if (_pendingUpdate is { } update)
             {
                 await new UpdateDialog(host, skins.Current, update).ShowAsync(this);
+            }
+            else if (_notificationTarget is { } target)
+            {
+                _notificationTarget = null;
+                _notification.Text = string.Empty;
+                await OpenTileAsync(new PreviewTile(string.Empty, Target: target), null, _active);
             }
         };
         UpdateService.CleanupPreviousVersion(Environment.ProcessPath);
@@ -1859,13 +1867,17 @@ public sealed class MainWindow : Window, IShell
         _jobsDirty = true;
     }
 
-    private void Notify(string message, bool isError = false)
+    private void Notify(string message, bool isError = false) => Notify(message, isError, null);
+
+    /// <summary>With a <paramref name="target"/> the message is clickable and goes through <see cref="OpenTileAsync"/>.</summary>
+    private void Notify(string message, bool isError, string? target)
     {
         if (_notification is null)
         {
             return;
         }
 
+        _notificationTarget = target;
         _notification.Text = message;
         _notification.Foreground = isError ? _skins!.Current.Error : _skins!.Current.StatusForeground;
         _notificationTimer.Stop();

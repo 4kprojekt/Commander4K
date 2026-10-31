@@ -24,8 +24,14 @@ public static class PluginPermissions
     /// <summary>Read OS, machine, memory and drive information (<c>system.info</c>; built-in panels read WMI directly).</summary>
     public const string SystemInfo = "system.info";
 
+    /// <summary>IMAP/SMTP mail through the host (<see cref="IMailHost"/>); the plugin never sees the credentials.</summary>
+    public const string Mail = "mail";
+
+    /// <summary>Periodic work while the app runs, without the plugin's panel being open (<c>contributes.background</c>).</summary>
+    public const string Background = "background";
+
     public static IReadOnlyList<string> All { get; } =
-        [FileRead, FileWrite, ProcessRead, ProcessControl, ShellRun, Network, SystemInfo];
+        [FileRead, FileWrite, ProcessRead, ProcessControl, ShellRun, Network, SystemInfo, Mail, Background];
 
     public static string Describe(string permission) => permission switch
     {
@@ -36,6 +42,8 @@ public static class PluginPermissions
         ShellRun => "uruchamianie programów i skryptów",
         Network => "dostęp do sieci (HTTP)",
         SystemInfo => "odczyt informacji o systemie i sprzęcie",
+        Mail => "poczta (IMAP/SMTP) przez aplikację",
+        Background => "praca w tle",
         _ => permission,
     };
 }
@@ -59,7 +67,11 @@ public sealed record PanelContribution(
 
 /// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
 /// <param name="Card">The plugin answers <c>preview.card</c>, so dashboards can show this preview as a live card.</param>
-public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, bool Card = false);
+/// <param name="Enter">Enter on a matching file opens the pinned preview; Shift+Enter keeps the shell open.</param>
+public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, bool Card = false, bool Enter = false);
+
+/// <param name="Interval">How often the host calls the plugin in the background (<c>"1m"</c>, <c>"5m"</c>…); clamped to at least one minute.</param>
+public sealed record BackgroundContribution(string Interval);
 
 public sealed record PaletteActionContribution(string Id, string Title, string? Icon = null, bool ForItem = false);
 
@@ -71,7 +83,8 @@ public sealed record PluginContributions(
     IReadOnlyList<CommandContribution>? Commands = null,
     IReadOnlyList<PanelContribution>? Panels = null,
     IReadOnlyList<PreviewContribution>? Previews = null,
-    IReadOnlyList<PaletteContribution>? Palettes = null);
+    IReadOnlyList<PaletteContribution>? Palettes = null,
+    BackgroundContribution? Background = null);
 
 /// <summary>
 /// Identity and declared capabilities of a plugin: <c>plugin.json</c> for external plugins, a property for built-in

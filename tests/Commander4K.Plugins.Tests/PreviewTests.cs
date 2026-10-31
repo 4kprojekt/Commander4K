@@ -289,7 +289,7 @@ public sealed class PreviewTests : IAsyncDisposable
 
         public Task NavigateAsync(string path, string? focusName) => Task.CompletedTask;
 
-        public void Notify(string message, bool isError)
+        public void Notify(string message, bool isError, string? target)
         {
         }
 

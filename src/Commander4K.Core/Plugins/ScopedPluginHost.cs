@@ -18,7 +18,7 @@ public interface IPluginUi
 
     Task NavigateAsync(string path, string? focusName);
 
-    void Notify(string message, bool isError);
+    void Notify(string message, bool isError, string? target);
 
     Task ShowTextAsync(string title, string text);
 
@@ -62,7 +62,7 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
         return ui.NavigateAsync(path, focusName);
     }
 
-    public void Notify(string message, bool isError = false) => ui.Notify(message, isError);
+    public void Notify(string message, bool isError = false, string? target = null) => ui.Notify(message, isError, target);
 
     public Task ShowTextAsync(string title, string text) => ui.ShowTextAsync(title, text);
 
@@ -139,6 +139,9 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
 
     public Task<IReadOnlyList<ProcessSnapshot>> ListProcessesAsync(CancellationToken cancellationToken = default) =>
         Gate(PluginPermissions.ProcessRead, "process.list", string.Empty, () => Task.Run(processes ?? (() => SystemSnapshots.Processes()), cancellationToken));
+
+    // Temporary: replaced by the MailKit-backed host.
+    public IMailHost Mail => throw new NotSupportedException();
 
     public Task<SystemSnapshot> GetSystemInfoAsync(CancellationToken cancellationToken = default) =>
         Gate(PluginPermissions.SystemInfo, "system.info", string.Empty, () => Task.Run(SystemSnapshots.System, cancellationToken));

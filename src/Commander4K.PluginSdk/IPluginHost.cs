@@ -68,8 +68,11 @@ public interface IPluginHost
     /// <summary>Opens <paramref name="path"/> in the active file panel, placing the cursor on <paramref name="focusName"/>.</summary>
     Task NavigateAsync(string path, string? focusName = null);
 
-    /// <summary>Short message in the status area.</summary>
-    void Notify(string message, bool isError = false);
+    /// <summary>
+    /// Short message in the status area. With <paramref name="target"/> the message is clickable; the target is handled
+    /// like a tile target (a path, an http(s) URL or a <c>c4k:</c> link).
+    /// </summary>
+    void Notify(string message, bool isError = false, string? target = null);
 
     /// <summary>Shows text in a read-only viewer window (reports, command output).</summary>
     Task ShowTextAsync(string title, string text);
@@ -151,4 +154,7 @@ public interface IPluginHost
 
     /// <summary>OS, machine, memory and drives. Requires <see cref="PluginPermissions.SystemInfo"/>.</summary>
     Task<SystemSnapshot> GetSystemInfoAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Mail through the app (IMAP/SMTP, parsing, composing). Every member requires <see cref="PluginPermissions.Mail"/>.</summary>
+    IMailHost Mail { get; }
 }

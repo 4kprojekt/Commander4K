@@ -25,7 +25,7 @@
     "permissions": {
       "type": "array",
       "uniqueItems": true,
-      "items": { "enum": ["fs.read", "fs.write", "process.read", "process.kill", "shell.run", "net", "system.info"] }
+      "items": { "enum": ["fs.read", "fs.write", "process.read", "process.kill", "shell.run", "net", "system.info", "mail", "background"] }
     },
     "contributes": {
       "type": "object",
@@ -85,10 +85,19 @@
               "title": { "type": "string" },
               "extensions": { "type": "array", "items": { "type": "string" }, "description": "An extension with the dot (\".csv\"), a file name (\"package.json\"), a pattern with * or ? (\"*.openapi.json\"), or \"/\" for folders." },
               "priority": { "type": "integer", "default": 10, "description": "Highest wins; built-ins: markdown 50, images 40, folders 10, text 0. Folder views meant only for c4k.dir use a negative value." },
-              "card": { "type": "boolean", "default": false, "description": "The plugin answers preview.card, so c4k.dir dashboards can show this preview as a live card." }
+              "card": { "type": "boolean", "default": false, "description": "The plugin answers preview.card, so c4k.dir dashboards can show this preview as a live card." },
+              "enter": { "type": "boolean", "default": false, "description": "Enter on a matching file opens the pinned preview; Shift+Enter keeps the shell open." }
             },
             "additionalProperties": false
           }
+        },
+        "background": {
+          "type": "object",
+          "required": ["interval"],
+          "properties": {
+            "interval": { "type": "string", "description": "How often the host calls the plugin in the background, e.g. \"5m\"; at least one minute. Needs the background permission." }
+          },
+          "additionalProperties": false
         },
         "palettes": {
           "type": "array",

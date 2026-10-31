@@ -38,6 +38,82 @@ public sealed record ChartPreview(string Title, ChartData Chart, string? Descrip
 /// <summary>Plain message (nothing to preview, access denied...).</summary>
 public sealed record MessagePreview(string Message) : PreviewContent;
 
+/// <summary>A button or link of an interactive preview.</summary>
+/// <param name="Target">Like a card action target, plus <c>c4k:plugin/&lt;action&gt;[?k=v&amp;…]</c> which calls <see cref="IInteractivePreviewPlugin.InvokeActionAsync"/>.</param>
+public sealed record PreviewAction(string Label, string Target, string? Shortcut = null);
+
+/// <summary>Another preview with a row of actions under it.</summary>
+public sealed record ActionsPreview(PreviewContent Content, IReadOnlyList<PreviewAction> Actions) : PreviewContent;
+
+public sealed record FormField(string Id, string Label, string Value, bool Multiline = false);
+
+public sealed record FormFile(string Name, string Path, long Size);
+
+/// <summary>Editable fields, attached files and buttons (composing a message…).</summary>
+public sealed record FormPreview(
+    string Title,
+    IReadOnlyList<FormField> Fields,
+    IReadOnlyList<FormFile> Files,
+    IReadOnlyList<PreviewAction> Buttons,
+    string? Message = null,
+    bool MessageIsError = false) : PreviewContent;
+
+/// <param name="FormValues">Current field values when the action comes from a <see cref="FormPreview"/>.</param>
+public sealed record PreviewActionRequest(
+    VfsEntry Entry,
+    string? OptionsJson,
+    string Action,
+    IReadOnlyDictionary<string, string> Arguments,
+    IReadOnlyDictionary<string, string>? FormValues);
+
+/// <summary>A preview that reacts to its <see cref="PreviewAction"/> buttons and form edits.</summary>
+public interface IInteractivePreviewPlugin : IPreviewPlugin
+{
+    /// <returns>New content to show, or <c>null</c> to render the entry again.</returns>
+    Task<PreviewContent?> InvokeActionAsync(PreviewActionRequest request, IPluginHost host, CancellationToken cancellationToken);
+
+    Task FormChangedAsync(VfsEntry entry, string? optionsJson, IReadOnlyDictionary<string, string> values, IPluginHost host, CancellationToken cancellationToken);
+}
+
+/// <summary>Parses <c>c4k:plugin/&lt;action&gt;?k=v&amp;…</c> targets.</summary>
+public static class PreviewActionTargets
+{
+    public const string PluginPrefix = "c4k:plugin/";
+
+    public static bool TryParse(string target, out string action, out IReadOnlyDictionary<string, string> arguments)
+    {
+        action = string.Empty;
+        arguments = new Dictionary<string, string>();
+        if (target is null || !target.StartsWith(PluginPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var rest = target[PluginPrefix.Length..];
+        var query = rest.IndexOf('?');
+        var name = query < 0 ? rest : rest[..query];
+        if (name.Length == 0)
+        {
+            return false;
+        }
+
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (query >= 0)
+        {
+            foreach (var pair in rest[(query + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var eq = pair.IndexOf('=');
+                var key = Uri.UnescapeDataString((eq < 0 ? pair : pair[..eq]).Replace('+', ' '));
+                values[key] = eq < 0 ? string.Empty : Uri.UnescapeDataString(pair[(eq + 1)..].Replace('+', ' '));
+            }
+        }
+
+        action = Uri.UnescapeDataString(name);
+        arguments = values;
+        return true;
+    }
+}
+
 /// <summary>
 /// Quick view (Ctrl+Q / F2 ▸ Podgląd) for the entry under the cursor. The host picks the highest-priority plugin whose
 /// <see cref="CanPreview"/> accepts the entry, cancels the load as soon as the cursor or folder changes, and saves edits

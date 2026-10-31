@@ -43,7 +43,7 @@ public sealed class PluginUiProxy : IPluginUi
 
     public Task NavigateAsync(string path, string? focusName) => Target?.NavigateAsync(path, focusName) ?? Task.CompletedTask;
 
-    public void Notify(string message, bool isError) => Target?.Notify(message, isError);
+    public void Notify(string message, bool isError, string? target) => Target?.Notify(message, isError, target);
 
     public Task ShowTextAsync(string title, string text) => Target?.ShowTextAsync(title, text) ?? Task.CompletedTask;
 

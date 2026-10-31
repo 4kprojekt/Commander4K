@@ -12,7 +12,7 @@ namespace Commander4K.App.PluginPanels;
 /// </summary>
 public sealed class PluginHostAdapter(
     Func<(FilePanelView Active, FilePanelView Other)> panels,
-    Action<string, bool> notify,
+    Action<string, bool, string?> notify,
     Func<string, string, Task> showText,
     Func<string, string, Task<bool>> confirm,
     Func<string, string, string, Task<string?>> prompt,
@@ -46,7 +46,7 @@ public sealed class PluginHostAdapter(
     public Task NavigateAsync(string path, string? focusName) =>
         Dispatcher.UIThread.InvokeAsync(() => FilePanel().NavigateAsync(path, focusName));
 
-    public void Notify(string message, bool isError) => Dispatcher.UIThread.Post(() => notify(message, isError));
+    public void Notify(string message, bool isError, string? target) => Dispatcher.UIThread.Post(() => notify(message, isError, target));
 
     public Task ShowTextAsync(string title, string text) => Dispatcher.UIThread.InvokeAsync(() => showText(title, text));
 
