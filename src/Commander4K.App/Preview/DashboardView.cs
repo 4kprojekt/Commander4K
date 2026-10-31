@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -30,6 +31,8 @@ public sealed class DashboardView : ScrollViewer
     private readonly Func<PreviewTile, Task> _open;
     private readonly Func<PreviewTile, double, Control> _shortcut;
     private readonly Func<FolderConfig, Task<bool>>? _askTrust;
+    private readonly Action<string, bool> _notify;
+    private readonly ConcurrentDictionary<int, CardSource> _sources = new();
     private readonly Dictionary<int, CardView> _cards = [];
     private readonly Dictionary<int, string> _targets = [];
     private readonly Dictionary<string, Bitmap?> _thumbnails = new(StringComparer.Ordinal);
@@ -41,9 +44,11 @@ public sealed class DashboardView : ScrollViewer
 
     /// <param name="shortcut">Draws a plain tile (the preview's usual tile look) at the given width.</param>
     /// <param name="askTrust">Asks the user to trust the <c>c4k.dir</c>; <c>null</c> = such cards stay locked.</param>
+    /// <param name="notify">Status-bar message (text, is error) for card actions that fail.</param>
     public DashboardView(AppHost app, DashboardPreview dashboard, SkinBrushes brushes, Func<PreviewTile, Task> open,
-        Func<PreviewTile, double, Control> shortcut, Func<FolderConfig, Task<bool>>? askTrust)
+        Func<PreviewTile, double, Control> shortcut, Func<FolderConfig, Task<bool>>? askTrust, Action<string, bool> notify)
     {
+        _notify = notify;
         _app = app;
         _dashboard = dashboard;
         _brushes = brushes;
@@ -147,11 +152,13 @@ public sealed class DashboardView : ScrollViewer
         foreach (var slot in _dashboard.Slots.Where(s => s.Tile.Card is not null))
         {
             var tile = slot.Tile;
+            var index = slot.Index;
             CardSource? source = null; // one read at a time per card (the loop guarantees it), so no lock is needed
             loop.Add(slot.Index, async (previous, ct) =>
             {
                 source ??= await resolver.ResolveAsync(config, tile, ct).ConfigureAwait(false)
                     ?? new CardSource((_, _) => Task.FromResult(new PreviewCard(null, Loc.T("Ten kafelek nie jest kartą."), "⚠", CardStatus.Error, [], [])), false, null);
+                _sources[index] = source; // the UI thread reads it for c4k:plugin/ buttons
                 if (source.Unavailable is { } why)
                 {
                     return Locked(why, unlock: false);
@@ -207,9 +214,41 @@ public sealed class DashboardView : ScrollViewer
                 }
 
                 break;
+            case var target when PreviewActionTargets.TryParse(target, out var name, out var arguments):
+                await RunPluginActionAsync(index, name, arguments);
+                break;
             default:
                 await _open(new PreviewTile(action.Label, null, null, null, action.Target));
                 break;
+        }
+    }
+
+    /// <summary>A <c>c4k:plugin/…</c> card button: the preview that drew the card runs it, then the card is read again.</summary>
+    private async Task RunPluginActionAsync(int index, string name, IReadOnlyDictionary<string, string> arguments)
+    {
+        if (!_sources.TryGetValue(index, out var source) || source.Invoke is not { } invoke)
+        {
+            _notify(Loc.T("Ta karta nie obsługuje akcji „{0}”.", name), true);
+            return;
+        }
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try
+        {
+            await Task.Run(() => invoke(name, arguments, timeout.Token), timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            _notify(Loc.T("Akcja „{0}” nie skończyła się w ciągu minuty.", name), true);
+        }
+        catch (Exception ex)
+        {
+            _notify(Loc.T("Akcja „{0}”: {1}", name, ex.Message), true);
+        }
+
+        if (!_stopped)
+        {
+            _loop?.RefreshNow(index);
         }
     }
 

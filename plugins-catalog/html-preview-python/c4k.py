@@ -83,6 +83,11 @@ def navigate(path, focus=None):      call("ui.navigate", path=path, focus=focus)
 def open_url(url):                   call("ui.openUrl", url=url)                              # internal browser, http(s) only
 def search(query, engine=None):      call("ui.search", query=query, engine=engine)            # engine: None, "assistant", "google", "chatgpt"…
 def copy_text(text):                 call("ui.copyText", text=text)                           # clipboard (write only)
+def action_target(action, **args):                                                              # preview button target "c4k:plugin/<action>?k=v" -> comes back as preview.action
+    def esc(text):
+        return "".join(c if c.isascii() and (c.isalnum() or c in "-._~") else "".join(f"%{b:02X}" for b in c.encode("utf-8")) for c in str(text))
+    query = "&".join(f"{esc(k)}={esc(v)}" for k, v in args.items())
+    return "c4k:plugin/" + esc(action) + ("?" + query if query else "")
 def storage_get(key, default=None):                                                          # the plugin's own settings/data (no permission)
     value = call("storage.get", key=key)
     return default if value is None else value

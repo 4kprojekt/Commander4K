@@ -106,7 +106,25 @@ def preview(params):
         lines.append("| " + " | ".join(cell(v) for v in row) + " |")
     lines.append("")
     lines.append(f"*{len(rows) - 1} wierszy, {width} kolumn (separator `{dialect.delimiter}`)*")
-    return {"kind": "markdown", "content": "\n".join(lines), "editable": False}
+    result = {"kind": "markdown", "content": "\n".join(lines), "editable": False}
+    if params.get("pinned"):
+        # Opened with Enter: buttons above the table. c4k:plugin/… targets come back as preview.action.
+        result["actions"] = [{"label": "Echo", "target": c4k.action_target("echo", x=1), "shortcut": "E"}]
+    return result
+
+
+@c4k.handler("preview.action")
+def preview_action(params):
+    """A c4k:plugin/<action>?k=v button of the preview: new content, or None to render the file again."""
+    if params["action"] == "echo":
+        return {"kind": "markdown", "content": f"echo {params['args'].get('x', '')}"}
+    return None
+
+
+@c4k.handler("preview.formChanged")
+def form_changed(params):
+    """Form fields after the user paused typing (800 ms): keep them, e.g. as a draft."""
+    c4k.storage_set("form", params["values"])
 
 
 @c4k.handler("preview.card")

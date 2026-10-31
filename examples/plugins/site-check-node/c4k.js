@@ -91,6 +91,8 @@ module.exports = {
   openUrl: url => call('ui.openUrl', { url }),                                   // internal browser, http(s) only
   search: (query, engine = null) => call('ui.search', { query, engine }),        // engine: null, 'assistant', 'google', 'chatgpt'…
   copyText: text => call('ui.copyText', { text }),                               // clipboard (write only)
+  actionTarget: (action, args = {}) => 'c4k:plugin/' + encodeURIComponent(action) + // preview button target "c4k:plugin/<action>?k=v" -> comes back as preview.action
+    (Object.keys(args).length ? '?' + Object.entries(args).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&') : ''),
   storageGet: async (key, fallback = null) => (await call('storage.get', { key })) ?? fallback, // the plugin's own settings/data (no permission)
   storageSet: (key, value) => call('storage.set', { key, value }),              // any JSON value; null removes the key
   listDir: path => call('fs.list', { path }),                                  // fs.read -> [entry]

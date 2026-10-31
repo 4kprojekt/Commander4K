@@ -764,8 +764,9 @@ public sealed class MainWindow : Window, IShell
     }
 
     /// <param name="pinned">A folder's own view (c4k.dir "enter") shown in <paramref name="source"/> itself.</param>
-    private PreviewPanelView CreatePreview(FilePanelView source, PreviewPanelView.PinnedFolder? pinned = null) =>
-        new(_host!, source, _skins!.Current, Notify, pinned)
+    /// <param name="pinnedFile">A file opened with Enter by a preview that asks for it, shown in <paramref name="source"/> itself.</param>
+    private PreviewPanelView CreatePreview(FilePanelView source, PreviewPanelView.PinnedFolder? pinned = null, VfsEntry? pinnedFile = null) =>
+        new(_host!, source, _skins!.Current, Notify, pinned, pinnedFile)
         {
             AskAiAboutFile = AskAiAboutFileAsync,
             CreatePreviewPlugin = CreatePreviewPluginAsync,
@@ -1130,12 +1131,16 @@ public sealed class MainWindow : Window, IShell
         await tab.RefreshAsync();
     }
 
-    /// <summary>Shift+Enter: the folder's files, whatever its <c>c4k.dir</c> says.</summary>
+    /// <summary>Shift+Enter: the folder's files, whatever its <c>c4k.dir</c> says; a file opens with Windows even when a preview claims Enter.</summary>
     private void EnterFolderPlain()
     {
         if (_active.Mode is null && _active.ActiveTab.CurrentEntry is { IsContainer: true, Kind: not (VfsEntryKind.ParentLink or VfsEntryKind.Action) } entry)
         {
             _ = _active.NavigateAsync(entry.Path);
+        }
+        else if (_active.Mode is null && string.IsNullOrWhiteSpace(_commandLine.Text) && _active.ActiveTab.CurrentEntry is { IsContainer: false } file)
+        {
+            OpenFile(_active, file, plain: true);
         }
         else
         {
@@ -1329,7 +1334,7 @@ public sealed class MainWindow : Window, IShell
 
                 // A folder with its own view, opened from a folder view (a dashboard picked on a dashboard), opens in
                 // place so Back returns to the dashboard it came from.
-                if (listPanel.Mode is PreviewPanelView { IsPinned: true } pinnedView && entry is { IsContainer: true } folderEntry
+                if (listPanel.Mode is PreviewPanelView { IsPinnedFolder: true } pinnedView && entry is { IsContainer: true } folderEntry
                     && VfsPath.GetScheme(folderEntry.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
                 {
                     var config = await Task.Run(() => _host.ReadFolderConfigAsync(folderEntry.Path, CancellationToken.None));
@@ -2110,8 +2115,17 @@ public sealed class MainWindow : Window, IShell
         }
     }
 
-    private void OpenFile(FilePanelView panel, VfsEntry entry)
+    /// <param name="plain">Shift+Enter: skip a preview that claims Enter (<c>"enter": true</c>) and open the file as before.</param>
+    private void OpenFile(FilePanelView panel, VfsEntry entry, bool plain = false)
     {
+        // A preview that asks for Enter (a mail message…) shows the file pinned over the panel; Esc returns to the files.
+        if (!plain && _host!.PreviewPlugins.Where(p => p.CanPreview(entry)).OrderByDescending(p => p.Priority).FirstOrDefault() is Core.Plugins.ExternalPreviewPlugin { OpensOnEnter: true })
+        {
+            panel.ShowMode(CreatePreview(panel, pinnedFile: entry));
+            SetActive(panel);
+            return;
+        }
+
         // Enter on an archive opens it like a folder (Total Commander); Alt+F9 extracts, the shell is one F3/F4 away.
         if (ArchiveVfsPlugin.IsArchiveName(entry.Name))
         {

@@ -95,6 +95,31 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Preview_action_round_trip()
+    {
+        await using var plugin = Start("folder-stats-python");
+        var csvPath = Path.Combine(_folder, "dane.csv");
+        await File.WriteAllTextAsync(csvPath, "a;b\n1;2\n", TestToken);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var entry = new VfsEntry("dane.csv", csvPath, VfsEntryKind.File, 8);
+        var host = HostFor(plugin);
+
+        // The pinned view (Enter) gets the action bar; the cursor-following quick view does not.
+        var pinned = Assert.IsType<ActionsPreview>(await preview.LoadWithOptionsAsync(entry, host, null, pinned: true, TestToken));
+        Assert.Contains(pinned.Actions, a => a.Target == "c4k:plugin/echo?x=1");
+        Assert.IsType<MarkdownPreview>(await preview.LoadWithOptionsAsync(entry, host, null, pinned: false, TestToken));
+
+        Assert.True(PreviewActionTargets.TryParse("c4k:plugin/echo?x=1", out var action, out var arguments));
+        var result = await preview.InvokeActionAsync(new PreviewActionRequest(entry, null, action, arguments, null), host, TestToken);
+        Assert.Equal(new MarkdownPreview("echo 1", false), result);
+
+        await preview.FormChangedAsync(entry, null, new Dictionary<string, string> { ["to"] = "a@b.pl", ["body"] = "Cześć" }, host, TestToken);
+        var stored = _storage.Get("examples.folder-stats", "form");
+        Assert.Equal("a@b.pl", stored?["to"]?.GetValue<string>());
+        Assert.Equal("Cześć", stored?["body"]?.GetValue<string>());
+    }
+
+    [Fact]
     public async Task Json_preview_formats_and_outlines()
     {
         var (preview, host, entry) = await CatalogPreviewAsync("json-preview-python", "data.json", """{"name":"Kraków","tags":["a","b"],"geo":{"lat":50.06,"lon":19.94}}""");

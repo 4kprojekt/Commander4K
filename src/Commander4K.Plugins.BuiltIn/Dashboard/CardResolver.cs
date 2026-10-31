@@ -9,10 +9,14 @@ namespace Commander4K.Plugins.BuiltIn.Dashboard;
 /// <summary>Reads one card; <paramref name="previous"/> is the last card it returned, for charts and differences.</summary>
 public delegate Task<PreviewCard> CardLoader(PreviewCard? previous, CancellationToken cancellationToken);
 
+/// <summary>Runs a card's <c>c4k:plugin/&lt;action&gt;</c> button in the preview that drew the card.</summary>
+public delegate Task CardActionHandler(string action, IReadOnlyDictionary<string, string> arguments, CancellationToken cancellationToken);
+
 /// <summary>How a tile's card is read.</summary>
 /// <param name="NeedsTrust">The card may change something or sign in somewhere (POST, SSH): it waits for the user's trust in the <c>c4k.dir</c>.</param>
 /// <param name="Unavailable">Why such a card cannot run from where the <c>c4k.dir</c> lives; the loader is never called then.</param>
-public sealed record CardSource(CardLoader Load, bool NeedsTrust, string? Unavailable);
+/// <param name="Invoke">The card's <c>c4k:plugin/…</c> actions, when an <see cref="IInteractivePreviewPlugin"/> draws it for an entry.</param>
+public sealed record CardSource(CardLoader Load, bool NeedsTrust, string? Unavailable, CardActionHandler? Invoke = null);
 
 /// <summary>
 /// Decides which preview draws a dashboard tile as a card: a built-in view, the API or SSH card, a plugin, or — for
@@ -186,13 +190,26 @@ public sealed class CardResolver(
             return entry is { } found
                 ? await PreviewCard(plugin, found, tile, target).Load(previous, ct).ConfigureAwait(false)
                 : ErrorCard(Loc.T("Nie znaleziono {0}.", target));
-        }, false, null);
+        }, false, null, Actions(plugin, ct => hostFor(_folders.Manifest).GetEntryAsync(target, ct), tile));
     }
 
     private CardSource PreviewCard(IPreviewPlugin plugin, VfsEntry entry, FolderTile tile, string target) =>
         plugin is IPreviewCardPlugin cards
-            ? new CardSource((previous, ct) => cards.LoadCardAsync(new PreviewCardRequest(entry, tile.Options, previous), hostFor(plugin.Manifest), ct), false, null)
+            ? new CardSource((previous, ct) => cards.LoadCardAsync(new PreviewCardRequest(entry, tile.Options, previous), hostFor(plugin.Manifest), ct), false, null,
+                Actions(plugin, _ => Task.FromResult<VfsEntry?>(entry), tile))
             : Fixed(DefaultCard(tile, target));
+
+    /// <summary>A card button <c>c4k:plugin/…</c> goes to the preview's <c>preview.action</c> with the card's entry.</summary>
+    private CardActionHandler? Actions(IPreviewPlugin plugin, Func<CancellationToken, Task<VfsEntry?>> entry, FolderTile tile) =>
+        plugin is IInteractivePreviewPlugin interactive
+            ? async (action, arguments, ct) =>
+            {
+                if (await entry(ct).ConfigureAwait(false) is { } found)
+                {
+                    await interactive.InvokeActionAsync(new PreviewActionRequest(found, tile.Options, action, arguments, null), hostFor(plugin.Manifest), ct).ConfigureAwait(false);
+                }
+            }
+            : null;
 
     /// <summary>POST and SSH cards: only from a <c>c4k.dir</c> on a disk or share, where the user can trust the file.</summary>
     private static CardSource Guarded(FolderConfig config, bool needsTrust, CardLoader load) =>

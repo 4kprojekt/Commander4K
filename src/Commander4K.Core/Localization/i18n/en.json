@@ -1152,5 +1152,14 @@
   "Spam": "Spam",
   "[obraz]": "[image]",
   "[obraz: {0}]": "[image: {0}]",
-  "{0}, {1} napisał(a):": "{0}, {1} wrote:"
+  "{0}, {1} napisał(a):": "{0}, {1} wrote:",
+  "_// preview actions and forms": "",
+  "{0} ({1})": "{0} ({1})",
+  "{0} załącznik|{0} załączniki|{0} załączników": "{0} attachment|{0} attachments",
+  "{0}: {1}…": "{0}: {1}…",
+  "📎 {0} · {1}": "📎 {0} · {1}",
+  "Akcja „{0}” nie skończyła się w ciągu minuty.": "The action “{0}” did not finish within a minute.",
+  "Akcja „{0}”: {1}": "Action “{0}”: {1}",
+  "Ta karta nie obsługuje akcji „{0}”.": "This card does not support the action “{0}”.",
+  "Ten podgląd nie obsługuje akcji „{0}”.": "This preview does not support the action “{0}”."
 }

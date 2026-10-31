@@ -6,7 +6,9 @@ using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Commander4K.App.Composition;
+using Commander4K.App.Input;
 using Commander4K.App.Panels;
 using Commander4K.App.Theming;
 using Commander4K.Core.Folders;
@@ -65,8 +67,31 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private PinnedFolder? _pinned => _history.Trail.Count > 0 ? _history.Current : null;
 
-    public PreviewPanelView(AppHost app, FilePanelView source, SkinBrushes brushes, Action<string, bool> notify, PinnedFolder? pinned = null)
+    /// <summary>Form edits reach the plugin this long after the last keystroke (and always before a button runs).</summary>
+    private const int FormDebounceMs = 800;
+
+    /// <summary>A file opened with Enter (its preview has <c>"enter": true</c>): shown pinned, Esc returns to the files.</summary>
+    private readonly VfsEntry? _pinnedFile;
+    private readonly CancellationTokenSource _lifetime = new();
+
+    /// <summary>The <c>c4k.dir</c> options the current plugin was loaded with; passed to its actions too.</summary>
+    private string? _options;
+
+    /// <summary>Buttons of the content on screen, for their shortcuts.</summary>
+    private readonly List<PreviewAction> _shortcuts = [];
+    private bool _acting;
+
+    /// <summary>The form on screen, its current values and who hears about edits (fixed when the form appears).</summary>
+    private FormPreview? _form;
+    private Dictionary<string, string>? _formValues;
+    private (VfsEntry Entry, IInteractivePreviewPlugin Plugin, string? Options)? _formOwner;
+    private DispatcherTimer? _formTimer;
+    private bool _formPending;
+
+    /// <param name="pinnedFile">A file opened with Enter, shown in <paramref name="source"/> itself instead of following the cursor.</param>
+    public PreviewPanelView(AppHost app, FilePanelView source, SkinBrushes brushes, Action<string, bool> notify, PinnedFolder? pinned = null, VfsEntry? pinnedFile = null)
     {
+        _pinnedFile = pinned is null ? pinnedFile : null;
         if (pinned is not null)
         {
             _history.Push(pinned);
@@ -89,7 +114,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             _trail.Col(1).IsVisible(pinned is not null),
             _editButton.Col(2),
             _saveButton.Col(3),
-            new Button().Col(4).Content(pinned is null ? Loc.T("Zamknij (Esc)") : Loc.T("📄 Pliki (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
+            new Button().Col(4).Content(pinned is null && _pinnedFile is null ? Loc.T("Zamknij (Esc)") : Loc.T("📄 Pliki (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
         _status = new TextBlock().Margin(8, 2).TextTrimming(TextTrimming.CharacterEllipsis);
 
         RowDefinitions = new RowDefinitions("Auto,*,Auto");
@@ -103,6 +128,12 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             RefreshTrail();
             _ = LoadAsync(pinned.Folder);
+            return;
+        }
+
+        if (_pinnedFile is { } file)
+        {
+            _ = LoadAsync(file);
             return;
         }
 
@@ -127,12 +158,15 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     /// <summary>Asks the user to trust a <c>c4k.dir</c> whose cards sign in or change something (POST, SSH); locked when null.</summary>
     public Func<FolderConfig, Task<bool>>? AskFolderTrust { get; init; }
 
-    public string Title => _pinned is { } pinned ? pinned.Config.Title ?? pinned.Folder.Name : Loc.T("Podgląd");
+    public string Title => _pinned is { } pinned ? pinned.Config.Title ?? pinned.Folder.Name : _pinnedFile?.Name ?? Loc.T("Podgląd");
 
     public Control View => this;
 
-    /// <summary>Shows a folder's own view (entered through its <c>c4k.dir</c>) rather than following the cursor.</summary>
-    public bool IsPinned => _pinned is not null;
+    /// <summary>Shows a folder's own view (entered through its <c>c4k.dir</c>) or a file opened with Enter, rather than following the cursor.</summary>
+    public bool IsPinned => _pinned is not null || _pinnedFile is not null;
+
+    /// <summary>A folder's own view, where another folder's view can open in place (<see cref="OpenPinnedAsync"/>).</summary>
+    public bool IsPinnedFolder => _pinned is not null;
 
     public bool IsActivePanel
     {
@@ -235,14 +269,27 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             return true;
         }
 
-        var back = (e.Key == Key.Left && e.KeyModifiers == KeyModifiers.Alt) || (e.Key == Key.Back && e.KeyModifiers == KeyModifiers.None && _editor is not { IsFocused: true });
+        // The window passes keys here only while this panel is active; inside a text field only Ctrl/Alt combos,
+        // F-keys and Esc arrive, so a plain-letter shortcut never fires while the user types.
+        if (_shortcuts.Count > 0 && KeyMapping.ToStroke(e) is { } stroke)
+        {
+            var pressed = stroke.ToString();
+            if (_shortcuts.FirstOrDefault(a => a.Shortcut is { } shortcut && NormalizedShortcut(shortcut) == pressed) is { } action)
+            {
+                _ = RunActionAsync(action);
+                return true;
+            }
+        }
+
+        var typing = FocusedTextBox() is { IsReadOnly: false };
+        var back = (e.Key == Key.Left && e.KeyModifiers == KeyModifiers.Alt) || (e.Key == Key.Back && e.KeyModifiers == KeyModifiers.None && !typing);
         if (back && !_dirty && _history.CanGoBack)
         {
             _ = BackAsync();
             return true;
         }
 
-        if (e.Key == Key.Escape || (e.Key == Key.Back && _editor is not { IsFocused: true }))
+        if (e.Key == Key.Escape || (e.Key == Key.Back && !typing))
         {
             if (_dirty && !_escapeArmed)
             {
@@ -272,7 +319,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _loading?.Cancel();
         _debounce?.Cancel();
         StopDashboard();
-        if (_pinned is not null)
+        _ = FlushFormAsync(); // the last edit still reaches the plugin (its own time limit, not the view's)
+        _lifetime.Cancel();
+        if (IsPinned)
         {
             return ValueTask.CompletedTask;
         }
@@ -286,7 +335,29 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         return ValueTask.CompletedTask;
     }
 
-    private bool CanEdit => _shown is MarkdownPreview { CanEdit: true } or TextPreview { CanEdit: true };
+    private bool CanEdit => Inner(_shown) is MarkdownPreview { CanEdit: true } or TextPreview { CanEdit: true };
+
+    /// <summary>The content under any action bars.</summary>
+    private static PreviewContent? Inner(PreviewContent? content) => content is ActionsPreview actions ? Inner(actions.Content) : content;
+
+    /// <summary>Changes the content under the action bars and keeps the bars.</summary>
+    private static PreviewContent MapInner(PreviewContent content, Func<PreviewContent, PreviewContent> change) =>
+        content is ActionsPreview actions ? actions with { Content = MapInner(actions.Content, change) } : change(content);
+
+    private TextBox? FocusedTextBox() =>
+        TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox box && this.IsVisualAncestorOf(box) ? box : null;
+
+    private static string? NormalizedShortcut(string shortcut)
+    {
+        try
+        {
+            return Commander4K.Core.Input.KeyStroke.Parse(shortcut).ToString();
+        }
+        catch (Exception ex) when (ex is FormatException or ArgumentException)
+        {
+            return null;
+        }
+    }
 
     private void Rebind()
     {
@@ -360,6 +431,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     {
         _loading?.Cancel();
         StopDashboard();
+        _ = FlushFormAsync(); // a draft typed into the previous form is not lost by moving on
+        _form = null;
+        _options = null;
         _editing = false;
         if (_entry?.Path != entry?.Path)
         {
@@ -445,24 +519,20 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         });
         try
         {
-            var result = await Task.Run(() => folderView is not null ? folderView(host, progress, cts.Token) : plugin.LoadAsync(target, host, progress, cts.Token), cts.Token);
-
-            // Files on read-only locations (inside archives, net://) cannot be saved back, so they are view-only.
-            if (!_app.Router.TryResolve(target.Path, out var provider) || (provider.Capabilities & VfsCapabilities.Write) == 0)
-            {
-                result = result switch
-                {
-                    MarkdownPreview markdown => markdown with { CanEdit = false },
-                    TextPreview text => text with { CanEdit = false },
-                    _ => result,
-                };
-            }
+            // External previews hear whether this view stays on the entry (Enter) or follows the cursor (Ctrl+Q).
+            var pinned = IsPinned;
+            var result = await Task.Run(() => folderView is not null
+                ? folderView(host, progress, cts.Token)
+                : plugin is ExternalPreviewPlugin external
+                    ? external.LoadWithOptionsAsync(target, host, null, pinned, cts.Token)
+                    : plugin.LoadAsync(target, host, progress, cts.Token), cts.Token);
+            result = ViewOnlyWhereReadOnly(target, result);
 
             if (_loading == cts)
             {
                 _pendingRender = null;
                 // "Edit right away" applies once per loaded file; F4 still switches back to the formatted view.
-                _editing = result is MarkdownPreview { CanEdit: true } && _app.Settings.MarkdownEditByDefault;
+                _editing = Inner(result) is MarkdownPreview { CanEdit: true } && _app.Settings.MarkdownEditByDefault;
                 Show(result);
             }
         }
@@ -477,6 +547,17 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             }
         }
     }
+
+    /// <summary>Files on read-only locations (inside archives, net://) cannot be saved back, so they are view-only.</summary>
+    private PreviewContent ViewOnlyWhereReadOnly(VfsEntry target, PreviewContent result) =>
+        _app.Router.TryResolve(target.Path, out var provider) && (provider.Capabilities & VfsCapabilities.Write) != 0
+            ? result
+            : MapInner(result, inner => inner switch
+            {
+                MarkdownPreview markdown => markdown with { CanEdit = false },
+                TextPreview text => text with { CanEdit = false },
+                _ => inner,
+            });
 
     /// <summary>
     /// What renders a <c>c4k.dir</c> action: a plugin's preview (with the file's options) or a built-in view. A plugin
@@ -517,7 +598,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             .FirstOrDefault();
         if (external is not null)
         {
-            return (external, (host, _, ct) => external.LoadWithOptionsAsync(folder, host, action.Options, ct));
+            _options = action.Options;
+            var pinned = section == "enter";
+            return (external, (host, _, ct) => external.LoadWithOptionsAsync(folder, host, action.Options, pinned, ct));
         }
 
         var installed = _app.DiscoveredPlugins.FirstOrDefault(p => string.Equals(p.Manifest?.Id, pluginId, StringComparison.OrdinalIgnoreCase));
@@ -548,26 +631,18 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _shown = content;
         _editor = null;
         _livePreview = null;
-        var editable = content is MarkdownPreview { CanEdit: true } or TextPreview { CanEdit: true };
+        _shortcuts.Clear();
+        var editable = CanEdit;
         _editButton.IsVisible = editable;
         _editButton.Content = _editing ? Loc.T("Podgląd (F4)") : Loc.T("Edytuj (F4)");
         _saveButton.IsVisible = _editing;
         SetStatus(_plugin is null ? string.Empty : $"{_plugin.DisplayName} · {_entry?.Path}");
-
-        Control? view = content switch
+        if (Inner(content) is not FormPreview)
         {
-            MarkdownPreview markdown when _editing => MarkdownEditor(markdown.Markdown),
-            MarkdownPreview markdown => Scroll(MarkdownRenderer.Render(markdown.Markdown, _brushes)),
-            TextPreview text => TextView(text),
-            ImagePreview image => ImageView(image),
-            HexPreview hex => Monospace(TextHexViewerPlugin.FormatHex(hex.Data.Span), Loc.T("Hex · pokazano {0:N0} z {1:N0} B", hex.Data.Length, hex.TotalLength)),
-            FolderPreview folder => FolderView(folder),
-            TilesPreview tiles => TilesView(tiles),
-            Plugins.BuiltIn.Dashboard.DashboardPreview dashboard => DashboardView(dashboard),
-            ChartPreview chart => ChartView(chart),
-            MessagePreview message => new TextBlock { Text = message.Message, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap },
-            _ => null,
-        };
+            _form = null;
+        }
+
+        var view = Render(content);
 
         // A file nothing recognises (binary shown as hex, or no preview at all): offer to find out what it is and to
         // have a preview plugin written for its type.
@@ -583,6 +658,280 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
 
         _content.Content = view;
+    }
+
+    private Control? Render(PreviewContent content) => content switch
+    {
+        ActionsPreview actions => ActionsView(actions),
+        FormPreview form => FormView(form),
+        MarkdownPreview markdown when _editing => MarkdownEditor(markdown.Markdown),
+        MarkdownPreview markdown => Scroll(MarkdownRenderer.Render(markdown.Markdown, _brushes)),
+        TextPreview text => TextView(text),
+        ImagePreview image => ImageView(image),
+        HexPreview hex => Monospace(TextHexViewerPlugin.FormatHex(hex.Data.Span), Loc.T("Hex · pokazano {0:N0} z {1:N0} B", hex.Data.Length, hex.TotalLength)),
+        FolderPreview folder => FolderView(folder),
+        TilesPreview tiles => TilesView(tiles),
+        Plugins.BuiltIn.Dashboard.DashboardPreview dashboard => DashboardView(dashboard),
+        ChartPreview chart => ChartView(chart),
+        MessagePreview message => new TextBlock { Text = message.Message, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap },
+        _ => null,
+    };
+
+    /// <summary>A bar of the plugin's buttons above its content (Reply, Delete…); shortcuts work while this panel is active.</summary>
+    private Control ActionsView(ActionsPreview actions)
+    {
+        var bar = new WrapPanel();
+        foreach (var action in actions.Actions)
+        {
+            bar.Children.Add(ActionButton(action, primary: false));
+        }
+
+        var dock = new DockPanel();
+        var border = new Border
+        {
+            Background = _brushes.Surface2,
+            BorderBrush = _brushes.PanelBorder,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(8, 6, 0, 6),
+            Child = bar,
+        };
+        DockPanel.SetDock(border, Dock.Top);
+        dock.Children.Add(border);
+        if (Render(actions.Content) is { } inner)
+        {
+            dock.Children.Add(inner);
+        }
+
+        return dock;
+    }
+
+    /// <summary>A plugin button: <c>c4k:plugin/…</c> goes back to the plugin, anything else opens like a tile.</summary>
+    private Button ActionButton(PreviewAction action, bool primary)
+    {
+        _shortcuts.Add(action);
+        var button = BannerButton(action.Shortcut is { Length: > 0 } key ? Loc.T("{0} ({1})", action.Label, key) : action.Label, () => RunActionAsync(action), primary);
+        button.Margin = new Thickness(0, 2, 8, 2);
+        ToolTip.SetTip(button, action.Target);
+        return button;
+    }
+
+    /// <summary>Fields, attached files and buttons of a plugin form (composing a message…); edits reach the plugin after a pause.</summary>
+    private Control FormView(FormPreview form)
+    {
+        // The same form shown again (a skin change) keeps what the user typed; a new one starts from its values.
+        if (!ReferenceEquals(_form, form))
+        {
+            _form = form;
+            _formValues = form.Fields.GroupBy(f => f.Id, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().Value, StringComparer.Ordinal);
+            _formOwner = _plugin is IInteractivePreviewPlugin interactive && _entry is { } entry ? (entry, interactive, _options) : null;
+            _formPending = false;
+            _formTimer?.Stop();
+        }
+
+        var stack = new StackPanel { Margin = new Thickness(12, 8), Spacing = 8 };
+        if (form.Title.Length > 0)
+        {
+            stack.Children.Add(new TextBlock { Text = form.Title, FontSize = _brushes.FontSize + 4, FontWeight = FontWeight.Bold, Foreground = _brushes.DirectoryForeground, TextWrapping = TextWrapping.Wrap });
+        }
+
+        if (form.Message is { Length: > 0 } message)
+        {
+            stack.Children.Add(new Border
+            {
+                Background = form.MessageIsError ? _brushes.ErrorBackground : _brushes.HighlightBackground,
+                BorderBrush = form.MessageIsError ? _brushes.Error : _brushes.PanelBorder,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(_brushes.ControlRadius),
+                Padding = new Thickness(10, 6),
+                Child = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Foreground = form.MessageIsError ? _brushes.Error : _brushes.FileForeground },
+            });
+        }
+
+        var fields = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+        TextBox? first = null;
+        foreach (var field in form.Fields)
+        {
+            var row = fields.RowDefinitions.Count;
+            fields.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            var label = new TextBlock
+            {
+                Text = field.Label,
+                Foreground = _brushes.MutedForeground,
+                VerticalAlignment = field.Multiline ? VerticalAlignment.Top : VerticalAlignment.Center,
+                Margin = new Thickness(0, field.Multiline ? 6 : 0, 12, 6),
+            };
+            Grid.SetRow(label, row);
+            fields.Children.Add(label);
+
+            var id = field.Id;
+            var box = new TextBox
+            {
+                Text = _formValues?.GetValueOrDefault(id) ?? field.Value,
+                AcceptsReturn = field.Multiline,
+                TextWrapping = field.Multiline ? TextWrapping.Wrap : TextWrapping.NoWrap,
+                MinHeight = field.Multiline ? 180 : 0,
+                Margin = new Thickness(0, 0, 0, 6),
+            };
+            box.TextChanged += (_, _) => FormEdited(id, box.Text ?? string.Empty);
+            Grid.SetRow(box, row);
+            Grid.SetColumn(box, 1);
+            fields.Children.Add(box);
+            first ??= box;
+        }
+
+        stack.Children.Add(fields);
+        if (form.Files.Count > 0)
+        {
+            var files = new StackPanel { Spacing = 2 };
+            files.Children.Add(new TextBlock { Text = Loc.P(form.Files.Count, "{0} załącznik|{0} załączniki|{0} załączników"), Foreground = _brushes.MutedForeground });
+            foreach (var file in form.Files)
+            {
+                var line = new TextBlock
+                {
+                    Text = Loc.T("📎 {0} · {1}", file.Name, FileViewportCanvas.FormatSize(file.Size)),
+                    Foreground = _brushes.FileForeground,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                };
+                ToolTip.SetTip(line, file.Path);
+                files.Children.Add(line);
+            }
+
+            stack.Children.Add(files);
+        }
+
+        if (form.Buttons.Count > 0)
+        {
+            var buttons = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+            for (var i = 0; i < form.Buttons.Count; i++)
+            {
+                buttons.Children.Add(ActionButton(form.Buttons[i], primary: i == 0));
+            }
+
+            stack.Children.Add(buttons);
+        }
+
+        // Opened with Enter, the form is what the user came for: the first field takes the keyboard.
+        if (IsPinned && first is not null)
+        {
+            Dispatcher.UIThread.Post(() => first.Focus(), DispatcherPriority.Loaded);
+        }
+
+        return Scroll(stack);
+    }
+
+    private void FormEdited(string id, string text)
+    {
+        // TextChanged also fires when the text is first assigned: only real changes count.
+        if (_formValues is null || (_formValues.TryGetValue(id, out var old) && old == text))
+        {
+            return;
+        }
+
+        _formValues[id] = text;
+        _formPending = true;
+        if (_formTimer is null)
+        {
+            _formTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(FormDebounceMs) };
+            _formTimer.Tick += (_, _) => _ = FlushFormAsync();
+        }
+
+        _formTimer.Stop();
+        _formTimer.Start();
+    }
+
+    /// <summary>Sends the form's values to the plugin now if an edit is still waiting for the pause.</summary>
+    private async Task FlushFormAsync()
+    {
+        _formTimer?.Stop();
+        if (!_formPending || _formOwner is not { } owner || _formValues is null)
+        {
+            _formPending = false;
+            return;
+        }
+
+        _formPending = false;
+        var values = new Dictionary<string, string>(_formValues, StringComparer.Ordinal);
+        var host = _app.HostFor(owner.Plugin.Manifest);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            await Task.Run(() => owner.Plugin.FormChangedAsync(owner.Entry, owner.Options, values, host, timeout.Token), timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _notify(Loc.T("{0}: {1}", owner.Plugin.DisplayName, ex.Message), true);
+        }
+    }
+
+    /// <summary>
+    /// A button or its shortcut. <c>c4k:plugin/…</c> runs in the plugin (after the last form edit reached it) and shows what
+    /// it returns, or renders the entry again; other targets open like a tile. One action at a time.
+    /// </summary>
+    private async Task RunActionAsync(PreviewAction action)
+    {
+        if (!PreviewActionTargets.TryParse(action.Target, out var name, out var arguments))
+        {
+            if (OpenTile is { } open)
+            {
+                await open(new PreviewTile(action.Label, Target: action.Target), _entry);
+            }
+
+            return;
+        }
+
+        if (_plugin is not IInteractivePreviewPlugin interactive || _entry is not { } entry)
+        {
+            _notify(Loc.T("Ten podgląd nie obsługuje akcji „{0}”.", name), true);
+            return;
+        }
+
+        if (_acting)
+        {
+            return;
+        }
+
+        _acting = true;
+        var status = _status.Text;
+        SetStatus(Loc.T("{0}: {1}…", interactive.DisplayName, action.Label), busy: true);
+        try
+        {
+            await FlushFormAsync();
+            var values = Inner(_shown) is FormPreview && _formValues is { } current ? new Dictionary<string, string>(current, StringComparer.Ordinal) : null;
+            var request = new PreviewActionRequest(entry, _options, name, arguments, values);
+            var host = _app.HostFor(interactive.Manifest);
+            var token = _lifetime.Token;
+            var result = await Task.Run(() => interactive.InvokeActionAsync(request, host, token), token);
+            if (_entry?.Path != entry.Path || _lifetime.IsCancellationRequested)
+            {
+                return; // the view moved on meanwhile
+            }
+
+            if (result is null)
+            {
+                await LoadAsync(entry);
+            }
+            else
+            {
+                _loading?.Cancel(); // a reload still running must not replace what the action returned
+                _editing = false;
+                Show(ViewOnlyWhereReadOnly(entry, result));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            SetStatus(status);
+            _notify(Loc.T("{0}: {1}", interactive.DisplayName, ex.Message), true);
+        }
+        finally
+        {
+            _acting = false;
+        }
     }
 
     private Border UnknownFileBanner(VfsEntry file)
@@ -647,12 +996,12 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         if (_editing && _editor is { } editor)
         {
             // Keep the edited text when going back to the formatted view.
-            _shown = _shown switch
+            _shown = MapInner(_shown!, inner => inner switch
             {
                 MarkdownPreview m => m with { Markdown = editor.Text ?? string.Empty },
                 TextPreview t => t with { Text = editor.Text ?? string.Empty },
                 var other => other,
-            };
+            });
         }
 
         _editing = !_editing;
@@ -956,7 +1305,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _dashboard = new DashboardView(_app, dashboard, _brushes,
             tile => OpenTile is { } open ? open(tile, folder) : Task.CompletedTask,
             TileButton,
-            AskFolderTrust);
+            AskFolderTrust,
+            _notify);
         SetStatus(Loc.P(dashboard.Slots.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty));
         return _dashboard;
     }

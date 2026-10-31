@@ -134,7 +134,7 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
 }
 
 /// <summary>One <c>contributes.previews</c> entry: quick view rendered by the plugin (<c>preview.render</c>).</summary>
-public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewCardPlugin
+public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewCardPlugin, IInteractivePreviewPlugin
 {
     private const int MaxCardImages = 4;
 
@@ -145,6 +145,9 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
     public PluginManifest Manifest => plugin.Manifest;
 
     public int Priority => preview.Priority;
+
+    /// <summary><c>"enter": true</c>: Enter on a matching file opens this preview pinned over the panel.</summary>
+    public bool OpensOnEnter => preview.Enter;
 
     public bool CanPreview(VfsEntry entry) =>
         entry.IsContainer
@@ -161,40 +164,128 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
             : pattern != "/" && System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(pattern, name, ignoreCase: true);
 
     public Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken) =>
-        LoadWithOptionsAsync(entry, host, null, cancellationToken);
+        LoadWithOptionsAsync(entry, host, null, pinned: false, cancellationToken);
 
     private const int MaxTileImageBytes = 4 * 1024 * 1024;
     private const int MaxTiles = 1000;
+    private const int MaxActions = 20;
+    private const int MaxFormFields = 50;
+    private const int MaxFormFiles = 200;
 
     /// <param name="options">JSON object from the folder's <c>c4k.dir</c>, passed as <c>options</c>.</param>
-    /// <remarks>
-    /// Result: <c>{ "kind": "markdown" | "text", "content": "...", "editable": false }</c> or
-    /// <c>{ "kind": "tiles", "title", "description"?, "tileWidth"?, "tiles": [{ "title", "subtitle"?, "icon"?, "image"?, "target"? }] }</c>;
-    /// a tile's <c>image</c> is a path the host reads with the plugin's own fs.read permission.
-    /// </remarks>
-    public async Task<PreviewContent> LoadWithOptionsAsync(VfsEntry entry, IPluginHost host, string? options, CancellationToken cancellationToken)
+    public Task<PreviewContent> LoadWithOptionsAsync(VfsEntry entry, IPluginHost host, string? options, CancellationToken cancellationToken) =>
+        LoadWithOptionsAsync(entry, host, options, pinned: false, cancellationToken);
+
+    /// <param name="options">JSON object from the folder's <c>c4k.dir</c>, passed as <c>options</c>.</param>
+    /// <param name="pinned"><c>true</c> for a view opened with Enter (it stays on this entry), <c>false</c> for the quick view that follows the cursor.</param>
+    public async Task<PreviewContent> LoadWithOptionsAsync(VfsEntry entry, IPluginHost host, string? options, bool pinned, CancellationToken cancellationToken)
     {
         using var optionsDocument = options is null ? null : JsonDocument.Parse(options);
         var result = await plugin.CallAsync("preview.render",
-            new { preview = preview.Id, entry = ExternalPlugin.EntryDto(entry), context = ExternalPlugin.Context(host), options = optionsDocument?.RootElement },
+            new { preview = preview.Id, entry = ExternalPlugin.EntryDto(entry), context = ExternalPlugin.Context(host), options = optionsDocument?.RootElement, pinned },
             cancellationToken).ConfigureAwait(false);
-        var kind = result.TryGetProperty("kind", out var k) ? k.GetString() : "text";
+        return await ParseRenderAsync(result, entry, host, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary><c>preview.action</c>: a <c>c4k:plugin/…</c> button; the plugin returns <c>null</c> (render again) or a render result.</summary>
+    public async Task<PreviewContent?> InvokeActionAsync(PreviewActionRequest request, IPluginHost host, CancellationToken cancellationToken)
+    {
+        using var optionsDocument = request.OptionsJson is null ? null : JsonDocument.Parse(request.OptionsJson);
+        var result = await plugin.CallAsync("preview.action", new
+        {
+            preview = preview.Id,
+            entry = ExternalPlugin.EntryDto(request.Entry),
+            options = optionsDocument?.RootElement,
+            action = request.Action,
+            args = request.Arguments,
+            values = request.FormValues,
+        }, cancellationToken).ConfigureAwait(false);
+        return result.ValueKind == JsonValueKind.Object
+            ? await ParseRenderAsync(result, request.Entry, host, cancellationToken).ConfigureAwait(false)
+            : null;
+    }
+
+    /// <summary><c>preview.formChanged</c>: the form's current values after the user paused typing.</summary>
+    public async Task FormChangedAsync(VfsEntry entry, string? optionsJson, IReadOnlyDictionary<string, string> values, IPluginHost host, CancellationToken cancellationToken)
+    {
+        using var optionsDocument = optionsJson is null ? null : JsonDocument.Parse(optionsJson);
+        await plugin.CallAsync("preview.formChanged",
+            new { preview = preview.Id, entry = ExternalPlugin.EntryDto(entry), options = optionsDocument?.RootElement, values },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A <c>preview.render</c> (or <c>preview.action</c>) result:
+    /// <c>{ "kind": "markdown" | "text", "content": "...", "editable": false }</c>,
+    /// <c>{ "kind": "tiles", "title", "description"?, "tileWidth"?, "tiles": [{ "title", "subtitle"?, "icon"?, "image"?, "target"? }] }</c>,
+    /// <c>{ "kind": "chart", … }</c> or
+    /// <c>{ "kind": "form", "title", "fields": [{ id, label, value, multiline? }], "files": [{ name, path, size }], "buttons": [{ label, target, shortcut? }], "message"?, "messageError"? }</c>.
+    /// Any kind may add <c>"actions": [{ label, target, shortcut? }]</c>, shown as a bar above it. Unknown kinds are text.
+    /// A tile's <c>image</c> is a path the host reads with the plugin's own fs.read permission (skipped without a host).
+    /// </summary>
+    public static async Task<PreviewContent> ParseRenderAsync(JsonElement result, VfsEntry entry, IPluginHost? host, CancellationToken cancellationToken)
+    {
+        if (result.ValueKind != JsonValueKind.Object)
+        {
+            return new TextPreview(string.Empty, false);
+        }
+
+        var kind = CardString(result, "kind") ?? "text";
+        PreviewContent content;
         if (string.Equals(kind, "tiles", StringComparison.OrdinalIgnoreCase))
         {
-            return await ParseTilesAsync(result, host, cancellationToken).ConfigureAwait(false);
+            content = await ParseTilesAsync(result, host, cancellationToken).ConfigureAwait(false);
         }
-
-        if (string.Equals(kind, "chart", StringComparison.OrdinalIgnoreCase) && result.TryGetProperty("chart", out var chart))
+        else if (string.Equals(kind, "chart", StringComparison.OrdinalIgnoreCase) && result.TryGetProperty("chart", out var chart))
         {
-            return new ChartPreview(CardString(result, "title") ?? entry.Name, ParseChart(chart), CardString(result, "description"));
+            content = new ChartPreview(CardString(result, "title") ?? entry.Name, ParseChart(chart), CardString(result, "description"));
+        }
+        else if (string.Equals(kind, "form", StringComparison.OrdinalIgnoreCase))
+        {
+            content = ParseForm(result, entry);
+        }
+        else
+        {
+            var text = result.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() ?? string.Empty : string.Empty;
+            var editable = result.TryGetProperty("editable", out var e) && e.ValueKind == JsonValueKind.True;
+            content = string.Equals(kind, "markdown", StringComparison.OrdinalIgnoreCase)
+                ? new MarkdownPreview(text, editable)
+                : new TextPreview(text, editable);
         }
 
-        var content = result.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty;
-        var editable = result.TryGetProperty("editable", out var e) && e.ValueKind == JsonValueKind.True;
-        return string.Equals(kind, "markdown", StringComparison.OrdinalIgnoreCase)
-            ? new MarkdownPreview(content, editable)
-            : new TextPreview(content, editable);
+        var actions = ParseActions(result, "actions");
+        return actions.Count > 0 ? new ActionsPreview(content, actions) : content;
     }
+
+    private static FormPreview ParseForm(JsonElement result, VfsEntry entry)
+    {
+        var fields = result.TryGetProperty("fields", out var list) && list.ValueKind == JsonValueKind.Array
+            ? [.. list.EnumerateArray()
+                .Where(f => CardString(f, "id") is not null)
+                .Take(MaxFormFields)
+                .Select(f => new FormField(CardString(f, "id")!, CardString(f, "label") ?? string.Empty,
+                    f.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? string.Empty : string.Empty,
+                    f.TryGetProperty("multiline", out var m) && m.ValueKind == JsonValueKind.True))]
+            : new List<FormField>();
+        var files = result.TryGetProperty("files", out var attached) && attached.ValueKind == JsonValueKind.Array
+            ? [.. attached.EnumerateArray()
+                .Where(f => CardString(f, "path") is not null)
+                .Take(MaxFormFiles)
+                .Select(f => new FormFile(CardString(f, "name") ?? Path.GetFileName(CardString(f, "path")!), CardString(f, "path")!,
+                    f.TryGetProperty("size", out var size) && size.TryGetInt64(out var bytes) ? bytes : 0))]
+            : new List<FormFile>();
+        return new FormPreview(CardString(result, "title") ?? entry.Name, fields, files, ParseActions(result, "buttons"),
+            CardString(result, "message"), result.TryGetProperty("messageError", out var error) && error.ValueKind == JsonValueKind.True);
+    }
+
+    /// <summary><c>[{ label, target, shortcut? }]</c>; entries without a target are dropped.</summary>
+    private static List<PreviewAction> ParseActions(JsonElement result, string name) =>
+        result.TryGetProperty(name, out var list) && list.ValueKind == JsonValueKind.Array
+            ? [.. list.EnumerateArray()
+                .Where(a => CardString(a, "target") is not null)
+                .Take(MaxActions)
+                .Select(a => new PreviewAction(CardString(a, "label") ?? CardString(a, "target")!, CardString(a, "target")!, CardString(a, "shortcut")))]
+            : [];
 
     /// <summary>
     /// <c>preview.card</c> with the same parameters as <c>preview.render</c> plus <c>previous</c> (the last card, so a
@@ -340,7 +431,7 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
         }
     }
 
-    private static async Task<TilesPreview> ParseTilesAsync(JsonElement result, IPluginHost host, CancellationToken cancellationToken)
+    private static async Task<TilesPreview> ParseTilesAsync(JsonElement result, IPluginHost? host, CancellationToken cancellationToken)
     {
         static string? Str(JsonElement element, string name) =>
             element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text ? text : null;
@@ -351,7 +442,7 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
             foreach (var item in items.EnumerateArray().Take(MaxTiles))
             {
                 ReadOnlyMemory<byte>? image = null;
-                if (Str(item, "image") is { } imagePath)
+                if (host is not null && Str(item, "image") is { } imagePath)
                 {
                     try
                     {
