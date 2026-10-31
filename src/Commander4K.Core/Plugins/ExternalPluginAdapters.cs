@@ -181,11 +181,42 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
             return await ParseTilesAsync(result, host, cancellationToken).ConfigureAwait(false);
         }
 
+        if (string.Equals(kind, "web", StringComparison.OrdinalIgnoreCase))
+        {
+            return ParseWeb(result, plugin.Manifest.Id, plugin.Folder, preview.WebRoot);
+        }
+
         var content = result.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty;
         var editable = result.TryGetProperty("editable", out var e) && e.ValueKind == JsonValueKind.True;
         return string.Equals(kind, "markdown", StringComparison.OrdinalIgnoreCase)
             ? new MarkdownPreview(content, editable)
             : new TextPreview(content, editable);
+    }
+
+    /// <summary>Forwards a message from a web preview page (<c>c4k.request</c>) to the plugin's <c>preview.message</c> handler.</summary>
+    public Task<JsonElement> MessageAsync(VfsEntry entry, string method, JsonElement parameters, IPluginHost host, CancellationToken cancellationToken) =>
+        plugin.CallAsync("preview.message",
+            new { preview = preview.Id, entry = ExternalPlugin.EntryDto(entry), method, @params = parameters, context = ExternalPlugin.Context(host) },
+            cancellationToken, TimeSpan.FromSeconds(30));
+
+    /// <summary><c>{ "kind": "web", "page": "index.html", "state"?: any }</c>; the page must be a file inside the preview's <c>webRoot</c>.</summary>
+    internal static PreviewContent ParseWeb(JsonElement result, string pluginId, string pluginFolder, string? webRoot)
+    {
+        if (webRoot is null)
+        {
+            return new MessagePreview("This preview returned kind \"web\" but declares no webRoot in plugin.json.");
+        }
+
+        var page = result.TryGetProperty("page", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() ?? string.Empty : string.Empty;
+        var root = Path.GetFullPath(Path.Combine(pluginFolder, webRoot));
+        var full = PluginAuthoring.IsSafeRelativePath(page) ? Path.GetFullPath(Path.Combine(root, page)) : null;
+        if (full is null || !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
+        {
+            return new MessagePreview("Web page not found inside webRoot: " + page);
+        }
+
+        var state = result.TryGetProperty("state", out var s) && s.ValueKind != JsonValueKind.Undefined && s.ValueKind != JsonValueKind.Null ? JsonSerializer.Serialize(s) : null;
+        return new WebPreview(pluginId, root, Path.GetRelativePath(root, full).Replace('\\', '/'), state);
     }
 
     private static async Task<TilesPreview> ParseTilesAsync(JsonElement result, IPluginHost host, CancellationToken cancellationToken)

@@ -122,6 +122,28 @@ public static partial class ManifestReader
             }
         }
 
+        foreach (var preview in manifest.Contributes?.Previews ?? [])
+        {
+            if (preview.WebRoot is { } webRoot
+                && (!PluginAuthoring.IsSafeRelativePath(webRoot) || !Directory.Exists(Path.Combine(folder, webRoot))))
+            {
+                errors.Add(Loc.T("Podgląd „{0}”: webRoot „{1}” musi być folderem wewnątrz wtyczki.", preview.Id, webRoot));
+            }
+            else if (preview.WebRoot is { } root && manifest.Runtime?.Entry is { Length: > 0 } startFile)
+            {
+                // Page code is not linted, so it must not share a folder with the code that runs as the plugin process.
+                var web = PluginSourceCheck.NormalizeFolder(root);
+                var entryFolder = PluginSourceCheck.NormalizeFolder(Path.GetDirectoryName(PluginSourceCheck.NormalizeFolder(startFile)) ?? string.Empty);
+                if (entryFolder.Length > 0
+                    && (string.Equals(web, entryFolder, StringComparison.OrdinalIgnoreCase)
+                        || entryFolder.StartsWith(web + "/", StringComparison.OrdinalIgnoreCase)
+                        || web.StartsWith(entryFolder + "/", StringComparison.OrdinalIgnoreCase)))
+                {
+                    errors.Add(Loc.T("Podgląd „{0}”: webRoot „{1}” nie może zawierać pliku startowego wtyczki ani leżeć w jego folderze.", preview.Id, root));
+                }
+            }
+        }
+
         var ids = (manifest.Contributes?.Commands?.Select(c => "command:" + c.Id) ?? [])
             .Concat(manifest.Contributes?.Panels?.Select(p => "panel:" + p.Id) ?? [])
             .Concat(manifest.Contributes?.Previews?.Select(p => "preview:" + p.Id) ?? [])

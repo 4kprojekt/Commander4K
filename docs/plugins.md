@@ -150,7 +150,8 @@ Ask for the fewest permissions that do the job.
 | `panel.load` | `{ panel, argument, filter, context, options }` | `{ columns: [{ id, header, align?: "left"\|"right"\|"center", width? }], rows: [{ id, parentId?, cells: [string], severity?: "normal"\|"muted"\|"highlight"\|"warning"\|"error", sortKeys?: [number\|null], expanded? }], status? }` |
 | `panel.details` | `{ panel, rowId }` | `{ sections: [{ title, items: [[key, value]] }] }` or `null` |
 | `panel.action` | `{ panel, action, rowIds, context }` | `{ text?: string }`. Text is shown in a viewer, and the panel reloads afterwards. |
-| `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }`. A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). |
+| `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }` or `{ kind: "web", page, state? }` (an HTML page from the preview's `webRoot`, see "Web previews"). A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). |
+| `preview.message` | `{ preview, entry, method, params, context }` | Any JSON value. A web preview page called `c4k.request(method, params)`; answer it here (30 s limit). See "Web previews". |
 | `palette.items` | `{ palette, context }` | `{ items: [{ id, title, icon?, tooltip? }] }`. Buttons of a docked palette. Asked again after every navigation and after every `palette.action`, so items may depend on `context.activePath`. |
 | `palette.invoke` | `{ palette, item, context }` | Same as `command.execute`. The user clicked an item. |
 | `palette.action` | `{ palette, action, item, context }` | Same as `command.execute`. `item` is `null` for header buttons and the clicked item for `forItem` actions (context menu). |
@@ -244,6 +245,7 @@ Every helper maps to one protocol method above:
 | `ui.openUrl` | `open_url(url)` | `openUrl(url)` | `Open-C4KUrl $Url` |
 | `ui.search` | `search(query, engine=None)` | `search(query, engine)` | `Search-C4KWeb $Query $Engine` |
 | `ui.copyText` | `copy_text(text)` | `copyText(text)` | `Copy-C4KText $Text` |
+| — (result of `preview.render`) | `web_preview(page, state=None)` | `webPreview(page, state)` | `New-C4KWebPreview $Page [$State]` |
 | `storage.get` / `.set` | `storage_get(key, default)` / `storage_set(key, value)` | `storageGet(key, fallback)` / `storageSet(key, value)` | `Get-C4KStorage $Key $Default` / `Set-C4KStorage $Key $Value` |
 | `fs.list` | `list_dir(path)` | `listDir(path)` | `Get-C4KChildItem $Path` |
 | `fs.stat` | `stat(path)` | `stat(path)` | `Get-C4KItem $Path` |
@@ -279,6 +281,33 @@ c4k.serve()
 
 Its `plugin.json` declares `"permissions": ["fs.read"]` and `"contributes": { "previews": [ { "id": "ini", "title": "INI", "extensions": [".ini"], "priority": 60 } ] }`.
 
+## Web previews
+
+A preview can show an HTML/JS page in WebView2 instead of text: viewers, charts, editors. Declare the folder with the page in the preview contribution and return `kind: "web"` from `preview.render`:
+
+```json
+"previews": [ { "id": "viewer", "title": "Viewer", "extensions": [".pdf"], "webRoot": "web" } ]
+```
+
+```json
+{ "kind": "web", "page": "index.html", "state": { "zoom": "page-width" } }
+```
+
+- `webRoot` is required for `kind: "web"`: a relative folder inside the plugin (no `..`, no drive letters). The plugin is refused if the folder does not exist; a `web` result from a preview without `webRoot` shows an error message.
+- `page` is a path inside `webRoot` (`/` separators). A page that is missing, rooted or leaves `webRoot` shows an error message. `state` is any JSON value, handed to the page as `c4k.state`.
+- The page is served from `https://<label>.plugin.c4k/`, one origin per plugin id: an id made only of `a-z`, `0-9` and single inner hyphens (at most 63 characters) is the label itself; any other id becomes a readable part (lower case, other characters as `-`, shortened), `--` and the first 16 hex digits of the SHA-256 of the exact id (`examples.pdf-viewer` → `examples-pdf-viewer--<hash>`). Read `location.host` rather than building it. Only files under `webRoot`, with a Content Security Policy that allows that origin plus `data:` and `blob:` (inline scripts and `eval` are allowed, `object`, `form` submissions and other origins are not). It cannot read the rest of the plugin folder or the disk, and it has its own WebView2 profile, without the browser panel's cookies or sign-ins. Service workers cannot be registered (their script requests get 403).
+- Nothing leaves the machine: requests to any other host get 403, and the profile's network goes to a proxy that does not exist, so WebSockets and WebRTC fail too. A top-level navigation to another address is cancelled and the preview stays. Only an http(s) link the user clicks (a plain link, `target="_blank"`, or `window.open` called from the click) opens in the app's browser panel (at most once a second); navigations a script starts on its own (`location.href = …`, `window.open` from a timer) open nothing. Frames may show only the page's own files, `about:` and `blob:`. Downloads are cancelled, permission prompts (camera, location, notifications…) are denied, and other URI schemes (`mailto:` …) do not launch.
+- The page reads the file being previewed from `c4k.fileUrl`, `https://<host>/__entry/<token>/<name>`. The token is new for every file shown; an old token gets 404. `GET` and `HEAD` are supported, with a single `Range: bytes=a-b`, `a-` or `-n`: 206 with `Content-Range`, 416 when the range starts beyond the end, 200 with the whole file without a header or with one the app does not understand (several ranges, other units). Responses about the file (200, 206, 416) carry `Accept-Ranges: bytes`; `Content-Type` follows the file extension (`application/octet-stream` when unknown). The app reads the file with the plugin's `fs.read` permission, audited: without the permission every request gets 403. A file that is not seekable (inside an archive, on some remote servers) is first copied to a temporary file. Opened on its own (in a frame or as the page), the file is sandboxed content without scripts.
+- `c4k.request(method, params)` reaches the plugin as the request `preview.message` with `{ preview, entry, method, params, context }`; the handler's return value resolves the page's promise, an error rejects it. Register it like any handler (`@c4k.handler("preview.message")`). The SDK helper `web_preview(page, state)` / `webPreview(page, state)` / `New-C4KWebPreview` builds the `preview.render` result.
+- Files in `webRoot` are page code, not plugin code: `PluginSourceCheck` does not lint them. They have no SDK; the page talks to the app only through the `window.c4k` bridge.
+
+The `window.c4k` bridge exists in the top frame before the page's own scripts run:
+- `c4k.entry` = `{ name, path, kind, size, modified }` (like `entry` in the protocol, without `hidden`), `c4k.fileUrl`, `c4k.state` (the `state` from `preview.render`, or `null`) and `c4k.skin` = `{ background, foreground, accent, muted, selection, border, fontFamily, fontSize }` (colours as `#rrggbb`, the size in pixels).
+- `c4k.on(event, fn)` returns a function that unsubscribes. `"entry"`: the cursor moved to another file that the same page of the same plugin shows; the page is not reloaded, `fn({ entry, fileUrl, state })` is called and the `c4k` fields are already updated (another page or plugin navigates instead). `"skin"`: `fn(skin)` after the user changed the skin.
+- `c4k.request(method, params)` returns a promise: the plugin's `preview.message` handler gets `{ preview, entry, method, params, context }`, its result resolves the promise and its error rejects it (with an `Error` carrying the message). A request still running when the cursor moves to another file never settles. At most 16 requests per file may be unanswered at once; more are rejected with `too many requests`.
+- `c4k.notify(text, error = false)` shows a message in the status area; `c4k.copyText(text)` puts text on the clipboard. Together they are limited to 5 calls a second per file; extra calls are dropped silently.
+- Keys: F1–F12 (with any modifiers), Esc, Tab, Ctrl+Q, Alt combinations without Ctrl and Ctrl+Shift combinations without Alt are offered to the application first: when the app has a command for the key it runs it (Esc closes the preview, Ctrl+Q toggles it) and the page never sees the key; otherwise the page gets it. Ctrl+Alt+<character key> always goes to the page, because Ctrl+Alt is AltGr on many keyboards (Polish ą, ł…). Every other key stays in the page. If the page receives Esc and does not call `preventDefault()`, the preview closes. The page has the default context menu (copy) and Ctrl+wheel zoom.
+
 ## Examples
 
 These are in [`examples/plugins`](../examples/plugins), and the app embeds them as templates:
@@ -288,6 +317,12 @@ These are in [`examples/plugins`](../examples/plugins), and the app embeds them 
 - **`git-powershell`** (`shell.run`): `git status`, and a commit history panel. `git` runs through the app, so each command line is audited.
 - **`project-modules-python`** (`fs.read`): a dedicated quick view for chosen files. It shows the dependencies of `package.json`, `*.csproj`, `pyproject.toml`, `requirements*.txt`, `go.mod`, `Cargo.toml` and `composer.json`, and the modules of an HTTP API from OpenAPI/Swagger files (endpoints grouped by tag, plus data models). It shows file names and patterns in `extensions`.
 - `site-check-node` keeps its site list in the plugin's storage (`storageGet`/`storageSet`), not in a file.
+
+[`pdf-viewer-node`](../examples/plugins/pdf-viewer-node) (`fs.read`) is the web preview example. It is not embedded as a template (PDF.js is ~6 MB) and is not in the catalog; copy the folder into `plugins/`. `main.js` only returns `webPreview("index.html", { zoom })` and stores the zoom that the page sends with `c4k.request("saveZoom", { zoom })`. The page (`web/`) runs PDF.js 5 (`PDFViewer`, `PDFFindController`) under the page CSP:
+- ES modules and the worker load from the page's own origin (`GlobalWorkerOptions.workerSrc`, `cMapUrl`, `standardFontDataUrl`, `wasmUrl` as absolute URLs built from `import.meta.url`, since PDF.js does not resolve relative ones).
+- `getDocument({ url: c4k.fileUrl, rangeChunkSize: 65536, disableAutoFetch: true })` reads the file in ranges; on `c4k.on("entry")` the page destroys the old loading task and opens the new file without a reload.
+- Colours come from `c4k.skin` as CSS variables and follow `c4k.on("skin")`. `Ctrl+F` stays in the page and focuses the search box.
+- Printing renders every page at 150 dpi into a container that only `@media print` shows, calls `window.print()` and empties it on `afterprint`.
 
 When the quick view cannot recognise a file (only hex is left), it offers to ask an AI what the format is. It can then have an AI write a preview plugin for that type, from a sample of the file.
 

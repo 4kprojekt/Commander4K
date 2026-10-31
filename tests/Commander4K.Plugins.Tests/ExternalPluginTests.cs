@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using Commander4K.Core.Execution;
 using Commander4K.Core.Plugins;
 using Commander4K.Core.Updates;
@@ -184,6 +185,136 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Web_preview_round_trip()
+    {
+        var folder = Path.Combine(_folder, "web-tour");
+        Directory.CreateDirectory(Path.Combine(folder, "web"));
+        File.WriteAllText(Path.Combine(folder, "web", "index.html"), "<html></html>");
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", "python", "c4k.py"), Path.Combine(folder, "c4k.py"));
+        File.WriteAllText(Path.Combine(folder, ManifestReader.FileName), """
+            { "id": "tests.web-tour", "name": "Web tour", "version": "1.0.0", "author": "t", "description": "d",
+              "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+              "permissions": [],
+              "contributes": { "previews": [ { "id": "view", "title": "View", "extensions": [".webtest"], "webRoot": "web" } ] } }
+            """);
+        File.WriteAllText(Path.Combine(folder, "main.py"), """
+            import c4k
+
+            @c4k.handler("preview.render")
+            def render(params):
+                return {"kind": "web", "page": "index.html", "state": {"n": 1}}
+
+            c4k.serve()
+            """);
+        await using var plugin = StartFrom(folder);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var entry = new VfsEntry("a.webtest", Path.Combine(_folder, "a.webtest"), VfsEntryKind.File, 0);
+
+        var web = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, HostFor(plugin), null, TestToken));
+
+        Assert.Equal("tests.web-tour", web.PluginId);
+        Assert.Equal("index.html", web.Page);
+        Assert.Equal("{\"n\":1}", web.StateJson);
+        Assert.Equal(Path.Combine(folder, "web"), web.RootFolder);
+    }
+
+    [Fact]
+    public async Task Pdf_viewer_returns_a_web_preview()
+    {
+        await using var plugin = Start("pdf-viewer-node");
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var path = Path.Combine(_folder, "one.pdf");
+        var pdf = MinimalPdf();
+        await File.WriteAllBytesAsync(path, pdf, TestToken);
+        var entry = new VfsEntry("one.pdf", path, VfsEntryKind.File, pdf.Length);
+        var host = HostFor(plugin);
+
+        Assert.True(preview.CanPreview(entry));
+        Assert.False(preview.CanPreview(entry with { Name = "one.txt" }));
+        var web = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, host, null, TestToken));
+
+        Assert.Equal("examples.pdf-viewer", web.PluginId);
+        Assert.Equal("index.html", web.Page);
+        Assert.EndsWith("web", web.RootFolder, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(web.RootFolder, "index.html")));
+        Assert.Equal("{\"zoom\":\"page-width\"}", web.StateJson);
+
+        using var zoom = JsonDocument.Parse("{\"zoom\": 1.5}");
+        await preview.MessageAsync(entry, "saveZoom", zoom.RootElement, host, TestToken);
+        var again = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, host, null, TestToken));
+        Assert.Equal("{\"zoom\":1.5}", again.StateJson);
+    }
+
+    /// <summary>A valid one-page PDF with a correct cross-reference table.</summary>
+    private static byte[] MinimalPdf()
+    {
+        const string content = "BT /F1 24 Tf 20 100 Td (Hello PDF) Tj ET";
+        string[] objects =
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            $"<< /Length {content.Length} >>\nstream\n{content}\nendstream",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ];
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        var text = new StringBuilder("%PDF-1.4\n");
+        var offsets = new List<int>();
+        for (var i = 0; i < objects.Length; i++)
+        {
+            offsets.Add(text.Length);
+            text.Append(invariant, $"{i + 1} 0 obj\n{objects[i]}\nendobj\n");
+        }
+        var xref = text.Length;
+        text.Append(invariant, $"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
+        foreach (var offset in offsets)
+            text.Append(invariant, $"{offset:D10} 00000 n \n");
+        text.Append(invariant, $"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return Encoding.ASCII.GetBytes(text.ToString());
+    }
+
+    [Fact]
+    public async Task Preview_message_round_trip()
+    {
+        var folder = Path.Combine(_folder, "web-msg");
+        Directory.CreateDirectory(Path.Combine(folder, "web"));
+        File.WriteAllText(Path.Combine(folder, "web", "index.html"), "<html></html>");
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", "python", "c4k.py"), Path.Combine(folder, "c4k.py"));
+        File.WriteAllText(Path.Combine(folder, ManifestReader.FileName), """
+            { "id": "tests.web-msg", "name": "Web msg", "version": "1.0.0", "author": "t", "description": "d",
+              "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+              "permissions": [],
+              "contributes": { "previews": [ { "id": "view", "title": "View", "extensions": [".webtest"], "webRoot": "web" } ] } }
+            """);
+        File.WriteAllText(Path.Combine(folder, "main.py"), """
+            import c4k
+
+            @c4k.handler("preview.render")
+            def render(params):
+                return c4k.web_preview("index.html", {"n": 1})
+
+            @c4k.handler("preview.message")
+            def message(params):
+                return {"method": params["method"], "n": params["params"]["n"] + 1, "entry": params["entry"]["name"], "preview": params["preview"]}
+
+            c4k.serve()
+            """);
+        await using var plugin = StartFrom(folder);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var entry = new VfsEntry("a.webtest", Path.Combine(_folder, "a.webtest"), VfsEntryKind.File, 0);
+
+        var web = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, HostFor(plugin), null, TestToken));
+        using var parameters = JsonDocument.Parse("{\"n\": 41}");
+        var answer = await preview.MessageAsync(entry, "bump", parameters.RootElement, HostFor(plugin), TestToken);
+
+        Assert.Equal("{\"n\":1}", web.StateJson);
+        Assert.Equal("bump", answer.GetProperty("method").GetString());
+        Assert.Equal(42, answer.GetProperty("n").GetInt32());
+        Assert.Equal("a.webtest", answer.GetProperty("entry").GetString());
+        Assert.Equal("view", answer.GetProperty("preview").GetString());
+    }
+
+    [Fact]
     public async Task New_api_calls_are_gated_by_permissions()
     {
         var host = HostFor(new PluginManifest("acme.none", "None", "1.0.0", "a", "d", []));
@@ -363,6 +494,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("site-check-node", "node", "c4k.js")]
     [InlineData("git-powershell", "powershell", "c4k.ps1")]
     [InlineData("project-modules-python", "python", "c4k.py")]
+    [InlineData("pdf-viewer-node", "node", "c4k.js")]
     [InlineData("../../plugins-catalog/steam-library-powershell", "powershell", "c4k.ps1")]
     public void Example_sdk_clients_match_plugins_sdk(string example, string language, string file) =>
         Assert.Equal(
