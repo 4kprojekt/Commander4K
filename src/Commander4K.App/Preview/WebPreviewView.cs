@@ -37,6 +37,8 @@ public sealed class WebPreviewView : UserControl, IDisposable
     private const long MaxBufferedBytes = 4 * 1024 * 1024;
     private const int MaxNotifyChars = 500;
     private const int MaxCopyChars = 1024 * 1024;
+    private const int MaxMessagesPerSecond = 5;
+    private const int MaxRequestsInFlight = 16;
     private static readonly string LineSeparator = ((char)0x2028).ToString();
     private static readonly string ParagraphSeparator = ((char)0x2029).ToString();
 
@@ -71,6 +73,7 @@ public sealed class WebPreviewView : UserControl, IDisposable
     private readonly StreamTracker _pageStreams = new();
     private SkinBrushes _brushes;
     private CoreWebView2? _core;
+    private CoreWebView2Controller? _controller;
     private CoreWebView2Environment? _environment;
     private EntryState? _current;
     private CancellationTokenSource? _showing;
@@ -130,7 +133,14 @@ public sealed class WebPreviewView : UserControl, IDisposable
         _showing = showing;
         var token = showing.Token;
         var state = await Task.Run(() => OpenEntryAsync(preview, entry, plugin, host, token));
-        if (_showing != showing || _disposed)
+        var stale = _showing != showing || _disposed;
+        if (_showing == showing)
+        {
+            _showing = null;
+        }
+
+        showing.Dispose(); // Only OpenEntryAsync used its token; _showing never holds a disposed source.
+        if (stale)
         {
             state.Close();
             return;
@@ -170,11 +180,16 @@ public sealed class WebPreviewView : UserControl, IDisposable
         }
 
         _disposed = true;
-        _showing?.Cancel();
+        _showing?.Cancel(); // ShowAsync disposes it when its open finishes.
+        _showing = null;
         _current?.Close();
         _current = null;
         _pageStreams.CloseAll();
+        _web.Ready -= OnReady;
+        _web.Failed -= OnFailed;
+        Unsubscribe();
         _core = null;
+        _controller = null;
         Content = null; // Leaving the visual tree closes the WebView2 controller.
     }
 
@@ -264,17 +279,54 @@ public sealed class WebPreviewView : UserControl, IDisposable
         core.NavigationStarting += OnNavigationStarting;
         core.FrameNavigationStarting += OnFrameNavigationStarting;
         core.NewWindowRequested += OnNewWindowRequested;
-        core.DownloadStarting += (_, e) => e.Cancel = true;
-        core.PermissionRequested += (_, e) => e.State = CoreWebView2PermissionState.Deny;
-        core.LaunchingExternalUriScheme += (_, e) => e.Cancel = true;
+        core.DownloadStarting += OnDownloadStarting;
+        core.PermissionRequested += OnPermissionRequested;
+        core.LaunchingExternalUriScheme += OnLaunchingExternalUriScheme;
         core.WebMessageReceived += OnWebMessage;
         controller.AcceleratorKeyPressed += OnAcceleratorKey;
+        _controller = controller;
 
         if (_current is { } state)
         {
             _ = ApplyAsync(state);
         }
     }
+
+    /// <summary>
+    /// Drops the handlers that call back into this view. <see cref="OnResourceRequested"/> stays until the controller
+    /// closes, so a request the page still makes gets its 403 instead of going to the network stack.
+    /// </summary>
+    private void Unsubscribe()
+    {
+        try
+        {
+            if (_core is { } core)
+            {
+                core.NavigationStarting -= OnNavigationStarting;
+                core.FrameNavigationStarting -= OnFrameNavigationStarting;
+                core.NewWindowRequested -= OnNewWindowRequested;
+                core.DownloadStarting -= OnDownloadStarting;
+                core.PermissionRequested -= OnPermissionRequested;
+                core.LaunchingExternalUriScheme -= OnLaunchingExternalUriScheme;
+                core.WebMessageReceived -= OnWebMessage;
+            }
+
+            if (_controller is { } controller)
+            {
+                controller.AcceleratorKeyPressed -= OnAcceleratorKey;
+            }
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException or ObjectDisposedException)
+        {
+            // The controller already closed and took its handlers with it.
+        }
+    }
+
+    private static void OnDownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e) => e.Cancel = true;
+
+    private static void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e) => e.State = CoreWebView2PermissionState.Deny;
+
+    private static void OnLaunchingExternalUriScheme(object? sender, CoreWebView2LaunchingExternalUriSchemeEventArgs e) => e.Cancel = true;
 
     private void OnFailed(Exception error)
     {
@@ -731,9 +783,18 @@ public sealed class WebPreviewView : UserControl, IDisposable
                 && methodElement.GetString() is { Length: > 0 and <= 200 } method
                 && message.TryGetProperty("token", out var tokenElement) && tokenElement.ValueKind == JsonValueKind.String
                 && tokenElement.GetString() == state.Token:
+                if (state.RequestsInFlight >= MaxRequestsInFlight)
+                {
+                    PostReply(core, state, id, ok: false, default, "too many requests");
+                    break;
+                }
+
                 var parameters = message.TryGetProperty("params", out var p) ? p.Clone() : NullElement;
+                state.RequestsInFlight++;
                 _ = HandleRequestAsync(core, state, id, method, parameters);
                 break;
+            case "notify" or "copyText" when !state.Messages.TryTake(Environment.TickCount64):
+                break; // More than MaxMessagesPerSecond: dropped quietly.
             case "notify" when message.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String:
                 var notice = text.GetString() ?? string.Empty;
                 state.Host.Notify(notice.Length > MaxNotifyChars ? notice[..MaxNotifyChars] + "…" : notice,
@@ -774,11 +835,17 @@ public sealed class WebPreviewView : UserControl, IDisposable
             }
         });
 
+        state.RequestsInFlight--;
         if ((!ok && error is null) || _current != state || _core != core)
         {
             return; // Cancelled, or the reply is about a file no longer shown.
         }
 
+        PostReply(core, state, id, ok, result, error);
+    }
+
+    private static void PostReply(CoreWebView2 core, EntryState state, long id, bool ok, JsonElement result, string? error)
+    {
         Post(core, writer =>
         {
             writer.WriteString("type", "reply");
@@ -1006,7 +1073,9 @@ public sealed class WebPreviewView : UserControl, IDisposable
     /// <summary>One shown file: its token, its source (null when it could not be opened), and what to stop when it is replaced.</summary>
     private sealed class EntryState(WebPreview preview, VfsEntry entry, ExternalPreviewPlugin plugin, IPluginHost host, EntryFileSource? source, string token, int failure)
     {
-        private readonly CancellationTokenSource _closing = new();
+        // The token is captured once: the source is disposed on Close, and a cancelled, disposed source's token still works.
+        private readonly (CancellationTokenSource Source, CancellationToken Token) _closing = NewClosing();
+        private int _closed;
 
         public WebPreview Preview { get; } = preview;
 
@@ -1025,18 +1094,36 @@ public sealed class WebPreviewView : UserControl, IDisposable
 
         public StreamTracker Streams { get; } = new();
 
+        /// <summary>notify/copyText messages from the page: at most <see cref="MaxMessagesPerSecond"/> a second.</summary>
+        public RateWindow Messages { get; } = new(MaxMessagesPerSecond, 1000);
+
+        /// <summary><c>c4k.request</c> calls not answered yet (UI thread only).</summary>
+        public int RequestsInFlight { get; set; }
+
         /// <summary>Cancelled when another file replaces this one (pending plugin requests, reads in progress).</summary>
         public CancellationToken Closing => _closing.Token;
 
         public void Close()
         {
-            _closing.Cancel();
+            if (Interlocked.Exchange(ref _closed, 1) != 0)
+            {
+                return;
+            }
+
+            _closing.Source.Cancel();
+            _closing.Source.Dispose();
             Streams.CloseAll();
             if (Source is { } source)
             {
                 // Deletes a spooled copy; DisposeAsync catches its own IO errors.
                 _ = Task.Run(async () => await source.DisposeAsync().ConfigureAwait(false));
             }
+        }
+
+        private static (CancellationTokenSource, CancellationToken) NewClosing()
+        {
+            var source = new CancellationTokenSource();
+            return (source, source.Token);
         }
     }
 
