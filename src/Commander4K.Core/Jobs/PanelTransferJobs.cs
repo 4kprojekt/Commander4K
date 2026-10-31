@@ -109,9 +109,9 @@ public sealed class PanelProvideJob(
             return 0;
         }
 
-        var parts = file.Name.Trim().Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var parts = PluginAuthoring.SplitRelativePath(file.Name);
         var target = targetFolder;
-        string? written = null;
+        var createdTarget = false;
         try
         {
             for (var i = 0; i < parts.Length - 1; i++)
@@ -124,17 +124,19 @@ public sealed class PanelProvideJob(
             }
 
             target = router.Combine(target, parts[^1]);
-            if (await router.GetEntryAsync(target, cancellationToken).ConfigureAwait(false) is { } existing
-                && (overwrite == OverwritePolicy.Skip || existing.IsContainer))
+            var existing = await router.GetEntryAsync(target, cancellationToken).ConfigureAwait(false);
+            if (existing is { } found && (overwrite == OverwritePolicy.Skip || found.IsContainer))
             {
                 Fail(file.Name, Loc.T("już istnieje, pominięto"));
                 return 0;
             }
 
-            written = target;
+            // The source is opened before the target, so a failing download never truncates an existing file.
+            await using var input = inline is null ? await openUrl(file.Url!, cancellationToken).ConfigureAwait(false) : null;
             long size;
             await using (var output = await router.OpenWriteAsync(target, overwrite == OverwritePolicy.Overwrite, cancellationToken).ConfigureAwait(false))
             {
+                createdTarget = existing is null;
                 if (inline is not null)
                 {
                     await output.WriteAsync(inline, cancellationToken).ConfigureAwait(false);
@@ -142,8 +144,7 @@ public sealed class PanelProvideJob(
                 }
                 else
                 {
-                    await using var input = await openUrl(file.Url!, cancellationToken).ConfigureAwait(false);
-                    size = await CopyAsync(input, output, cancellationToken).ConfigureAwait(false);
+                    size = await CopyAsync(input!, output, cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -151,13 +152,13 @@ public sealed class PanelProvideJob(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await DiscardAsync(written).ConfigureAwait(false);
+            await DiscardAsync(createdTarget ? target : null).ConfigureAwait(false);
             throw;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or HttpRequestException or NotSupportedException
-            or InvalidOperationException or ArgumentException or TimeoutException or OperationCanceledException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            await DiscardAsync(written).ConfigureAwait(false);
+            // Only a file this job created is removed; an existing one that was overwritten keeps what was written.
+            await DiscardAsync(createdTarget ? target : null).ConfigureAwait(false);
             Fail(file.Name, ex.Message);
             return 0;
         }
@@ -198,5 +199,5 @@ public sealed class PanelProvideJob(
         }
     }
 
-    private void Fail(string name, string reason) => _errors.Add($"{name}: {reason}");
+    private void Fail(string name, string reason) => _errors.Add(Loc.T("{0}: {1}", name, reason));
 }

@@ -47,6 +47,8 @@ public sealed class PanelTransferJobTests
     /// <summary>Writable in-memory file system under <c>w://</c>.</summary>
     private sealed class WritableProvider : IVfsProviderPlugin
     {
+        public bool FailOpenWrite { get; set; }
+
         public Dictionary<string, byte[]> Files { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public HashSet<string> Directories { get; } = new(StringComparer.OrdinalIgnoreCase) { "w://t" };
@@ -81,11 +83,17 @@ public sealed class PanelTransferJobTests
 
         public ValueTask<Stream> OpenWriteAsync(string path, bool overwrite, CancellationToken cancellationToken)
         {
+            if (FailOpenWrite)
+            {
+                throw new IOException("locked");
+            }
+
             if (!overwrite && Files.ContainsKey(path))
             {
                 throw new IOException("exists");
             }
 
+            Files[path] = [];
             return ValueTask.FromResult<Stream>(new Capture(this, path));
         }
 
@@ -159,11 +167,13 @@ public sealed class PanelTransferJobTests
     public async Task Provide_rejects_unsafe_names()
     {
         var (job, fs) = ProvideJob([
-            new ProvidedFile("..\\x.txt", Text: "x"), new ProvidedFile("C:\\x.txt", Text: "x"), new ProvidedFile("a:b.txt", Text: "x")]);
+            new ProvidedFile("..\\x.txt", Text: "x"), new ProvidedFile("C:\\x.txt", Text: "x"), new ProvidedFile("a:b.txt", Text: "x"),
+            new ProvidedFile("NUL", Text: "x"), new ProvidedFile("con.txt", Text: "x"), new ProvidedFile("COM1", Text: "x"),
+            new ProvidedFile("sub/LPT9.log", Text: "x"), new ProvidedFile("a.", Text: "x"), new ProvidedFile("b ", Text: "x")]);
 
         await job.ExecuteAsync(new Sink(), Token);
 
-        Assert.Equal(3, job.Errors.Count);
+        Assert.Equal(9, job.Errors.Count);
         Assert.Empty(fs.Files);
     }
 
@@ -231,5 +241,53 @@ public sealed class PanelTransferJobTests
 
         Assert.Single(job.Errors);
         Assert.Empty(fs.Files);
+    }
+
+    [Fact]
+    public async Task Provide_keeps_existing_file_when_download_fails()
+    {
+        var (job, fs) = ProvideJob([new ProvidedFile("e.txt", Url: new Uri("https://example.test/u"))], OverwritePolicy.Overwrite,
+            (_, _) => throw new HttpRequestException("404"));
+        fs.Files["w://t/e.txt"] = [1, 2];
+
+        await job.ExecuteAsync(new Sink(), Token);
+
+        Assert.Single(job.Errors);
+        Assert.Equal(new byte[] { 1, 2 }, fs.Files["w://t/e.txt"]);
+    }
+
+    [Fact]
+    public async Task Provide_does_not_delete_file_it_could_not_open()
+    {
+        var (job, fs) = ProvideJob([new ProvidedFile("e.txt", Text: "new")], OverwritePolicy.Overwrite);
+        fs.Files["w://t/e.txt"] = [1, 2];
+        fs.FailOpenWrite = true;
+
+        await job.ExecuteAsync(new Sink(), Token);
+
+        Assert.Single(job.Errors);
+        Assert.Equal(new byte[] { 1, 2 }, fs.Files["w://t/e.txt"]);
+    }
+
+    [Fact]
+    public async Task Provide_turns_any_provider_exception_into_file_error()
+    {
+        var (job, fs) = ProvideJob([new ProvidedFile("a.txt", Text: "x"), new ProvidedFile("b.txt", Text: "y")]);
+        fs.FailOpenWrite = true;
+
+        await job.ExecuteAsync(new Sink(), Token);
+
+        Assert.Equal(2, job.Errors.Count);
+    }
+
+    [Fact]
+    public async Task Provide_ignores_leading_dot_segment()
+    {
+        var (job, fs) = ProvideJob([new ProvidedFile("./a.txt", Text: "x")]);
+
+        await job.ExecuteAsync(new Sink(), Token);
+
+        Assert.Empty(job.Errors);
+        Assert.Contains("w://t/a.txt", fs.Files.Keys);
     }
 }
