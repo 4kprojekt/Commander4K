@@ -387,6 +387,77 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Contains("tabela importów", md, StringComparison.Ordinal);
     }
 
+    private async Task<string> RenderAsync(string folder, string path, string previewId)
+    {
+        var (preview, host, entry) = await CatalogPreviewOfAsync(folder, path, previewId);
+        return Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+    }
+
+    [Fact]
+    public async Task Pe_preview_shows_version_and_execution_level()
+    {
+        var regedit = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "regedit.exe");
+        var md = await RenderAsync("pe-info-python", regedit, "exe");
+        Assert.Contains("## Uprawnienia", md, StringComparison.Ordinal);
+        Assert.Contains("highestAvailable", md, StringComparison.Ordinal); // verified on this machine: regedit.exe asks for highestAvailable
+        Assert.Contains("Microsoft Corporation", md, StringComparison.Ordinal);
+        Assert.Contains("## Wersja", md, StringComparison.Ordinal);
+        Assert.True(md.IndexOf("## Uprawnienia", StringComparison.Ordinal) < md.IndexOf("## Nagłówek", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Pe_preview_respects_read_budget()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var path = Path.Combine(_folder, "big.exe");
+        await using (var output = File.Create(path))
+        {
+            await output.WriteAsync(await File.ReadAllBytesAsync(exe, TestToken), TestToken);
+            await output.WriteAsync(new byte[40 * 1024 * 1024], TestToken);
+        }
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var md = await RenderAsync("pe-info-python", path, "exe");
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(20), clock.Elapsed.ToString());
+        Assert.Contains("Dane doklejone", md, StringComparison.Ordinal);
+        Assert.Contains("40,0 MB", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_stops_endless_import_thunk_list()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var bytes = await File.ReadAllBytesAsync(exe, TestToken);
+        var lfanew = BitConverter.ToInt32(bytes, 0x3C);
+        var plus = BitConverter.ToUInt16(bytes, lfanew + 24) == 0x20B;
+        var optSize = BitConverter.ToUInt16(bytes, lfanew + 20);
+        var sectionCount = BitConverter.ToUInt16(bytes, lfanew + 6);
+        var table = lfanew + 24 + optSize;
+        var importDir = lfanew + 24 + (plus ? 112 : 96) + 8;
+        var importRva = BitConverter.ToUInt32(bytes, importDir);
+        uint ToOffset(uint rva)
+        {
+            for (var i = 0; i < sectionCount; i++)
+            {
+                var at = table + 40 * i;
+                var va = BitConverter.ToUInt32(bytes, at + 12);
+                var rawSize = BitConverter.ToUInt32(bytes, at + 16);
+                if (rva >= va && rva < va + rawSize) return rva - va + BitConverter.ToUInt32(bytes, at + 20);
+            }
+            throw new InvalidOperationException("RVA outside sections");
+        }
+        // thunk array in the first section's raw data: 0x41 bytes never form a 0 terminator
+        var firstVa = BitConverter.ToUInt32(bytes, table + 12);
+        var firstRaw = (int)BitConverter.ToUInt32(bytes, table + 20);
+        Array.Fill(bytes, (byte)0x41, firstRaw, 4096 * 8 + 256);
+        BitConverter.GetBytes(firstVa).CopyTo(bytes, (int)ToOffset(importRva)); // OriginalFirstThunk of descriptor 0
+        var path = Path.Combine(_folder, "loop.exe");
+        await File.WriteAllBytesAsync(path, bytes, TestToken);
+        var md = await RenderAsync("pe-info-python", path, "exe");
+        Assert.Contains("## Nagłówek", md, StringComparison.Ordinal);
+        Assert.Contains("⚠", md, StringComparison.Ordinal);
+        Assert.Contains("możliwa pętla", md, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Python_preview_returns_a_card()
     {

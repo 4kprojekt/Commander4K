@@ -7,6 +7,7 @@ import datetime
 
 import c4k
 import pe
+import resources
 
 MAX_SHOWN_FUNCTIONS = 400
 MAX_SHOWN_EXPORTS = 2000
@@ -15,11 +16,18 @@ SUBSYSTEMS = {1: "natywny (sterownik)", 2: "GUI Windows", 3: "konsola", 7: "POSI
               10: "EFI", 11: "EFI", 12: "EFI", 13: "EFI", 14: "Xbox", 16: "aplikacja rozruchowa"}
 WINDOWS = {"5.0": "Windows 2000", "5.1": "Windows XP", "5.2": "Windows XP x64", "6.0": "Windows Vista", "6.1": "Windows 7",
            "6.2": "Windows 8", "6.3": "Windows 8.1", "10.0": "Windows 10/11"}
-PACKERS = ("upx", "aspack", "themida", "mpress", "petite", "fsg", ".vmp", "enigma")
+PACKERS = {"upx0", "upx1", "upx2", ".aspack", ".adata", ".themida", ".vmp0", ".vmp1", ".mpress1", ".mpress2", "fsg!"}
+SENSITIVE = {"VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "SetWindowsHookExA", "SetWindowsHookExW",
+             "NtUnmapViewOfSection", "URLDownloadToFileA", "URLDownloadToFileW", "AdjustTokenPrivileges", "IsDebuggerPresent"}
+LEVELS = {"asInvoker": "uprawnienia użytkownika",
+          "highestAvailable": "najwyższe dostępne (administrator pyta o UAC)",
+          "requireAdministrator": "wymaga administratora (UAC)"}
+NO_MANIFEST = "brak manifestu — uprawnienia użytkownika, wirtualizacja UAC dla starszych programów"
 
 
 def _size(count):
-    return f"{count} B" if count < 1024 else f"{count / 1024:.1f} KB" if count < 1024 * 1024 else f"{count / 1024 / 1024:.1f} MB"
+    text = f"{count} B" if count < 1024 else f"{count / 1024:.1f} KB" if count < 1024 * 1024 else f"{count / 1048576:.1f} MB"
+    return text.replace(".", ",")
 
 
 def _mark(flag):
@@ -37,7 +45,7 @@ def _timestamp(image):
     return datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def section_header(image, entry):
+def section_header(image, entry, ctx):
     kind = "biblioteka DLL" if image.is_dll else "program"
     bits = "PE32+" if image.pe32_plus else "PE32"
     system = WINDOWS.get(image.os_version)
@@ -54,7 +62,7 @@ def section_header(image, entry):
     return ["## Nagłówek", "", "| Cecha | Wartość |", "|---|---|"] + [f"| {name} | {_cell(value)} |" for name, value in rows] + [""]
 
 
-def section_security(image, entry):
+def section_security(image, entry, ctx):
     d = image.dll_characteristics
     return ["## Zabezpieczenia", "",
             f"- ASLR: {_mark(d & 0x40)}",
@@ -66,7 +74,7 @@ def section_security(image, entry):
             f"- Large address aware: {_mark(image.characteristics & 0x20)}", ""]
 
 
-def section_sections(image, entry):
+def section_sections(image, entry, ctx):
     if not image.sections:
         return []
     lines = ["## Sekcje", "", "| Nazwa | RVA | Rozmiar | Entropia | Flagi |", "|---|---|---|---|---|"]
@@ -77,7 +85,7 @@ def section_sections(image, entry):
     return lines + [""]
 
 
-def section_imports(image, entry):
+def section_imports(image, entry, ctx):
     if not image.imports:
         return []
     lines = ["## Importy", ""]
@@ -93,7 +101,7 @@ def section_imports(image, entry):
     return lines + [""]
 
 
-def section_exports(image, entry):
+def section_exports(image, entry, ctx):
     exports = image.exports
     if exports is None:
         return []
@@ -106,25 +114,122 @@ def section_exports(image, entry):
     return lines + [""]
 
 
-def section_notes(image, entry):
-    notes = [f"⚠ {w}" for w in image.warnings]
+def section_permissions(image, entry, ctx):
+    manifest = ctx.manifest()
+    lines = ["## Uprawnienia", ""]
+    if ctx.manifest_error:
+        lines += [f"⚠ Manifest: {ctx.manifest_error}", ""]
+    if manifest is None:
+        return lines + [f"- Poziom wykonania: {NO_MANIFEST}", ""]
+    if manifest.skipped_reason:
+        return lines + [f"⚠ Manifest: {manifest.skipped_reason}", ""]
+    level = manifest.execution_level
+    if level:
+        lines.append(f"- Poziom wykonania: **{_cell(level)}** — {LEVELS.get(level, 'nieznany poziom')}")
+    else:
+        lines.append(f"- Poziom wykonania: {NO_MANIFEST}")
+    lines.append(f"- uiAccess: {'tak' if manifest.ui_access else 'nie'}")
+    if manifest.auto_elevate:
+        lines.append("- autoElevate: tak (podnosi uprawnienia bez pytania, jeśli to program systemowy)")
+    if manifest.dpi:
+        lines.append(f"- Skalowanie DPI: {_cell(manifest.dpi)}")
+    lines.append(f"- Długie ścieżki: {'tak' if manifest.long_path_aware else 'nie zadeklarowano'}")
+    if manifest.supported_os:
+        lines.append(f"- Obsługiwane systemy: {', '.join(manifest.supported_os)}")
+    if manifest.dependencies:
+        lines.append(f"- Zależne zestawy: {', '.join(_cell(n) for n in manifest.dependencies)}")
+    return lines + [""]
+
+
+def section_version(image, entry, ctx):
+    info = ctx.version()
+    labels = (("FileDescription", "Opis"), ("CompanyName", "Firma"), ("ProductName", "Produkt"), ("FileVersion", "Wersja pliku"),
+              ("ProductVersion", "Wersja produktu"), ("OriginalFilename", "Oryginalna nazwa"), ("InternalName", "Nazwa wewnętrzna"),
+              ("LegalCopyright", "Prawa autorskie"), ("_fixed", "Wersja numeryczna"))
+    rows = [f"| {label} | {_cell(info[key])} |" for key, label in labels if info.get(key)]
+    return ["## Wersja", "", "| Pole | Wartość |", "|---|---|"] + rows + [""] if rows else []
+
+
+def notes(image, manifest, signature):
+    """Facts about the file, never a verdict. `signature` is None until the signature reader exists: then it adds nothing."""
+    result = []
+    d = image.dll_characteristics
+    off = [name for name, flag in (("ASLR", 0x40), ("DEP/NX", 0x100), ("CFG", 0x4000)) if not d & flag]
+    if off:
+        result.append(f"Wyłączone zabezpieczenia: {', '.join(off)}.")
     for s in image.sections:
         if s.flags & 0x20000000 and s.flags & 0x80000000:
-            notes.append(f"Sekcja {_cell(s.name)} jest jednocześnie zapisywalna i wykonywalna (RWX).")
-    packed = [s.name for s in image.sections if (s.entropy or 0) > 7.2 or s.name.lower().startswith(PACKERS)]
+            result.append(f"Sekcja {_cell(s.name)} jest jednocześnie zapisywalna i wykonywalna (RWX).")
+    packed = [s.name for s in image.sections
+              if s.name.lower() in PACKERS or (s.flags & 0x20000000 and (s.entropy or 0) > 7.2)]
     if packed:
-        notes.append(f"Sekcje {', '.join(_cell(n) for n in packed)}: wysoka entropia lub nazwa packera — prawdopodobnie spakowany.")
+        result.append(f"Sekcje {', '.join(_cell(n) for n in packed)}: wysoka entropia kodu lub nazwa packera — prawdopodobnie spakowany.")
     if image.tls_callbacks:
-        notes.append(f"Plik ma {image.tls_callbacks} wywołań zwrotnych TLS (kod uruchamiany przed punktem wejścia).")
+        result.append(f"Plik ma {image.tls_callbacks} wywołań zwrotnych TLS (kod uruchamiany przed punktem wejścia).")
     if image.overlay:
-        notes.append(f"Za ostatnią sekcją są dodatkowe dane ({_size(image.overlay[1])}); mogą zawierać podpis lub dołączone archiwum.")
-    return ["## Uwagi", ""] + [f"- {n}" for n in notes] + [""] if notes else []
+        kind = f"; wygląda na: {image.overlay[2]}" if image.overlay[2] else ""
+        result.append(f"Dane doklejone za ostatnią sekcją: {_size(image.overlay[1])}{kind}.")
+    if manifest is not None:
+        if manifest.execution_level == "requireAdministrator":
+            result.append("Manifest wymaga uprawnień administratora (requireAdministrator).")
+        if manifest.ui_access:
+            result.append("Manifest ustawia uiAccess=true (dostęp do interfejsu innych programów).")
+    names = {f for item in image.imports for f in item.functions}
+    used = sorted(SENSITIVE & names)
+    if used:
+        result.append(f"Funkcje wrażliwe (informacyjnie): {', '.join(used)}.")
+    return result
+
+
+def section_notes(image, entry, ctx):
+    manifest = ctx.manifest()
+    lines = [f"⚠ {w}" for w in image.warnings] + notes(image, manifest, None)
+    return ["## Uwagi", ""] + [f"- {n}" for n in lines] + [""] if lines else []
 
 
 ORDER = {
-    "exe": [section_header, section_security, section_sections, section_imports, section_exports, section_notes],
-    "dll": [section_header, section_exports, section_security, section_sections, section_imports, section_notes],
+    "exe": [section_permissions, section_version, section_header, section_security, section_sections, section_imports,
+            section_exports, section_notes],
+    "dll": [section_header, section_exports, section_version, section_security, section_sections, section_imports,
+            section_notes],
 }
+
+
+class Context:
+    """The reader and the lazily read resources of one render; a failure is kept, never raised."""
+
+    def __init__(self, reader, image):
+        self.reader = reader
+        self.image = image
+        self.manifest_error = None
+        self._manifest = None
+        self._version = None
+        self._done = set()
+
+    def _once(self, name, read):
+        if name in self._done:
+            return None
+        self._done.add(name)
+        try:
+            return read()
+        except (pe.ReadLimit, pe.PeError, ValueError, IndexError, OverflowError, UnicodeError) as error:
+            if name == "manifest":
+                self.manifest_error = str(error)
+            else:
+                self.image.warnings.append(f"zasoby wersji: {error}")
+        return None
+
+    def manifest(self):
+        value = self._once("manifest", lambda: resources.manifest(self.reader, self.image))
+        if value is not None:
+            self._manifest = value
+        return self._manifest
+
+    def version(self):
+        value = self._once("version", lambda: resources.version_info(self.reader, self.image))
+        if value is not None:
+            self._version = value
+        return self._version or {}
 
 
 def _analyze(entry):
@@ -132,7 +237,8 @@ def _analyze(entry):
     if not size:
         found = c4k.stat(entry["path"])
         size = (found or {}).get("size") or 0
-    return pe.parse(pe.RangeReader(entry["path"], size))
+    reader = pe.RangeReader(entry["path"], size)
+    return reader, pe.parse(reader)
 
 
 @c4k.handler("preview.render")
@@ -141,12 +247,15 @@ def render(params):
     kind = params.get("preview") or "exe"
     lines = [f"# {entry['name']}", ""]
     try:
-        image = _analyze(entry)
-    except Exception as error:  # nothing may raise out of preview.render
+        reader, image = _analyze(entry)
+    except pe.PeError as error:
         return {"kind": "markdown", "content": "\n".join(lines + [f"⚠ To nie jest prawidłowym plikiem PE ({error})."])}
+    except Exception as error:  # nothing may raise out of preview.render
+        return {"kind": "markdown", "content": "\n".join(lines + [f"⚠ Nie udało się odczytać pliku: {error}"])}
+    ctx = Context(reader, image)
     for build in ORDER.get(kind, ORDER["exe"]):
         try:
-            lines += build(image, entry)
+            lines += build(image, entry, ctx)
         except Exception as error:
             lines += [f"⚠ Sekcja {build.__name__.removeprefix('section_')}: nie udało się wyświetlić ({error}).", ""]
     return {"kind": "markdown", "content": "\n".join(lines)}
@@ -157,7 +266,7 @@ def card(params):
     entry = params["entry"]
     actions = [{"label": "Otwórz", "target": entry["path"]}]
     try:
-        image = _analyze(entry)
+        _reader, image = _analyze(entry)
     except Exception as error:
         return {"icon": "⚙", "status": "error", "items": [{"kind": "text", "text": f"To nie jest prawidłowy plik PE ({error})"}], "actions": actions}
     items = [{"kind": "value", "label": "Architektura", "value": image.machine},
