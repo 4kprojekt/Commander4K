@@ -1629,6 +1629,9 @@ public sealed class MainWindow : Window, IShell
         _jobsDirty = true;
     }
 
+    /// <summary>Text currently shown in the status bar's notification area (for automation and tests).</summary>
+    public string LastNotification => _notification?.Text ?? string.Empty;
+
     private void Notify(string message, bool isError = false)
     {
         if (_notification is null)
@@ -1822,7 +1825,15 @@ public sealed class MainWindow : Window, IShell
                 return;
             }
 
-            if (_active.Mode is not null && FileCommands.Contains(commandId))
+            // F5 from a plugin panel that provides files copies them out; moving out of (or into) a plugin is not a thing.
+            if (_active.Mode is PluginPanelView && string.Equals(commandId, CommandIds.Move, StringComparison.OrdinalIgnoreCase))
+            {
+                Notify(MoveNotSupported);
+                return;
+            }
+
+            if (_active.Mode is not null && FileCommands.Contains(commandId)
+                && !(_active.Mode is PluginPanelView { Session.CanProvide: true } && string.Equals(commandId, CommandIds.Copy, StringComparison.OrdinalIgnoreCase)))
             {
                 Notify(Loc.T("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach."));
                 return;
@@ -2012,8 +2023,44 @@ public sealed class MainWindow : Window, IShell
             : result.Error ?? Loc.T("Nie znaleziono VS Code."), isError: !result.Launched);
     }
 
+    private static string MoveNotSupported => Loc.T("Przenoszenie z wtyczek i do wtyczek nie jest obsługiwane.");
+
+    private static string DoesNotReceive(string title) => Loc.T("Panel „{0}” nie przyjmuje plików.", title);
+
+    /// <summary>
+    /// F5/F6. A plugin panel on either side changes what happens: the active one provides files (copy only), the other
+    /// one receives them (copy only); the browser takes nothing. A preview or pinned folder still copies into the folder
+    /// it shows.
+    /// </summary>
     private async ValueTask TransferAsync(TransferMode mode)
     {
+        if (_active.Mode is PluginPanelView source)
+        {
+            if (mode == TransferMode.Move)
+            {
+                Notify(MoveNotSupported);
+            }
+            else
+            {
+                await ProvideFromPanelAsync(source);
+            }
+
+            return;
+        }
+
+        switch (Other.Mode)
+        {
+            case PluginPanelView when mode == TransferMode.Move:
+                Notify(MoveNotSupported);
+                return;
+            case PluginPanelView panel:
+                await SendToPanelAsync(panel);
+                return;
+            case BrowserPanelView browser:
+                Notify(DoesNotReceive(browser.Title));
+                return;
+        }
+
         var sources = _active.ActiveTab.MarkedOrCurrent();
         if (sources.Count == 0)
         {
@@ -2031,6 +2078,196 @@ public sealed class MainWindow : Window, IShell
         RunJob(job, request.Queue ? JobQueueManager.DefaultQueue : null, refreshBoth: true);
         _active.ActiveTab.Marked.Clear();
     }
+
+    /// <summary>F5 onto a plugin panel: ask it for receivers, keep the ones that fit, let the user pick, run the job.</summary>
+    private async Task SendToPanelAsync(PluginPanelView panel)
+    {
+        var session = panel.Session;
+        if (!session.CanReceive)
+        {
+            Notify(DoesNotReceive(panel.Title));
+            return;
+        }
+
+        var sources = _active.ActiveTab.MarkedOrCurrent();
+        var items = sources.Select(ToTransferItem).ToList();
+        if (items.Count == 0)
+        {
+            return; // TransferMatching.WhyNone would give a misleading reason for nothing.
+        }
+
+        var offered = await AskPanelAsync(panel.Title, ct => session.GetReceiversAsync(items, ct));
+        if (offered is null)
+        {
+            return;
+        }
+
+        var fitting = offered.Where(receiver => Core.Plugins.TransferMatching.Fits(receiver, items)).ToList();
+        if (fitting.Count == 0)
+        {
+            Notify(Core.Plugins.TransferMatching.WhyNone(offered, items) ?? DoesNotReceive(panel.Title));
+            return;
+        }
+
+        var choice = await new PanelTransferDialog(
+            _skins!.Current,
+            Loc.T("Wyślij do „{0}”", panel.Title),
+            Loc.T("Wyślij {0} do:", DescribeSelection(sources)),
+            [.. fitting.Select(r => (r.Id, r.Title, r.Description))],
+            target: null).ShowAsync(this);
+        if (choice is null || fitting.FirstOrDefault(r => r.Id == choice.OptionId) is not { } receiver)
+        {
+            return;
+        }
+
+        var job = new PanelReceiveJob(session, panel.Title, receiver, items);
+        RunJob(job, queue: null, refreshBoth: false, handle =>
+        {
+            if (handle.State == JobState.Completed && job.Result is { } result)
+            {
+                var report = new StringBuilder();
+                if (receiver.ReturnsMessage && !string.IsNullOrWhiteSpace(result.Text))
+                {
+                    report.AppendLine(result.Text);
+                }
+
+                var failed = result.Results?.Where(r => !r.Ok).ToList() ?? [];
+                if (failed.Count > 0)
+                {
+                    if (report.Length > 0)
+                    {
+                        report.AppendLine();
+                    }
+
+                    report.AppendLine(Loc.T("Wtyczka nie przyjęła:"));
+                    foreach (var item in failed)
+                    {
+                        report.Append("  ").AppendLine(Loc.T("{0}: {1}", item.Path, item.Error ?? Loc.T("nieznany błąd")));
+                    }
+                }
+
+                if (report.Length > 0)
+                {
+                    _ = ShowTextWindowAsync(panel.Title + " — " + receiver.Title, report.ToString().TrimEnd());
+                }
+            }
+
+            // Like after a panel action; only while the panel is still open (closing it disposed the session).
+            if (_left.Mode == panel || _right.Mode == panel)
+            {
+                panel.Reload(quiet: true);
+            }
+        });
+        _active.ActiveTab.Marked.Clear();
+    }
+
+    /// <summary>F5 in a plugin panel that provides files: pick a provider and a target folder, then write what it returns.</summary>
+    private async Task ProvideFromPanelAsync(PluginPanelView panel)
+    {
+        var target = Other;
+        if (target.Mode is PluginPanelView or BrowserPanelView)
+        {
+            Notify(DoesNotReceive(target.Mode.Title));
+            return;
+        }
+
+        var rowIds = panel.SelectedRowIds;
+        if (rowIds.Count == 0)
+        {
+            return;
+        }
+
+        var session = panel.Session;
+        var providers = await AskPanelAsync(panel.Title, ct => session.GetProvidersAsync(rowIds, ct));
+        if (providers is null)
+        {
+            return;
+        }
+
+        if (providers.Count == 0)
+        {
+            Notify(Loc.T("Ta wtyczka nie wydaje plików."));
+            return;
+        }
+
+        var choice = await new PanelTransferDialog(
+            _skins!.Current,
+            Loc.T("Kopiuj z „{0}”", panel.Title),
+            Loc.T("Kopiuj {0} z panelu „{1}”:", Loc.P(rowIds.Count, "{0} wiersz|{0} wiersze|{0} wierszy"), panel.Title),
+            [.. providers.Select(p => (p.Id, p.Title, p.Description))],
+            target.ActiveTab.Path).ShowAsync(this);
+        if (choice?.Target is not { } folder || providers.FirstOrDefault(p => p.Id == choice.OptionId) is not { } provider)
+        {
+            return;
+        }
+
+        // Downloads of url files go through the plugin's own host: gated by its "net" permission and audited.
+        var host = (Core.Plugins.ScopedPluginHost)_host!.HostFor(panel.Plugin.Manifest);
+        var job = new PanelProvideJob(session, provider, rowIds, _host.Router, folder, choice.Overwrite, host.OpenHttpReadAsync);
+        RunJob(job, queue: null, refreshBoth: true, handle =>
+        {
+            if (handle.State != JobState.Completed)
+            {
+                return;
+            }
+
+            var report = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(job.Result?.Text))
+            {
+                report.AppendLine(job.Result.Text);
+            }
+
+            if (job.Errors.Count > 0)
+            {
+                if (report.Length > 0)
+                {
+                    report.AppendLine();
+                }
+
+                report.AppendLine(Loc.T("Nie zapisano:"));
+                foreach (var error in job.Errors)
+                {
+                    report.Append("  ").AppendLine(error);
+                }
+            }
+
+            if (report.Length > 0)
+            {
+                _ = ShowTextWindowAsync(panel.Title + " — " + provider.Title, report.ToString().TrimEnd());
+            }
+        });
+    }
+
+    /// <summary>
+    /// Asks a plugin panel for its receivers or providers on the thread pool, with the 5 s limit a waiting dialog
+    /// allows; failures become a message and <c>null</c>.
+    /// </summary>
+    private async Task<IReadOnlyList<T>?> AskPanelAsync<T>(string title, Func<CancellationToken, Task<IReadOnlyList<T>>> ask)
+    {
+        using var cts = new CancellationTokenSource(PanelQuestionTimeout);
+        try
+        {
+            return await Task.Run(() => ask(cts.Token), cts.Token).WaitAsync(PanelQuestionTimeout);
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        {
+            Notify(Loc.T("Panel „{0}” nie odpowiedział w ciągu 5 s.", title), isError: true);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Notify(Loc.T("{0}: {1}", title, ex.Message), isError: true);
+        }
+
+        return null;
+    }
+
+    private static readonly TimeSpan PanelQuestionTimeout = TimeSpan.FromSeconds(5);
+
+    private static TransferItem ToTransferItem(VfsEntry entry) => new(
+        entry.Path,
+        entry.Name,
+        entry.IsContainer && entry.Kind != VfsEntryKind.Archive ? TransferItemKind.Folder : TransferItemKind.File,
+        entry.Size);
 
     /// <summary>Alt+F5: the format follows the name typed (.zip, .tar, .tar.gz/.tgz); the archive goes to the other panel.</summary>
     private async ValueTask PackAsync(CommandInvocation _)
@@ -2143,7 +2380,8 @@ public sealed class MainWindow : Window, IShell
         _active.ActiveTab.Marked.Clear();
     }
 
-    private void RunJob(IJob job, string? queue, bool refreshBoth)
+    /// <param name="finished">Runs on the UI thread once the job has ended, whatever its state.</param>
+    private void RunJob(IJob job, string? queue, bool refreshBoth, Action<JobHandle>? finished = null)
     {
         var handle = _host!.Jobs.Enqueue(job, queue);
         _jobsDirty = true;
@@ -2154,6 +2392,8 @@ public sealed class MainWindow : Window, IShell
                 {
                     Notify($"{handle.Title}: {handle.Error?.Message}", isError: true);
                 }
+
+                finished?.Invoke(handle);
 
                 if (refreshBoth)
                 {

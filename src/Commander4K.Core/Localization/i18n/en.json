@@ -1069,5 +1069,18 @@
   "niedozwolona nazwa pliku": "file name not allowed",
   "zawartość większa niż 16 MB": "content larger than 16 MB",
   "Pobieranie z „{0}” → {1}": "Fetching from “{0}” → {1}",
-  "Wysyłanie {0} → {1}": "Sending {0} → {1}"
+  "Wysyłanie {0} → {1}": "Sending {0} → {1}",
+  "Przenoszenie z wtyczek i do wtyczek nie jest obsługiwane.": "Moving files out of or into plugin panels is not supported.",
+  "Panel „{0}” nie przyjmuje plików.": "The “{0}” panel does not accept files.",
+  "Wyślij do „{0}”": "Send to “{0}”",
+  "Wyślij {0} do:": "Send {0} to:",
+  "Wtyczka nie przyjęła:": "Not accepted by the plugin:",
+  "nieznany błąd": "unknown error",
+  "Ta wtyczka nie wydaje plików.": "This plugin does not provide files.",
+  "Kopiuj z „{0}”": "Copy from “{0}”",
+  "Kopiuj {0} z panelu „{1}”:": "Copy {0} from the “{1}” panel:",
+  "{0} wiersz|{0} wiersze|{0} wierszy": "{0} row|{0} rows",
+  "Nie zapisano:": "Not saved:",
+  "Panel „{0}” nie odpowiedział w ciągu 5 s.": "The “{0}” panel did not answer within 5 s.",
+  "Do folderu:": "To folder:"
 }

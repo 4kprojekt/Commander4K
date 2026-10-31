@@ -239,11 +239,14 @@ as files (`"provides": true`).
 
 **Providing** — your panel is active and the user presses F5:
 1. The app calls `panel.providers` with the selected row ids; the user picks one (no choice when there is one) and
-   the target folder (the other panel, editable) and overwrite policy.
+   the target folder (the other panel, editable; created when missing) and overwrite policy.
 2. The app calls `panel.provide` and writes each returned file itself: `text` (UTF-8) or `base64` inline, up to
    16 MB per file; larger files as an `http`/`https` `url` the app downloads (other schemes are refused). `name` may
    contain subfolders (`docs/a.txt`), never `..` or an absolute path. A file that breaks these rules (too large, no
    content, another URL scheme, no name) is reported to the user; the other files are still written.
+
+Only copying works this way: F6 (move) into or out of a plugin panel is refused with a message, and so is F5 onto a
+panel without `accepts` (or onto the browser) — nothing is copied into the folder hidden under it.
 
 **Progress:** `panel.receive` and `panel.provide` carry a `jobId`. Send `job.progress { jobId, done, total, bytes?,
 text? }` as a notification (`report_progress` in the SDKs) and the job's progress bar follows it; without it the bar

@@ -146,6 +146,13 @@ public sealed class PluginPanelView : Grid, IPanelModeView
 
     public string PluginId => _plugin.Id;
 
+    /// <summary>The plugin session, for sending files to the panel or taking files from it (F5).</summary>
+    public IPanelSession Session => _session;
+
+    /// <summary>Marked rows, or the row under the cursor — what an action that applies to rows would get.</summary>
+    public IReadOnlyList<string> SelectedRowIds =>
+        _table.Marked.Count > 0 ? [.. _table.Marked] : CurrentRow is { } row ? [row.Row.Id] : [];
+
     public bool IsActivePanel
     {
         set
@@ -212,7 +219,9 @@ public sealed class PluginPanelView : Grid, IPanelModeView
                 return true;
             }
 
-            if (text == "Ctrl+R" || text == "F5" && !_session.Actions.Any(a => a.Shortcut == "F5"))
+            // A panel that provides files leaves F5 to the keymap (cm_Copy, or whatever the user bound it to); Ctrl+R
+            // always refreshes. An action bound to F5 has already won above.
+            if (text == "Ctrl+R" || text == "F5" && !_session.CanProvide && !_session.Actions.Any(a => a.Shortcut == "F5"))
             {
                 Reload();
                 return true;
@@ -264,7 +273,8 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         await _session.DisposeAsync();
     }
 
-    private void Reload(bool quiet = false)
+    /// <summary>Loads the panel again (after an action or after files were sent to it).</summary>
+    public void Reload(bool quiet = false)
     {
         _loading?.Cancel();
         var cts = new CancellationTokenSource();
@@ -460,7 +470,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
 
     private async Task ExecuteActionAsync(PanelAction action)
     {
-        var ids = _table.Marked.Count > 0 ? _table.Marked.ToList() : CurrentRow is { } row ? [row.Row.Id] : [];
+        var ids = SelectedRowIds;
         if (action.AppliesToRows && ids.Count == 0)
         {
             return;

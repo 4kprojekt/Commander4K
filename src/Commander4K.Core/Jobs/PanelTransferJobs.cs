@@ -60,6 +60,12 @@ public sealed class PanelProvideJob(
         var result = await session.ProvideAsync(provider.Id, rowIds, new Relay(progress), cancellationToken).ConfigureAwait(false);
         Result = result;
 
+        // A target typed into the dialog that does not exist yet is created, as F5 between file panels does.
+        if (result.Files.Count > 0 && await router.GetEntryAsync(targetFolder, cancellationToken).ConfigureAwait(false) is null)
+        {
+            await router.CreateDirectoryAsync(targetFolder, cancellationToken).ConfigureAwait(false);
+        }
+
         var done = 0;
         long bytes = 0;
         foreach (var file in result.Files)

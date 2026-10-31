@@ -164,6 +164,18 @@ public sealed class PanelTransferJobTests
     }
 
     [Fact]
+    public async Task Provide_creates_a_missing_target_folder()
+    {
+        var (job, fs) = ProvideJob([new ProvidedFile("a.txt", Text: "x")]);
+        fs.Directories.Clear();
+
+        await job.ExecuteAsync(new Sink(), Token);
+
+        Assert.Contains("w://t", fs.Directories);
+        Assert.True(fs.Files.ContainsKey("w://t/a.txt"));
+    }
+
+    [Fact]
     public async Task Provide_rejects_unsafe_names()
     {
         var (job, fs) = ProvideJob([
