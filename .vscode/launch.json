@@ -1,0 +1,34 @@
+{
+  // F5 debugs the app (needs the C# extension). The app runs in portable mode from bin/, so config/ and data/
+  // are created there, not in your installed copy's folders.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Commander4K",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build app",
+      "program": "${workspaceFolder}/src/Commander4K.App/bin/Debug/net10.0-windows/Commander4K.dll",
+      "cwd": "${workspaceFolder}/src/Commander4K.App/bin/Debug/net10.0-windows",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "justMyCode": true
+    },
+    {
+      "name": "Commander4K (English UI)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build app",
+      "program": "${workspaceFolder}/src/Commander4K.App/bin/Debug/net10.0-windows/Commander4K.dll",
+      "cwd": "${workspaceFolder}/src/Commander4K.App/bin/Debug/net10.0-windows",
+      "env": { "C4K_LANGUAGE": "en" },
+      "console": "internalConsole"
+    },
+    {
+      "name": "Attach to Commander4K",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ]
+}

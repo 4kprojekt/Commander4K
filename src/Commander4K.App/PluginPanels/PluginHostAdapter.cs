@@ -25,6 +25,14 @@ public sealed class PluginHostAdapter(
 
     public Task SearchWebAsync(string query, string? engine) => Dispatcher.UIThread.InvokeAsync(() => searchWeb(query, engine));
 
+    public Task CopyTextAsync(string text) => Dispatcher.UIThread.InvokeAsync(async () =>
+    {
+        if (Avalonia.Controls.TopLevel.GetTopLevel(panels().Active)?.Clipboard is { } clipboard)
+        {
+            await Avalonia.Input.Platform.ClipboardExtensions.SetTextAsync(clipboard, text);
+        }
+    });
+
     public string? ActivePath => OnUi(() => FilePanel().ActiveTab.Path);
 
     public string? OtherPath => OnUi(() =>

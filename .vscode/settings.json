@@ -1,0 +1,17 @@
+{
+  "dotnet.defaultSolution": "Commander4K.sln",
+  "search.exclude": {
+    "**/bin": true,
+    "**/obj": true,
+    "dist": true,
+    "TestResults": true
+  },
+  "files.associations": {
+    "plugin.json": "jsonc",
+    "c4k.dir": "jsonc"
+  },
+  "json.schemas": [
+    { "fileMatch": ["**/plugins/*/plugin.json", "examples/plugins/*/plugin.json", "plugins-catalog/*/plugin.json"], "url": "./docs/plugin.schema.json" },
+    { "fileMatch": ["c4k.dir"], "url": "./docs/c4k.dir.schema.json" }
+  ]
+}

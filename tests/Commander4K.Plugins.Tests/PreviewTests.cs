@@ -91,6 +91,97 @@ public sealed class PreviewTests : IAsyncDisposable
         Assert.Contains(_audit.Recent(image.Id), e => e.Operation == "fs.write" && e.Outcome == AuditOutcome.Denied);
     }
 
+    [Fact]
+    public async Task Obsidian_vault_preview_shows_links_backlinks_tags_and_a_graph()
+    {
+        var vault = Path.Combine(_root, "Sejf");
+        Directory.CreateDirectory(Path.Combine(vault, ".obsidian"));
+        Directory.CreateDirectory(Path.Combine(vault, "Projekty"));
+        File.WriteAllText(Path.Combine(vault, "Start.md"), "---\ntags: [indeks, plan]\n---\n# Start\n\nWitaj w sejfie, zobacz [[Projekt Ćma]] oraz [[Pomysły|moje pomysły]].\n![[schemat.png]]\n#projekt");
+        File.WriteAllText(Path.Combine(vault, "Pomysły.md"), "Lista pomysłów. Wraca do [[Start#Start]] i do [[Brakująca notatka]].\n```\n[[w kodzie się nie liczy]]\n```");
+        File.WriteAllText(Path.Combine(vault, "Samotna.md"), "Notatka bez linków.");
+        File.WriteAllText(Path.Combine(vault, "Projekty", "Projekt Ćma.md"), "Opis projektu, link [md](../Pomysły.md). #projekt/ćma");
+        var plugin = new FolderPreviewPlugin();
+
+        var overview = Assert.IsType<MarkdownPreview>(await plugin.LoadAsync(Dir(vault), Host(plugin.Manifest), null, TestToken)).Markdown;
+
+        Assert.Contains("sejf Obsidian", overview, StringComparison.Ordinal);
+        Assert.Contains("4 notatki · 4 powiązania", overview, StringComparison.Ordinal);
+        Assert.Contains("```mermaid\nflowchart LR", overview.ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        Assert.Contains("[\"Projekt Ćma\"]", overview, StringComparison.Ordinal);
+        Assert.Contains("`#projekt` 1", overview, StringComparison.Ordinal);
+        Assert.Contains("`#projekt/ćma` 1", overview, StringComparison.Ordinal); // Nested tags stay separate, as in Obsidian.
+        Assert.Contains("4 tagi", overview, StringComparison.Ordinal);
+        Assert.Contains("`#indeks` 1", overview, StringComparison.Ordinal);
+        Assert.Contains("## Bez powiązań\n\nSamotna", overview.ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        Assert.Contains("`Brakująca notatka` ← Pomysły", overview, StringComparison.Ordinal);
+        Assert.DoesNotContain("w kodzie", overview, StringComparison.Ordinal);
+        Assert.Contains("> Witaj w sejfie, zobacz Projekt Ćma oraz moje pomysły.", overview, StringComparison.Ordinal);
+
+        // A subfolder of the vault is recognised through the .obsidian folder above it.
+        var sub = Assert.IsType<MarkdownPreview>(await plugin.LoadAsync(Dir(Path.Combine(vault, "Projekty")), Host(plugin.Manifest), null, TestToken)).Markdown;
+        Assert.Contains("folder w sejfie Obsidian „Sejf”", sub, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Folders_without_notes_keep_the_size_view()
+    {
+        File.WriteAllText(Path.Combine(_root, "small", "notes.md"), "# tylko jedna");
+
+        Assert.IsType<FolderPreview>(await new FolderPreviewPlugin().LoadAsync(Dir(Path.Combine(_root, "small")), Host(new FolderPreviewPlugin().Manifest), null, TestToken));
+    }
+
+    [Fact]
+    public void Canvas_becomes_a_diagram_with_cards()
+    {
+        var markdown = CanvasPreviewPlugin.Describe("Plan", """
+            { "nodes": [
+                { "id": "a", "type": "text", "text": "# Cel\nWydać wersję" },
+                { "id": "b", "type": "file", "file": "Projekty/Projekt Ćma.md" },
+                { "id": "c", "type": "link", "url": "https://example.com" },
+                { "id": "g", "type": "group", "label": "Etap 1" } ],
+              "edges": [ { "id": "e1", "fromNode": "a", "toNode": "b", "label": "opis \"x\"" }, { "id": "e2", "fromNode": "b", "toNode": "c" } ] }
+            """).ReplaceLineEndings("\n");
+
+        Assert.Contains("4 elementy · 2 połączenia", markdown, StringComparison.Ordinal);
+        Assert.Contains("c0[\"Cel\"]", markdown, StringComparison.Ordinal);
+        Assert.Contains("c1[\"📄 Projekt Ćma\"]", markdown, StringComparison.Ordinal);
+        Assert.Contains("c3[/\"▢ Etap 1\"/]", markdown, StringComparison.Ordinal);
+        Assert.Contains("c0 -->|\"opis 'x'\"| c1", markdown, StringComparison.Ordinal);
+        Assert.Contains("### Cel\n\n# Cel\nWydać wersję", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task This_pc_lists_drives_known_folders_then_network_entries()
+    {
+        var local = new LocalFileSystemPlugin { NetworkEntries = Network };
+        var entries = new List<VfsEntry>();
+        await foreach (var entry in local.EnumerateAsync(LocalFileSystemPlugin.RootPath, TestToken))
+        {
+            entries.Add(entry);
+        }
+
+        Assert.Contains(entries, e => e.Kind == VfsEntryKind.Drive);
+        Assert.Contains(entries, e => e.Kind == VfsEntryKind.Directory && e.Path == Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+        Assert.Contains(entries, e => e.Path == "net://");
+        Assert.Equal("NAS", entries[^1].Name); // Streamed after the local part.
+        Assert.True(entries.FindIndex(e => e.Kind == VfsEntryKind.Drive) < entries.FindIndex(e => e.Kind == VfsEntryKind.Directory));
+
+        static async IAsyncEnumerable<VfsEntry> Network([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Delay(50, cancellationToken);
+            yield return new VfsEntry("NAS", "net://nas.lan", VfsEntryKind.Host);
+        }
+    }
+
+    [Theory]
+    [InlineData("sftp://jan@serwer:2222/home/jan", "sftp://jan@serwer:2222")]
+    [InlineData("sftp://serwer/", "sftp://@serwer:22")]
+    [InlineData("ftp://anna@ftp.example.com/pub", "ftp://anna@ftp.example.com:21")]
+    [InlineData("sftp://jan@serwer:22", "sftp://jan@serwer:22")]
+    public void Saved_logins_are_keyed_like_the_sessions(string path, string realm) =>
+        Assert.Equal(realm, Commander4K.Plugins.BuiltIn.Remote.RemoteTransferVfsPlugin.RealmFor(path));
+
     private ScopedPluginHost Host(PluginManifest manifest) => new(manifest, new NullUi(), _router, _http, _audit);
 
     private static VfsEntry Dir(string path) => new(Path.GetFileName(path), path, VfsEntryKind.Directory);
@@ -129,5 +220,7 @@ public sealed class PreviewTests : IAsyncDisposable
         public Task OpenUrlAsync(string url) => Task.CompletedTask;
 
         public Task SearchWebAsync(string query, string? engine) => Task.CompletedTask;
+
+        public Task CopyTextAsync(string text) => Task.CompletedTask;
     }
 }

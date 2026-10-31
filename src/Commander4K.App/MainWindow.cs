@@ -7,6 +7,7 @@ using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Commander4K.App.Ai;
 using Commander4K.App.Browser;
 using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
@@ -17,6 +18,7 @@ using Commander4K.App.PluginPanels;
 using Commander4K.App.Preview;
 using Commander4K.App.Theming;
 using Commander4K.Core.Configuration;
+using Commander4K.Core.Folders;
 using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
 using Commander4K.Core.Localization;
@@ -26,6 +28,7 @@ using Commander4K.Core.Web;
 using Commander4K.Plugins.BuiltIn.Archives;
 using Commander4K.Plugins.BuiltIn.Local;
 using Commander4K.Plugins.BuiltIn.Network;
+using Commander4K.Plugins.BuiltIn.Remote;
 using Commander4K.PluginSdk;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -82,6 +85,65 @@ public sealed class MainWindow : Window, IShell
     private IReadOnlyList<IPalettePlugin> _builtInPalettes = [];
     private string? _navigationKey;
 
+    /// <summary>Saved window state, read by <c>Program</c> before the window exists; <c>null</c> = first run → maximized.</summary>
+    public static WindowPlacement? StartupPlacement { get; set; }
+
+    private PixelPoint? _normalPosition;
+    private Size _normalSize = new(1360, 860);
+    private bool _maximizedBeforeMinimize;
+
+    /// <summary>First run opens maximized; later runs restore the last size, position (if still on a screen) and state.</summary>
+    private void ApplyPlacement(WindowPlacement? placement)
+    {
+        if (placement is null)
+        {
+            WindowState = WindowState.Maximized;
+            _maximizedBeforeMinimize = true;
+            return;
+        }
+
+        if (placement.Width >= MinWidth && placement.Height >= MinHeight)
+        {
+            Width = placement.Width;
+            Height = placement.Height;
+            _normalSize = new Size(placement.Width, placement.Height);
+        }
+
+        // A monitor may have been unplugged since: only reuse the position when a screen still contains it.
+        if (placement is { X: { } x, Y: { } y } && Screens.ScreenFromPoint(new PixelPoint(x + 40, y + 20)) is not null)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Position = new PixelPoint(x, y);
+            _normalPosition = Position;
+        }
+
+        WindowState = placement.Maximized ? WindowState.Maximized : WindowState.Normal;
+        _maximizedBeforeMinimize = placement.Maximized;
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == ClientSizeProperty && WindowState == WindowState.Normal && change.NewValue is Size size)
+        {
+            _normalSize = size;
+        }
+        else if (change.Property == WindowStateProperty && change.NewValue is WindowState state && state != WindowState.Minimized)
+        {
+            _maximizedBeforeMinimize = state == WindowState.Maximized;
+        }
+    }
+
+    /// <summary>What to save on exit: the restored bounds (even when maximized) and whether it was maximized.</summary>
+    private WindowPlacement CapturePlacement() => new()
+    {
+        Maximized = WindowState == WindowState.Maximized || (WindowState == WindowState.Minimized && _maximizedBeforeMinimize),
+        X = _normalPosition?.X,
+        Y = _normalPosition?.Y,
+        Width = Math.Round(_normalSize.Width),
+        Height = Math.Round(_normalSize.Height),
+    };
+
     public MainWindow()
     {
         Title = $"Commander4K {AppVersion.Display}";
@@ -90,6 +152,14 @@ public sealed class MainWindow : Window, IShell
         MinWidth = 720;
         MinHeight = 420;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        ApplyPlacement(StartupPlacement);
+        PositionChanged += (_, e) =>
+        {
+            if (WindowState == WindowState.Normal)
+            {
+                _normalPosition = e.Point;
+            }
+        };
         Content = new TextBlock()
             .Text(Loc.T("Commander4K — uruchamianie…"))
             .HorizontalAlignment(HorizontalAlignment.Center)
@@ -152,8 +222,10 @@ public sealed class MainWindow : Window, IShell
             var p = panel;
             p.Activated += SetActive;
             p.FileActivated += entry => OpenFile(p, entry);
+            p.FolderEntering += entry => _ = EnterFolderAsync(p, entry);
             p.ContextMenuRequested += entry => ShowContextMenu(p, entry, fromKeyboard: false);
             p.AddConnectionRequested += sender => _ = ExecuteAsync(CommandIds.AddConnection);
+            p.LocationMenuRequested += sender => _ = ShowDriveMenuAsync(sender).AsTask();
             p.AuthenticationRequired += request => _ = LoginAndRetryAsync(request);
         }
 
@@ -173,6 +245,7 @@ public sealed class MainWindow : Window, IShell
             },
             SearchWebAsync);
         host.PluginUi.Target = _pluginHost;
+        host.InstallFromCatalog = InstallFromCatalogAsync;
         host.PowerShell.CommandsChanged += () => Dispatcher.UIThread.Post(RebuildMenu);
         host.PluginsChanged += () => Dispatcher.UIThread.Post(() =>
         {
@@ -253,6 +326,8 @@ public sealed class MainWindow : Window, IShell
         RegisterPaletteSettings();
         host.Jobs.JobChanged += _ => Dispatcher.UIThread.Post(() => _jobsDirty = true);
         host.Remote.HostKeyValidator = ValidateHostKey;
+        // Mermaid diagrams in previews and the AI chat render in a hidden WebView2 parented to this window.
+        MermaidRenderer.Configure(() => TryGetPlatformHandle()?.Handle ?? 0, host.DataDirectory);
         _jobsTimer.Start();
         skins.Changed += ApplySkin;
         ApplySkin(skins.Current);
@@ -326,6 +401,7 @@ public sealed class MainWindow : Window, IShell
     private void OpenSettings(string? query = null)
     {
         var window = new SettingsWindow(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, query);
+        FollowSkin(window, window.ApplySkin);
         window.Closed += (_, _) => RebuildMenu(); // Key bindings shown in the menu may have changed.
         window.Show(this);
     }
@@ -613,7 +689,11 @@ public sealed class MainWindow : Window, IShell
             return existing;
         }
 
-        var browser = new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut);
+        var browser = new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut)
+        {
+            Ai = AiContext,
+            InstallPlugin = files => AiPluginInstaller.InstallAsync(this, _skins.Current, AiContext, files, OpenPluginManagerAsync),
+        };
         target.ShowMode(browser);
         SetActive(target);
         return browser;
@@ -634,6 +714,12 @@ public sealed class MainWindow : Window, IShell
 
     private async Task AskAiAsync()
     {
+        if (_host!.Settings.AiInApp && _host.Ai.IsConfigured)
+        {
+            OpenAiChat();
+            return;
+        }
+
         var assistant = SearchEngines.Get(_host!.Settings.AssistantEngine, SearchEngines.DefaultAssistant);
         var question = await new InputDialog(_skins!.Current, Loc.T("Zapytaj AI ({0})", assistant.Name),
             Loc.T("Pytanie (asystenta zmienisz w ustawieniach: „Asystent AI”):"), string.Empty).ShowAsync(this);
@@ -641,6 +727,612 @@ public sealed class MainWindow : Window, IShell
         {
             await SearchWebAsync(question, "assistant");
         }
+    }
+
+    private AiChatWindow? _aiChat;
+    private AiProvidersWindow? _aiProviders;
+
+    /// <summary>One chat window; it knows the active folder so questions can refer to "here".</summary>
+    private void OpenAiChat()
+    {
+        if (_aiChat is { } open)
+        {
+            open.Activate();
+            return;
+        }
+
+        _aiChat = new AiChatWindow(AiContext, _skins!.Current, OpenAiProviders, OpenPluginManagerAsync);
+        FollowSkin(_aiChat, _aiChat.ApplySkin);
+        _aiChat.Closed += (_, _) => _aiChat = null;
+        _aiChat.Show(this);
+    }
+
+    /// <param name="pinned">A folder's own view (c4k.dir "enter") shown in <paramref name="source"/> itself.</param>
+    private PreviewPanelView CreatePreview(FilePanelView source, PreviewPanelView.PinnedFolder? pinned = null) =>
+        new(_host!, source, _skins!.Current, Notify, pinned)
+        {
+            AskAiAboutFile = AskAiAboutFileAsync,
+            CreatePreviewPlugin = CreatePreviewPluginAsync,
+            OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
+        };
+
+    /// <summary>
+    /// Enter on a folder: its <c>c4k.dir</c> (when the setting is on) may show a view, open a panel plugin, go somewhere
+    /// else (SFTP with a key), open a page or run a script; otherwise, and with Shift+Enter, the folder opens as files.
+    /// Only disks, shares and SFTP/FTP are checked — one stat per Enter, abandoned after 2 s on a hung share.
+    /// </summary>
+    private async Task EnterFolderAsync(FilePanelView panel, VfsEntry folder)
+    {
+        FolderConfig? config = null;
+        if (VfsPath.GetScheme(folder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
+        {
+            config = await Task.Run(() => _host!.ReadFolderConfigAsync(folder.Path, CancellationToken.None));
+        }
+
+        if (config?.Error is { } error)
+        {
+            Notify(Loc.T("{0}: {1}", config.FilePath, error), isError: true);
+        }
+
+        if (config?.Enter is not { IsPlainFiles: false } action)
+        {
+            await panel.NavigateAsync(folder.Path);
+            return;
+        }
+
+        await RunFolderActionAsync(panel, folder, config, action);
+    }
+
+    /// <summary>
+    /// cm_FolderView: writes a c4k.dir for the folder under the cursor (or the current one) from a short choice — a
+    /// view, a catalog plugin, an SSH connection with a key, a web page or a script — for its preview, its Enter or both.
+    /// </summary>
+    private async ValueTask ConfigureFolderViewAsync(CommandInvocation _)
+    {
+        var tab = _active.ActiveTab;
+        var folder = tab.CurrentEntry is { Kind: VfsEntryKind.Directory or VfsEntryKind.Drive or VfsEntryKind.Share } entry ? entry.Path : tab.Path;
+        if (VfsPath.GetScheme(folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme) || folder.Contains("://", StringComparison.Ordinal))
+        {
+            Notify(Loc.T("Plik c4k.dir można utworzyć na dysku albo w udziale sieciowym."), isError: true);
+            return;
+        }
+
+        var brushes = _skins!.Current;
+        var items = new List<PickerItem>
+        {
+            new(Loc.T("🖼 Galeria"), Loc.T("miniatury obrazów z folderu"), FolderViewIds.Gallery, "zdjęcia photos images"),
+            new(Loc.T("▦ Kafelki"), Loc.T("dashboard: skróty do folderów, stron i skryptów"), FolderViewIds.Dashboard, "dashboard skróty tiles"),
+            new(Loc.T("🗒 Notatki"), Loc.T("notatki Markdown z powiązaniami (Obsidian)"), FolderViewIds.Notes, "obsidian markdown"),
+            new(Loc.T("📄 README"), Loc.T("plik Markdown folderu"), FolderViewIds.Markdown, "markdown opis"),
+            new(Loc.T("🔐 Połączenie SSH"), Loc.T("wejście otwiera serwer SFTP z kluczem"), "ssh", "sftp klucz key serwer"),
+            new(Loc.T("🌐 Strona WWW"), Loc.T("wejście otwiera stronę w przeglądarce panelu"), "url", "www http link"),
+            new(Loc.T("▶ Skrypt"), Loc.T("wejście uruchamia polecenie (po Twojej zgodzie)"), "run", "script ps1 bat polecenie"),
+        };
+        items.AddRange(_host!.PluginCatalog.Plugins.Select(p => new PickerItem("🧩 " + p.Name, p.LocalizedDescription, "plugin:" + p.Id, string.Join(' ', p.Tags))));
+        items.Add(new(Loc.T("✕ Zwykła lista plików"), Loc.T("usuwa c4k.dir"), "remove", "usuń delete"));
+
+        var choice = (await new PickerDialog(brushes, Loc.T("Widok folderu: {0}", folder), items, Loc.T("Co ma pokazywać ten folder?")).ShowAsync(this))?.Value;
+        if (choice is null)
+        {
+            return;
+        }
+
+        var file = FolderConfig.ChildPath(folder, FolderConfig.FileName);
+        if (choice == "remove")
+        {
+            await Task.Run(() => File.Delete(file));
+            Notify(Loc.T("Usunięto {0}.", file));
+            await tab.RefreshAsync();
+            return;
+        }
+
+        System.Text.Json.Nodes.JsonNode? action;
+        var where = "both";
+        switch (choice)
+        {
+            case "ssh":
+                var address = await new InputDialog(brushes, Loc.T("Połączenie SSH"), Loc.T("Adres (sftp://użytkownik@host/folder):"), "sftp://" + Environment.UserName + "@host/home/" + Environment.UserName).ShowAsync(this);
+                if (string.IsNullOrWhiteSpace(address))
+                {
+                    return;
+                }
+
+                var key = await new InputDialog(brushes, Loc.T("Połączenie SSH"), Loc.T("Klucz prywatny (puste = domyślne klucze z ~/.ssh):"), "~/.ssh/id_ed25519").ShowAsync(this);
+                action = new System.Text.Json.Nodes.JsonObject { ["open"] = address.Trim() };
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    action["keyFile"] = key.Trim();
+                }
+
+                where = "enter";
+                break;
+            case "url":
+                var url = await new InputDialog(brushes, Loc.T("Strona WWW"), Loc.T("Adres strony:"), "https://").ShowAsync(this);
+                if (!Core.Ai.AiInstallInfo.IsWebUrl(url))
+                {
+                    return;
+                }
+
+                action = new System.Text.Json.Nodes.JsonObject { ["url"] = url!.Trim() };
+                where = "enter";
+                break;
+            case "run":
+                var command = await new InputDialog(brushes, Loc.T("Skrypt"), Loc.T("Polecenie (np. build.ps1, npm, code):"), "build.ps1").ShowAsync(this);
+                if (string.IsNullOrWhiteSpace(command))
+                {
+                    return;
+                }
+
+                action = new System.Text.Json.Nodes.JsonObject { ["run"] = new System.Text.Json.Nodes.JsonObject { ["command"] = command.Trim(), ["args"] = new System.Text.Json.Nodes.JsonArray() } };
+                where = "enter";
+                break;
+            case FolderViewIds.Dashboard:
+                action = System.Text.Json.Nodes.JsonNode.Parse("""
+                    {
+                      "view": "dashboard",
+                      "tiles": [
+                        { "title": "Dokumenty", "icon": "📁", "open": "~/Documents" },
+                        { "title": "Commander4K", "icon": "🌐", "url": "https://github.com/4kprojekt/Commander4K" },
+                        { "title": "Terminal", "icon": "▶", "run": { "command": "wt", "args": ["-d", "."] } }
+                      ]
+                    }
+                    """);
+                break;
+            default:
+                if (choice.StartsWith("plugin:", StringComparison.Ordinal))
+                {
+                    var plugin = _host.PluginCatalog.Find(choice[7..])!;
+                    action = new System.Text.Json.Nodes.JsonObject { ["plugin"] = plugin.Id };
+                    if (!IsInstalled(plugin.Id))
+                    {
+                        await OfferCatalogPluginAsync(plugin.Id);
+                    }
+                }
+                else
+                {
+                    action = choice;
+                }
+
+                break;
+        }
+
+        if (where == "both")
+        {
+            var when = (await new PickerDialog(brushes, Loc.T("Kiedy?"),
+            [
+                new(Loc.T("Podgląd i wejście"), Loc.T("Ctrl+Q na folderze i Enter"), "both"),
+                new(Loc.T("Tylko podgląd"), Loc.T("Enter otwiera zwykłą listę plików"), "preview"),
+                new(Loc.T("Tylko wejście"), Loc.T("podgląd pokazuje rozmiary jak zwykle"), "enter"),
+            ]).ShowAsync(this))?.Value;
+            if (when is null)
+            {
+                return;
+            }
+
+            where = when;
+        }
+
+        var root = new System.Text.Json.Nodes.JsonObject { ["$schema"] = FolderConfig.SchemaUrl };
+        if (where is "both" or "preview")
+        {
+            root["preview"] = action?.DeepClone();
+        }
+
+        if (where is "both" or "enter")
+        {
+            root["enter"] = action?.DeepClone();
+        }
+
+        if (File.Exists(file) && !await new ConfirmDialog(brushes, Loc.T("Zastąpić c4k.dir?"), Loc.T("{0} już istnieje.", file), Loc.T("Zastąp")).ShowAsync(this))
+        {
+            return;
+        }
+
+        try
+        {
+            await File.WriteAllTextAsync(file, root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }) + "\n");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Notify(ex.Message, isError: true);
+            return;
+        }
+
+        Notify(Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file));
+        await tab.RefreshAsync();
+    }
+
+    /// <summary>Shift+Enter: the folder's files, whatever its <c>c4k.dir</c> says.</summary>
+    private void EnterFolderPlain()
+    {
+        if (_active.Mode is null && _active.ActiveTab.CurrentEntry is { IsContainer: true, Kind: not (VfsEntryKind.ParentLink or VfsEntryKind.Action) } entry)
+        {
+            _ = _active.NavigateAsync(entry.Path);
+        }
+        else
+        {
+            OpenCurrent();
+        }
+    }
+
+    private async Task RunFolderActionAsync(FilePanelView panel, VfsEntry folder, FolderConfig config, FolderAction action)
+    {
+        var host = _host!;
+        switch (action.Kind)
+        {
+            case FolderActionKind.Run when action.Run is { } run:
+                await RunFolderCommandAsync(config, run);
+                return;
+
+            case FolderActionKind.Open when action.Open is { } open:
+                var target = config.Resolve(open);
+                if (VfsPath.GetScheme(target) is "sftp" or "ftp" && (action.KeyFile is not null || action.User is not null))
+                {
+                    // The login from c4k.dir is kept for this session only; saved connections remain the place for passwords.
+                    host.Remote.SetLogin(target, new RemoteLogin(action.User ?? Environment.UserName,
+                        PrivateKeyFile: action.KeyFile is { } key ? config.Resolve(key) : null));
+                }
+
+                await panel.NavigateAsync(target);
+                return;
+
+            case FolderActionKind.Url when action.Url is { } url:
+                if (!Core.Ai.AiInstallInfo.IsWebUrl(url))
+                {
+                    Notify(Loc.T("{0}: „url” musi być adresem http(s).", config.FilePath), isError: true);
+                    break;
+                }
+
+                _ = panel.NavigateAsync(folder.Path);
+                OpenBrowser(url, panel);
+                return;
+
+            case FolderActionKind.Panel when action.PanelId is { } panelId:
+                if (host.FindPanel(panelId) is null && action.Plugin is { } owner && !IsInstalled(owner))
+                {
+                    await OfferCatalogPluginAsync(owner);
+                    break;
+                }
+
+                _ = panel.NavigateAsync(folder.Path);
+                await OpenPanelInAsync(panelId, folder.Path, panel, action.Options);
+                return;
+
+            case FolderActionKind.View:
+                _ = panel.NavigateAsync(folder.Path);
+                panel.ShowMode(CreatePreview(panel, new PreviewPanelView.PinnedFolder(folder, config, action)));
+                SetActive(panel);
+                return;
+        }
+
+        await panel.NavigateAsync(folder.Path);
+    }
+
+    private bool IsInstalled(string pluginId) =>
+        _host!.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Runs a command from a <c>c4k.dir</c>. The first time (and after every change of the file) the user sees the
+    /// exact command and decides; a folder copied from elsewhere cannot run anything on its own. Disks and shares only.
+    /// </summary>
+    private async Task RunFolderCommandAsync(FolderConfig config, FolderRun run)
+    {
+        if (VfsPath.GetScheme(config.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
+        {
+            Notify(Loc.T("Polecenia z c4k.dir działają tylko na dyskach i udziałach sieciowych."), isError: true);
+            return;
+        }
+
+        var workingDirectory = run.WorkingDirectory is { } cwd ? config.Resolve(cwd) : config.Folder;
+        if (!await Task.Run(() => _host!.FolderTrust.IsTrusted(config)))
+        {
+            var message = Loc.T("Plik {0} chce uruchomić:", config.FilePath) + "\n\n    " + run + "\n\n" +
+                Loc.T("Folder roboczy: {0}", workingDirectory) + "\n\n" +
+                Loc.T("Zgoda dotyczy tej treści pliku — gdy c4k.dir się zmieni, zapytam ponownie. Uruchamiaj tylko polecenia, które rozumiesz.");
+            if (!await new ConfirmDialog(_skins!.Current, Loc.T("Uruchomić polecenie z c4k.dir?"), message, Loc.T("Uruchom")).ShowAsync(this))
+            {
+                return;
+            }
+
+            await Task.Run(() => _host!.FolderTrust.Trust(config));
+        }
+
+        _host!.Audit.Record("c4k.dir", "run", $"{config.FilePath}: {run}");
+        await Task.Run(() =>
+        {
+            try
+            {
+                using var _ = Process.Start(FolderRunStartInfo(config, run, workingDirectory));
+            }
+            catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or FileNotFoundException)
+            {
+                Dispatcher.UIThread.Post(() => Notify(Loc.T("Nie udało się uruchomić „{0}”: {1}", run.Command, ex.Message), isError: true));
+            }
+        });
+    }
+
+    /// <summary>A script next to the c4k.dir runs with its interpreter (.ps1 → PowerShell 7); anything else goes through Windows (exe, bat, documents, PATH).</summary>
+    private static ProcessStartInfo FolderRunStartInfo(FolderConfig config, FolderRun run, string workingDirectory)
+    {
+        var local = config.Resolve(run.Command);
+        var command = File.Exists(local) ? local : run.Command;
+        var info = Path.GetExtension(command).Equals(".ps1", StringComparison.OrdinalIgnoreCase)
+            ? new ProcessStartInfo("pwsh") { ArgumentList = { "-NoLogo", "-File", command } }
+            : new ProcessStartInfo(command);
+        foreach (var argument in run.Arguments)
+        {
+            info.ArgumentList.Add(argument);
+        }
+
+        info.WorkingDirectory = workingDirectory;
+        info.UseShellExecute = !run.Hidden;
+        info.CreateNoWindow = run.Hidden;
+        return info;
+    }
+
+    private readonly HashSet<string> _allowedUriSchemes = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A tile click (gallery, dashboard, plugin tiles). Paths open like Enter in <paramref name="listPanel"/>; web pages in
+    /// the browser panel; <c>c4k:</c> links install plugins or run the folder's own commands; other URIs (steam://…)
+    /// go to Windows once the user allowed that scheme in this session.
+    /// </summary>
+    private async Task OpenTileAsync(PreviewTile tile, VfsEntry? folder, FilePanelView listPanel)
+    {
+        if (tile.Target is not { Length: > 0 } target)
+        {
+            return;
+        }
+
+        try
+        {
+            if (target == "c4k:plugins")
+            {
+                await OpenPluginManagerAsync();
+            }
+            else if (target.StartsWith("c4k:install/", StringComparison.Ordinal))
+            {
+                await InstallFromCatalogAsync(target["c4k:install/".Length..]);
+            }
+            else if (target.StartsWith("c4k:run/", StringComparison.Ordinal))
+            {
+                await RunTileCommandAsync(target["c4k:run/".Length..], folder);
+            }
+            else if (Core.Ai.AiInstallInfo.IsWebUrl(target))
+            {
+                OpenBrowser(target);
+            }
+            else if (_host!.Router.TryResolve(target, out _) && !IsForeignUri(target))
+            {
+                if (listPanel.Mode is PreviewPanelView { IsPinned: true })
+                {
+                    listPanel.CloseMode();
+                }
+
+                var entry = await Task.Run(() => _host.Router.GetEntryAsync(target, CancellationToken.None));
+                if (entry is null)
+                {
+                    Notify(Loc.T("Nie znaleziono {0}.", target), isError: true);
+                }
+                else if (entry.Value.IsContainer)
+                {
+                    await EnterFolderAsync(listPanel, entry.Value);
+                }
+                else
+                {
+                    OpenFile(listPanel, entry.Value);
+                }
+            }
+            else
+            {
+                await OpenForeignUriAsync(target);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException or InvalidOperationException or NotSupportedException)
+        {
+            Notify(ex.Message, isError: true);
+        }
+    }
+
+    /// <summary>A URI scheme the VFS does not own (steam://, mailto:, ms-settings:), not a drive letter.</summary>
+    private static bool IsForeignUri(string target)
+    {
+        var colon = target.IndexOf(':');
+        return colon > 1 && target[..colon].All(c => char.IsAsciiLetterOrDigit(c) || c is '+' or '-' or '.')
+            && !(target[..colon] is "sftp" or "ftp" or "smb" or "net" or "reg" or "zip" or "7z" or "tar" or "rar" or "gz" or "local" or "file");
+    }
+
+    private async Task OpenForeignUriAsync(string uri)
+    {
+        var colon = uri.IndexOf(':');
+        if (colon <= 1)
+        {
+            Notify(Loc.T("Nieznany cel kafelka: {0}", uri), isError: true);
+            return;
+        }
+
+        var scheme = uri[..colon];
+        if (!_allowedUriSchemes.Contains(scheme))
+        {
+            if (!await new ConfirmDialog(_skins!.Current, Loc.T("Otworzyć link {0}:?", scheme),
+                    Loc.T("Kafelek otwiera „{0}” w programie, który Windows przypisał do „{1}:”. Pozwolić na linki {1}: do końca tej sesji?", uri, scheme), Loc.T("Otwórz")).ShowAsync(this))
+            {
+                return;
+            }
+
+            _allowedUriSchemes.Add(scheme);
+        }
+
+        await Task.Run(() =>
+        {
+            try
+            {
+                using var _ = Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+            }
+            catch (Win32Exception ex)
+            {
+                Dispatcher.UIThread.Post(() => Notify(ex.Message, isError: true));
+            }
+        });
+    }
+
+    /// <summary><c>c4k:run/&lt;section&gt;/&lt;tile&gt;</c>: the command is read again from the folder's c4k.dir, never taken from the link.</summary>
+    private async Task RunTileCommandAsync(string reference, VfsEntry? folder)
+    {
+        var parts = reference.Split('/');
+        if (folder is null || parts.Length != 2 || !int.TryParse(parts[1], out var index))
+        {
+            return;
+        }
+
+        var config = await Task.Run(() => _host!.ReadFolderConfigAsync(folder.Value.Path, CancellationToken.None));
+        var action = parts[0] == "enter" ? config?.Enter : config?.Preview;
+        if (config is null || action is null || index < 0 || index >= action.Tiles.Count || action.Tiles[index].Run is not { } run)
+        {
+            Notify(Loc.T("Kafelek nie ma już polecenia w c4k.dir."), isError: true);
+            return;
+        }
+
+        await RunFolderCommandAsync(config, run);
+    }
+
+    private async Task OfferCatalogPluginAsync(string pluginId)
+    {
+        if (_host!.PluginCatalog.Find(pluginId) is not { } entry)
+        {
+            Notify(Loc.T("Wtyczki „{0}” nie ma w katalogu oficjalnych wtyczek.", pluginId), isError: true);
+            return;
+        }
+
+        if (await new ConfirmDialog(_skins!.Current, Loc.T("Ten folder potrzebuje wtyczki"),
+                Loc.T("c4k.dir tego folderu korzysta z wtyczki „{0}”:\n\n{1}\n\nPobrać ją z katalogu oficjalnych wtyczek?", entry.Name, entry.LocalizedDescription), Loc.T("Pobierz")).ShowAsync(this))
+        {
+            await InstallFromCatalogAsync(pluginId);
+        }
+    }
+
+    /// <summary>Downloads a catalog plugin (each file checked against the catalog's hash) and installs it disabled, through the usual consent.</summary>
+    private async Task InstallFromCatalogAsync(string pluginId)
+    {
+        var host = _host!;
+        if (host.PluginCatalog.Find(pluginId) is not { } entry)
+        {
+            Notify(Loc.T("Wtyczki „{0}” nie ma w katalogu oficjalnych wtyczek.", pluginId), isError: true);
+            return;
+        }
+
+        IReadOnlyList<Core.Plugins.GeneratedFile> files;
+        try
+        {
+            Notify(Loc.T("Pobieranie „{0}”…", entry.Name));
+            files = await Task.Run(() => host.PluginCatalog.DownloadAsync(entry));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or IOException or TaskCanceledException)
+        {
+            await new MessageDialog(_skins!.Current, Loc.T("Nie można pobrać wtyczki"), ex.Message).ShowAsync(this);
+            return;
+        }
+
+        var result = await AiPluginInstaller.InstallAsync(this, _skins!.Current, AiContext, files, OpenPluginManagerAsync, fromCatalog: true);
+        Notify(result.Message);
+    }
+
+
+    /// <summary>
+    /// "What format is this?" for a file no preview recognises: name, size and its first bytes go to the AI chat when
+    /// a provider is signed in, otherwise to the assistant in the browser panel (Gemini, ChatGPT… — the settings' choice).
+    /// </summary>
+    private async Task AskAiAboutFileAsync(VfsEntry file)
+    {
+        var sample = await Task.Run(() => AiAppContext.DescribeFileAsync(_host!, file));
+        var question = Loc.T("Co to za format pliku „{0}”? Jaki program go tworzy i otwiera, jak jest zbudowany (sygnatura, sekcje), czy ma publiczną specyfikację albo biblioteki w Pythonie/Node i jak można pokazać jego zawartość?", file.Name) +
+            "\n\n" + sample;
+        if (_host!.Settings.AiInApp && _host.Ai.IsConfigured)
+        {
+            OpenAiChat();
+            _aiChat?.Ask(question);
+            return;
+        }
+
+        await OpenBrowser(null).AskWithPromptAsync(question, SearchEngines.Get(_host.Settings.AssistantEngine, SearchEngines.DefaultAssistant));
+    }
+
+    /// <summary>
+    /// A preview plugin for the unknown file's type: the wish (editable) plus a sample of the file goes to the chat in
+    /// plugin mode, or with the guide and the preview example to the browser assistant.
+    /// </summary>
+    private async Task CreatePreviewPluginAsync(VfsEntry file)
+    {
+        var extension = Path.GetExtension(file.Name) is { Length: > 0 } ext ? ext : file.Name;
+        var wish = await new InputDialog(_skins!.Current, Loc.T("Podgląd dla {0} (AI)", extension),
+            Loc.T("Co ma pokazywać podgląd? (AI dostanie też przewodnik po wtyczkach i początek tego pliku)"),
+            Loc.T("Napisz wtyczkę z podglądem (Ctrl+Q) dla plików {0}: pokaż czytelnie ich zawartość i strukturę jako Markdown.", extension)).ShowAsync(this);
+        if (string.IsNullOrWhiteSpace(wish))
+        {
+            return;
+        }
+
+        var sample = await Task.Run(() => AiAppContext.DescribeFileAsync(_host!, file));
+        var request = wish + "\n\nThe preview must declare `contributes.previews` with \"extensions\": [\"" + extension +
+            "\"] and read the file only with the SDK (read_bytes / read_text). Sample file:\n\n" + sample;
+        if (_host!.Settings.AiInApp && _host.Ai.IsConfigured)
+        {
+            OpenAiChat();
+            _aiChat?.StartPlugin(request, preview: true, send: true);
+            return;
+        }
+
+        await OpenBrowser(null).AskWithPromptAsync(AiContext.PluginPrompt(request, preview: true), SearchEngines.Get(_host.Settings.AssistantEngine, SearchEngines.DefaultAssistant));
+    }
+
+    /// <summary>What AI assistants (chat and browser panel) are told about the app.</summary>
+    private AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
+
+    private AiAppContext? _aiContext;
+
+    private Task OpenPluginManagerAsync() => ExecuteAsync(CommandIds.PanelPrefix + PluginManagerPanel.PluginId);
+
+    /// <summary>cm_AiWritePlugin: the chat in plugin mode when a provider is signed in, otherwise the web assistant with the guide typed in.</summary>
+    private async Task WritePluginWithAiAsync()
+    {
+        if (_host!.Ai.IsConfigured)
+        {
+            OpenAiChat();
+            _aiChat?.StartPlugin();
+            return;
+        }
+
+        var wish = await new InputDialog(_skins!.Current, Loc.T("Napisz wtyczkę z AI"),
+            Loc.T("Co ma robić wtyczka? (prośba trafi do asystenta w przeglądarce razem z przewodnikiem i stanem aplikacji)")).ShowAsync(this);
+        if (!string.IsNullOrWhiteSpace(wish))
+        {
+            await OpenBrowser(null).AskWithPromptAsync(AiContext.PluginPrompt(wish), SearchEngines.Get(_host.Settings.AssistantEngine, SearchEngines.DefaultAssistant));
+        }
+    }
+
+    private void OpenAiProviders()
+    {
+        if (_aiProviders is { } open)
+        {
+            open.Activate();
+            return;
+        }
+
+        _aiProviders = new AiProvidersWindow(_host!, _skins!.Current);
+        FollowSkin(_aiProviders, _aiProviders.ApplySkin);
+        _aiProviders.Closed += (_, _) => _aiProviders = null;
+        _aiProviders.Show(this);
+    }
+
+    /// <summary>
+    /// Repaints a non-modal window whenever the skin or density changes, for as long as it is open. Posted, so a
+    /// window can be rebuilt by a change made from its own controls (the skin combo box in the settings).
+    /// </summary>
+    private void FollowSkin(Window window, Action<SkinBrushes> apply)
+    {
+        void OnChanged(SkinBrushes brushes) => Dispatcher.UIThread.Post(() => apply(brushes));
+        _skins!.Changed += OnChanged;
+        window.Closed += (_, _) => _skins.Changed -= OnChanged;
     }
 
     /// <summary>App shortcuts pressed while a web page has focus (the page reports them; Avalonia never sees them).</summary>
@@ -697,7 +1389,7 @@ public sealed class MainWindow : Window, IShell
             case null:
                 break;
             case "preview":
-                target.ShowMode(new PreviewPanelView(_host!, source, _skins!.Current, Notify));
+                target.ShowMode(CreatePreview(source));
                 break;
             case var browser when browser.StartsWith(BrowserModePrefix, StringComparison.Ordinal):
                 OpenBrowser(browser[BrowserModePrefix.Length..] is { Length: > 0 } url ? url : null, target);
@@ -1028,6 +1720,7 @@ public sealed class MainWindow : Window, IShell
 
         _host.Settings.LeftPath = _left.ActiveTab.Path;
         _host.Settings.RightPath = _right.ActiveTab.Path;
+        _host.Settings.Window = CapturePlacement();
         try
         {
             // Runs on the thread pool internally, so blocking here cannot deadlock the dispatcher.
@@ -1044,6 +1737,8 @@ public sealed class MainWindow : Window, IShell
         c.Register(CommandIds.Help, Loc.T("Lista skrótów klawiszowych"), ShowHelpAsync)
          .Register(CommandIds.SwitchPanel, Loc.T("Przełącz panel"), () => SetActive(Other))
          .Register(CommandIds.Open, Loc.T("Otwórz / wejdź"), OpenCurrent)
+         .Register(CommandIds.EnterFolderPlain, Loc.T("Wejdź do folderu jako lista plików (pomija c4k.dir)"), EnterFolderPlain)
+         .Register(CommandIds.FolderView, Loc.T("Widok folderu (c4k.dir): galeria, kafelki, wtyczka, SSH, skrypt"), ConfigureFolderViewAsync)
          .Register(CommandIds.GoToParent, Loc.T("Katalog wyżej"), () => _active.GoToParent())
          .Register(CommandIds.Refresh, Loc.T("Odśwież"), () => _ = _active.ActiveTab.RefreshAsync())
          .Register(CommandIds.NewTab, Loc.T("Nowa zakładka"), () => _active.AddTab(_active.ActiveTab.Path))
@@ -1060,7 +1755,9 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.QuickView, Loc.T("Szybki podgląd"), TogglePreview)
          .Register(CommandIds.PanelModes, Loc.T("Tryb panelu (pliki, podgląd, panele wtyczek)"), ShowPanelModesAsync)
          .Register(CommandIds.Browser, Loc.T("Przeglądarka (WWW, wyszukiwarki, asystenci AI)"), () => OpenBrowser(null))
-         .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (ChatGPT, Gemini, Claude…) w przeglądarce"), _ => new ValueTask(AskAiAsync()))
+         .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (czat z darmowymi dostawcami lub asystent w przeglądarce)"), _ => new ValueTask(AskAiAsync()))
+         .Register(CommandIds.AiProviders, Loc.T("Dostawcy AI — logowanie, kolejność, limity"), _ => { OpenAiProviders(); return ValueTask.CompletedTask; })
+         .Register(CommandIds.AiWritePlugin, Loc.T("Napisz wtyczkę z AI (według przewodnika, z instalacją)"), _ => new ValueTask(WritePluginWithAiAsync()))
          .Register(CommandIds.TogglePalettes, Loc.T("Palety: pokaż / ukryj"), _ => new ValueTask(TogglePalettesAsync()))
          .Register(CommandIds.Palettes, Loc.T("Palety: położenie (szybkie akcje, ulubione, widoki, wtyczki)"), () => OpenSettings(Loc.T("paleta")))
          .Register(CommandIds.AddFavorite, Loc.T("Dodaj bieżący folder do ulubionych"), _ => new ValueTask(AddFavoriteAsync()))
@@ -1077,8 +1774,9 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.SearchAsync, Loc.T("Szukaj"), OpenSearch)
          .Register(CommandIds.Compare, Loc.T("Porównaj pliki"), CompareAsync)
          .Register(CommandIds.OpenTerminal, Loc.T("Terminal w bieżącym katalogu"), OpenTerminalAsync)
+         .Register(CommandIds.OpenInVsCode, Loc.T("Otwórz w VS Code (bieżący folder i zaznaczone pliki)"), OpenInVsCodeAsync)
          .Register(CommandIds.CancelCurrentOperation, Loc.T("Przerwij"), CancelCurrent)
-         .Register(CommandIds.SelectSkin, Loc.T("Wybór skórki"), _ => new SkinPickerDialog(_host, _skins!).ShowAsync(this).ContinueWith(_ => { }, TaskScheduler.Default).AsValueTask())
+         .Register(CommandIds.SelectSkin, Loc.T("Wybór skórki"), _ => new ValueTask(new SkinPickerDialog(_host, _skins!).ShowAsync(this)))
          .Register(CommandIds.NextSkin, Loc.T("Następna skórka"), NextSkin)
          .Register(CommandIds.ToggleHidden, Loc.T("Pokaż / ukryj pliki ukryte"), ToggleHiddenAsync)
          .Register(CommandIds.CommandPalette, Loc.T("Paleta komend"), ShowCommandPaletteAsync)
@@ -1283,6 +1981,37 @@ public sealed class MainWindow : Window, IShell
         }
     }
 
+    /// <summary>
+    /// cm_OpenInVsCode: a folder under the cursor (nothing marked) opens as the workspace; otherwise the current folder
+    /// opens with the marked files (or the file under the cursor). Disks and UNC shares only — VS Code cannot open
+    /// archives, SFTP or the registry through Commander4K.
+    /// </summary>
+    private async ValueTask OpenInVsCodeAsync(CommandInvocation _)
+    {
+        var tab = _active.ActiveTab;
+        if (!IsFileSystemPath(tab.Path) || LocalFileSystemPlugin.ToLocalPath(tab.Path) is not { } folder)
+        {
+            Notify(Loc.T("VS Code otwiera tylko foldery na dyskach i udziałach sieciowych (nie archiwa, SFTP ani rejestr)."), isError: true);
+            return;
+        }
+
+        var chosen = tab.MarkedOrCurrent().Where(e => e.Kind != VfsEntryKind.ParentLink).ToList();
+        IReadOnlyList<string> files = [];
+        if (tab.Marked.Count == 0 && chosen is [{ IsContainer: true } single])
+        {
+            folder = LocalFileSystemPlugin.ToLocalPath(single.Path) ?? folder;
+        }
+        else
+        {
+            files = [.. chosen.Where(e => !e.IsContainer).Select(e => LocalFileSystemPlugin.ToLocalPath(e.Path) ?? e.Path)];
+        }
+
+        var result = await _host!.Tools.OpenInVsCodeAsync(folder, files);
+        Notify(result.Launched
+            ? Loc.T("VS Code: {0}{1}", folder, files.Count > 0 ? Loc.P(files.Count, " + {0} plik| + {0} pliki| + {0} plików") : string.Empty)
+            : result.Error ?? Loc.T("Nie znaleziono VS Code."), isError: !result.Launched);
+    }
+
     private async ValueTask TransferAsync(TransferMode mode)
     {
         var sources = _active.ActiveTab.MarkedOrCurrent();
@@ -1463,10 +2192,42 @@ public sealed class MainWindow : Window, IShell
             items.Add(new PickerItem(drive.Name, drive.Description, drive.Path));
         }
 
-        items.Add(new PickerItem(Loc.T("Sieć"), Loc.T("net:// – hosty w sieci LAN, udziały SMB, SFTP/FTP"), NetworkNeighborhoodVfsPlugin.RootPath));
+        // Network locations right after the drives: the LAN, saved connections, Explorer's network locations and
+        // network folders visited recently (frecency), each once.
+        items.Add(new PickerItem(Loc.T("🖧 Sieć"), Loc.T("net:// – hosty w sieci LAN, udziały SMB, SFTP/FTP"), NetworkNeighborhoodVfsPlugin.RootPath));
+        var network = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void AddNetwork(string label, string detail, string path)
+        {
+            if (network.Add(path.TrimEnd('\\', '/')))
+            {
+                items.Add(new PickerItem(label, detail, path, Loc.T("sieć lokalizacja")));
+            }
+        }
+
+        foreach (var connection in _host.Settings.Connections)
+        {
+            AddNetwork("🔗 " + connection.Name, Loc.T("Zapisane połączenie · {0}", connection.Path), connection.Path);
+        }
+
+        var (locations, recent) = await Task.Run(async () =>
+        {
+            var explorer = NetworkLocations.Read();
+            var visited = _host.Index is { } index ? await index.GetFrecentAsync(null, 200) : [];
+            return (explorer, visited.Where(f => IsNetworkPath(f.Path)).Take(8).ToList());
+        });
+        foreach (var location in locations)
+        {
+            AddNetwork("📁 " + location.Name, Loc.T("Lokalizacja sieciowa Windows · {0}", location.Path), location.Path);
+        }
+
+        foreach (var visited in recent)
+        {
+            AddNetwork("🕘 " + visited.Path, Loc.T("Ostatnio odwiedzane w sieci"), visited.Path);
+        }
+
+        items.Add(new PickerItem(Loc.T("➕ Dodaj połączenie sieciowe…"), Loc.T("SMB, SFTP lub FTP — zostanie zapisane na tej liście"), AddConnectionChoice));
         items.Add(new PickerItem(Loc.T("Rejestr Windows"), "reg://", "reg://"));
         items.AddRange(_host.PanelPlugins.Select(p => new PickerItem("Panel: " + p.Title, p.Description, CommandIds.PanelPrefix + p.Id)));
-        items.AddRange(_host.Settings.Connections.Select(c => new PickerItem(c.Name, c.Path, c.Path)));
 
         var choice = await new PickerDialog(_skins!.Current, Loc.T("Zmień dysk"), items).ShowAsync(this);
         if (choice is null)
@@ -1480,9 +2241,23 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
+        if (choice.Value == AddConnectionChoice)
+        {
+            await ExecuteAsync(CommandIds.AddConnection);
+            return;
+        }
+
         panel.CloseMode();
         await panel.NavigateAsync(choice.Value);
     }
+
+    private const string AddConnectionChoice = "cmd:add-connection";
+
+    /// <summary>UNC shares and remote servers (not local disks, the registry or archives on a local disk).</summary>
+    private static bool IsNetworkPath(string path) =>
+        path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("net://", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("smb://", StringComparison.OrdinalIgnoreCase) || path.StartsWith("sftp://", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("ftp://", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Opens a panel plugin in the opposite panel (like Total Commander's quick view), so the file list the user is in
@@ -1492,7 +2267,8 @@ public sealed class MainWindow : Window, IShell
     private Task OpenPanelAsync(string pluginId, string? argument) => OpenPanelInAsync(pluginId, argument, null);
 
     /// <param name="target">Panel to show the plugin in; <c>null</c> = the usual mode target (see <see cref="ModeTarget"/>).</param>
-    private Task OpenPanelInAsync(string pluginId, string? argument, FilePanelView? target)
+    /// <param name="options">JSON from a folder's c4k.dir, passed to the plugin with the request.</param>
+    private Task OpenPanelInAsync(string pluginId, string? argument, FilePanelView? target, string? options = null)
     {
         var host = _host!;
         if (host.FindPanel(pluginId) is not { } plugin)
@@ -1517,7 +2293,7 @@ public sealed class MainWindow : Window, IShell
             }
         }
 
-        var request = new PanelRequest(argument, null);
+        var request = new PanelRequest(argument, null, options);
         var services = new PluginPanelServices(
             (title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this),
             ShowTextWindowAsync,
@@ -1541,7 +2317,7 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
-        target.ShowMode(new PreviewPanelView(_host!, source, _skins!.Current, Notify));
+        target.ShowMode(CreatePreview(source));
         SetActive(source);
     }
 
@@ -1656,11 +2432,12 @@ public sealed class MainWindow : Window, IShell
         _menu.Items.Add(Group(Loc.T("_Plik"), [Item(CommandIds.Copy), Item(CommandIds.Move), Item(CommandIds.MakeDirectory), Item(CommandIds.Delete), new Separator(),
             Item(CommandIds.NewTab), Item(CommandIds.CloseTab), new Separator(), Item(CommandIds.Exit)]));
         _menu.Items.Add(Group(Loc.T("P_olecenia"), [Item(CommandIds.SearchAsync), Item(CommandIds.GoToFrecent), Item(CommandIds.CalculateDirSizes), Item(CommandIds.Compare),
-            Item(CommandIds.OpenTerminal), Item(CommandIds.Refresh), Item(CommandIds.ToggleHidden), new Separator(), Item(CommandIds.AddConnection)]));
+            Item(CommandIds.OpenTerminal), Item(CommandIds.OpenInVsCode), Item(CommandIds.Refresh), Item(CommandIds.ToggleHidden), new Separator(), Item(CommandIds.AddConnection)]));
         _menu.Items.Add(Group(Loc.T("Pa_nele"), [Item(CommandIds.LeftDriveMenu), Item(CommandIds.RightDriveMenu), Item(CommandIds.OpenNetwork), Item(CommandIds.OpenRegistry), new Separator(),
             .. host.PanelPlugins.Select(p => Item(CommandIds.PanelPrefix + p.Id, p.Title))]));
         _menu.Items.Add(pluginMenu);
-        _menu.Items.Add(Group(Loc.T("_Konfiguracja"), [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.CommandPalette)]));
+        _menu.Items.Add(Group(Loc.T("_Konfiguracja"), [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.CommandPalette),
+            new Separator(), Item(CommandIds.AskAi), Item(CommandIds.AiWritePlugin), Item(CommandIds.AiProviders)]));
         _menu.Items.Add(Group(Loc.T("Pomo_c"), [Item(CommandIds.Help), Item(CommandIds.CheckForUpdates), Item(CommandIds.About)]));
         if (_skins is not null)
         {
@@ -1709,19 +2486,26 @@ public sealed class MainWindow : Window, IShell
 
     private async ValueTask AddConnectionAsync(CommandInvocation _)
     {
-        var connection = await new AddConnectionDialog(_skins!.Current).ShowAsync(this);
-        if (connection is null)
+        var result = await new ConnectionDialog(_skins!.Current, TestConnectionAsync).ShowAsync(this);
+        if (result is null)
         {
             return;
         }
 
+        var connection = result.Setting;
         _host!.Settings.Connections.Add(connection);
         _host.ApplySettings();
         await _host.SaveSettingsAsync();
-        if (_active.ActiveTab.Path.StartsWith(NetworkNeighborhoodVfsPlugin.RootPath, StringComparison.OrdinalIgnoreCase))
+        if (!await PrepareConnectionAsync(connection, result.Secret))
         {
-            await _active.ActiveTab.RefreshAsync();
+            Notify(Loc.T("Zapisano „{0}”, ale serwer odrzucił login — spróbuj ponownie przy otwieraniu.", connection.Name), isError: true);
         }
+
+        // Straight into the new connection, in the active file panel.
+        var target = _active.Mode is null ? _active : Other;
+        target.CloseMode();
+        SetActive(target);
+        await target.NavigateAsync(connection.Path);
     }
 
     private void CancelCurrent()
@@ -1813,7 +2597,15 @@ public sealed class MainWindow : Window, IShell
             user = realm[(realm.IndexOf("://", StringComparison.Ordinal) + 3)..at];
         }
 
-        var credential = await new LoginDialog(_skins!.Current, realm, string.IsNullOrEmpty(user) ? null : user).ShowAsync(this);
+        // A share with a saved login: connect with it first, ask only if that fails.
+        if (VfsPath.GetScheme(ex.Path) is not ("sftp" or "ftp") && SavedLoginFor(realm) is { } saved && await TryConnectShareAsync(realm, saved.User, saved.Password))
+        {
+            await request.Tab.NavigateAsync(request.Tab.Path);
+            return;
+        }
+
+        var isSsh = VfsPath.GetScheme(ex.Path) == "sftp";
+        var credential = await new LoginDialog(_skins!.Current, realm, string.IsNullOrEmpty(user) ? null : user, allowKey: isSsh).ShowAsync(this);
         if (credential is null)
         {
             return;
@@ -1823,7 +2615,9 @@ public sealed class MainWindow : Window, IShell
         {
             if (VfsPath.GetScheme(ex.Path) is "sftp" or "ftp")
             {
-                _host!.Remote.SetCredentials(realm, credential);
+                _host!.Remote.SetLogin(realm, credential.KeyFile is { } key
+                    ? new RemoteLogin(credential.UserName, PrivateKeyFile: key, Passphrase: credential.Password.Length > 0 ? credential.Password : null)
+                    : new RemoteLogin(credential.UserName, credential.Password));
             }
             else
             {
@@ -1843,6 +2637,98 @@ public sealed class MainWindow : Window, IShell
         {
             Notify($"Logowanie nieudane: {error.Message}", isError: true);
         }
+    }
+
+    /// <summary>The saved Windows-share login whose path contains <paramref name="realm"/> (user + decrypted password).</summary>
+    private (string User, string Password)? SavedLoginFor(string realm)
+    {
+        foreach (var connection in _host!.Settings.Connections)
+        {
+            if (connection.Auth == "password" && connection.UserName is { } user && SecretProtector.Unprotect(connection.Secret) is { } password
+                && (realm.StartsWith(connection.Path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase) || connection.Path.StartsWith(realm.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)))
+            {
+                return (user, password);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>WNetAddConnection2 for a share, off the UI thread; <c>false</c> when the server refuses or is unreachable.</summary>
+    private async Task<bool> TryConnectShareAsync(string path, string? user, string? password)
+    {
+        try
+        {
+            await _host!.Executor.RunAsync(
+                _ =>
+                {
+                    _host.Network.Connect(path, user, password);
+                    return true;
+                },
+                CancellationToken.None,
+                TimeSpan.FromSeconds(30));
+            return true;
+        }
+        catch (Exception ex) when (ex is Win32Exception or TimeoutException or IOException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>"Test" in the connection dialog: registers the login for this session and lists the start folder.</summary>
+    private async Task<string?> TestConnectionAsync(ConnectionDialogResult result)
+    {
+        var setting = result.Setting;
+        try
+        {
+            if (!await PrepareConnectionAsync(setting, result.Secret))
+            {
+                return Loc.T("Serwer odrzucił login albo jest nieosiągalny.");
+            }
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var reader = _host!.Router.OpenListing(setting.Path, timeout.Token);
+            var count = 0;
+            await foreach (var entry in reader.ReadAllAsync(timeout.Token))
+            {
+                if (++count >= 1)
+                {
+                    break;
+                }
+            }
+
+            return null;
+        }
+        catch (VfsAuthenticationRequiredException)
+        {
+            return Loc.T("Serwer odrzucił login (sprawdź użytkownika, hasło albo klucz).");
+        }
+        catch (OperationCanceledException)
+        {
+            return Loc.T("Brak odpowiedzi w ciągu 20 s.");
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    /// <summary>Makes a connection usable now: SFTP/FTP logins go to the remote plugin, shares are connected.</summary>
+    private async Task<bool> PrepareConnectionAsync(ConnectionSetting setting, string? secret)
+    {
+        if (VfsPath.GetScheme(setting.Path) is "sftp" or "ftp")
+        {
+            if (setting.Auth is not null)
+            {
+                _host!.Remote.SetLogin(setting.Path, setting.Auth == "key"
+                    ? new RemoteLogin(setting.UserName ?? Environment.UserName, PrivateKeyFile: setting.KeyFile, Passphrase: secret)
+                    : new RemoteLogin(setting.UserName ?? Environment.UserName, Password: secret ?? string.Empty));
+            }
+
+            return true;
+        }
+
+        return setting.Auth != "password" || await TryConnectShareAsync(setting.Path, setting.UserName, secret);
     }
 
     /// <summary>Called on SSH.NET's connection thread: blocks it (never the UI thread) while the user decides.</summary>
@@ -1871,9 +2757,4 @@ public sealed class MainWindow : Window, IShell
 
     private static string DescribeSelection(IReadOnlyList<VfsEntry> entries) =>
         entries.Count == 1 ? Loc.T("„{0}”", entries[0].Name) : Loc.P(entries.Count, "{0} zaznaczony element|{0} zaznaczone elementy|{0} zaznaczonych elementów");
-}
-
-internal static class TaskExtensions
-{
-    public static ValueTask AsValueTask(this Task task) => new(task);
 }

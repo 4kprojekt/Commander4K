@@ -1,11 +1,13 @@
 // Example plugin: checks web sites through the app's net.get API (needs the "net" permission).
+// Everything goes through the SDK: the site list is the plugin's own data (storage.get/set, no permission needed).
 'use strict';
-const fs = require('node:fs');
-const path = require('node:path');
 const c4k = require('./c4k');
 
-// The plugin's own configuration file lives in its folder; it is read directly, not through the app.
-const sites = JSON.parse(fs.readFileSync(path.join(__dirname, 'sites.json'), 'utf8'));
+const DEFAULT_SITES = ['https://github.com', 'https://www.nuget.org', 'https://learn.microsoft.com'];
+
+async function loadSites() {
+  return c4k.storageGet('sites', DEFAULT_SITES);
+}
 
 async function check(url) {
   const started = Date.now();
@@ -28,6 +30,7 @@ c4k.on('command.execute', async () => {
 });
 
 c4k.on('panel.load', async () => {
+  const sites = await loadSites();
   const results = await Promise.all(sites.map(async url => ({ url, ...(await check(url)) })));
   return {
     columns: [
@@ -51,12 +54,8 @@ c4k.on('panel.details', async ({ rowId }) => ({
 }));
 
 // Palette: one button per site; clicking checks it, "+" adds a site, the context menu removes one.
-function saveSites() {
-  fs.writeFileSync(path.join(__dirname, 'sites.json'), JSON.stringify(sites, null, 2) + '\n');
-}
-
 c4k.on('palette.items', async () => ({
-  items: sites.map(url => ({ id: url, title: new URL(url).host, icon: '🌐', tooltip: url })),
+  items: (await loadSites()).map(url => ({ id: url, title: new URL(url).host, icon: '🌐', tooltip: url })),
 }));
 
 c4k.on('palette.invoke', async ({ item }) => {
@@ -65,6 +64,7 @@ c4k.on('palette.invoke', async ({ item }) => {
 });
 
 c4k.on('palette.action', async ({ action, item }) => {
+  const sites = await loadSites();
   if (action === 'add') {
     const url = await c4k.prompt('Dodaj stronę', 'Adres (https://…):', 'https://');
     if (!url || !/^https?:\/\/\S+$/.test(url)) return null;
@@ -74,6 +74,6 @@ c4k.on('palette.action', async ({ action, item }) => {
   } else {
     return null;
   }
-  saveSites();
+  await c4k.storageSet('sites', sites);
   return null;
 });

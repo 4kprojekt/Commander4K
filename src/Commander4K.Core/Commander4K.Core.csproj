@@ -7,6 +7,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Commander4K.Core.Tests" />
@@ -14,5 +15,13 @@
   <!-- Built-in UI translations (Loc): Localization/i18n/<code>.json → resource "i18n/<code>.json". -->
   <ItemGroup>
     <EmbeddedResource Include="Localization\i18n\*.json" LogicalName="i18n/%(Filename)%(Extension)" />
+  </ItemGroup>
+  <!-- Fallback AI provider list; the live copy is read from the repository (AppSettings.AiCatalogUrl). -->
+  <ItemGroup>
+    <EmbeddedResource Include="Ai\ai-providers.json" LogicalName="ai-providers.json" />
+  </ItemGroup>
+  <!-- Fallback official plugin catalog; the live copy is read from the repository (AppSettings.PluginCatalogUrl). -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\plugins-catalog\catalog.json" LogicalName="plugin-catalog.json" />
   </ItemGroup>
 </Project>

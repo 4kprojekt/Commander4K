@@ -5,7 +5,6 @@ using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Commander4K.App.Composition;
-using Commander4K.App.PluginPanels;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
@@ -137,8 +136,16 @@ public sealed class FilePanelView : ViewBase
     /// <summary>Right click with the Windows context menu enabled; the window shows the menu for this entry (or the marked set).</summary>
     public event Action<VfsEntry>? ContextMenuRequested;
 
+    /// <summary>Enter on a folder, drive or share; the window decides (a <c>c4k.dir</c> may open something else) and calls <see cref="NavigateAsync"/>.</summary>
+    public event Action<VfsEntry>? FolderEntering;
+
     /// <summary>Enter on the "+ Add network connection" row.</summary>
     public event Action<FilePanelView>? AddConnectionRequested;
+
+    /// <summary>The ▾ button on the path bar: the window shows the location menu (drives, This PC, network, connections).</summary>
+    public event Action<FilePanelView>? LocationMenuRequested;
+
+    private Button _locationButton = null!;
 
     public event Action<AuthenticationRequest>? AuthenticationRequired;
 
@@ -171,10 +178,15 @@ public sealed class FilePanelView : ViewBase
                     new Border()
                         .Ref(out _pathBorder)
                         .Row(1)
-                        .Child(new Grid().Cols("Auto,*").Children(
+                        .Child(new Grid().Cols("Auto,*,Auto").Children(
                             new Border().Ref(out _accentEdge).Width(3).Col(0),
                             new TextBox().Ref(out _pathBox).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(7, 2)
-                                .VerticalContentAlignment(VerticalAlignment.Center))),
+                                .VerticalContentAlignment(VerticalAlignment.Center),
+                            // One click to switch this panel elsewhere: drives, This PC, network, saved and new connections.
+                            new Button().Ref(out _locationButton).Col(2).Content("▾").Padding(10, 0).MinWidth(32)
+                                .VerticalAlignment(VerticalAlignment.Stretch).VerticalContentAlignment(VerticalAlignment.Center)
+                                .BorderThickness(new Thickness(0)).Background(Brushes.Transparent)
+                                .OnClick(click => LocationMenuRequested?.Invoke(this)))),
                     new Panel().Ref(out _content).Row(2).Children(Canvas),
                     new Border()
                         .Ref(out _statusBorder)
@@ -187,12 +199,6 @@ public sealed class FilePanelView : ViewBase
                                     new TextBlock().Ref(out _statusMarked).FontWeight(FontWeight.SemiBold))))));
 
     public Task NavigateAsync(string path, string? focusName = null) => ActiveTab.NavigateAsync(path, focusName);
-
-    public void FocusPathBar()
-    {
-        _pathBox.Focus();
-        _pathBox.SelectAll();
-    }
 
     private IReadOnlyList<ActiveColumn> _columns = [];
 
@@ -259,6 +265,9 @@ public sealed class FilePanelView : ViewBase
                 break;
             case VfsEntryKind.Action:
                 AddConnectionRequested?.Invoke(this);
+                break;
+            case VfsEntryKind.Directory or VfsEntryKind.Drive or VfsEntryKind.Share when FolderEntering is not null:
+                FolderEntering(entry); // The window checks the folder's c4k.dir first.
                 break;
             case var _ when entry.IsContainer:
                 _ = ActiveTab.NavigateAsync(entry.Path);
@@ -516,6 +525,9 @@ public sealed class FilePanelView : ViewBase
         _pathBox.FontFamily = b.FontFamily;
         _pathBox.FontSize = b.FontSize;
         _pathBox.FontWeight = modern ? FontWeight.SemiBold : FontWeight.Normal;
+        _locationButton.Foreground = b.HeaderForeground;
+        _locationButton.FontSize = b.FontSize;
+        ToolTip.SetTip(_locationButton, Loc.T("Zmień lokalizację panelu: dyski, Ten komputer, sieć, połączenia SSH/FTP (Alt+F1 / Alt+F2)"));
         ApplyChrome();
         RebuildTabs();
     }

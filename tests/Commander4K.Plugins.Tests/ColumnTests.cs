@@ -239,5 +239,7 @@ public sealed class ColumnTests : IAsyncDisposable
         public Task OpenUrlAsync(string url) => Task.CompletedTask;
 
         public Task SearchWebAsync(string query, string? engine) => Task.CompletedTask;
+
+        public Task CopyTextAsync(string text) => Task.CompletedTask;
     }
 }

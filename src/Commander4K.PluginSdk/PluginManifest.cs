@@ -9,7 +9,7 @@ public static class PluginPermissions
     /// <summary>Create, write and delete files through the host.</summary>
     public const string FileWrite = "fs.write";
 
-    /// <summary>Enumerate processes and their details (in-process plugins read them directly).</summary>
+    /// <summary>Enumerate processes and their details (<c>process.list</c>; built-in panels read them directly).</summary>
     public const string ProcessRead = "process.read";
 
     /// <summary>Terminate processes through the host.</summary>
@@ -21,7 +21,7 @@ public static class PluginPermissions
     /// <summary>HTTP requests through the host.</summary>
     public const string Network = "net";
 
-    /// <summary>Read hardware, OS and security configuration (WMI, registry).</summary>
+    /// <summary>Read OS, machine, memory and drive information (<c>system.info</c>; built-in panels read WMI directly).</summary>
     public const string SystemInfo = "system.info";
 
     public static IReadOnlyList<string> All { get; } =

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "official.steam-library",
+  "name": "Steam: biblioteka gier",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Oficjalna wtyczka: gry zainstalowane w bibliotece Steam jako kafelki z okładkami (klik uruchamia grę) i jako tabela. Folder steamapps (lub folder Steama) z plikiem c4k.dir: { \"enter\": { \"plugin\": \"official.steam-library\" } }.",
+  "runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" },
+  "permissions": ["fs.read"],
+  "contributes": {
+    "previews": [
+      { "id": "games", "title": "Steam: gry", "extensions": ["/"], "priority": -10 }
+    ],
+    "panels": [
+      {
+        "id": "games",
+        "title": "Steam: biblioteka gier",
+        "description": "Zainstalowane gry z rozmiarem i datą aktualizacji (folder steamapps lub folder Steama).",
+        "requiresArgument": true
+      }
+    ]
+  }
+}

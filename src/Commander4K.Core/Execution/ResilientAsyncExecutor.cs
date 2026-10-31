@@ -28,13 +28,49 @@ public sealed class ResilientAsyncExecutor
         ArgumentNullException.ThrowIfNull(operation);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var task = Task.Factory.StartNew(
-            () => operation(cancellationToken),
-            cancellationToken,
+        // The result goes through a completion source so that an exception from the operation is caught here, in our
+        // code, rather than by the task machinery: a debugger with "Just My Code" would otherwise stop on every
+        // expected failure (access denied, offline share) as "user-unhandled". The operation observes the token
+        // itself, so the thread is started with None and always completes the source.
+        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task.Factory.StartNew(
+            () =>
+            {
+                try
+                {
+                    completion.TrySetResult(operation(cancellationToken));
+                }
+                catch (OperationCanceledException ex)
+                {
+                    completion.TrySetCanceled(ex.CancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            },
+            CancellationToken.None,
             TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
             TaskScheduler.Default);
 
-        return DetachOnCancelAsync(task, timeout ?? DefaultTimeout, cancellationToken);
+        return DetachOnCancelAsync(completion.Task, timeout ?? DefaultTimeout, cancellationToken);
+    }
+
+    /// <summary>Starts <paramref name="operation"/>, turning a synchronous throw into a faulted task (see the sync overload).</summary>
+    private static Task<T> Invoke<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return operation(cancellationToken);
+        }
+        catch (OperationCanceledException ex)
+        {
+            return Task.FromCanceled<T>(ex.CancellationToken.IsCancellationRequested ? ex.CancellationToken : new CancellationToken(canceled: true));
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException<T>(ex);
+        }
     }
 
     /// <summary>Runs an asynchronous call whose synchronous prefix may block (e.g. the first FindFirstFile).</summary>
@@ -43,7 +79,7 @@ public sealed class ResilientAsyncExecutor
         ArgumentNullException.ThrowIfNull(operation);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var task = Task.Run(() => operation(cancellationToken), cancellationToken);
+        var task = Task.Run(() => Invoke(operation, cancellationToken), cancellationToken);
         return DetachOnCancelAsync(task, timeout ?? DefaultTimeout, cancellationToken);
     }
 
@@ -77,7 +113,7 @@ public sealed class ResilientAsyncExecutor
         // Not disposed via 'using': an abandoned enumerator may still observe the token after we return.
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var enumerator = source.GetAsyncEnumerator(linked.Token);
-        Task<bool>? pending = Task.Run(() => enumerator.MoveNextAsync().AsTask(), CancellationToken.None);
+        Task<bool>? pending = Task.Run(() => StepAsync(enumerator), CancellationToken.None);
 
         try
         {
@@ -98,7 +134,7 @@ public sealed class ResilientAsyncExecutor
                     }
                     else
                     {
-                        pending = step.AsTask();
+                        pending = AwaitStepAsync(step);
                         hasItem = await pending.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
                         pending = null;
                     }
@@ -126,6 +162,17 @@ public sealed class ResilientAsyncExecutor
             }
         }
     }
+
+    /// <summary>
+    /// One step of a provider's iterator, awaited in our own async method. <c>ValueTask.AsTask()</c> on an async
+    /// iterator's step reads its result inside .NET's adapter, so a failed step (login refused, access denied) was
+    /// thrown from our code into .NET code — and a debugger with "Just My Code" stopped on every such expected error
+    /// as user-unhandled. Here the failure surfaces in this method and is stored in the task like any other.
+    /// </summary>
+    private static async Task<bool> StepAsync<T>(IAsyncEnumerator<T> enumerator) => await enumerator.MoveNextAsync().ConfigureAwait(false);
+
+    /// <inheritdoc cref="StepAsync{T}(IAsyncEnumerator{T})"/>
+    private static async Task<bool> AwaitStepAsync(ValueTask<bool> step) => await step.ConfigureAwait(false);
 
     private async Task<T> DetachOnCancelAsync<T>(Task<T> task, TimeSpan timeout, CancellationToken cancellationToken)
     {

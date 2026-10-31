@@ -4,7 +4,7 @@
   "name": "Sprawdzanie stron (Node.js)",
   "version": "1.0.0",
   "author": "4Kprojekt",
-  "description": "Przykład: dostępność stron WWW z listy sites.json, odświeżana co minutę.",
+  "description": "Przykład: dostępność stron WWW z listy w danych wtyczki (storage), odświeżana co minutę. Wszystko przez SDK.",
   "runtime": { "type": "node", "entry": "main.js", "version": ">=18" },
   "permissions": ["net"],
   "contributes": {
@@ -12,7 +12,7 @@
       { "id": "check-url", "title": "Sprawdź adres URL", "category": "Przykłady", "description": "Pobiera stronę i pokazuje tytuł oraz rozmiar." }
     ],
     "panels": [
-      { "id": "sites", "title": "Stan stron", "description": "Strony z sites.json.", "refreshSeconds": 60 }
+      { "id": "sites", "title": "Stan stron", "description": "Strony z listy (paleta „Strony”: + dodaje, menu kontekstowe usuwa).", "refreshSeconds": 60 }
     ],
     "palettes": [
       {

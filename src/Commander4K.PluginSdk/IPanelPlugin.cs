@@ -37,7 +37,8 @@ public sealed record PanelAction(string Id, string Title, string? Shortcut = nul
 
 /// <param name="Argument">What the panel was opened for, e.g. a log file path; the host passes the file under the cursor.</param>
 /// <param name="Filter">Text typed into the panel's filter box.</param>
-public sealed record PanelRequest(string? Argument, string? Filter);
+/// <param name="Options">JSON object from the folder's <c>c4k.dir</c> (<c>"options"</c>) when the panel was opened by entering that folder.</param>
+public sealed record PanelRequest(string? Argument, string? Filter, string? Options = null);
 
 /// <summary>
 /// A panel mode backed by a plugin (system information, task manager, log analysis...). The plugin only provides data;

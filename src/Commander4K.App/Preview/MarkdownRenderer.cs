@@ -4,6 +4,7 @@ using Avalonia.Controls.Documents;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Commander4K.App.Theming;
+using Commander4K.Core.Localization;
 using Markdig;
 using Markdig.Extensions.Tables;
 using Markdig.Extensions.TaskLists;
@@ -57,6 +58,8 @@ public static class MarkdownRenderer
             Padding = new Thickness(12, 6, 10, 6),
             Child = Container(quote, b, foreground: b.MutedForeground),
         },
+        FencedCodeBlock { Info: { } info } fenced when info.Trim().Equals("mermaid", StringComparison.OrdinalIgnoreCase) =>
+            Mermaid(fenced.Lines.ToString().TrimEnd(), b),
         FencedCodeBlock or CodeBlock => new Border
         {
             Background = b.CodeBackground,
@@ -80,6 +83,73 @@ public static class MarkdownRenderer
         LeafBlock leaf => new SelectableTextBlock { Text = leaf.Lines.ToString(), Foreground = b.FileForeground, TextWrapping = TextWrapping.Wrap },
         _ => new Panel(),
     };
+
+    /// <summary>
+    /// A ```mermaid block: drawn by <see cref="MermaidRenderer"/> once the block is on screen (offline, skin colours);
+    /// the code itself when WebView2 is unavailable or the diagram has an error (with the message).
+    /// </summary>
+    private static Control Mermaid(string code, SkinBrushes b)
+    {
+        if (!MermaidRenderer.IsAvailable)
+        {
+            return CodeBox(code, b, Loc.T("Diagram Mermaid (do rysowania potrzebny jest Microsoft Edge WebView2)"));
+        }
+
+        var holder = new Border
+        {
+            MinHeight = 32,
+            Padding = new Thickness(0, 4),
+            Child = new TextBlock { Text = Loc.T("Rysowanie diagramu…"), Foreground = b.MutedForeground, FontSize = b.FontSize - 1 },
+        };
+        var started = false;
+        holder.AttachedToVisualTree += async (_, _) =>
+        {
+            if (started)
+            {
+                return;
+            }
+
+            started = true;
+            try
+            {
+                var image = await MermaidRenderer.RenderAsync(code, b);
+                var view = new Image
+                {
+                    Source = image.Bitmap,
+                    MaxWidth = image.Width,
+                    Stretch = Stretch.Uniform,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                };
+                ToolTip.SetTip(view, code);
+                holder.Child = view;
+            }
+            catch (Exception ex) when (ex is MermaidRenderException or TimeoutException or InvalidOperationException
+                or System.Runtime.InteropServices.COMException or Microsoft.Web.WebView2.Core.WebView2RuntimeNotFoundException)
+            {
+                holder.Child = CodeBox(code, b, Loc.T("Nie udało się narysować diagramu: {0}", ex.Message));
+            }
+        };
+        return holder;
+    }
+
+    private static Control CodeBox(string code, SkinBrushes b, string note) =>
+        new StackPanel
+        {
+            Spacing = 4,
+            Children =
+            {
+                new TextBlock { Text = note, Foreground = b.MutedForeground, FontSize = b.FontSize - 1, TextWrapping = TextWrapping.Wrap },
+                new Border
+                {
+                    Background = b.CodeBackground,
+                    BorderBrush = b.PanelBorder,
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(5),
+                    Padding = new Thickness(12, 10),
+                    Child = new SelectableTextBlock { Text = code, FontFamily = b.MonospaceFamily, FontSize = b.FontSize - 1, Foreground = b.FileForeground, TextWrapping = TextWrapping.Wrap },
+                },
+            },
+        };
 
     private static StackPanel Container(ContainerBlock container, SkinBrushes b, IBrush? foreground = null)
     {

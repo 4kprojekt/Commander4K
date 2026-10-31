@@ -71,8 +71,9 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
 
         public async Task<PanelSnapshot> LoadAsync(PanelRequest request, IProgress<string>? progress, CancellationToken cancellationToken)
         {
+            using var options = request.Options is null ? null : JsonDocument.Parse(request.Options);
             var result = await plugin.CallAsync("panel.load",
-                new { panel = panel.Id, argument = request.Argument, filter = request.Filter, context = ExternalPlugin.Context(host) },
+                new { panel = panel.Id, argument = request.Argument, filter = request.Filter, context = ExternalPlugin.Context(host), options = options?.RootElement },
                 cancellationToken).ConfigureAwait(false);
             return ParseSnapshot(result);
         }
@@ -145,20 +146,83 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
     public bool CanPreview(VfsEntry entry) =>
         entry.IsContainer
             ? entry.Kind != VfsEntryKind.ParentLink && preview.Extensions.Contains("/")
-            : preview.Extensions.Contains(Path.GetExtension(entry.Name), StringComparer.OrdinalIgnoreCase);
+            : preview.Extensions.Any(pattern => Matches(pattern, entry.Name));
 
-    /// <remarks>Result: <c>{ "kind": "markdown" | "text", "content": "...", "editable": false }</c>.</remarks>
-    public async Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
+    /// <summary>
+    /// <c>.csv</c> = extension; anything else is a file name or a pattern with <c>*</c>/<c>?</c> (<c>package.json</c>,
+    /// <c>requirements*.txt</c>, <c>*.openapi.json</c>), so a preview can claim specific files without a whole extension.
+    /// </summary>
+    public static bool Matches(string pattern, string name) =>
+        pattern.StartsWith('.') && pattern.IndexOfAny(['*', '?']) < 0
+            ? string.Equals(Path.GetExtension(name), pattern, StringComparison.OrdinalIgnoreCase)
+            : pattern != "/" && System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(pattern, name, ignoreCase: true);
+
+    public Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken) =>
+        LoadWithOptionsAsync(entry, host, null, cancellationToken);
+
+    private const int MaxTileImageBytes = 4 * 1024 * 1024;
+    private const int MaxTiles = 1000;
+
+    /// <param name="options">JSON object from the folder's <c>c4k.dir</c>, passed as <c>options</c>.</param>
+    /// <remarks>
+    /// Result: <c>{ "kind": "markdown" | "text", "content": "...", "editable": false }</c> or
+    /// <c>{ "kind": "tiles", "title", "description"?, "tileWidth"?, "tiles": [{ "title", "subtitle"?, "icon"?, "image"?, "target"? }] }</c>;
+    /// a tile's <c>image</c> is a path the host reads with the plugin's own fs.read permission.
+    /// </remarks>
+    public async Task<PreviewContent> LoadWithOptionsAsync(VfsEntry entry, IPluginHost host, string? options, CancellationToken cancellationToken)
     {
+        using var optionsDocument = options is null ? null : JsonDocument.Parse(options);
         var result = await plugin.CallAsync("preview.render",
-            new { preview = preview.Id, entry = ExternalPlugin.EntryDto(entry), context = ExternalPlugin.Context(host) },
+            new { preview = preview.Id, entry = ExternalPlugin.EntryDto(entry), context = ExternalPlugin.Context(host), options = optionsDocument?.RootElement },
             cancellationToken).ConfigureAwait(false);
         var kind = result.TryGetProperty("kind", out var k) ? k.GetString() : "text";
+        if (string.Equals(kind, "tiles", StringComparison.OrdinalIgnoreCase))
+        {
+            return await ParseTilesAsync(result, host, cancellationToken).ConfigureAwait(false);
+        }
+
         var content = result.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty;
         var editable = result.TryGetProperty("editable", out var e) && e.ValueKind == JsonValueKind.True;
         return string.Equals(kind, "markdown", StringComparison.OrdinalIgnoreCase)
             ? new MarkdownPreview(content, editable)
             : new TextPreview(content, editable);
+    }
+
+    private static async Task<TilesPreview> ParseTilesAsync(JsonElement result, IPluginHost host, CancellationToken cancellationToken)
+    {
+        static string? Str(JsonElement element, string name) =>
+            element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text ? text : null;
+
+        var tiles = new List<PreviewTile>();
+        if (result.TryGetProperty("tiles", out var items) && items.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in items.EnumerateArray().Take(MaxTiles))
+            {
+                ReadOnlyMemory<byte>? image = null;
+                if (Str(item, "image") is { } imagePath)
+                {
+                    try
+                    {
+                        await using var stream = await host.OpenReadAsync(imagePath, cancellationToken).ConfigureAwait(false);
+                        var buffer = new byte[MaxTileImageBytes + 1];
+                        var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+                        image = read <= MaxTileImageBytes ? buffer.AsMemory(0, read) : null;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PluginPermissionException or ArgumentException or NotSupportedException)
+                    {
+                        // A missing cover leaves the icon; the rest of the tiles still show.
+                    }
+                }
+
+                tiles.Add(new PreviewTile(Str(item, "title") ?? string.Empty, Str(item, "subtitle"), Str(item, "icon"), image, Str(item, "target")));
+            }
+        }
+
+        return new TilesPreview(
+            Str(result, "title") ?? string.Empty,
+            tiles,
+            Str(result, "description"),
+            result.TryGetProperty("tileWidth", out var width) && width.TryGetDouble(out var w) ? Math.Clamp(w, 80, 600) : 200);
     }
 }
 

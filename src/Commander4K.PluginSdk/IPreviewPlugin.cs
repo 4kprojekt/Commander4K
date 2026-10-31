@@ -18,6 +18,20 @@ public sealed record FolderPreviewItem(string Name, string Path, bool IsDirector
 /// <summary>Contents of a folder with sizes; previews push updated instances through progress as sizes arrive.</summary>
 public sealed record FolderPreview(string Path, IReadOnlyList<FolderPreviewItem> Items, long TotalBytes, long Files, long Folders, bool Complete) : PreviewContent;
 
+/// <summary>One tile of a <see cref="TilesPreview"/>.</summary>
+/// <param name="Icon">An emoji or a short text shown when there is no image.</param>
+/// <param name="Image">Encoded image (PNG, JPEG…) shown on the tile.</param>
+/// <param name="Target">
+/// What a click does: a path (opened like Enter), an <c>http(s)</c> URL (the browser panel), another URI such as
+/// <c>steam://rungameid/570</c> (opened by Windows after the user confirms the scheme once), or a <c>c4k:</c> link
+/// (<c>c4k:install/&lt;plugin id&gt;</c>, <c>c4k:run/&lt;tile&gt;</c> for a <c>c4k.dir</c> script). <c>null</c> = not clickable.
+/// </param>
+public sealed record PreviewTile(string Title, string? Subtitle = null, string? Icon = null, ReadOnlyMemory<byte>? Image = null, string? Target = null);
+
+/// <summary>A grid of tiles: a gallery, a dashboard, a game library…</summary>
+/// <param name="TileWidth">Tile width in pixels (images keep their aspect ratio).</param>
+public sealed record TilesPreview(string Title, IReadOnlyList<PreviewTile> Tiles, string? Description = null, double TileWidth = 200) : PreviewContent;
+
 /// <summary>Plain message (nothing to preview, access denied...).</summary>
 public sealed record MessagePreview(string Message) : PreviewContent;
 

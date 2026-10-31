@@ -15,7 +15,7 @@ namespace Commander4K.Plugins.BuiltIn.Remote;
 public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, Lazy<Task<IRemoteSession>>> _sessions = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, NetworkCredential> _credentials = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, RemoteLogin> _logins = new(StringComparer.OrdinalIgnoreCase);
 
     public string Id => "builtin.remote";
 
@@ -37,7 +37,35 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
     public HostKeyValidator HostKeyValidator { get; set; } = static (_, _, _) => true;
 
     /// <summary>Stores credentials for a realm reported by <see cref="VfsAuthenticationRequiredException.Realm"/>.</summary>
-    public void SetCredentials(string realm, NetworkCredential credential) => _credentials[realm] = credential;
+    public void SetCredentials(string realm, NetworkCredential credential) => SetLogin(realm, new RemoteLogin(credential.UserName, credential.Password));
+
+    /// <summary>
+    /// Stores how to sign in for <paramref name="realm"/> (a session key reported by the exception) or for any
+    /// <c>sftp://</c>/<c>ftp://</c> path (saved connections). The pooled session for it is dropped, so the next
+    /// navigation signs in with the new login.
+    /// </summary>
+    public void SetLogin(string realmOrPath, RemoteLogin login)
+    {
+        var key = RealmFor(realmOrPath);
+        _logins[key] = login;
+        if (_sessions.TryRemove(key, out var stale) && stale.IsValueCreated && stale.Value.IsCompletedSuccessfully)
+        {
+            _ = stale.Value.Result.DisposeAsync().AsTask();
+        }
+    }
+
+    /// <summary>The session key of a path (user, host and port), or the realm itself when it already is one.</summary>
+    public static string RealmFor(string realmOrPath)
+    {
+        try
+        {
+            return RemoteEndpoint.Parse(realmOrPath).SessionKey;
+        }
+        catch (FormatException)
+        {
+            return realmOrPath;
+        }
+    }
 
     public async IAsyncEnumerable<VfsEntry> EnumerateAsync(string path, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -184,15 +212,20 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
     // poison the pooled session that the next navigation will reuse.
     private Task<IRemoteSession> ConnectAsync(RemoteEndpoint endpoint)
     {
-        var credential = endpoint.Password is not null
-            ? new NetworkCredential(endpoint.UserName, endpoint.Password)
-            : _credentials.GetValueOrDefault(endpoint.SessionKey);
+        var login = endpoint.Password is not null
+            ? new RemoteLogin(endpoint.UserName ?? string.Empty, endpoint.Password)
+            : _logins.GetValueOrDefault(endpoint.SessionKey);
 
-        if (credential is null)
+        if (login is null)
         {
             if (endpoint.Scheme == RemoteEndpoint.Ftp && endpoint.UserName is null)
             {
-                credential = new NetworkCredential("anonymous", "anonymous@");
+                login = new RemoteLogin("anonymous", "anonymous@");
+            }
+            else if (endpoint.Scheme == RemoteEndpoint.Sftp && RemoteLogin.DefaultKeyFiles().Count > 0)
+            {
+                // Like ssh: try the default keys (as the given user, else the Windows user); a refusal asks for a login.
+                login = new RemoteLogin(endpoint.UserName ?? Environment.UserName);
             }
             else
             {
@@ -201,9 +234,13 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
             }
         }
 
-        return endpoint.Scheme == RemoteEndpoint.Sftp
-            ? Connect(SftpSession.ConnectAsync(endpoint, credential, HostKeyValidator, KeepAliveInterval, CancellationToken.None))
-            : Connect(FtpSession.ConnectAsync(endpoint, credential, CancellationToken.None));
+        if (endpoint.Scheme == RemoteEndpoint.Sftp)
+        {
+            return Connect(SftpSession.ConnectAsync(endpoint, login, HostKeyValidator, KeepAliveInterval, CancellationToken.None));
+        }
+
+        var credential = new NetworkCredential(login.UserName, login.Password ?? string.Empty);
+        return Connect(FtpSession.ConnectAsync(endpoint, credential, CancellationToken.None));
 
         static async Task<IRemoteSession> Connect<T>(Task<T> connecting) where T : IRemoteSession => await connecting.ConfigureAwait(false);
     }

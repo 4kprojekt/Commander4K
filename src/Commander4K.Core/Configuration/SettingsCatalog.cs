@@ -47,6 +47,7 @@ public static class SettingsCatalog
     public static string Updates => Loc.T("Aktualizacje");
     public static string Browser => Loc.T("Przeglądarka");
     public static string Language => Loc.T("Język");
+    public static string Ai => Loc.T("Sztuczna inteligencja");
 
     public static IReadOnlyList<SettingDescriptor> Create(Func<IReadOnlyList<SettingChoice>> skinChoices, Func<IReadOnlyList<SettingChoice>>? languageChoices = null) =>
     [
@@ -86,6 +87,11 @@ public static class SettingsCatalog
 
         new("markdownEdit", Preview, Loc.T("Markdown: od razu edycja"), Loc.T("Podgląd (Ctrl+Q) otwiera pliki .md w edycji z podglądem na żywo obok, zamiast samego widoku sformatowanego (F4 przełącza)."),
             SettingKind.Toggle, s => s.MarkdownEditByDefault, (s, v) => s.MarkdownEditByDefault = (bool)v!, ["markdown", "md", "edytor", Loc.T("podgląd"), "quick view"]),
+        new("folderConfigs", Preview, Loc.T("Pliki c4k.dir w folderach"), Loc.T("Plik c4k.dir w folderze decyduje, co pokazuje jego podgląd i co się dzieje po wejściu: galeria, kafelki, notatki, wtyczka (np. gry Steam), połączenie SSH z kluczem albo skrypt (uruchamiany dopiero po Twojej zgodzie). Shift+Enter wchodzi zawsze do zwykłej listy plików."),
+            SettingKind.Toggle, s => s.FolderConfigs, (s, v) => s.FolderConfigs = (bool)v!, ["c4k.dir", "folder", "widok", "galeria", "dashboard", "kafelki", "steam", "skrypt", "ssh"]),
+        new("pluginCatalogUrl", Preview, Loc.T("Katalog oficjalnych wtyczek (adres)"), Loc.T("Plik catalog.json pobierany przy starcie z repozytorium projektu: wtyczki do instalacji jednym kliknięciem i do użycia w plikach c4k.dir."),
+            SettingKind.Text, s => s.PluginCatalogUrl, (s, v) => s.PluginCatalogUrl = NullIfEmpty(v) ?? AppSettings.DefaultPluginCatalogUrl,
+            ["wtyczki", "katalog", "pluginy", "repozytorium", "pobierz", "catalog"]),
 
         new("lanDiscovery", Network, Loc.T("Wykrywaj hosty w sieci LAN"), Loc.T("Przy otwarciu net:// skanuje lokalną podsieć (porty 445, 22, 21) i pokazuje znalezione maszyny."),
             SettingKind.Toggle, s => s.LanDiscovery, (s, v) => s.LanDiscovery = (bool)v!, ["skan", "lan", "smb", "ssh", "otoczenie"]),
@@ -96,6 +102,12 @@ public static class SettingsCatalog
         new("assistantEngine", Browser, Loc.T("Asystent AI do szukania rozwiązań"), Loc.T("Kogo pyta „Szukaj rozwiązania” (menedżer wtyczek) i komenda „Zapytaj AI” (Ctrl+Alt+A). Zaloguj się raz w przeglądarce — sesja zostaje zapamiętana."),
             SettingKind.Choice, s => s.AssistantEngine, (s, v) => s.AssistantEngine = (string)v!, ["ai", "chatgpt", "gemini", "claude", "perplexity", "asystent", "pomoc"])
         { Choices = () => [.. Web.SearchEngines.All.OrderBy(e => !e.IsAssistant).Select(e => new SettingChoice(e.Id, e.IsAssistant ? e.Name : e.Name + Loc.T(" (wyszukiwarka)")))] },
+
+        new("aiInApp", Ai, Loc.T("Odpowiedzi AI w aplikacji"), Loc.T("„Zapytaj AI” (Ctrl+Alt+A) odpowiada w oknie czatu przez zalogowanych dostawców (OpenRouter, Groq, Cerebras…), przechodząc do następnego, gdy któryś wyczerpie limit. Wyłączone lub bez logowania: otwiera asystenta w przeglądarce."),
+            SettingKind.Toggle, s => s.AiInApp, (s, v) => s.AiInApp = (bool)v!, ["ai", "czat", "chat", "openrouter", "groq", "cerebras", "gemini", "mistral", "dostawcy", "darmowe", "rotacja", "limit"]),
+        new("aiCatalogUrl", Ai, Loc.T("Lista dostawców AI (adres)"), Loc.T("Plik ai-providers.json pobierany przy starcie z repozytorium projektu, więc nowe darmowe modele pojawiają się bez aktualizacji programu. Własne wpisy: config/ai/providers.json."),
+            SettingKind.Text, s => s.AiCatalogUrl, (s, v) => s.AiCatalogUrl = NullIfEmpty(v) ?? AppSettings.DefaultAiCatalogUrl,
+            ["ai", "dostawcy", "lista", "repozytorium", "modele", "providers"]),
 
         new("checkForUpdates", Updates, Loc.T("Sprawdzaj aktualizacje automatycznie"), Loc.T("Raz na dobę sprawdza wydania na GitHubie i informuje o nowej wersji."),
             SettingKind.Toggle, s => s.CheckForUpdates, (s, v) => s.CheckForUpdates = (bool)v!, ["update", "wersja", "nowa"]),

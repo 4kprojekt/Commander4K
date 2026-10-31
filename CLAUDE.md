@@ -5,7 +5,59 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Repository status
 
 The sections below (in Polish) are the project specification and implementation plan; treat them as the source of truth for architecture. Steps 1–4 and the release script are done. Plugin architecture (protocol spec for plugin authors: `docs/plugins.md`, manifest schema `docs/plugin.schema.json`):
-- Every plugin has a `PluginManifest` (id, version, author, declared permissions). Plugin code only ever receives an `IPluginHost` from `AppHost.HostFor(manifest)` — a `ScopedPluginHost` that checks the manifest's permissions on gated calls (fs.read/fs.write/process.kill/shell.run/net) and writes every call to `AuditLog` (`data/logs/plugins-YYYYMMDD.log`). Built-ins follow the same rule for side effects (task manager kills via `KillProcessAsync`, PowerShell runs via `RunProcessAsync`, log analyzer reads via `OpenReadAsync`); `process.read`/`system.info` are declarative only. Don't hand plugins the window or `PluginHostAdapter` (that is the UI side, `IPluginUi`).
+- Every plugin has a `PluginManifest` (id, version, author, declared permissions). Plugin code only ever receives an `IPluginHost` from `AppHost.HostFor(manifest)` — a `ScopedPluginHost` that checks the manifest's permissions on gated calls (fs.read/fs.write/process.kill/shell.run/net) and writes every call to `AuditLog` (`data/logs/plugins-YYYYMMDD.log`). Built-ins follow the same rule for side effects (task manager kills via `KillProcessAsync`, PowerShell runs via `RunProcessAsync`, log analyzer reads via `OpenReadAsync`). For external plugins `process.read` and `system.info` gate `process.list` / `system.info`; built-in panels still read WMI and processes directly.
+- The SDK is the only channel to the system: fs.list/stat/readText/readBytes (fs.read), fs.writeText/writeBytes/mkdir/delete/move (fs.write), process.list/kill, shell.run, net.get/request, system.info, `ui.copyText`, and `storage.get/set/keys`.
+  - Storage is per-plugin JSON in `data/plugin-data/<id>.json` (`PluginStorage`). It needs no permission, so plugins never read files next to their code.
+  - When you add a protocol method, add it to `IPluginHost`/`ScopedPluginHost` (gated and audited), to `ExternalPlugin.HandleRequestAsync`, to all three SDK clients (then copy them into every example; a test keeps the copies identical) and to the SDK reference table in `docs/plugins.md`.
+  - Core has no native interop: `process.list` gets parent PIDs and image paths from `Plugins.BuiltIn.Interop.ProcessLookups`, passed into `ScopedPluginHost`.
+  - `PluginSourceCheck` lints plugin code for SDK bypasses (`open()`, `fs`, `subprocess`, `fetch`, `Get-Content`, stdout writes…; calls through the SDK alias are excluded). The AI installer turns its findings into a fix request, and the plugin manager shows them in the details and warns on enable. The bundled examples must stay clean (test).
+- Preview `extensions` accept `.ext`, file names and `*`/`?` patterns (`ExternalPreviewPlugin.Matches`). The example `project-modules-python` shows this: dependencies and OpenAPI modules.
+- Unknown files: `PreviewPanelView` shows a bar over hex / "no preview". Its buttons call `MainWindow.AskAiAboutFileAsync` (format question with the first 512 bytes, via `AiAppContext.DescribeFileAsync`) and `CreatePreviewPluginAsync` (preview-plugin request; the chat in plugin mode, otherwise the browser assistant with the guide and the preview example).
+- This PC (`local://`, `LocalFileSystemPlugin`):
+  - It lists drives, then `KnownFolders` (libraries via SpecialFolder; Downloads from the User Shell Folders registry key), then a `net://` entry.
+  - After that it streams `NetworkEntries`: AppHost passes the network plugin's root, i.e. saved connections, Explorer network locations and discovered hosts.
+  - `PanelSorting.Rank` groups: actions, drives, folders, shares, hosts, files.
+  - The ▾ button on the path bar (`FilePanelView.LocationMenuRequested`) opens the drive menu for that panel.
+- Connections (`ConnectionDialog`, `ConnectionSetting.Auth/UserName/KeyFile/Secret`):
+  - `Secret` is DPAPI via `Core/Security/SecretProtector`, which `AiCredentialStore` uses too.
+  - `AppHost.ApplySettings` registers SFTP/FTP logins with `RemoteTransferVfsPlugin.SetLogin` (keyed by `RealmFor(path)` = the session key).
+  - SFTP offers private keys (`RemoteLogin`), password and keyboard-interactive. With neither password nor key it tries `~/.ssh/id_ed25519|id_ecdsa|id_rsa` as the given or Windows user.
+  - A refused login becomes `VfsAuthenticationRequiredException`, and `LoginDialog` (with a key option for SSH) asks.
+  - Saved SMB logins are tried before asking.
+- Mermaid (`App/Preview/MermaidRenderer`):
+  - Mermaid 12.2.0 is vendored in `App/Assets/Mermaid` (npm tarball checked against its sha512) and embedded, then extracted to `data/mermaid/<version>`.
+  - A hidden WebView2 controller, using the browser's shared environment (`WebView2Host.GetEnvironmentAsync`) and parented to the main window, loads `render.html` from a virtual host and returns PNGs through `postMessage`.
+  - Configuration: `securityLevel: strict`, navigation locked to the virtual host, `htmlLabels: false` (so the canvas is not tainted), base theme from skin colours.
+  - `MarkdownRenderer` draws ```mermaid blocks when they are attached; without WebView2, or on error, it shows the code and a message.
+  - WebView2 needs an STA thread: headless harnesses on MTA show the fallback.
+  - Labels are text, not HTML, so quotes in labels become apostrophes (entities would show literally).
+- Folder preview (`FolderPreviewPlugin`):
+  - It switches to `NotesOverview` (Markdown with a Mermaid graph) for an Obsidian vault (`.obsidian` here or up to 5 parents, disk paths only) or for a folder that is mostly Markdown.
+  - `CanvasPreviewPlugin` shows `.canvas` (JSON Canvas) files as a diagram.
+- Folder files `c4k.dir` (`Core/Folders/FolderConfig`, schema `docs/c4k.dir.schema.json`, guide in `docs/plugins.md`):
+  - Each file has a `preview` and an `enter` action. An action is a view (`gallery`, `dashboard`, `notes`, `markdown`, `files`), a `plugin` (+ `preview`/`panel`, `options`), `open` (+ `user`, `keyFile`), `url` or `run`. A string is shorthand for a view name or a plugin id.
+  - `FilePanelView.FolderEntering` → `MainWindow.EnterFolderAsync` reads the file, only on file/smb/sftp/ftp, with a 2 s limit, then `RunFolderActionAsync`.
+  - A view on Enter is a pinned `PreviewPanelView` (`PinnedFolder`) over the same panel, already navigated into the folder, so Esc shows its files.
+  - Shift+Enter is `cm_EnterFolderPlain`; `cm_FolderView` writes the file.
+  - `PreviewPanelView` checks the folder's file before picking a preview plugin (`ResolveFolderView`). Built-in views are `Plugins.BuiltIn/Previews/FolderViews`.
+  - Plugins get `options` in `preview.render` and `panel.load` (`ExternalPreviewPlugin.LoadWithOptionsAsync`, `PanelRequest.Options`). A missing plugin becomes an install tile.
+  - `TilesPreview`/`PreviewTile` (SDK) render as a wrap of buttons.
+  - Tile targets:
+    - paths behave like Enter;
+    - http(s) opens the browser panel;
+    - other URI schemes need a confirmation once per session;
+    - `c4k:install/<id>` and `c4k:plugins` go to the catalog and the plugin manager;
+    - `c4k:run/<section>/<n>` re-reads the command from the file and never trusts the link.
+  - `run` needs `FolderTrustStore` consent (`config/trusted-folders.json`, file path + SHA-256 of its content). It works on disks and shares only.
+- Official plugin catalog (`plugins-catalog/catalog.json`, `Core/Plugins/PluginCatalog`):
+  - It is embedded as a fallback and downloaded at start-up from `AppSettings.PluginCatalogUrl` (cached in `data/plugin-catalog.json`).
+  - Entries point to a folder relative to `baseUrl` and list every file with the SHA-256 of its text without CR.
+  - `DownloadAsync` refuses mismatches. Installation goes through `AiPluginInstaller.InstallAsync(fromCatalog: true)`: disabled until approved.
+  - The plugin manager has a catalog group (Ctrl+I installs, Ctrl+R refreshes).
+  - After changing a catalog plugin, run `pwsh ./plugins-catalog/Update-Catalog.ps1`; `PluginCatalogTests` fails otherwise.
+  - Official plugins live in `plugins-catalog/<name>/` with their own SDK client copy, which is tested like the examples. A catalog install downloads from `main`, so it only works for files that are pushed.
+- Drive menu (Alt+F1/F2): after the drives come net://, saved connections, Explorer's network locations and recently visited network paths from frecency, then "add connection".
+  - Explorer's network locations are `NetworkLocations`: `%AppData%\Microsoft\Windows\Network Shortcuts`, with `.lnk` LinkInfo parsed per MS-SHLLINK, no COM. Don't hand plugins the window or `PluginHostAdapter` (that is the UI side, `IPluginUi`).
 - External plugins: folders with `plugin.json` under `plugins/` (next to the exe and in the data folder), run out of process (`ExternalPlugin`, JSON-RPC 2.0 NDJSON over stdio via `JsonRpcConnection`), started lazily, disabled until the user approves their permissions (`PluginApprovalStore`, re-consent when permissions grow). `RuntimeCatalog` detects Node/Python/PowerShell/.NET versions and checks `runtime.version` ranges. Adapters `ExternalCommandPlugin`/`ExternalPanelPlugin` make them look like built-ins to the UI. There is no in-process loading of third-party assemblies — by design, since .NET has no sandbox.
 - Client SDKs: `plugins-sdk/{python,node,powershell}` (single files); the examples in `examples/plugins` carry copies (a test keeps them identical) and are embedded in the app as templates for the plugin manager. `ExternalPluginTests` run the examples against the real runtimes.
 - Panels open in the panel opposite the active one; while the active panel shows a plugin, plugin "context" (active path, selection) is the other — visible — file panel.
@@ -27,10 +79,29 @@ Columns (WDX): `IColumnMetadataPlugin.GetValueAsync` receives an `IPluginHost` (
 
 Not yet written: sorting by plugin columns, columns from external plugins, writing into archives, archive passwords. Beyond the spec, the user asked for switchable skins (Norton Commander, Midnight Commander, modern...) including skins generated with AI: the model lives in `Core/Theming`, UI code must paint from `SkinBrushes` (never hard-coded colours), and `App/Theming/ClaudeSkinGenerator.cs` designs skins via the Claude API.
 
+AI providers (`Core/Ai`): every provider speaks the OpenAI-compatible chat completions API (`OpenAiCompatibleClient`), described in `Core/Ai/ai-providers.json` — embedded as the fallback and downloaded at start-up from `AppSettings.AiCatalogUrl` (raw GitHub URL of that same file, so fixing it on `main` updates every install; cached in `data/ai-providers.json`, user additions in `config/ai/providers.json`). Check model ids against the live endpoints before editing it (GitHub Models was retired 2026-07-30; OpenRouter's free ids change often — `openrouter/free` is its own free router). `AiCredentialStore` keeps keys in `config/ai/credentials.json`, DPAPI-encrypted (`dpapi:` prefix; plain text accepted for hand edits); keys may also come from `envVar` or the GitHub CLI. `AiRouter` rotates: 429 → that model cools down (Retry-After / reset headers) and the next model is tried; all models cooling → the provider waits; quota/402 → provider waits 1 h; 401 → "invalid key" until re-login or reset; 5xx/timeout → 30 s. OpenRouter signs in with OAuth PKCE on a loopback port (`AiLogin`). Local providers (`tier: local`, `auth: none`: Ollama :11434, LM Studio :1234) carry `install` (Markdown steps per language, winget id, download URL); the providers window probes them (`/models`, 2 s) and runs `winget install` in a visible PowerShell. The list is remote data: run only `AiInstallInfo.SafeWingetId` and open only `IsWebUrl` links. UI: `App/Ai/AiProvidersWindow` (cm_AiProviders) and `AiChatWindow` (cm_AskAi when `AiInApp` and something is signed in). AI context and plugins:
+- `App/Ai/AiAppContext` describes the app for prompts: both panels, plugins, runtimes, and the embedded `docs/plugins.md` + schema + the example plugin for an installed runtime. It is English because it is a prompt.
+- The chat sends it with every question and offers tools (`AiChatTools`: `get_context`, `list_directory`, `read_text_file` behind a consent dialog, `get_plugin_guide`). Models that reject tools get the conversation flattened (`AiMessage.WithoutTools`).
+- `Core/Plugins/PluginAuthoring` holds the prompt and output format (`File: path` + one fenced block per file), the parser for Markdown and for page code blocks, and `Prepare`/`Install`. `Prepare` validates in a temp folder: safe relative paths, `ManifestReader`, and it adds the SDK client.
+- `AiPluginInstaller` shows the permissions and revokes any earlier approval before installing (new code is never auto-enabled).
+- Browser panel "🤖 AI" menu: `PageScripts.TypeIntoChat` fills the page's lowest visible message box and never sends. It was checked live on Gemini (Quill editor under an `aria-hidden` ancestor when signed out) and ChatGPT (textarea). `ReadCodeBlocks` labels each `pre` with the nearest preceding "File:" text.
+- `SearchEngine.ChatUrl` opens an empty chat for prompts that are too long for `?q=`.
+
+JSON source-generated records pass `null` for missing keys, so their defaults use `init => field = value ?? …`. Non-modal windows follow skin changes via `MainWindow.FollowSkin` (each has `ApplySkin` that rebuilds its layout).
+
 Design system (`docs/DesignSystem/`, "Grafit" = the `modern-dark`/`modern-light` skins): its tokens are optional `SkinPalette` fields (mutedForeground, surface2, hover/pressed, focusRing, activeHeader*, selectedBackground, warning/success, warning/error/highlight/code backgrounds); `SkinBrushes` derives a fallback for each from the classic colours, so retro skins and old skin JSON keep working. `SkinBrushes.IsModern` (CornerRadius > 0) switches the card layout: rounded panel cards, tab bar, path bar with a 3 px accent edge, uppercase column header, inset rounded rows with `FileIcons` vector icons, palette search box in the menu bar; retro skins keep the frame-and-text look. `SkinManager.ApplyToControls` maps tokens onto Fluent resources (buttons, text boxes, combo boxes, menus) — prefer that over styling each control. Density (`AppSettings.Density`: compact/default/comfortable) scales font size and row height.
 
 - Build: `dotnet build Commander4K.sln` — `TreatWarningsAsErrors` is on globally, so any warning fails the build.
-- Run: `dotnet run --project src/Commander4K.App` (portable mode: `config/` and `data/index.db` are created next to the executable, `%AppData%\Commander4K` if that is not writable).
+- Run: `dotnet run --project src/Commander4K.App` (portable mode: `config/` and `data/index.db` are created next to the executable, `%AppData%\Commander4K` if that is not writable). `C4K_LANGUAGE=en` overrides the UI language for one run.
+- Window placement:
+  - `AppSettings.Window` is saved on exit: the restored bounds and whether the window was maximized. It is `null` until the first exit, so the first start opens maximized.
+  - `Program` reads it before the window exists (`AppSettings.ReadWindowPlacement` → `MainWindow.StartupPlacement`), like the language, so the window does not jump.
+  - The saved position is reused only if a screen still contains it.
+- VS Code: `.vscode/` is checked in.
+  - `launch.json`: F5 debugs the app with `coreclr`, with an English-UI profile and attach.
+  - `tasks.json`: build (default), build app, run, watch, test (default), test (filter), release.
+  - Also recommended extensions, and the `plugin.json` schema in `settings.json`.
+  - From the app, `cm_OpenInVsCode` (Ctrl+Shift+E) uses the `vscode` tool. It opens a folder plus files through the `{files}` token. Tools missing from an older `tools.json` fall back to `ExternalToolsService.CreateDefaultConfig()`.
 - Test: `dotnet test --solution Commander4K.sln` — `global.json` opts into Microsoft.Testing.Platform (VSTest mode is rejected by the .NET 10 SDK, so don't add `Microsoft.NET.Test.Sdk`). Tests use xunit.v3.
 - Single test: `dotnet test --solution Commander4K.sln -- --filter-method "*Chord_waits*"` (xunit.v3 filter options go after `--`).
 - Release: `pwsh ./build-release.ps1 [-Runtime win-arm64] [-Version 0.2.0 -Package]` → ReadyToRun single-file exe per RID in `dist/publish/<rid>/` (~260–310 MB; the size is R2R code, not symbols — the csproj already strips package `.pdb`s). It never touches `dist/<rid>/`, which may be a running portable copy. `-Package` writes `dist/release/Commander4K-<rid>.zip` (portable) and `.msi` (WiX 5 project in `installer/`, isolated from the repo's Directory.*.props, built with `--no-incremental` per RID — incremental builds once produced an x64 MSI under the arm64 name) plus `SHA256SUMS.txt`, the exact asset names `UpdateService` looks for. WiX 6+ is avoided on purpose (Open Source Maintenance Fee EULA).
@@ -56,9 +127,19 @@ Build conventions: shared settings live in `Directory.Build.props` (TFM, RIDs, n
 
 Core implementation notes that span files:
 - `VfsRouter` resolves providers via `VfsPath.GetScheme` (`C:\` → `file`, `\\srv\share` → `smb`, otherwise the `scheme://` prefix), and wraps every provider listing in `ResilientAsyncExecutor.StreamAsync`, so plugin code never needs its own hang protection. `OpenListing` returns a bounded `ChannelReader<VfsEntry>`; the UI consumes it with `ChannelBatching.ReadBatchesAsync` (first batch immediately, then ≤ one per 16 ms).
+- Debugger-friendly background work:
+  - Expected failures (cancellation when leaving a folder, access denied, timeouts) must be caught in our code. They must never leave a lambda passed to `Task.Run`, `Task.Factory.StartNew` or a `Parallel.ForEachAsync` body. Otherwise VS Code with "Just My Code" stops on them as user-unhandled.
+  - `ResilientAsyncExecutor` turns synchronous throws into faulted tasks. LAN discovery sources and probes end quietly on cancellation; only the consumer of the listing sees the cancellation.
+  - Never call `.AsTask()` on an async iterator's `MoveNextAsync()`: .NET's adapter reads the failed result inside its own code. `StreamAsync` awaits steps in `StepAsync`/`AwaitStepAsync` instead (regression test: `StreamFaultTests`).
+  - To see which exception a paused F5 session is on, take a dump with `MiniDumpWriteDump` and run `dotnet-dump analyze` → `clrthreads`, `setthread`, `pe -nested`.
 - `SqliteIndexService`: writes are fire-and-forget records (`IndexWriteCommand` subclasses) drained by one writer in batched transactions; use `FlushAsync()` as a barrier (tests rely on it). Microsoft.Data.Sqlite's async methods are synchronous, so reads are explicitly `Task.Run`.
 - Progress reporting goes through `ThrottledProgress<T>` (30 Hz, thread-safe, `Flush()` for the final value); `JobQueueManager` and `DirectorySizeCalculator` both use it. `JobChanged` fires on worker threads — the UI must marshal.
-- Network plugin lessons verified on a real LAN: `NetServerEnum` blocks 30 s+ when no Computer Browser exists, so it runs under a 3 s abandonable timeout; `NetShareEnum` against a host without SMB waits ~10 s, so host level probes ports 445/22/21 first and only enumerates shares when 445 answers; reverse DNS yields `name.lan` and the bare label often does not resolve forward, so host paths use the full DNS name while the display name is the short label.
+- Network plugin lessons verified on a real LAN: `NetServerEnum` blocks 30 s+ when no Computer Browser exists, so it runs under a 3 s abandonable timeout; `NetShareEnum` against a host without SMB waits ~10 s, so host level probes ports 445/22/21 first and only enumerates shares when 445 answers; reverse DNS yields `name.lan` and the bare label often does not resolve forward, so host paths use the full DNS name while the display name is the short label. More measured behaviour (2026-10-31, on a machine with Hyper-V/VPN adapters, 1012 candidate addresses):
+  - A TCP probe must be bounded by `WaitAsync(timeout)` and closing the socket, not only by `ConnectAsync`'s token. A probe that never completed once kept `net://` and This PC "loading" for good.
+  - Reverse lookups (`Dns.GetHostEntryAsync`) hold a pool thread for 5–10 s when an address has no name. They are capped at 4 concurrent.
+  - ARP neighbours get a 600 ms connect timeout (150 ms for the rest), otherwise busy hosts were missed.
+  - The whole root discovery has a 6 s budget (`DiscoveryBudget`). Found hosts are cached, so they appear at once on the next visit.
+  - The preview follows the cursor while a folder is still loading.
 - Paths: providers never emit `..` (the UI adds it from `GetParentPath`). Registry values are addressed as `reg://HIVE\key\\ValueName` (double backslash, which can't occur in key paths). Remote paths are parsed by hand, not with `Uri`, to keep `#`/`?`/`%` in names. The plugin's default SFTP `HostKeyValidator` accepts every key; the app replaces it with trust-on-first-use (`KnownHostsStore`, `config/known_hosts.json`) and a confirmation dialog — keep that wiring if you touch start-up.
 - Plugin tests write to a throw-away `HKCU\Software\Commander4K.Tests\<guid>` key and delete it afterwards.
 - Skins: `BuiltInSkins` + user JSON files in `config/skins/` (same id overrides a built-in), selected skin id persisted in `config/settings.json`; `config/skins/skin.schema.json` is regenerated from the model on every start. Commands `cm_SelectSkin` (F2, Ctrl+Shift+K) and `cm_NextSkin` (Ctrl+Alt+K). `SkinPrompt.ForChat` is the copy-to-clipboard prompt for Claude.ai / Claude Design; `SkinValidator` reports WCAG contrast problems.

@@ -1,0 +1,9 @@
+{
+  // C# for building and debugging (F5); the others are for plugins (Python, PowerShell) and the release script.
+  "recommendations": [
+    "ms-dotnettools.csharp",
+    "ms-dotnettools.csdevkit",
+    "ms-vscode.powershell",
+    "ms-python.python"
+  ]
+}

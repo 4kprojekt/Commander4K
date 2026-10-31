@@ -123,6 +123,18 @@ public sealed class FolderPreviewPlugin : IPreviewPlugin
     public async Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
     {
         var listing = await host.ListAsync(entry.Path, cancellationToken).ConfigureAwait(false);
+
+        // The view follows the content: notes (an Obsidian vault or a folder of Markdown) get their links and excerpts.
+        if (entry.Kind == VfsEntryKind.Directory && listing.Any(e => e.Kind == VfsEntryKind.File && e.Name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)))
+        {
+            var vault = await NotesOverview.FindVaultRootAsync(host, entry.Path, listing, cancellationToken).ConfigureAwait(false);
+            if (vault is not null || NotesOverview.LooksLikeNotes(listing))
+            {
+                progress?.Report(new MarkdownPreview(Loc.T("⏳ Czytam notatki i ich powiązania…"), CanEdit: false));
+                return new MarkdownPreview(await NotesOverview.BuildAsync(host, entry.Path, vault, cancellationToken).ConfigureAwait(false), CanEdit: false);
+            }
+        }
+
         var items = listing
             .Where(e => e.Kind is VfsEntryKind.File or VfsEntryKind.Directory)
             .Take(MaxItems)

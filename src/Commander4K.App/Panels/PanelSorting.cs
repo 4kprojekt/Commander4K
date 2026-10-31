@@ -46,12 +46,16 @@ public static class PanelSorting
         return order.Descending ? -result : result;
     }
 
+    /// <summary>Groups, in order: "..", actions, drives, folders, shares, hosts, files ("This PC" mixes all of them).</summary>
     private static int Rank(VfsEntry entry) => entry.Kind switch
     {
         VfsEntryKind.ParentLink => 0,
         VfsEntryKind.Action => 1,
-        _ when entry.IsContainer => 2,
-        _ => 3,
+        VfsEntryKind.Drive => 2,
+        VfsEntryKind.Share => 4,
+        VfsEntryKind.Host => 5,
+        _ when entry.IsContainer => 3,
+        _ => 6,
     };
 
     private static long SizeOf(VfsEntry entry, IReadOnlyDictionary<string, long>? sizes) =>

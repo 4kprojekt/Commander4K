@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Commander4K's offline Mermaid renderer: a hidden WebView2 loads this page (virtual host c4k-mermaid.local),
+     the app calls c4kRender(id, code, theme) and receives { id, png (base64), width, height } or { id, error }
+     through chrome.webview.postMessage. mermaid.min.js is Mermaid 12.2.0 (MIT), shipped with the app. -->
+<script src="mermaid.min.js"></script>
+<style>body { margin: 0; } #out { position: absolute; left: -10000px; top: 0; }</style>
+</head>
+<body>
+<div id="out"></div>
+<script>
+let counter = 0;
+function reply(message) {
+  if (window.chrome && window.chrome.webview) { window.chrome.webview.postMessage(message); } else { window.__c4kLast = message; }
+}
+
+window.c4kRender = async (id, code, theme) => {
+  const holder = document.getElementById('out');
+  try {
+    // Text labels instead of HTML (foreignObject), so the SVG can be drawn onto a canvas without tainting it.
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'base',
+      themeVariables: theme.variables,
+      fontFamily: theme.font,
+      htmlLabels: false,
+      flowchart: { htmlLabels: false },
+      class: { htmlLabels: false },
+    });
+    const { svg } = await mermaid.render('c4k' + (++counter), code);
+    holder.innerHTML = svg;
+    const element = holder.querySelector('svg');
+    const view = element.viewBox && element.viewBox.baseVal;
+    const box = view && view.width ? view : element.getBBox();
+    const width = Math.max(1, Math.ceil(box.width));
+    const height = Math.max(1, Math.ceil(box.height));
+    element.setAttribute('width', width);
+    element.setAttribute('height', height);
+    element.style.maxWidth = '';
+    const xml = new XMLSerializer().serializeToString(element);
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const scale = theme.scale || 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = width * scale;
+        canvas.height = height * scale;
+        const context = canvas.getContext('2d');
+        context.scale(scale, scale);
+        context.drawImage(image, 0, 0, width, height);
+        reply({ id, png: canvas.toDataURL('image/png').split(',')[1], width, height });
+      } catch (error) {
+        reply({ id, error: String(error && error.message || error) });
+      } finally {
+        holder.innerHTML = '';
+      }
+    };
+    image.onerror = () => { holder.innerHTML = ''; reply({ id, error: 'The diagram image could not be loaded.' }); };
+    image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+  } catch (error) {
+    holder.innerHTML = '';
+    reply({ id, error: String(error && error.message || error) });
+  }
+};
+reply({ id: 'ready' });
+</script>
+</body>
+</html>

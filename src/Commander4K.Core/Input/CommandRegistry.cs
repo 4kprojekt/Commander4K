@@ -15,8 +15,6 @@ public sealed class CommandRegistry
     private readonly Dictionary<string, CommandDescriptor> _pending = new(StringComparer.OrdinalIgnoreCase);
     private FrozenDictionary<string, CommandDescriptor>? _frozen;
 
-    public bool IsFrozen => _frozen is not null;
-
     public IEnumerable<CommandDescriptor> Commands => (IEnumerable<CommandDescriptor>?)_frozen?.Values ?? _pending.Values;
 
     public CommandRegistry Register(string id, string description, Func<CommandInvocation, ValueTask> handler)

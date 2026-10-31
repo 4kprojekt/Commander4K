@@ -187,9 +187,9 @@ public sealed class ImageInfoColumnPlugin : IColumnMetadataPlugin
         {
             switch (tag)
             {
-                case 0x010F: make = ReadAscii(tiff, type, count, valueOffset, entryPosition, little); break;
-                case 0x0110: model = ReadAscii(tiff, type, count, valueOffset, entryPosition, little); break;
-                case 0x0132: modified = ReadAscii(tiff, type, count, valueOffset, entryPosition, little); break;
+                case 0x010F: make = ReadAscii(tiff, type, count, valueOffset, entryPosition); break;
+                case 0x0110: model = ReadAscii(tiff, type, count, valueOffset, entryPosition); break;
+                case 0x0132: modified = ReadAscii(tiff, type, count, valueOffset, entryPosition); break;
                 case 0x8769: exifOffset = (int)valueOffset; break;
             }
         }
@@ -200,7 +200,7 @@ public sealed class ImageInfoColumnPlugin : IColumnMetadataPlugin
             {
                 switch (tag)
                 {
-                    case 0x9003: original = ReadAscii(tiff, type, 20, valueOffset, entryPosition, little); break;
+                    case 0x9003: original = ReadAscii(tiff, type, 20, valueOffset, entryPosition); break;
                     case 0xA002: width = (int)(type == 3 ? ReadUInt16(tiff, entryPosition + 8, little) : valueOffset); break;
                     case 0xA003: height = (int)(type == 3 ? ReadUInt16(tiff, entryPosition + 8, little) : valueOffset); break;
                 }
@@ -244,7 +244,7 @@ public sealed class ImageInfoColumnPlugin : IColumnMetadataPlugin
         return entries;
     }
 
-    private static string? ReadAscii(ReadOnlySpan<byte> tiff, ushort type, uint count, uint valueOffset, int entryPosition, bool little)
+    private static string? ReadAscii(ReadOnlySpan<byte> tiff, ushort type, uint count, uint valueOffset, int entryPosition)
     {
         if (type != 2 || count == 0)
         {

@@ -10,6 +10,29 @@ public sealed record ProcessRunRequest(
 
 public sealed record ProcessRunResult(int ExitCode, string Output, string Error);
 
+/// <summary>One running process (<see cref="IPluginHost.ListProcessesAsync"/>).</summary>
+public sealed record ProcessSnapshot(int Id, int? ParentId, string Name, string? Path, long WorkingSetBytes, DateTimeOffset? StartTime);
+
+public sealed record DriveSnapshot(string Name, string Type, string? Format, string? Label, long? TotalBytes, long? FreeBytes);
+
+/// <summary>Basic facts about the machine (<see cref="IPluginHost.GetSystemInfoAsync"/>).</summary>
+public sealed record SystemSnapshot(
+    string OsDescription,
+    string OsVersion,
+    string Architecture,
+    string MachineName,
+    string UserName,
+    int ProcessorCount,
+    long TotalMemoryBytes,
+    IReadOnlyList<DriveSnapshot> Drives);
+
+/// <param name="Method">GET, POST, PUT, PATCH, DELETE or HEAD.</param>
+/// <param name="Body">Request body as text (JSON, form data…), sent with <paramref name="ContentType"/>.</param>
+public sealed record HttpRequestSpec(string Method, Uri Url, IReadOnlyDictionary<string, string>? Headers = null, string? Body = null, string? ContentType = null);
+
+/// <summary>Any status is returned (no exception for 4xx/5xx); the body is text, at most 5 MB.</summary>
+public sealed record HttpResponseData(int Status, IReadOnlyDictionary<string, string> Headers, string Body);
+
 /// <summary>Raised by the host when a plugin calls an API its manifest does not declare.</summary>
 public sealed class PluginPermissionException(string pluginId, string permission)
     : UnauthorizedAccessException($"Wtyczka „{pluginId}” nie ma uprawnienia „{permission}” ({PluginPermissions.Describe(permission)}).")
@@ -76,6 +99,9 @@ public interface IPluginHost
     /// <summary>Writes to the plugin's section of the audit log.</summary>
     void Log(string message);
 
+    /// <summary>Puts text on the clipboard (writing only; plugins cannot read the clipboard).</summary>
+    Task CopyTextAsync(string text);
+
     // ---- gated ----
 
     /// <summary>Lists a folder on any VFS. Requires <see cref="PluginPermissions.FileRead"/>.</summary>
@@ -101,4 +127,28 @@ public interface IPluginHost
 
     /// <summary>HTTP GET returning the body as text (at most 5 MB). Requires <see cref="PluginPermissions.Network"/>.</summary>
     Task<string> HttpGetTextAsync(Uri url, CancellationToken cancellationToken = default);
+
+    /// <summary>Any HTTP method with headers and a text body; returns status, headers and body. Requires <see cref="PluginPermissions.Network"/>.</summary>
+    Task<HttpResponseData> HttpRequestAsync(HttpRequestSpec request, CancellationToken cancellationToken = default);
+
+    /// <summary>Entry details, or <c>null</c> when the path does not exist. Requires <see cref="PluginPermissions.FileRead"/>.</summary>
+    Task<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken = default);
+
+    /// <summary>Creates or replaces a binary file. Requires <see cref="PluginPermissions.FileWrite"/>.</summary>
+    Task WriteBytesAsync(string path, ReadOnlyMemory<byte> content, CancellationToken cancellationToken = default);
+
+    /// <summary>Creates a folder (and missing parents). Requires <see cref="PluginPermissions.FileWrite"/>.</summary>
+    Task CreateDirectoryAsync(string path, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes a file, or a folder (with <paramref name="recursive"/> its content too). Requires <see cref="PluginPermissions.FileWrite"/>.</summary>
+    Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken = default);
+
+    /// <summary>Moves or renames a file or folder. Requires <see cref="PluginPermissions.FileWrite"/>.</summary>
+    Task MoveAsync(string sourcePath, string destinationPath, bool overwrite, CancellationToken cancellationToken = default);
+
+    /// <summary>Running processes. Requires <see cref="PluginPermissions.ProcessRead"/>.</summary>
+    Task<IReadOnlyList<ProcessSnapshot>> ListProcessesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>OS, machine, memory and drives. Requires <see cref="PluginPermissions.SystemInfo"/>.</summary>
+    Task<SystemSnapshot> GetSystemInfoAsync(CancellationToken cancellationToken = default);
 }

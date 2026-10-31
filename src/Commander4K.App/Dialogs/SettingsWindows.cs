@@ -28,14 +28,14 @@ public sealed class SettingsWindow : Window
     private static string FilesCategory => Loc.T("Pliki konfiguracyjne");
 
     private readonly AppHost _host;
-    private readonly SkinBrushes _brushes;
     private readonly Action<string> _onChanged;
     private readonly Func<Task> _checkForUpdates;
-    private readonly TextBox _search;
-    private readonly StackPanel _content;
-    private readonly StackPanel _nav;
-    private readonly ScrollViewer _scroll;
-    private readonly TextBlock _keyStatus;
+    private SkinBrushes _brushes;
+    private TextBox _search = null!;
+    private StackPanel _content = null!;
+    private StackPanel _nav = null!;
+    private ScrollViewer _scroll = null!;
+    private TextBlock _keyStatus = null!;
 
     public SettingsWindow(AppHost host, SkinBrushes brushes, Action<string> onChanged, Func<Task> checkForUpdates, string? query = null)
     {
@@ -44,12 +44,36 @@ public sealed class SettingsWindow : Window
         _onChanged = onChanged;
         _checkForUpdates = checkForUpdates;
         Title = Loc.T("Ustawienia — Commander4K");
-        Width = 820;
         Height = 700;
-        MinWidth = 560;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Width = 1000;
         MinWidth = 640;
+        BuildLayout(query);
+
+        Opened += (_, _) =>
+        {
+            _search.Focus();
+            _search.CaretIndex = _search.Text?.Length ?? 0;
+        };
+    }
+
+    /// <summary>Repaints the whole window in a new skin (switching skin or density here applies to this window too).</summary>
+    public void ApplySkin(SkinBrushes brushes)
+    {
+        if (ReferenceEquals(brushes, _brushes))
+        {
+            return;
+        }
+
+        _brushes = brushes;
+        var offset = _scroll.Offset;
+        BuildLayout(_search.Text);
+        Dispatcher.UIThread.Post(() => _scroll.Offset = offset, DispatcherPriority.Loaded);
+    }
+
+    private void BuildLayout(string? query)
+    {
+        var brushes = _brushes;
         Background = brushes.PanelBackground;
         Foreground = brushes.WindowForeground;
         FontFamily = brushes.FontFamily;
@@ -93,12 +117,6 @@ public sealed class SettingsWindow : Window
         DockPanel.SetDock(nav, Dock.Left);
         DockPanel.SetDock(_keyStatus, Dock.Top);
         Content = new DockPanel().Children(top, footer, nav, _keyStatus, _scroll);
-
-        Opened += (_, _) =>
-        {
-            _search.Focus();
-            _search.CaretIndex = _search.Text?.Length ?? 0;
-        };
         Rebuild();
     }
 

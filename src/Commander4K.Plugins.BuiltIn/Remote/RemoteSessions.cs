@@ -38,15 +38,19 @@ public delegate bool HostKeyValidator(string host, int port, string HostKeyFinge
 
 internal sealed class SftpSession(SftpClient client) : IRemoteSession
 {
+    /// <summary>
+    /// Connects with every method the login allows — private key(s), password, and keyboard-interactive answered with
+    /// the password — so the server can pick the one it accepts. A refused login becomes
+    /// <see cref="VfsAuthenticationRequiredException"/> (the app then asks for credentials).
+    /// </summary>
     public static async Task<SftpSession> ConnectAsync(
         RemoteEndpoint endpoint,
-        NetworkCredential credential,
+        RemoteLogin login,
         HostKeyValidator hostKeyValidator,
         TimeSpan keepAlive,
         CancellationToken cancellationToken)
     {
-        var info = new ConnectionInfo(endpoint.Host, endpoint.Port, credential.UserName,
-            new PasswordAuthenticationMethod(credential.UserName, credential.Password));
+        var info = new ConnectionInfo(endpoint.Host, endpoint.Port, login.UserName, [.. AuthenticationMethods(login)]);
         var client = new SftpClient(info) { KeepAliveInterval = keepAlive };
         client.HostKeyReceived += (_, e) => e.CanTrust = hostKeyValidator(endpoint.Host, endpoint.Port, e.FingerPrintSHA256);
         try
@@ -54,10 +58,62 @@ internal sealed class SftpSession(SftpClient client) : IRemoteSession
             await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
             return new SftpSession(client);
         }
+        catch (SshAuthenticationException ex)
+        {
+            client.Dispose();
+            throw new VfsAuthenticationRequiredException(endpoint.ToPath(endpoint.RemotePath), endpoint.SessionKey, ex);
+        }
         catch
         {
             client.Dispose();
             throw;
+        }
+    }
+
+    private static IEnumerable<AuthenticationMethod> AuthenticationMethods(RemoteLogin login)
+    {
+        // An explicit key file, or else the default ~/.ssh keys when there is no password either. Keys that need a
+        // passphrase we do not have are skipped instead of failing the whole connection.
+        var keyFiles = login.PrivateKeyFile is { Length: > 0 } file ? [file]
+            : login.Password is null ? RemoteLogin.DefaultKeyFiles() : [];
+        var keys = new List<IPrivateKeySource>();
+        foreach (var path in keyFiles)
+        {
+            try
+            {
+                keys.Add(string.IsNullOrEmpty(login.Passphrase) ? new PrivateKeyFile(path) : new PrivateKeyFile(path, login.Passphrase));
+            }
+            catch (Exception ex) when (ex is SshException or IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                if (login.PrivateKeyFile is not null)
+                {
+                    throw new IOException($"The key '{path}' cannot be read: {ex.Message}", ex);
+                }
+            }
+        }
+
+        if (keys.Count > 0)
+        {
+            yield return new PrivateKeyAuthenticationMethod(login.UserName, [.. keys]);
+        }
+
+        if (login.Password is { } password)
+        {
+            yield return new PasswordAuthenticationMethod(login.UserName, password);
+            var interactive = new KeyboardInteractiveAuthenticationMethod(login.UserName);
+            interactive.AuthenticationPrompt += (_, e) =>
+            {
+                foreach (var prompt in e.Prompts)
+                {
+                    prompt.Response = password;
+                }
+            };
+            yield return interactive;
+        }
+
+        if (keys.Count == 0 && login.Password is null)
+        {
+            yield return new NoneAuthenticationMethod(login.UserName); // Lets the server reject it, which asks the user.
         }
     }
 

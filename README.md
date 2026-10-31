@@ -20,17 +20,35 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - `sftp://` and `ftp://` servers;
   - `reg://`, the Windows Registry;
   - archives (ZIP, 7z, TAR with gz/bz2/xz, RAR, GZ), opened with `Enter` like folders, even when they sit on a share or an SFTP server. `Alt+F5` packs to ZIP or TAR, and `Alt+F9` extracts.
+- **This PC (`local://`):** shows drives, the system and user folders (Desktop, Documents, Downloads…, Program Files, AppData, Temp), then the network: saved connections, Windows network locations, and LAN hosts as background discovery finds them. The ▾ button on each panel's path bar switches the panel to any of these, or adds a connection.
+- **Connections:** SFTP/SSH with a password or a private key (passphrase optional). Your `~/.ssh` keys are tried automatically, as `ssh` does. Also FTP and Windows shares. "Testuj" checks a connection before saving it. Passwords and passphrases are stored DPAPI-encrypted in `config/settings.json`.
 - **Panel modes (`F2`):** either panel can show files, a quick preview, the built-in browser or any plugin panel.
 - **Built-in browser (`Ctrl+Alt+W`):** a web panel based on Microsoft Edge WebView2. The address bar also searches (Google, Bing, DuckDuckGo).
-  - `Ctrl+Alt+A` asks an AI assistant: ChatGPT, Claude, Perplexity or Gemini. Sign in once and the session is remembered.
+  - Without AI providers signed in (see below), `Ctrl+Alt+A` asks an AI assistant in the browser: ChatGPT, Claude, Perplexity or Gemini. Sign in once and the session is remembered.
+- **AI chat with free providers (`Ctrl+Alt+A`):** sign in to several free API tiers in "Konfiguracja → Dostawcy AI". Questions go to them in turn; when one hits its rate limit or quota, or rejects its key, the next one answers.
+  - Providers: OpenRouter (one-click browser sign-in, no key to copy), Groq, Cerebras, Google AI Studio, Mistral, NVIDIA NIM, Hugging Face and Cohere, plus local models through Ollama or LM Studio (no account, no limits, nothing leaves the PC; the window detects them, shows install steps and can install them with winget). Keys can also come from environment variables (`OPENROUTER_API_KEY`, `GROQ_API_KEY`…).
+  - The provider list ([`ai-providers.json`](src/Commander4K.Core/Ai/ai-providers.json)) is downloaded from this repository at start-up, so endpoints and free models can be updated without a new release. Add your own in `config/ai/providers.json`.
+  - The AI knows where you are: it gets both panels' paths, the cursor, the marked files and the installed plugins. It can look into folders, and it reads a file only after you allow it.
+  - **Plugins written by AI:** "Napisz wtyczkę z AI" gives the model the [plugin guide](docs/plugins.md) and installs the plugin from its answer. The plugin stays disabled until you approve its permissions.
+  - **Gemini, ChatGPT or Claude in the browser panel:** the "🤖 AI" menu types the app state, or a plugin request with the guide, into the page's chat box for you to send. It can also install a plugin from the answer on the page.
+  - Keys are stored in `config/ai/credentials.json`, encrypted for the current Windows user (DPAPI). After moving a portable copy to another account or PC, sign in again.
   - The plugin manager's "Szukaj rozwiązania" sends a plugin's problem to that assistant, and plugins can open pages or searches here too.
 - **Quick view (`Ctrl+Q`):** previews the entry under the cursor in the opposite panel:
-  - Markdown is rendered with formatting, and `F4` switches to side-by-side editing with a live preview;
+  - Markdown is rendered with formatting, and `F4` switches to side-by-side editing with a live preview. ` ```mermaid ` diagrams are drawn offline with the bundled [Mermaid](https://mermaid.js.org) 12.2.0 (MIT), in the skin's colours;
+  - the folder preview adapts to the content: an Obsidian vault, or a folder of Markdown notes, shows a link graph, the most linked notes, recent notes with excerpts, tags, unlinked notes and broken links. Obsidian `.canvas` boards show as diagrams;
   - text files are editable;
   - images are shown;
   - folders show their total size and per-subfolder bars, filled in as they are computed.
 
   Moving the cursor cancels the running load at once. Plugins can add previews too.
+- **Folders that decide how they look (`c4k.dir`):** a small JSON file in a folder sets what its preview shows and what `Enter` does ([guide](docs/plugins.md#folder-files-c4kdir), [schema](docs/c4k.dir.schema.json)). `Shift+Enter` always opens the plain file list.
+  - It can show a photo gallery, a dashboard of tiles (folders, pages, scripts), the notes view, a README, or a plugin's view (for example the games of a Steam library, with covers).
+  - It can open an SFTP server with a key, a web page in the panel browser, or run a script. A script runs only after you have seen the command and trusted that exact file; a changed or copied file asks again.
+  - "Widok folderu (c4k.dir)" in the command palette writes the file for you.
+- **Official plugin catalog:** [`plugins-catalog/catalog.json`](plugins-catalog/catalog.json) is downloaded at start-up. Its plugins install from the plugin manager (`Ctrl+I`), or with one click when a `c4k.dir` needs one.
+  - Every file is checked against the catalog's SHA-256.
+  - A new plugin stays disabled until you approve its permissions.
+  - The first catalog plugin is `official.steam-library`; the catalog will grow.
 - **Palettes:** button bars docked to the left, the right, the bottom or between the panels. Each palette's position is a setting.
   - Quick actions: any command, panel or plugin command, one click away.
   - Favourite folders (`Ctrl+D` adds the current one) and recently used folders.
@@ -98,6 +116,14 @@ dotnet run --project src/Commander4K.App
 ./build-release.ps1 -Version 0.2.0 -Package   # + ZIP, MSI (WiX 5) and SHA256SUMS.txt in dist/release
 ```
 
+**VS Code:** open the repository folder and accept the recommended extensions (C#, C# Dev Kit).
+- `F5` builds and debugs the app; the "English UI" profile sets `C4K_LANGUAGE=en` for that run.
+- `Ctrl+Shift+B` builds; *Tasks: Run Test Task* runs the tests.
+- The tasks also include `run`, `watch`, `test (filter)` and `release (local)`.
+- `plugin.json` files get schema completion.
+
+From the app, `Ctrl+Shift+E` opens the current folder (and the marked files) in VS Code.
+
 To publish a release, push a tag such as `v0.2.0`. The [release workflow](.github/workflows/release.yml) tests, builds both architectures and publishes the release assets the updater expects.
 
 Architecture: `Commander4K.PluginSdk` (plugin contracts) → `Commander4K.Core` (VFS router, background jobs, SQLite index, keymap, updates) → `Commander4K.Plugins.BuiltIn` (local, network, registry, SFTP/FTP, search) → `Commander4K.App` (Avalonia UI). See [CLAUDE.md](CLAUDE.md) for the details.
@@ -120,7 +146,8 @@ Commander4K to szybki, dwupanelowy menedżer plików dla Windows 11 w stylu Nort
 
 - **Interfejs:** po polsku.
 - **Konfiguracja:** `Ctrl+,` otwiera ustawienia z wyszukiwarką, a `Ctrl+Shift+P` paletę komend.
-- **Przeglądarka:** `Ctrl+Alt+W` otwiera stronę w panelu, a `Ctrl+Alt+A` pyta asystenta AI (ChatGPT, Gemini, Claude, Perplexity).
+- **Przeglądarka:** `Ctrl+Alt+W` otwiera stronę w panelu.
+- **Czat AI (`Ctrl+Alt+A`):** zaloguj się do kilku darmowych dostawców w „Konfiguracja → Dostawcy AI” (OpenRouter jednym kliknięciem, Groq, Cerebras, Mistral…) albo uruchom modele lokalnie w Ollamie lub LM Studio — okno pokazuje instrukcję i instaluje je przez winget. Gdy jeden wyczerpie limit, odpowiada następny. Bez logowania `Ctrl+Alt+A` otwiera asystenta w przeglądarce. AI zna stan aplikacji (ścieżki, zaznaczenie, wtyczki) i potrafi napisać wtyczkę według przewodnika, a aplikacja ją instaluje (wyłączoną do Twojej zgody). Gemini, ChatGPT i Claude otwarte w panelu przeglądarki dostają ten sam kontekst z menu „🤖 AI”.
 - **Palety:** szybkie akcje, ulubione foldery, zapisane widoki i palety wtyczek, dokowane na dole, po bokach albo między panelami (`Ctrl+B` pokazuje i ukrywa).
 - **Skórki:** są w `config/skins`. Możesz też wygenerować je z pomocą AI.
 - **Aktualizacje:** pobierane z GitHub Releases.

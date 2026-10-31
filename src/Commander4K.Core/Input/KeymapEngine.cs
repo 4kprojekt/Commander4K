@@ -75,20 +75,6 @@ public sealed class KeymapEngine
 
     public void CancelChord() => _pendingChord = null;
 
-    /// <summary>Returns the first sequence bound to <paramref name="commandId"/>, e.g. for the function-key bar.</summary>
-    public string? FindSequence(string commandId)
-    {
-        foreach (var (sequence, id) in _bindings)
-        {
-            if (string.Equals(id, commandId, StringComparison.Ordinal))
-            {
-                return sequence;
-            }
-        }
-
-        return null;
-    }
-
     private KeymapResult Match(string sequence)
     {
         if (_bindings.TryGetValue(sequence, out var commandId))

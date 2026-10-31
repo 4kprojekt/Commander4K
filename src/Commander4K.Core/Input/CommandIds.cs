@@ -36,6 +36,9 @@ public static class CommandIds
 
     /// <summary>Asks the configured AI assistant (ChatGPT, Gemini, Claude…) in the internal browser (Ctrl+Alt+A).</summary>
     public const string AskAi = "cm_AskAi";
+    public const string AiProviders = "cm_AiProviders";
+    public const string AiWritePlugin = "cm_AiWritePlugin";
+    public const string OpenInVsCode = "cm_OpenInVsCode";
 
     /// <summary>Shows or hides all docked palettes (Ctrl+B).</summary>
     public const string TogglePalettes = "cm_TogglePalettes";
@@ -51,6 +54,12 @@ public static class CommandIds
     public const string ToggleHidden = "cm_ToggleHidden";
     public const string SwitchPanel = "cm_SwitchPanel";
     public const string Open = "cm_Open";
+
+    /// <summary>Shift+Enter: enter a folder as a plain file list, ignoring its c4k.dir.</summary>
+    public const string EnterFolderPlain = "cm_EnterFolderPlain";
+
+    /// <summary>Create or edit the current folder's c4k.dir (how it is previewed and what entering it does).</summary>
+    public const string FolderView = "cm_FolderView";
     public const string GoToParent = "cm_GoToParent";
     public const string Refresh = "cm_Refresh";
     public const string NewTab = "cm_NewTab";

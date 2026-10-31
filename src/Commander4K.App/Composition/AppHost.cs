@@ -1,5 +1,7 @@
+using Commander4K.Core.Ai;
 using Commander4K.Core.Configuration;
 using Commander4K.Core.Execution;
+using Commander4K.Core.Folders;
 using Commander4K.Core.Indexing;
 using Commander4K.Core.Input;
 using Commander4K.Core.Jobs;
@@ -56,6 +58,8 @@ public sealed class PluginUiProxy : IPluginUi
     public Task OpenUrlAsync(string url) => Target?.OpenUrlAsync(url) ?? Task.CompletedTask;
 
     public Task SearchWebAsync(string query, string? engine) => Target?.SearchWebAsync(query, engine) ?? Task.CompletedTask;
+
+    public Task CopyTextAsync(string text) => Target?.CopyTextAsync(text) ?? Task.CompletedTask;
 }
 
 /// <param name="Category">Menu group for plugin commands (slash = submenu); <c>null</c> for built-ins.</param>
@@ -80,11 +84,18 @@ public sealed class AppHost : IAsyncDisposable
         KnownHosts = new KnownHostsStore(Path.Combine(config.ConfigDirectory, "known_hosts.json"));
 
         Network = new NetworkNeighborhoodVfsPlugin(index);
+        // "This PC" (local://) lists the network root after drives and folders; hosts stream in as discovery finds them.
+        Local.NetworkEntries = ct => Network.EnumerateAsync(NetworkNeighborhoodVfsPlugin.RootPath, ct);
         Router = new VfsRouter(Executor, [Local, Network, Registry, Remote, Archives]);
         Archives.Router = Router; // Archives open their container file through the router (any VFS).
         DirectorySizes = new DirectorySizeCalculator(Router);
         SearchProviders = [Registry, FileSearch];
         Updates = new UpdateService(Http);
+        AiCatalog = new AiCatalogService(Http, Path.Combine(dataDirectory, "data", "ai-providers.json"), Path.Combine(config.ConfigDirectory, "ai", "providers.json"));
+        PluginCatalog = new PluginCatalogService(Http, Path.Combine(dataDirectory, "data", "plugin-catalog.json"));
+        FolderTrust = new FolderTrustStore(Path.Combine(config.ConfigDirectory, "trusted-folders.json"));
+        AiCredentials = new AiCredentialStore(Path.Combine(config.ConfigDirectory, "ai", "credentials.json"));
+        Ai = new AiRouter(AiCatalog, AiCredentials, new OpenAiCompatibleClient(Http), AiLogin.GitHubCliToken);
         _baseSettings = Core.Configuration.SettingsCatalog.Create(
             () => [.. Skins.Skins.Select(s => new SettingChoice(s.Id, s.DisplayName))],
             () => [new(Loc.Auto, Loc.T("Automatycznie")), .. Loc.AvailableLanguages(config.ConfigDirectory).Select(code => new SettingChoice(code, LanguageName(code)))]);
@@ -94,7 +105,7 @@ public sealed class AppHost : IAsyncDisposable
         BuiltInPanels = [new SystemInfoPanelPlugin(), new TaskManagerPanelPlugin(), new LogAnalyzerPanelPlugin(), PowerShell, new PluginManagerPanel(this)];
         PanelPlugins = BuiltInPanels;
         CommandPlugins = [PowerShell];
-        BuiltInPreviews = [new MarkdownPreviewPlugin(), new ImagePreviewPlugin(), new FolderPreviewPlugin(), new TextPreviewPlugin()];
+        BuiltInPreviews = [new MarkdownPreviewPlugin(), new CanvasPreviewPlugin(), new ImagePreviewPlugin(), new FolderPreviewPlugin(), new TextPreviewPlugin()];
         PreviewPlugins = BuiltInPreviews;
         ApplySettings();
     }
@@ -138,7 +149,8 @@ public sealed class AppHost : IAsyncDisposable
         {
             if (!_hosts.TryGetValue(manifest.Id, out var host))
             {
-                host = new ScopedPluginHost(manifest, PluginUi, Router, Http, Audit);
+                host = new ScopedPluginHost(manifest, PluginUi, Router, Http, Audit,
+                    () => SystemSnapshots.Processes(Plugins.BuiltIn.Interop.ProcessLookups.ParentIds, Plugins.BuiltIn.Interop.ProcessLookups.ImagePath));
                 _hosts[manifest.Id] = host;
             }
 
@@ -175,7 +187,7 @@ public sealed class AppHost : IAsyncDisposable
         foreach (var plugin in discovered.Where(p => PluginBlocker(p) is null))
         {
             var runtime = Runtimes.First(r => string.Equals(r.Type, plugin.Manifest!.Runtime.Type, StringComparison.OrdinalIgnoreCase));
-            external.Add(new ExternalPlugin(plugin, runtime, (ScopedPluginHost)HostFor(plugin.Manifest!), Audit));
+            external.Add(new ExternalPlugin(plugin, runtime, (ScopedPluginHost)HostFor(plugin.Manifest!), Audit, PluginData));
         }
 
         DiscoveredPlugins = discovered;
@@ -186,6 +198,11 @@ public sealed class AppHost : IAsyncDisposable
         ExternalPalettes = [.. external.SelectMany(e => (e.Manifest.Contributes?.Palettes ?? []).Select(p => (IPalettePlugin)new ExternalPalettePlugin(e, p)))];
         PluginsChanged?.Invoke();
     }
+
+    /// <summary>Plugins' own settings and data (<c>storage.get/set</c>), in <c>data/plugin-data</c>.</summary>
+    public PluginStorage PluginData => _pluginData ??= new PluginStorage(Path.Combine(DataDirectory, "data", "plugin-data"));
+
+    private PluginStorage? _pluginData;
 
     /// <summary>Raised (on a background thread) after <see cref="ReloadExternalPluginsAsync"/>.</summary>
     public event Action? PluginsChanged;
@@ -225,6 +242,26 @@ public sealed class AppHost : IAsyncDisposable
     public HttpClient Http { get; } = new() { Timeout = TimeSpan.FromMinutes(10) };
 
     public UpdateService Updates { get; }
+
+    /// <summary>AI providers: the live list, signed-in keys (<c>config/ai</c>) and the rotating router that asks them.</summary>
+    public AiCatalogService AiCatalog { get; }
+
+    public AiCredentialStore AiCredentials { get; }
+
+    /// <summary>Official plugins from the repository (<c>plugins-catalog/catalog.json</c>), installable from the plugin manager and from <c>c4k.dir</c>.</summary>
+    public PluginCatalogService PluginCatalog { get; }
+
+    /// <summary>Downloads and installs a catalog plugin with the window's consent dialogs (set by the window).</summary>
+    public Func<string, Task>? InstallFromCatalog { get; set; }
+
+    /// <summary><c>c4k.dir</c> files whose scripts the user allowed.</summary>
+    public FolderTrustStore FolderTrust { get; }
+
+    /// <summary>The folder's <c>c4k.dir</c> when the setting is on; <c>null</c> otherwise or when there is none.</summary>
+    public Task<FolderConfig?> ReadFolderConfigAsync(string folder, CancellationToken cancellationToken) =>
+        Settings.FolderConfigs ? FolderConfig.ReadAsync(Router, folder, TimeSpan.FromSeconds(2), cancellationToken) : Task.FromResult<FolderConfig?>(null);
+
+    public AiRouter Ai { get; }
 
     private readonly IReadOnlyList<SettingDescriptor> _baseSettings;
 
@@ -321,6 +358,11 @@ public sealed class AppHost : IAsyncDisposable
                     new ExternalToolsService(toolsTask.Result),
                     indexTask.Result);
                 host.KeyBindings = new Dictionary<string, string>(keymapTask.Result.Bindings, StringComparer.OrdinalIgnoreCase);
+                host.AiCatalog.Load();
+                host.PluginCatalog.Load();
+                _ = Task.Run(() => host.PluginCatalog.RefreshAsync(host.Settings.PluginCatalogUrl), CancellationToken.None);
+                _ = host.Ai.States(); // Reads credentials and asks the GitHub CLI here, never later on the UI thread.
+                _ = Task.Run(() => host.AiCatalog.RefreshAsync(host.Settings.AiCatalogUrl), CancellationToken.None); // Live list; the cached one serves meanwhile.
                 await host.PowerShell.ReloadAsync(cancellationToken).ConfigureAwait(false);
                 host.Runtimes = await RuntimeCatalog.DetectAsync(cancellationToken).ConfigureAwait(false);
                 await host.ReloadExternalPluginsAsync().ConfigureAwait(false);
@@ -338,6 +380,15 @@ public sealed class AppHost : IAsyncDisposable
     {
         Network.SavedConnections = [.. Settings.Connections.Select(c => new SavedConnection(c.Name, c.Path))];
         Network.LanDiscoveryEnabled = Settings.LanDiscovery;
+
+        // Saved SFTP/FTP logins (password or key + passphrase); the secret is decrypted only in memory.
+        foreach (var connection in Settings.Connections.Where(c => c.Auth is not null && VfsPath.GetScheme(c.Path) is "sftp" or "ftp"))
+        {
+            var secret = SecretProtector.Unprotect(connection.Secret);
+            Remote.SetLogin(connection.Path, connection.Auth == "key"
+                ? new RemoteLogin(connection.UserName ?? Environment.UserName, PrivateKeyFile: connection.KeyFile, Passphrase: secret)
+                : new RemoteLogin(connection.UserName ?? Environment.UserName, Password: secret));
+        }
     }
 
     /// <summary>Validates, persists and activates new key bindings; throws <see cref="FormatException"/> on a bad sequence.</summary>

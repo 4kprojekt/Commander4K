@@ -72,22 +72,27 @@ public sealed partial class WebView2Host : NativeControlHost
     /// <summary>Gives keyboard focus to the page (the native window does not take part in Avalonia's focus).</summary>
     public void FocusPage() => _controller?.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
 
+    /// <summary>The shared environment for a profile folder (the browser and the Mermaid renderer use the same one).</summary>
+    public static Task<CoreWebView2Environment> GetEnvironmentAsync(string profileFolder)
+    {
+        lock (Environments)
+        {
+            if (!Environments.TryGetValue(profileFolder, out var environment) || environment.IsFaulted)
+            {
+                Directory.CreateDirectory(profileFolder);
+                environment = CoreWebView2Environment.CreateAsync(null, profileFolder);
+                Environments[profileFolder] = environment;
+            }
+
+            return environment;
+        }
+    }
+
     private async Task InitializeAsync(nint hwnd)
     {
         try
         {
-            Task<CoreWebView2Environment> environment;
-            lock (Environments)
-            {
-                if (!Environments.TryGetValue(_profileFolder, out environment!) || environment.IsFaulted)
-                {
-                    Directory.CreateDirectory(_profileFolder);
-                    environment = CoreWebView2Environment.CreateAsync(null, _profileFolder);
-                    Environments[_profileFolder] = environment;
-                }
-            }
-
-            var controller = await (await environment).CreateCoreWebView2ControllerAsync(hwnd);
+            var controller = await (await GetEnvironmentAsync(_profileFolder)).CreateCoreWebView2ControllerAsync(hwnd);
             if (_destroyed)
             {
                 controller.Close(); // The panel closed while the browser was starting.

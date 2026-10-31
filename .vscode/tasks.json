@@ -1,0 +1,76 @@
+{
+  // Ctrl+Shift+B = build, "Tasks: Run Test Task" = all tests. See CLAUDE.md for what each command does.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "detail": "dotnet build Commander4K.sln (warnings are errors)",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["build", "${workspaceFolder}/Commander4K.sln", "/property:GenerateFullPaths=true", "/consoleloggerparameters:NoSummary"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "build app",
+      "detail": "Builds only the app and what it references (used before debugging)",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["build", "${workspaceFolder}/src/Commander4K.App/Commander4K.App.csproj", "/property:GenerateFullPaths=true", "/consoleloggerparameters:NoSummary"],
+      "problemMatcher": "$msCompile",
+      "presentation": { "reveal": "silent" }
+    },
+    {
+      "label": "run",
+      "detail": "dotnet run — the app without the debugger",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["run", "--project", "${workspaceFolder}/src/Commander4K.App"],
+      "problemMatcher": "$msCompile",
+      "isBackground": false
+    },
+    {
+      "label": "watch",
+      "detail": "dotnet watch — rebuilds and restarts the app when code changes",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["watch", "--project", "${workspaceFolder}/src/Commander4K.App"],
+      "problemMatcher": "$msCompile",
+      "isBackground": true
+    },
+    {
+      "label": "test",
+      "detail": "dotnet test --solution Commander4K.sln (xunit.v3 on Microsoft.Testing.Platform)",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["test", "--solution", "${workspaceFolder}/Commander4K.sln"],
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test (filter)",
+      "detail": "Runs the tests whose method name matches a pattern, e.g. *Chord_waits*",
+      "type": "process",
+      "command": "dotnet",
+      "args": ["test", "--solution", "${workspaceFolder}/Commander4K.sln", "--", "--filter-method", "${input:testFilter}"],
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "release (local)",
+      "detail": "build-release.ps1 — ReadyToRun single-file exe for both RIDs in dist/publish",
+      "type": "process",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "${workspaceFolder}/build-release.ps1"],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testFilter",
+      "type": "promptString",
+      "description": "Test method pattern (xunit.v3 --filter-method)",
+      "default": "*"
+    }
+  ]
+}

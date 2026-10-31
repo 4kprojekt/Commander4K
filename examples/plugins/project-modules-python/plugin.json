@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "examples.project-modules",
+  "name": "Moduły projektu i API (Python)",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Przykład dedykowanego podglądu: zależności projektów (npm, .NET, Python, Go, Rust) i moduły API z plików OpenAPI/Swagger. Tylko odczyt przez SDK.",
+  "runtime": { "type": "python", "entry": "main.py", "version": ">=3.11" },
+  "permissions": ["fs.read"],
+  "contributes": {
+    "previews": [
+      {
+        "id": "modules",
+        "title": "Moduły projektu / API",
+        "extensions": [
+          "package.json", "*.csproj", "*.fsproj", "*.vbproj", "Directory.Packages.props",
+          "pyproject.toml", "requirements*.txt", "go.mod", "Cargo.toml", "composer.json",
+          "openapi*.json", "swagger*.json", "*.openapi.json", "*.swagger.json"
+        ],
+        "priority": 60
+      }
+    ]
+  }
+}

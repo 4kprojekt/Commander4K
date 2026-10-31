@@ -41,13 +41,24 @@ public sealed class LanScanner
 
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromMilliseconds(150);
 
+    /// <summary>ARP neighbours are known to be alive: they get longer, so a busy host still answers.</summary>
+    public TimeSpan NeighbourConnectTimeout { get; init; } = TimeSpan.FromMilliseconds(600);
+
+    /// <summary>
+    /// Reverse lookups at the same time. Windows has no asynchronous reverse lookup: each one holds a thread-pool
+    /// thread, for 5–10 s when the address has no name, so they are capped to keep the pool free for the UI's work.
+    /// </summary>
+    private const int MaxConcurrentReverseLookups = 4;
+
+    private readonly SemaphoreSlim _lookups = new(MaxConcurrentReverseLookups);
+
     public TimeSpan ReverseDnsTimeout { get; init; } = TimeSpan.FromMilliseconds(400);
 
     public int MaxDegreeOfParallelism { get; init; } = 128;
 
     public async IAsyncEnumerable<DiscoveredHost> ScanAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var candidates = GetCandidates();
+        var (candidates, neighbours) = GetCandidatesWithNeighbours();
         var found = Channel.CreateUnbounded<DiscoveredHost>(new UnboundedChannelOptions { SingleReader = true });
 
         var sweep = Task.Run(
@@ -60,10 +71,13 @@ public sealed class LanScanner
                         MaxDegreeOfParallelism = MaxDegreeOfParallelism,
                         CancellationToken = cancellationToken,
                     };
+                    // The body never throws on cancellation (probes return "closed"): an exception leaving this
+                    // lambda into Parallel's code would stop a debugger as "user-unhandled" on every navigation away
+                    // from "This PC". Parallel.ForEachAsync itself stops on the token and reports it below.
                     await Parallel.ForEachAsync(candidates, options, async (address, ct) =>
                     {
-                        var open = await ProbeHostAsync(address, Ports, ct).ConfigureAwait(false);
-                        if (open.Count > 0)
+                        var open = await ProbeHostAsync(address, Ports, neighbours.Contains(address) ? NeighbourConnectTimeout : ConnectTimeout, ct).ConfigureAwait(false);
+                        if (open.Count > 0 && !ct.IsCancellationRequested)
                         {
                             var name = await TryReverseLookupAsync(address, ct).ConfigureAwait(false);
                             found.Writer.TryWrite(new DiscoveredHost(address, name, open));
@@ -87,12 +101,15 @@ public sealed class LanScanner
     }
 
     /// <summary>Returns the subset of <paramref name="ports"/> accepting TCP connections on <paramref name="address"/>.</summary>
-    public async Task<IReadOnlyList<int>> ProbeHostAsync(IPAddress address, IReadOnlyList<int> ports, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<int>> ProbeHostAsync(IPAddress address, IReadOnlyList<int> ports, CancellationToken cancellationToken) =>
+        ProbeHostAsync(address, ports, ConnectTimeout, cancellationToken);
+
+    private static async Task<IReadOnlyList<int>> ProbeHostAsync(IPAddress address, IReadOnlyList<int> ports, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var probes = new Task<bool>[ports.Count];
         for (var i = 0; i < probes.Length; i++)
         {
-            probes[i] = IsPortOpenAsync(address, ports[i], cancellationToken);
+            probes[i] = IsPortOpenAsync(address, ports[i], timeout, cancellationToken);
         }
 
         var results = await Task.WhenAll(probes).ConfigureAwait(false);
@@ -109,7 +126,9 @@ public sealed class LanScanner
     }
 
     /// <summary>Hosts to probe: ARP neighbours first (most likely alive), then the rest of each local subnet.</summary>
-    internal static List<IPAddress> GetCandidates()
+    internal static List<IPAddress> GetCandidates() => GetCandidatesWithNeighbours().Candidates;
+
+    private static (List<IPAddress> Candidates, HashSet<IPAddress> Neighbours) GetCandidatesWithNeighbours()
     {
         var subnets = GetLocalSubnets();
         var ordered = new List<IPAddress>();
@@ -123,6 +142,8 @@ public sealed class LanScanner
             }
         }
 
+        var neighbours = new HashSet<IPAddress>(ordered);
+
         foreach (var subnet in subnets)
         {
             foreach (var address in subnet.Hosts())
@@ -134,26 +155,50 @@ public sealed class LanScanner
             }
         }
 
-        return ordered;
+        return (ordered, neighbours);
     }
 
-    private async Task<bool> IsPortOpenAsync(IPAddress address, int port, CancellationToken cancellationToken)
+    /// <summary>
+    /// A connect that is guaranteed to end: the wait is bounded by <paramref name="timeout"/> itself and closing the
+    /// socket aborts the connect, instead of trusting <c>ConnectAsync</c> to observe its token — a probe that never
+    /// completed kept the whole listing "loading" for good.
+    /// </summary>
+    /// <remarks>
+    /// No exception is thrown anywhere on this path: the outcome is read from <see cref="SocketAsyncEventArgs.SocketError"/>
+    /// and the timeout completes the same source. A sweep is ~3000 probes, nearly all of them timeouts, and a throwing
+    /// probe (<c>WaitAsync</c> → <c>TimeoutException</c>) made a debugger suspend the whole app 3000 times: under F5
+    /// the window froze and <c>net://</c> stayed "loading".
+    /// </remarks>
+    private static async Task<bool> IsPortOpenAsync(IPAddress address, int port, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(ConnectTimeout);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        var connect = new SocketAsyncEventArgs { RemoteEndPoint = new IPEndPoint(address, port) };
+        var outcome = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connect.Completed += (_, e) => outcome.TrySetResult(e.SocketError == SocketError.Success);
+        var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         try
         {
-            await socket.ConnectAsync(address, port, timeout.Token).ConfigureAwait(false);
-            return true;
+            if (!socket.ConnectAsync(connect))
+            {
+                return connect.SocketError == SocketError.Success; // Completed synchronously (e.g. refused at once).
+            }
+
+            deadline.CancelAfter(timeout);
+            using (deadline.Token.Register(static state => ((TaskCompletionSource<bool>)state!).TrySetResult(false), outcome))
+            {
+                return await outcome.Task.ConfigureAwait(false);
+            }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        finally
         {
-            return false;
-        }
-        catch (SocketException)
-        {
-            return false;
+            deadline.Dispose();
+            socket.Dispose(); // Aborts a connect still in progress; Completed then reports OperationAborted, ignored.
+            connect.Dispose(); // Deferred by the runtime until a pending operation completes.
         }
     }
 
@@ -161,10 +206,29 @@ public sealed class LanScanner
     {
         try
         {
-            var entry = await Dns.GetHostEntryAsync(address.ToString(), cancellationToken)
-                .WaitAsync(ReverseDnsTimeout, cancellationToken)
-                .ConfigureAwait(false);
-            var name = entry.HostName;
+            // A lookup still running from an earlier host keeps its slot until Windows gives up, so a slow DNS server
+            // cannot take more than a few pool threads; when none is free in time the host is shown by its address.
+            if (!await _lookups.WaitAsync(ReverseDnsTimeout, cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            var lookup = Dns.GetHostEntryAsync(address);
+            _ = lookup.ContinueWith(t =>
+            {
+                _ = t.Exception;
+                _lookups.Release();
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            // WhenAny instead of WaitAsync: a slow or failed lookup is the common case and must not throw (see IsPortOpenAsync).
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            await Task.WhenAny(lookup, Task.Delay(ReverseDnsTimeout, deadline.Token)).ConfigureAwait(false);
+            deadline.Cancel(); // Releases the delay's timer.
+            if (!lookup.IsCompletedSuccessfully)
+            {
+                return null;
+            }
+
+            var name = lookup.Result.HostName;
             if (string.IsNullOrEmpty(name) || IPAddress.TryParse(name, out _))
             {
                 return null;
@@ -172,10 +236,9 @@ public sealed class LanScanner
 
             return name.ToLowerInvariant();
         }
-        catch (Exception ex) when (ex is SocketException or TimeoutException
-            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        catch (Exception ex) when (ex is SocketException or OperationCanceledException)
         {
-            return null;
+            return null; // The scan was cancelled while waiting for a lookup slot.
         }
     }
 

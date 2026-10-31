@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text;
 using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
-using Commander4K.Plugins.BuiltIn.Local;
 
 namespace Commander4K.Plugins.BuiltIn.Logs;
 

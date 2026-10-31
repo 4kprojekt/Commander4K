@@ -23,9 +23,18 @@ public sealed class NetworkAndRemoteTests
     [InlineData(@"\\NAS\media\movies\2026", @"\\NAS\media\movies")]
     [InlineData(@"\\NAS\media", "net://NAS")]
     [InlineData("net://NAS", "net://")]
-    [InlineData("net://", null)]
+    [InlineData("net://", "local://")]
     public void Network_parents(string path, string? expected) =>
         Assert.Equal(expected, new NetworkNeighborhoodVfsPlugin().GetParentPath(path));
+
+    [Theory]
+    [InlineData("net://")]
+    [InlineData("net://NAS")]
+    public void Virtual_network_levels_are_watched_without_throwing(string path)
+    {
+        using var watch = new NetworkNeighborhoodVfsPlugin().Watch(path, () => { });
+        Assert.NotNull(watch);
+    }
 
     [Fact]
     public void Share_root_is_server_and_share() =>
@@ -65,5 +74,55 @@ public sealed class NetworkAndRemoteTests
         var result = await new LanScanner().ProbeHostAsync(IPAddress.Loopback, [open, closed], TestToken);
 
         Assert.Equal([open], result);
+    }
+
+    [Fact]
+    public async Task Cancelled_scan_probes_report_closed_instead_of_throwing()
+    {
+        // Leaving "This PC" cancels discovery; probes must not throw out of Parallel.ForEachAsync's body (a debugger
+        // would stop there as "user-unhandled" on every navigation).
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var result = await new LanScanner().ProbeHostAsync(IPAddress.Parse("192.0.2.1"), [445, 22], cancelled.Token);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task Root_listing_ends_within_the_discovery_budget_however_slow_the_probes_are()
+    {
+        // A probe that never answered once kept net:// (and "This PC") loading for good; the budget ends it.
+        var plugin = new NetworkNeighborhoodVfsPlugin(scanner: new LanScanner { ConnectTimeout = TimeSpan.FromSeconds(30), NeighbourConnectTimeout = TimeSpan.FromSeconds(30) })
+        {
+            DiscoveryBudget = TimeSpan.FromMilliseconds(800),
+        };
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        var entries = new List<PluginSdk.VfsEntry>();
+        await foreach (var entry in plugin.EnumerateAsync(NetworkNeighborhoodVfsPlugin.RootPath, TestToken))
+        {
+            entries.Add(entry);
+        }
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"took {watch.Elapsed}");
+        Assert.Contains(entries, e => e.Kind == PluginSdk.VfsEntryKind.Action);
+    }
+
+    [Fact]
+    public async Task Cancelled_scan_ends_with_cancellation_at_the_consumer_only()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        var scanner = new LanScanner { ConnectTimeout = TimeSpan.FromSeconds(2) };
+
+        var error = await Record.ExceptionAsync(async () =>
+        {
+            await foreach (var host in scanner.ScanAsync(cts.Token))
+            {
+                _ = host;
+            }
+        });
+
+        Assert.True(error is null or OperationCanceledException, error?.ToString());
     }
 }

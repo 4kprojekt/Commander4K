@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Net;
 using System.Runtime.CompilerServices;
@@ -33,6 +32,12 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
     private const int MaxCachedListing = 20_000;
 
     private static readonly TimeSpan BrowserEnumerationTimeout = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// The longest the root listing stays "loading": discovery that has not finished by then is abandoned, so a stuck
+    /// source can never keep the panel busy. Hosts found by then are cached and appear at once on the next visit.
+    /// </summary>
+    public TimeSpan DiscoveryBudget { get; init; } = TimeSpan.FromSeconds(6);
     private static readonly ResilientAsyncExecutor BlockingCalls = new();
 
     private readonly SqliteIndexService? _index;
@@ -90,7 +95,7 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
         switch (parsed.Level)
         {
             case NetworkPathLevel.Root:
-                return null;
+                return LocalFileSystemPlugin.RootPath; // "This PC", which lists net:// next to the drives.
             case NetworkPathLevel.Host:
                 return NetworkPath.RootPath;
         }
@@ -176,8 +181,14 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
         return ValueTask.CompletedTask;
     }
 
-    public IDisposable Watch(string directoryPath, Action changed) =>
-        FileSystemListing.Watch(RequireShare(directoryPath), changed);
+    /// <summary>Only shares have files to watch; the root and host levels are virtual (no exception, see LanScanner).</summary>
+    public IDisposable Watch(string directoryPath, Action changed)
+    {
+        var parsed = NetworkPath.Parse(directoryPath);
+        return parsed.Level == NetworkPathLevel.Share
+            ? FileSystemListing.Watch(parsed.Unc, changed)
+            : LocalFileSystemPlugin.NoWatch.Instance;
+    }
 
     private async IAsyncEnumerable<VfsEntry> EnumerateRootAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -187,32 +198,63 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
             yield return new VfsEntry(saved.Name, saved.Path, VfsEntryKind.Host, Description: saved.Description ?? saved.Path);
         }
 
+        // Network locations added in Windows Explorer (folders with target.lnk); a few small files, read here off the UI thread.
+        foreach (var location in NetworkLocations.Read())
+        {
+            yield return new VfsEntry(location.Name, location.Path, VfsEntryKind.Share, Description: Loc.T("Lokalizacja sieciowa Windows · {0}", location.Path));
+        }
+
         var output = Channel.CreateUnbounded<VfsEntry>(new UnboundedChannelOptions { SingleReader = true });
-        var seen = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenAddresses = new HashSet<IPAddress>();
+        var seenGate = new Lock();
 
         void Emit(string display, string hostName, IPAddress? address, IReadOnlyList<int> ports, VfsEntryFlags flags)
         {
-            // A host is reported once, whether it was found by name, by address, or both.
-            var nameIsNew = seen.TryAdd(display, 0);
-            var addressIsNew = address is null || seen.TryAdd(address.ToString(), 0);
-            if (!nameIsNew || !addressIsNew)
+            // A host is reported once, whether it was found by name, by address, or both. Both keys are checked before
+            // either is claimed: claiming one and then rejecting on the other dropped hosts (a host shown by its IP
+            // claimed the address under its name, so the address check then failed for itself and for its DNS name).
+            lock (seenGate)
             {
-                return;
+                if (seenNames.Contains(display) || (address is not null && seenAddresses.Contains(address)))
+                {
+                    return;
+                }
+
+                seenNames.Add(display);
+                if (address is not null)
+                {
+                    seenAddresses.Add(address);
+                }
             }
 
             var description = DescribePorts(ports, address);
             output.Writer.TryWrite(new VfsEntry(display, NetworkPath.HostPath(hostName), VfsEntryKind.Host, Flags: flags, Description: description));
         }
 
+        // Each source swallows its own cancellation: an exception escaping a Task.Run lambda stops a debugger
+        // ("user-unhandled") every time the user leaves "This PC" or net:// before discovery finishes.
+        var discovery = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        discovery.CancelAfter(DiscoveryBudget);
+        var token = discovery.Token;
         var sources = Task.WhenAll(
-            Task.Run(() => EmitCachedHostsAsync(Emit, cancellationToken), CancellationToken.None),
-            Task.Run(() => EmitBrowserServersAsync(Emit, cancellationToken), CancellationToken.None),
-            Task.Run(() => EmitScanAsync(Emit, cancellationToken), CancellationToken.None));
+            Task.Run(() => EmitCachedHostsAsync(Emit, token), CancellationToken.None),
+            Task.Run(() => EmitBrowserServersAsync(Emit, token), CancellationToken.None),
+            Task.Run(() => EmitScanAsync(Emit, token), CancellationToken.None));
         _ = sources.ContinueWith(_ => output.Writer.TryComplete(), TaskScheduler.Default);
 
-        await foreach (var entry in output.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            yield return entry;
+            await foreach (var entry in output.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                yield return entry;
+            }
+        }
+        finally
+        {
+            // Leaving early stops the sources too; they end quietly on their own threads. Not disposed: a source may
+            // still be linking to the token, and cancelling already released the budget timer.
+            discovery.Cancel();
         }
     }
 
@@ -225,16 +267,20 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
 
         try
         {
-            foreach (var host in await _index.GetHostsAsync(cancellationToken).ConfigureAwait(false))
+            // Hosts with a DNS name first: the cache may also hold the same address from a visit when it had no name,
+            // and the first one emitted wins.
+            var hosts = await _index.GetHostsAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var host in hosts.OrderBy(h => IPAddress.TryParse(h.Host, out _)))
             {
                 var address = host.Address is not null && IPAddress.TryParse(host.Address, out var parsed) ? parsed : null;
                 var display = IPAddress.TryParse(host.Host, out _) ? host.Host : DiscoveredHost.ShortName(host.Host);
                 emit(display, host.Host, address, host.OpenPorts, VfsEntryFlags.Cached);
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception)
         {
-            // The cache is an accelerator; live discovery still runs.
+            // The cache is an accelerator; live discovery still runs. Cancellation also ends here quietly: these
+            // sources run inside Task.Run, and the listing reports the cancellation itself.
         }
     }
 
@@ -248,9 +294,9 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
             names = await BlockingCalls.RunAsync(_ => Win32Network.EnumerateBrowserServers(), cancellationToken, BrowserEnumerationTimeout)
                 .ConfigureAwait(false);
         }
-        catch (TimeoutException)
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
         {
-            return;
+            return; // Runs inside Task.Run: cancellation must end quietly here (see EnumerateRootAsync).
         }
 
         foreach (var name in names)
@@ -278,7 +324,11 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
                     DateTimeOffset.UtcNow));
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            // Navigated away: the listing reports the cancellation itself.
+        }
+        catch (Exception ex)
         {
             System.Diagnostics.Trace.TraceWarning($"LAN scan failed: {ex.Message}");
         }

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using Commander4K.App.Composition;
 using Commander4K.Core.Localization;
 using Commander4K.Core.Plugins;
@@ -21,6 +20,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
         ["python"] = "folder-stats-python",
         ["node"] = "site-check-node",
         ["powershell"] = "git-powershell",
+        ["preview"] = "project-modules-python",
     };
 
     public string Id => PluginId;
@@ -51,6 +51,8 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
         public IReadOnlyList<PanelAction> Actions { get; } =
         [
             new("enable", Loc.T("Włącz (zgoda)"), "Ctrl+E"),
+            new("install", Loc.T("Zainstaluj z katalogu"), "Ctrl+I"),
+            new("catalog", Loc.T("Odśwież katalog"), "Ctrl+R", AppliesToRows: false),
             new("disable", Loc.T("Wyłącz"), "Ctrl+D"),
             new("log", Loc.T("Dziennik audytu"), "F3", AppliesToRows: false),
             new("search", Loc.T("Szukaj rozwiązania"), "Ctrl+F"),
@@ -87,6 +89,20 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                 rows.Add(new PanelRow("external:none", "external", [Loc.T("(brak — Ctrl+N tworzy wtyczkę z przykładu)"), "", "", ""], RowSeverity.Muted));
             }
 
+            // Official plugins from the repository: install with Ctrl+I, then enable like any other plugin.
+            rows.Add(new PanelRow("catalog", null, [Loc.T("Katalog oficjalnych wtyczek"), "", "", app.Settings.PluginCatalogUrl], RowSeverity.Highlight, ExpandedByDefault: true));
+            foreach (var entry in app.PluginCatalog.Plugins)
+            {
+                var installed = app.DiscoveredPlugins.FirstOrDefault(p => string.Equals(p.Manifest?.Id, entry.Id, StringComparison.OrdinalIgnoreCase));
+                var status = installed is null
+                    ? Loc.T("do pobrania (Ctrl+I) · {0}", entry.LocalizedDescription)
+                    : installed.Manifest!.Version != entry.Version
+                        ? Loc.T("zainstalowana {0} — dostępna {1} (Ctrl+I aktualizuje)", installed.Manifest.Version, entry.Version)
+                        : Loc.T("zainstalowana · {0}", entry.LocalizedDescription);
+                rows.Add(new PanelRow("catalog:" + entry.Id, "catalog", [entry.Name, entry.Version, entry.Runtime, status],
+                    installed is null ? RowSeverity.Muted : installed.Manifest!.Version != entry.Version ? RowSeverity.Warning : RowSeverity.Normal));
+            }
+
             rows.Add(new PanelRow("builtin", null, [Loc.T("Wtyczki wbudowane"), "", "", Loc.T("w procesie aplikacji")], RowSeverity.Highlight));
             foreach (var plugin in BuiltIns())
             {
@@ -99,10 +115,14 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                 Loc.T("{0} aktywnych wtyczek zewnętrznych z {1} · dziennik: {2}", active, app.DiscoveredPlugins.Count, Path.Combine(app.DataDirectory, "data", "logs"))));
         }
 
-        public Task<PanelDetails?> GetDetailsAsync(string rowId, CancellationToken cancellationToken)
+        public async Task<PanelDetails?> GetDetailsAsync(string rowId, CancellationToken cancellationToken)
         {
             if (Find(rowId) is { Manifest: { } manifest } plugin)
             {
+                var findings = await Task.Run(() => SafeScan(plugin.Folder), cancellationToken);
+                var sdk = findings.Count == 0
+                    ? [new KeyValuePair<string, string>("✓", Loc.T("kod korzysta z systemu tylko przez SDK"))]
+                    : findings.Take(30).Select(f => new KeyValuePair<string, string>($"⚠ {f.File}:{f.Line}", $"{f.Api} → {f.Instead}")).ToList();
                 var info = new List<KeyValuePair<string, string>>
                 {
                     new("Id", manifest.Id),
@@ -117,31 +137,65 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                     .Concat((manifest.Contributes?.Panels ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("panel"), p.Title)))
                     .Concat((manifest.Contributes?.Previews ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("podgląd"), $"{p.Title} ({string.Join(", ", p.Extensions)})")))
                     .Concat((manifest.Contributes?.Palettes ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("paleta"), $"{p.Title} ({p.Dock})"))).ToList();
-                return Task.FromResult<PanelDetails?>(new PanelDetails(
+                return new PanelDetails(
                 [
                     new(Loc.T("Wtyczka"), info),
                     new(Loc.T("Uprawnienia"), permissions.Count > 0 ? permissions : [new("—", "brak (tylko interfejs)")]),
+                    new(Loc.T("Zgodność z SDK"), sdk),
                     new(Loc.T("Dodaje"), contributions),
                     new(Loc.T("Ostatnie wpisy dziennika"), Audit(manifest.Id, 20)),
-                ]));
+                ]);
+            }
+
+            if (rowId.StartsWith("catalog:", StringComparison.Ordinal) && app.PluginCatalog.Find(rowId[8..]) is { } entry)
+            {
+                var info = new List<KeyValuePair<string, string>>
+                {
+                    new("Id", entry.Id),
+                    new(Loc.T("Autor"), entry.Author),
+                    new(Loc.T("Opis"), entry.LocalizedDescription),
+                    new(Loc.T("Środowisko"), entry.Runtime),
+                    new(Loc.T("Pliki"), string.Join(", ", entry.Files.Select(f => f.Path))),
+                    new(Loc.T("Źródło"), app.PluginCatalog.Catalog.BaseUrl + entry.Path),
+                };
+                var sections = new List<PanelDetailSection> { new(Loc.T("Wtyczka z katalogu"), info) };
+                if (entry.Example is { } example)
+                {
+                    sections.Add(new(Loc.T("Przykładowy c4k.dir"), [new(FolderConfigName, example)]));
+                }
+
+                return new PanelDetails(sections);
             }
 
             if (Find(rowId) is { } invalid)
             {
-                return Task.FromResult<PanelDetails?>(new PanelDetails([new(Loc.T("Błędy manifestu"), [.. invalid.Errors.Select(e => new KeyValuePair<string, string>("•", e))])]));
+                return new PanelDetails([new(Loc.T("Błędy manifestu"), [.. invalid.Errors.Select(e => new KeyValuePair<string, string>("•", e))])]);
             }
 
             if (rowId.StartsWith("builtin:", StringComparison.Ordinal) && BuiltIns().FirstOrDefault(p => "builtin:" + p.Id == rowId) is { } builtIn)
             {
-                return Task.FromResult<PanelDetails?>(new PanelDetails(
+                return new PanelDetails(
                 [
                     new(builtIn.Manifest.Name, [new("Id", builtIn.Id), new(Loc.T("Opis"), builtIn.Manifest.Description)]),
                     new(Loc.T("Uprawnienia"), [.. builtIn.Manifest.Permissions.Select(p => new KeyValuePair<string, string>(p, Loc.T(PluginPermissions.Describe(p))))]),
                     new(Loc.T("Ostatnie wpisy dziennika"), Audit(builtIn.Id, 20)),
-                ]));
+                ]);
             }
 
-            return Task.FromResult<PanelDetails?>(null);
+            return null;
+        }
+
+        /// <summary>SDK lint of an installed plugin; an unreadable folder counts as clean (the manifest check reports it).</summary>
+        private static IReadOnlyList<SourceFinding> SafeScan(string folder)
+        {
+            try
+            {
+                return PluginSourceCheck.ScanFolder(folder);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return [];
+            }
         }
 
         public async Task<string?> ExecuteActionAsync(string actionId, IReadOnlyList<string> rowIds, CancellationToken cancellationToken)
@@ -153,9 +207,12 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                     var permissions = manifest.Permissions.Count == 0
                         ? Loc.T("żadnych (tylko interfejs)")
                         : string.Join("\n", manifest.Permissions.Select(p => $"  • {p} — {Loc.T(PluginPermissions.Describe(p))}"));
+                    var bypass = await Task.Run(() => SafeScan(plugin.Folder), cancellationToken);
+                    var sdkNote = bypass.Count == 0
+                        ? Loc.T("Wtyczka działa jako osobny proces i wszystko robi przez API aplikacji, która sprawdza te uprawnienia i zapisuje każde wywołanie w dzienniku.")
+                        : Loc.T("⚠ UWAGA: kod omija SDK w {0} miejscach (np. {1}). Tych operacji aplikacja nie sprawdzi ani nie zapisze w dzienniku — włącz tylko, jeśli ufasz autorowi.", bypass.Count, bypass[0]);
                     if (!await host.ConfirmAsync(Loc.T("Włącz wtyczkę"),
-                            Loc.T("„{0}” {1} ({2})\nŚrodowisko: {3}\n\nUprawnienia:\n{4}\n\n", manifest.Name, manifest.Version, manifest.Author, manifest.Runtime.Type, permissions) +
-                            Loc.T("Wtyczka działa jako osobny proces i wszystko robi przez API aplikacji, która sprawdza te uprawnienia i zapisuje każde wywołanie w dzienniku.")))
+                            Loc.T("„{0}” {1} ({2})\nŚrodowisko: {3}\n\nUprawnienia:\n{4}\n\n", manifest.Name, manifest.Version, manifest.Author, manifest.Runtime.Type, permissions) + sdkNote))
                     {
                         return null;
                     }
@@ -164,6 +221,18 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                     app.Audit.Record(manifest.Id, "approve", string.Join(",", manifest.Permissions), AuditOutcome.Info);
                     await app.ReloadExternalPluginsAsync();
                     return app.PluginBlocker(plugin) is { } still ? Loc.T("Zgoda zapisana, ale wtyczka nie może się uruchomić: {0}", still) : null;
+
+                case "install" when rowIds.FirstOrDefault() is { } row && row.StartsWith("catalog:", StringComparison.Ordinal) && app.InstallFromCatalog is { } install:
+                    await install(row[8..]);
+                    return null;
+
+                case "install":
+                    return Loc.T("Zaznacz wtyczkę w grupie „Katalog oficjalnych wtyczek”.");
+
+                case "catalog":
+                    return await app.PluginCatalog.RefreshAsync(app.Settings.PluginCatalogUrl, cancellationToken) is { } error
+                        ? Loc.T("Nie udało się pobrać katalogu: {0}", error)
+                        : null;
 
                 case "disable" when plugin?.Manifest is { } manifest:
                     app.Approvals.Disable(manifest.Id);
@@ -193,10 +262,10 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                     return null;
 
                 case "template":
-                    var choice = await host.PromptAsync(Loc.T("Nowa wtyczka z przykładu"), Loc.T("Język przykładu: python, node albo powershell"), "python");
+                    var choice = await host.PromptAsync(Loc.T("Nowa wtyczka z przykładu"), Loc.T("Przykład: python, node, powershell albo preview (dedykowany podgląd plików, Python)"), "python");
                     if (choice is null || !Templates.TryGetValue(choice.Trim(), out var template))
                     {
-                        return choice is null ? null : Loc.T("Dostępne przykłady: python, node, powershell.");
+                        return choice is null ? null : Loc.T("Dostępne przykłady: python, node, powershell, preview.");
                     }
 
                     var target = Path.Combine(app.DataDirectory, "plugins", template);
@@ -218,6 +287,8 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        private const string FolderConfigName = Core.Folders.FolderConfig.FileName;
 
         private DiscoveredPlugin? Find(string rowId) =>
             rowId.StartsWith("ext:", StringComparison.Ordinal) ? app.DiscoveredPlugins.FirstOrDefault(p => p.Folder == rowId[4..]) : null;

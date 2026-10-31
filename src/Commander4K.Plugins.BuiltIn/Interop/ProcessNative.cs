@@ -2,6 +2,14 @@ using System.Runtime.InteropServices;
 
 namespace Commander4K.Plugins.BuiltIn.Interop;
 
+/// <summary>Parent PIDs and image paths for the plugin API's <c>process.list</c> (Core has no native interop).</summary>
+public static class ProcessLookups
+{
+    public static Dictionary<int, int> ParentIds() => ProcessNative.GetParentProcessIds();
+
+    public static string? ImagePath(int processId) => ProcessNative.GetImagePath(processId);
+}
+
 /// <summary>Process APIs not covered by <see cref="System.Diagnostics.Process"/> (parent PIDs, image path, GUI objects).</summary>
 internal static unsafe partial class ProcessNative
 {

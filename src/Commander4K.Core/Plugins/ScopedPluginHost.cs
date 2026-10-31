@@ -33,6 +33,8 @@ public interface IPluginUi
     Task OpenUrlAsync(string url);
 
     Task SearchWebAsync(string query, string? engine);
+
+    Task CopyTextAsync(string text);
 }
 
 /// <summary>
@@ -40,7 +42,9 @@ public interface IPluginUi
 /// — allowed, denied or failed — is written to the <see cref="AuditLog"/> with the plugin's id. Elevated program runs
 /// additionally require the user's confirmation every time.
 /// </summary>
-public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsRouter router, HttpClient http, AuditLog audit) : IPluginHost
+/// <param name="processes">Process list for <c>process.list</c>; the app passes one with parent PIDs and image paths.</param>
+public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsRouter router, HttpClient http, AuditLog audit,
+    Func<IReadOnlyList<ProcessSnapshot>>? processes = null) : IPluginHost
 {
     private const int MaxHttpBytes = 5 * 1024 * 1024;
 
@@ -94,6 +98,80 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
     }
 
     public void Log(string message) => audit.Record(Manifest.Id, "log", message, AuditOutcome.Info);
+
+    public Task CopyTextAsync(string text)
+    {
+        audit.Record(Manifest.Id, "ui.copy", Loc.T("{0} znaków", text.Length), AuditOutcome.Info);
+        return ui.CopyTextAsync(text);
+    }
+
+    public Task<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.FileRead, "fs.stat", path, () => router.GetEntryAsync(path, cancellationToken));
+
+    public Task WriteBytesAsync(string path, ReadOnlyMemory<byte> content, CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.FileWrite, "fs.write", Loc.T("{0} ({1} B)", path, content.Length), async () =>
+        {
+            await using var stream = await router.OpenWriteAsync(path, overwrite: true, cancellationToken).ConfigureAwait(false);
+            await stream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
+            return true;
+        });
+
+    public Task CreateDirectoryAsync(string path, CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.FileWrite, "fs.mkdir", path, async () =>
+        {
+            await router.CreateDirectoryAsync(path, cancellationToken).ConfigureAwait(false);
+            return true;
+        });
+
+    public Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.FileWrite, "fs.delete", recursive ? path + Loc.T(" (z zawartością)") : path, async () =>
+        {
+            await router.DeleteAsync(path, recursive, cancellationToken).ConfigureAwait(false);
+            return true;
+        });
+
+    public Task MoveAsync(string sourcePath, string destinationPath, bool overwrite, CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.FileWrite, "fs.move", $"{sourcePath} → {destinationPath}", async () =>
+        {
+            await router.MoveAsync(sourcePath, destinationPath, overwrite, cancellationToken).ConfigureAwait(false);
+            return true;
+        });
+
+    public Task<IReadOnlyList<ProcessSnapshot>> ListProcessesAsync(CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.ProcessRead, "process.list", string.Empty, () => Task.Run(processes ?? (() => SystemSnapshots.Processes()), cancellationToken));
+
+    public Task<SystemSnapshot> GetSystemInfoAsync(CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.SystemInfo, "system.info", string.Empty, () => Task.Run(SystemSnapshots.System, cancellationToken));
+
+    public Task<HttpResponseData> HttpRequestAsync(HttpRequestSpec request, CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.Network, "net.request", $"{request.Method.ToUpperInvariant()} {request.Url}", async () =>
+        {
+            if (request.Url.Scheme is not ("http" or "https"))
+            {
+                throw new ArgumentException(Loc.T("Dozwolone są tylko adresy http i https."), nameof(request));
+            }
+
+            using var message = new HttpRequestMessage(new HttpMethod(request.Method.ToUpperInvariant()), request.Url);
+            if (request.Body is not null)
+            {
+                message.Content = new StringContent(request.Body, Encoding.UTF8, request.ContentType ?? "application/json");
+            }
+
+            foreach (var (name, value) in request.Headers ?? new Dictionary<string, string>())
+            {
+                if (!message.Headers.TryAddWithoutValidation(name, value))
+                {
+                    message.Content?.Headers.TryAddWithoutValidation(name, value);
+                }
+            }
+
+            using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            var headers = response.Headers.Concat(response.Content.Headers)
+                .GroupBy(h => h.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => string.Join(", ", g.SelectMany(h => h.Value)), StringComparer.OrdinalIgnoreCase);
+            var body = await ReadLimitedAsync(response, cancellationToken).ConfigureAwait(false);
+            return new HttpResponseData((int)response.StatusCode, headers, body);
+        });
 
     public Task<IReadOnlyList<VfsEntry>> ListAsync(string path, CancellationToken cancellationToken = default) =>
         Gate(PluginPermissions.FileRead, "fs.list", path, async () =>
@@ -157,22 +235,27 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
 
             using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
-            await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            using var limited = new MemoryStream();
-            var buffer = new byte[81920];
-            int read;
-            while ((read = await body.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
-            {
-                if (limited.Length + read > MaxHttpBytes)
-                {
-                    throw new InvalidDataException(Loc.T("Odpowiedź przekracza 5 MB."));
-                }
+            return await ReadLimitedAsync(response, cancellationToken).ConfigureAwait(false);
+        });
 
-                limited.Write(buffer, 0, read);
+    private static async Task<string> ReadLimitedAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var limited = new MemoryStream();
+        var buffer = new byte[81920];
+        int read;
+        while ((read = await body.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            if (limited.Length + read > MaxHttpBytes)
+            {
+                throw new InvalidDataException(Loc.T("Odpowiedź przekracza 5 MB."));
             }
 
-            return Encoding.UTF8.GetString(limited.GetBuffer(), 0, (int)limited.Length);
-        });
+            limited.Write(buffer, 0, read);
+        }
+
+        return Encoding.UTF8.GetString(limited.GetBuffer(), 0, (int)limited.Length);
+    }
 
     private async Task<T> Gate<T>(string permission, string operation, string detail, Func<Task<T>> action)
     {

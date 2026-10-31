@@ -187,20 +187,34 @@ public sealed class TransferDialog : DialogWindow<TransferRequest?>
     }
 }
 
-public sealed class LoginDialog : DialogWindow<System.Net.NetworkCredential?>
+/// <param name="KeyFile">SSH private key file (the password is then its passphrase); <c>null</c> = password login.</param>
+public sealed record LoginResult(string UserName, string Password, string? KeyFile);
+
+public sealed class LoginDialog : DialogWindow<LoginResult?>
 {
     private readonly TextBox _user;
     private readonly TextBox _password;
+    private readonly CheckBox? _useKey;
+    private readonly TextBox? _keyFile;
 
-    public LoginDialog(SkinBrushes brushes, string realm, string? userName = null) : base(Loc.T("Logowanie"), brushes)
+    /// <param name="allowKey">SSH: offer a private key file instead of a password.</param>
+    public LoginDialog(SkinBrushes brushes, string realm, string? userName = null, bool allowKey = false) : base(Loc.T("Logowanie"), brushes)
     {
         _user = new TextBox().Text(userName ?? string.Empty).PlaceholderText(Loc.T("użytkownik (np. DOMENA\\jan)"));
         _password = new TextBox().PasswordChar('•').PlaceholderText(Loc.T("hasło"));
-        SetBody(
-            Label(Loc.T("„{0}” wymaga zalogowania.", realm)),
-            _user,
-            _password.Margin(0, 6, 0, 0),
-            ButtonRow((Loc.T("Zaloguj"), Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
+        var body = new List<Control> { Label(Loc.T("„{0}” wymaga zalogowania.", realm)), _user, _password.Margin(0, 6, 0, 0) };
+        if (allowKey)
+        {
+            _keyFile = new TextBox().IsEnabled(false).Text(Plugins.BuiltIn.Remote.RemoteLogin.DefaultKeyFiles().FirstOrDefault() ?? string.Empty)
+                .PlaceholderText(@"C:\Users\…\.ssh\id_ed25519");
+            _useKey = new CheckBox().Content(Loc.T("Zaloguj kluczem prywatnym (hasło powyżej = hasło klucza)"));
+            _useKey.IsCheckedChanged += (_, _) => _keyFile.IsEnabled = _useKey.IsChecked == true;
+            body.Add(_useKey.Margin(0, 8, 0, 0));
+            body.Add(_keyFile.Margin(0, 4, 0, 0));
+        }
+
+        body.Add(ButtonRow((Loc.T("Zaloguj"), Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
+        SetBody([.. body]);
         Opened += (_, _) => (string.IsNullOrEmpty(_user.Text) ? _user : _password).Focus();
     }
 
@@ -208,7 +222,8 @@ public sealed class LoginDialog : DialogWindow<System.Net.NetworkCredential?>
     {
         if (!string.IsNullOrWhiteSpace(_user.Text))
         {
-            Complete(new System.Net.NetworkCredential(_user.Text.Trim(), _password.Text ?? string.Empty));
+            var key = _useKey?.IsChecked == true && !string.IsNullOrWhiteSpace(_keyFile?.Text) ? _keyFile!.Text!.Trim() : null;
+            Complete(new LoginResult(_user.Text.Trim(), _password.Text ?? string.Empty, key));
         }
     }
 }
@@ -292,34 +307,5 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
         {
             Complete(item);
         }
-    }
-}
-
-public sealed class AddConnectionDialog : DialogWindow<Core.Configuration.ConnectionSetting?>
-{
-    private readonly TextBox _name;
-    private readonly TextBox _path;
-
-    public AddConnectionDialog(SkinBrushes brushes) : base(Loc.T("Dodaj połączenie sieciowe"), brushes, 520)
-    {
-        _name = new TextBox().PlaceholderText("Nazwa, np. NAS – filmy");
-        _path = new TextBox().PlaceholderText(@"\\nas\media   lub   sftp://jan@serwer/   lub   ftp://serwer/");
-        SetBody(
-            Label(Loc.T("Nazwa:")), _name,
-            Label(Loc.T("Adres:")).Margin(0, 10, 0, 6), _path,
-            ButtonRow((Loc.T("Dodaj"), Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
-        Opened += (_, _) => _name.Focus();
-    }
-
-    private void Accept()
-    {
-        var path = _path.Text?.Trim();
-        if (string.IsNullOrEmpty(path))
-        {
-            return;
-        }
-
-        var name = string.IsNullOrWhiteSpace(_name.Text) ? path : _name.Text.Trim();
-        Complete(new Core.Configuration.ConnectionSetting { Name = name, Path = path });
     }
 }

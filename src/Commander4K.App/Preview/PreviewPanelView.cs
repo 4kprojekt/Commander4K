@@ -9,7 +9,9 @@ using Avalonia.Threading;
 using Commander4K.App.Composition;
 using Commander4K.App.Panels;
 using Commander4K.App.Theming;
+using Commander4K.Core.Folders;
 using Commander4K.Core.Localization;
+using Commander4K.Core.Plugins;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Viewers;
 
@@ -51,8 +53,15 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private ScrollViewer? _livePreview;
     private DispatcherTimer? _liveDelay;
 
-    public PreviewPanelView(AppHost app, FilePanelView source, SkinBrushes brushes, Action<string, bool> notify)
+    /// <summary>A folder's own view shown on entering it (<c>c4k.dir</c> <c>"enter"</c>), instead of following the cursor.</summary>
+    public sealed record PinnedFolder(VfsEntry Folder, FolderConfig Config, FolderAction Action);
+
+    private readonly PinnedFolder? _pinned;
+    private readonly Dictionary<string, Bitmap?> _thumbnails = new(StringComparer.Ordinal);
+
+    public PreviewPanelView(AppHost app, FilePanelView source, SkinBrushes brushes, Action<string, bool> notify, PinnedFolder? pinned = null)
     {
+        _pinned = pinned;
         _app = app;
         _source = source;
         _brushes = brushes;
@@ -74,19 +83,37 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         Children.Add(_status.Row(2));
         PointerPressed += (_, _) => Activated?.Invoke();
 
+        ApplySkin(brushes);
+        if (pinned is not null)
+        {
+            _ = LoadAsync(pinned.Folder);
+            return;
+        }
+
         // Event-driven: the source tab reports cursor moves, navigation and loading; switching tabs rebinds.
         _source.ActiveTabChanged += Rebind;
         Rebind();
-        ApplySkin(brushes);
     }
 
     public event Action? CloseRequested;
 
     public event Action? Activated;
 
-    public string Title => Loc.T("Podgląd");
+    /// <summary>"What format is this?" for a file no preview recognises (the window asks an AI assistant); hidden when null.</summary>
+    public Func<VfsEntry, Task>? AskAiAboutFile { get; init; }
+
+    /// <summary>Lets an AI assistant write a preview plugin for the unknown file's type; hidden when null.</summary>
+    public Func<VfsEntry, Task>? CreatePreviewPlugin { get; init; }
+
+    /// <summary>A tile was clicked; the folder is the one whose preview (or <c>c4k.dir</c>) produced it.</summary>
+    public Func<PreviewTile, VfsEntry?, Task>? OpenTile { get; init; }
+
+    public string Title => _pinned is { } pinned ? pinned.Config.Title ?? pinned.Folder.Name : Loc.T("Podgląd");
 
     public Control View => this;
+
+    /// <summary>Shows a folder's own view (entered through its <c>c4k.dir</c>) rather than following the cursor.</summary>
+    public bool IsPinned => _pinned is not null;
 
     public bool IsActivePanel
     {
@@ -149,6 +176,11 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     {
         _loading?.Cancel();
         _debounce?.Cancel();
+        if (_pinned is not null)
+        {
+            return ValueTask.CompletedTask;
+        }
+
         _source.ActiveTabChanged -= Rebind;
         if (_watchedTab is not null)
         {
@@ -182,7 +214,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         var tab = _source.ActiveTab;
         var entry = tab.CurrentEntry;
         var key = $"{tab.Path}|{entry?.Path}";
-        if (key == _loadedKey || tab.IsLoading)
+        // A folder still loading (a slow share, net:// discovering hosts) does not stop the preview: the entry under
+        // the cursor is already known, and the key keeps new batches from reloading it.
+        if (key == _loadedKey || (tab.IsLoading && entry is null or { Kind: VfsEntryKind.ParentLink }))
         {
             return;
         }
@@ -230,6 +264,11 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     {
         _loading?.Cancel();
         _editing = false;
+        if (_entry?.Path != entry?.Path)
+        {
+            _thumbnails.Clear(); // Pictures of the previous folder's tiles.
+        }
+
         _entry = entry;
         if (entry is not { } target)
         {
@@ -237,17 +276,62 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             return;
         }
 
-        var plugin = _app.PreviewPlugins.Where(p => p.CanPreview(target)).OrderByDescending(p => p.Priority).FirstOrDefault();
-        _plugin = plugin;
+        var cts = new CancellationTokenSource();
+        _loading = cts;
         _title.Text = target.Name;
+
+        // A folder may say how it wants to be shown (c4k.dir); the file is read only for folders on the way here.
+        Func<IPluginHost, IProgress<PreviewContent>, CancellationToken, Task<PreviewContent>>? folderView = null;
+        IPreviewPlugin? plugin = null;
+        if (target.IsContainer && target.Kind is not (VfsEntryKind.Host or VfsEntryKind.ParentLink))
+        {
+            FolderConfig? config;
+            FolderAction? action;
+            string section;
+            if (_pinned is { } pinned)
+            {
+                (config, action, section) = (pinned.Config, pinned.Action, "enter");
+            }
+            else
+            {
+                try
+                {
+                    config = await Task.Run(() => _app.ReadFolderConfigAsync(target.Path, cts.Token), cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                (action, section) = (config?.Preview, "preview");
+            }
+
+            if (_loading != cts)
+            {
+                return;
+            }
+
+            if (config?.Error is { } error)
+            {
+                Show(new MessagePreview(Loc.T("⚠ {0}: {1}", config.FilePath, error)));
+                return;
+            }
+
+            if (config is not null && action is { IsPlainFiles: false })
+            {
+                (plugin, folderView) = ResolveFolderView(config, action, section, target);
+                _title.Text = config.Title ?? target.Name;
+            }
+        }
+
+        plugin ??= _app.PreviewPlugins.Where(p => p.CanPreview(target)).OrderByDescending(p => p.Priority).FirstOrDefault();
+        _plugin = plugin;
         if (plugin is null)
         {
             Show(new MessagePreview(Loc.T("Brak podglądu dla „{0}”.", target.Name)));
             return;
         }
 
-        var cts = new CancellationTokenSource();
-        _loading = cts;
         _status.Text = $"⏳ {plugin.DisplayName}: wczytywanie…";
         var host = _app.HostFor(plugin.Manifest);
         var progress = new Progress<PreviewContent>(partial =>
@@ -264,7 +348,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         });
         try
         {
-            var result = await Task.Run(() => plugin.LoadAsync(target, host, progress, cts.Token), cts.Token);
+            var result = await Task.Run(() => folderView is not null ? folderView(host, progress, cts.Token) : plugin.LoadAsync(target, host, progress, cts.Token), cts.Token);
 
             // Files on read-only locations (inside archives, net://) cannot be saved back, so they are view-only.
             if (!_app.Router.TryResolve(target.Path, out var provider) || (provider.Capabilities & VfsCapabilities.Write) == 0)
@@ -297,6 +381,53 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
     }
 
+    /// <summary>
+    /// What renders a <c>c4k.dir</c> action: a plugin's preview (with the file's options) or a built-in view. A plugin
+    /// that is not installed, or not enabled yet, becomes a tile that installs or enables it.
+    /// </summary>
+    private (IPreviewPlugin Plugin, Func<IPluginHost, IProgress<PreviewContent>, CancellationToken, Task<PreviewContent>> Load) ResolveFolderView(
+        FolderConfig config, FolderAction action, string section, VfsEntry folder)
+    {
+        var folderPlugin = _app.BuiltInPreviews.OfType<Plugins.BuiltIn.Previews.FolderPreviewPlugin>().First();
+        if (action.Kind != FolderActionKind.View)
+        {
+            var what = action.Kind switch
+            {
+                FolderActionKind.Panel => Loc.T("panel „{0}”", action.PanelId ?? string.Empty),
+                FolderActionKind.Open => action.Open ?? string.Empty,
+                FolderActionKind.Url => action.Url ?? string.Empty,
+                _ => action.Run?.ToString() ?? string.Empty,
+            };
+            return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(new TilesPreview(config.Title ?? folder.Name,
+                [new PreviewTile(Loc.T("Otwórz"), what, "↪", null, folder.Path)],
+                Loc.T("Ten podgląd z c4k.dir otwiera się po wejściu do folderu (Enter)."))));
+        }
+
+        if (action.Plugin is not { } pluginId)
+        {
+            return (folderPlugin, (host, progress, ct) => Plugins.BuiltIn.Previews.FolderViews.LoadAsync(config, action, section, folder, host, progress, ct));
+        }
+
+        var external = _app.PreviewPlugins.OfType<ExternalPreviewPlugin>()
+            .Where(p => string.Equals(p.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(p => action.Preview is { } id && p.Id.EndsWith("/" + id, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault();
+        if (external is not null)
+        {
+            return (external, (host, _, ct) => external.LoadWithOptionsAsync(folder, host, action.Options, ct));
+        }
+
+        var installed = _app.DiscoveredPlugins.FirstOrDefault(p => string.Equals(p.Manifest?.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+        var entry = _app.PluginCatalog.Find(pluginId);
+        PreviewTile tile = installed is not null
+            ? new(Loc.T("Włącz wtyczkę „{0}”", installed.Manifest!.Name), _app.PluginBlocker(installed) ?? Loc.T("Wtyczka nie ma podglądu „{0}”.", action.Preview ?? string.Empty), "🧩", null, "c4k:plugins")
+            : entry is not null
+                ? new(Loc.T("Zainstaluj „{0}”", entry.Name), entry.LocalizedDescription, "⬇", null, "c4k:install/" + entry.Id)
+                : new(Loc.T("Nieznana wtyczka „{0}”", pluginId), Loc.T("Nie ma jej w katalogu oficjalnych wtyczek."), "❓", null, "c4k:plugins");
+        return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(new TilesPreview(config.Title ?? folder.Name, [tile],
+            Loc.T("Ten folder chce być pokazany przez wtyczkę „{0}” (c4k.dir).", pluginId), TileWidth: 340)));
+    }
+
     private void Show(PreviewContent content)
     {
         _shown = content;
@@ -308,7 +439,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _saveButton.IsVisible = _editing;
         _status.Text = _plugin is null ? string.Empty : $"{_plugin.DisplayName} · {_entry?.Path}";
 
-        _content.Content = content switch
+        Control? view = content switch
         {
             MarkdownPreview markdown when _editing => MarkdownEditor(markdown.Markdown),
             MarkdownPreview markdown => Scroll(MarkdownRenderer.Render(markdown.Markdown, _brushes)),
@@ -316,9 +447,76 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             ImagePreview image => ImageView(image),
             HexPreview hex => Monospace(TextHexViewerPlugin.FormatHex(hex.Data.Span), Loc.T("Hex · pokazano {0:N0} z {1:N0} B", hex.Data.Length, hex.TotalLength)),
             FolderPreview folder => FolderView(folder),
+            TilesPreview tiles => TilesView(tiles),
             MessagePreview message => new TextBlock { Text = message.Message, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap },
             _ => null,
         };
+
+        // A file nothing recognises (binary shown as hex, or no preview at all): offer to find out what it is and to
+        // have a preview plugin written for its type.
+        if (_entry is { IsContainer: false } file && (content is HexPreview || (_plugin is null && content is MessagePreview))
+            && (AskAiAboutFile is not null || CreatePreviewPlugin is not null) && view is not null)
+        {
+            var dock = new DockPanel();
+            var banner = UnknownFileBanner(file);
+            DockPanel.SetDock(banner, Dock.Top);
+            dock.Children.Add(banner);
+            dock.Children.Add(view);
+            view = dock;
+        }
+
+        _content.Content = view;
+    }
+
+    private Border UnknownFileBanner(VfsEntry file)
+    {
+        var extension = Path.GetExtension(file.Name) is { Length: > 0 } ext ? ext : file.Name;
+        var buttons = new WrapPanel();
+        if (AskAiAboutFile is { } ask)
+        {
+            buttons.Children.Add(BannerButton(Loc.T("🔎 Co to za format? (AI)"), () => ask(file), primary: false));
+        }
+
+        if (CreatePreviewPlugin is { } create)
+        {
+            buttons.Children.Add(BannerButton(Loc.T("🧩 Utwórz podgląd dla {0} (AI)", extension), () => create(file), primary: true));
+        }
+
+        return new Border
+        {
+            Background = _brushes.HighlightBackground,
+            BorderBrush = _brushes.PanelBorder,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(12, 8),
+            Child = new StackPanel
+            {
+                Spacing = 6,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = Loc.T("Nieznany typ pliku „{0}” — żaden podgląd go nie rozpoznaje. AI może sprawdzić, co to za format, i napisać wtyczkę z podglądem (przez SDK, zainstalowaną dopiero po Twojej zgodzie).", extension),
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = _brushes.FileForeground,
+                    },
+                    buttons,
+                },
+            },
+        };
+    }
+
+    private Button BannerButton(string text, Func<Task> action, bool primary)
+    {
+        var button = new Button { Content = text, Height = 28, Padding = new Thickness(10, 0), Margin = new Thickness(0, 0, 8, 0), VerticalContentAlignment = VerticalAlignment.Center };
+        if (primary)
+        {
+            button.Background = _brushes.Accent;
+            button.BorderBrush = _brushes.Accent;
+            button.Foreground = Avalonia.Media.Brushes.White;
+        }
+
+        button.Click += async (_, _) => await action();
+        return button;
     }
 
 
@@ -484,7 +682,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private Control FolderView(FolderPreview folder)
     {
         var known = folder.Items.Where(i => i.Size is not null).Sum(i => i.Size!.Value);
-        var max = Math.Max(1, folder.Items.Max(i => i.Size ?? 0));
+        var max = Math.Max(1, folder.Items.Select(i => i.Size ?? 0).DefaultIfEmpty(0).Max()); // Empty folders have no items.
         var ordered = folder.Items.OrderByDescending(i => i.Size ?? -1).ThenBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         var pending = folder.Items.Count(i => i.Size is null);
 
@@ -544,6 +742,106 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _status.Text = folder.Complete ? Loc.T("Gotowe · {0}", folder.Path) : Loc.T("⏳ Liczenie rozmiarów… · {0}", folder.Path);
         return Scroll(list);
     }
+
+    /// <summary>Tiles in rows that wrap with the panel's width; pictures are decoded off the UI thread and kept while the view updates.</summary>
+    private Control TilesView(TilesPreview tiles)
+    {
+        var stack = new StackPanel { Margin = new Thickness(12, 8), Spacing = 6 };
+        if (tiles.Title.Length > 0)
+        {
+            stack.Children.Add(new TextBlock { Text = tiles.Title, FontSize = _brushes.FontSize + 4, FontWeight = FontWeight.Bold, Foreground = _brushes.DirectoryForeground });
+        }
+
+        if (tiles.Description is { Length: > 0 } description)
+        {
+            stack.Children.Add(new TextBlock { Text = description, Foreground = _brushes.MutedForeground, TextWrapping = TextWrapping.Wrap });
+        }
+
+        var wrap = new WrapPanel { Margin = new Thickness(-6, 4, 0, 0) };
+        var imageHeight = Math.Round(tiles.TileWidth * 0.5);
+        var folder = _entry;
+        foreach (var tile in tiles.Tiles)
+        {
+            Control picture;
+            if (tile.Image is { } data)
+            {
+                var image = new Image { Stretch = Stretch.UniformToFill, Height = imageHeight, Width = tiles.TileWidth - 14 };
+                var key = $"{tile.Target}|{tile.Title}|{data.Length}";
+                if (_thumbnails.TryGetValue(key, out var cached))
+                {
+                    image.Source = cached;
+                }
+                else
+                {
+                    _thumbnails[key] = null;
+                    _ = DecodeThumbnailAsync(key, data, (int)Math.Min(tiles.TileWidth * 2, 800), image);
+                }
+
+                picture = new Border { CornerRadius = new CornerRadius(_brushes.ControlRadius), ClipToBounds = true, Child = image, Background = _brushes.Skeleton };
+            }
+            else
+            {
+                picture = new Border
+                {
+                    Height = Math.Min(imageHeight, 72),
+                    Background = _brushes.Surface2,
+                    CornerRadius = new CornerRadius(_brushes.ControlRadius),
+                    Child = new TextBlock { Text = tile.Icon ?? "▪", FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+                };
+            }
+
+            var content = new StackPanel { Spacing = 3 };
+            content.Children.Add(picture);
+            content.Children.Add(new TextBlock { Text = tile.Title, FontWeight = FontWeight.SemiBold, Foreground = _brushes.FileForeground, TextTrimming = TextTrimming.CharacterEllipsis });
+            if (tile.Subtitle is { Length: > 0 } subtitle)
+            {
+                content.Children.Add(new TextBlock { Text = subtitle, FontSize = _brushes.FontSize - 1, Foreground = _brushes.MutedForeground, TextTrimming = TextTrimming.CharacterEllipsis });
+            }
+
+            var button = new Button
+            {
+                Content = content,
+                Width = tiles.TileWidth,
+                Margin = new Thickness(6),
+                Padding = new Thickness(6),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Background = _brushes.PanelBackground,
+                BorderBrush = _brushes.PanelBorder,
+                BorderThickness = new Thickness(1),
+                IsEnabled = tile.Target is not null && OpenTile is not null,
+            };
+            if (tile.Target is { } target)
+            {
+                ToolTip.SetTip(button, target);
+                button.Click += async (_, _) => await OpenTile!(tile, folder);
+            }
+
+            wrap.Children.Add(button);
+        }
+
+        stack.Children.Add(wrap);
+        _status.Text = Loc.P(tiles.Tiles.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty);
+        return Scroll(stack);
+    }
+
+    private async Task DecodeThumbnailAsync(string key, ReadOnlyMemory<byte> data, int width, Image image)
+    {
+        var bitmap = await Task.Run(() =>
+        {
+            try
+            {
+                using var stream = new MemoryStream(data.ToArray());
+                return Bitmap.DecodeToWidth(stream, width);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException or IOException)
+            {
+                return null; // Not a picture after all: the tile keeps its grey placeholder.
+            }
+        });
+        _thumbnails[key] = bitmap;
+        image.Source = bitmap;
+    }
+
 
     private static ScrollViewer Scroll(Control content) => new() { Content = content, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
 }

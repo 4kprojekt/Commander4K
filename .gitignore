@@ -13,3 +13,7 @@ TestResults/
 # Python bytecode (the example plugins run in tests)
 __pycache__/
 *.pyc
+
+# Local tool output (graph, subagent workspaces)
+graphify-out/
+.superpowers/

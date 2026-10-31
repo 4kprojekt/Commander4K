@@ -24,14 +24,36 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
     public VfsCapabilities Capabilities => VfsCapabilities.Read | VfsCapabilities.Write | VfsCapabilities.CreateDirectory
         | VfsCapabilities.Delete | VfsCapabilities.Move | VfsCapabilities.Watch;
 
+    /// <summary>
+    /// Network part of "This PC": the network neighbourhood's root (saved connections, Windows network locations, LAN
+    /// hosts streamed as they are discovered). Set by the app, which owns both providers; <c>null</c> = drives and folders only.
+    /// </summary>
+    public Func<CancellationToken, IAsyncEnumerable<VfsEntry>>? NetworkEntries { get; set; }
+
     public async IAsyncEnumerable<VfsEntry> EnumerateAsync(string path, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var local = ToLocalPath(path);
         if (local is null)
         {
+            // "This PC": drives and well-known folders at once, then the network as it answers (in the background).
             foreach (var drive in EnumerateDrives())
             {
                 yield return drive;
+            }
+
+            foreach (var folder in KnownFolders.Enumerate())
+            {
+                yield return folder;
+            }
+
+            if (NetworkEntries is { } network)
+            {
+                // Share kind: first in the network group (shares sort before hosts), with the network icon.
+                yield return new VfsEntry(Loc.T("Sieć"), "net://", VfsEntryKind.Share, Description: Loc.T("Wszystkie hosty w sieci LAN, udziały SMB, SFTP/FTP"));
+                await foreach (var entry in network(cancellationToken).ConfigureAwait(false))
+                {
+                    yield return entry;
+                }
             }
 
             yield break;
@@ -137,8 +159,9 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
         return ValueTask.CompletedTask;
     }
 
+    /// <remarks>The drive list (<c>local://</c>) has nothing to watch: an empty subscription, not an error (panels start there).</remarks>
     public IDisposable Watch(string directoryPath, Action changed) =>
-        FileSystemListing.Watch(RequireLocal(directoryPath), changed);
+        ToLocalPath(directoryPath) is { } local ? FileSystemListing.Watch(local, changed) : NoWatch.Instance;
 
     /// <summary>Returns the Windows path, or <c>null</c> for the virtual drive list.</summary>
     public static string? ToLocalPath(string path)
@@ -192,6 +215,15 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
             }
 
             yield return new VfsEntry(drive.Name.TrimEnd('\\'), drive.Name, VfsEntryKind.Drive, size, Description: description);
+        }
+    }
+
+    internal sealed class NoWatch : IDisposable
+    {
+        public static readonly NoWatch Instance = new();
+
+        public void Dispose()
+        {
         }
     }
 

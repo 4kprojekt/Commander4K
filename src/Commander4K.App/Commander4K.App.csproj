@@ -27,6 +27,12 @@
   <ItemGroup>
     <EmbeddedResource Include="Assets\commander4k.ico" LogicalName="commander4k.ico" />
     <EmbeddedResource Include="..\..\examples\plugins\**\*" Exclude="..\..\examples\plugins\**\__pycache__\**" LogicalName="examples/%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- The plugin guide given to AI assistants that write plugins (chat and browser panel). -->
+    <EmbeddedResource Include="..\..\docs\plugins.md" LogicalName="docs/plugins.md" />
+    <EmbeddedResource Include="..\..\docs\plugin.schema.json" LogicalName="docs/plugin.schema.json" />
+    <!-- Offline Mermaid diagrams (Mermaid 12.2.0, MIT — LICENSE-mermaid.txt), extracted to data/mermaid on first use. -->
+    <EmbeddedResource Include="Assets\Mermaid\render.html" LogicalName="mermaid/render.html" />
+    <EmbeddedResource Include="Assets\Mermaid\mermaid.min.js" LogicalName="mermaid/mermaid.min.js" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Commander4K.PluginSdk\Commander4K.PluginSdk.csproj" />

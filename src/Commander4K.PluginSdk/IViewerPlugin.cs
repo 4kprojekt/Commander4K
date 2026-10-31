@@ -5,8 +5,6 @@ public abstract record ViewerContent;
 
 public sealed record TextViewerContent(string Text, string? Language = null) : ViewerContent;
 
-public sealed record ImageViewerContent(ReadOnlyMemory<byte> EncodedImage) : ViewerContent;
-
 /// <param name="TotalLength">Full length of the source; <paramref name="Data"/> may be only its head.</param>
 public sealed record HexViewerContent(ReadOnlyMemory<byte> Data, long TotalLength) : ViewerContent;
 

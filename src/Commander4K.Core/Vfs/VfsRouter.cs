@@ -46,17 +46,6 @@ public sealed class VfsRouter
         }
     }
 
-    public void Unregister(IVfsProviderPlugin provider)
-    {
-        lock (_registrationGate)
-        {
-            if (_registered.Remove(provider))
-            {
-                Rebuild();
-            }
-        }
-    }
-
     public bool TryResolve(string path, out IVfsProviderPlugin provider)
     {
         var scheme = VfsPath.GetScheme(path);

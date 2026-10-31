@@ -8,6 +8,15 @@ public sealed record SearchEngine(string Id, string Name, string UrlTemplate, bo
 
     public string BuildUrl(string query) =>
         AcceptsQuery ? string.Format(System.Globalization.CultureInfo.InvariantCulture, UrlTemplate, Uri.EscapeDataString(query.Trim())) : UrlTemplate;
+
+    /// <summary>
+    /// The page with an empty chat, for prompts too long for a URL (the browser panel types them into the page): the
+    /// template itself when it takes no query, otherwise the site's root.
+    /// </summary>
+    public string ChatUrl => AcceptsQuery ? new Uri(BuildUrl("x")).GetLeftPart(UriPartial.Authority) + "/" : UrlTemplate;
+
+    /// <summary>Longest prompt sent in the address; longer ones are typed into the page.</summary>
+    public const int MaxQueryLength = 1500;
 }
 
 /// <summary>Search engines and AI assistants the internal browser can send a question to.</summary>
