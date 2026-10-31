@@ -59,7 +59,7 @@
       "path": "examples/plugins/project-modules-python",
       "files": [
         {
-          "sha256": "4b45b90cdf6f6def91aeb06e668aa848626815524269939a49d398c52a82890d",
+          "sha256": "6ac48eebcd93659d898e449aeb04d010778fa7bc1e3a5dbdf8d23849c30ece3a",
           "path": "c4k.py"
         },
         {
@@ -124,7 +124,7 @@
       "path": "examples/plugins/folder-stats-python",
       "files": [
         {
-          "sha256": "4b45b90cdf6f6def91aeb06e668aa848626815524269939a49d398c52a82890d",
+          "sha256": "6ac48eebcd93659d898e449aeb04d010778fa7bc1e3a5dbdf8d23849c30ece3a",
           "path": "c4k.py"
         },
         {
@@ -157,7 +157,7 @@
       "path": "examples/plugins/site-check-node",
       "files": [
         {
-          "sha256": "d7b379e7aa3092662d1dc689f3c25a8399e86cbaca545ba5d43093ca94a4c6d7",
+          "sha256": "3e73b19cb896e9e1319ee26922cb3dc4abdfb81ba28e9a5cbd9a928fc95304e5",
           "path": "c4k.js"
         },
         {

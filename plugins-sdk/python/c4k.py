@@ -81,7 +81,7 @@ def navigate(path, focus=None):      call("ui.navigate", path=path, focus=focus)
 def open_url(url):                   call("ui.openUrl", url=url)                              # internal browser, http(s) only
 def search(query, engine=None):      call("ui.search", query=query, engine=engine)            # engine: None, "assistant", "google", "chatgpt"…
 def copy_text(text):                 call("ui.copyText", text=text)                           # clipboard (write only)
-def web_preview(page, state=None):         return {"kind": "web", "page": page, "state": state}  # result of preview.render: an HTML page from the preview's webRoot
+def web_preview(page, state=None):   return {"kind": "web", "page": page, "state": state}     # result of preview.render: an HTML page from the preview's webRoot
 def storage_get(key, default=None):                                                          # the plugin's own settings/data (no permission)
     value = call("storage.get", key=key)
     return default if value is None else value
