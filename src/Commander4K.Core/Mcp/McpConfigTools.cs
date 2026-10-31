@@ -58,10 +58,16 @@ public static partial class McpConfigTools
 
     /// <summary>A language code usable as a file name: <c>de</c>, <c>pt-BR</c>; not <c>pl</c> (the source language).</summary>
     public static bool IsLanguageCode(string? code) =>
-        code is not null && LanguageCode().IsMatch(code) && !code.Equals(Loc.SourceLanguage, StringComparison.OrdinalIgnoreCase);
+        code is not null && LanguageCode().IsMatch(code) && !code.Equals(Loc.SourceLanguage, StringComparison.OrdinalIgnoreCase)
+        && !IsDeviceName(code);
 
     /// <summary>A skin id usable as a file name (lower-case kebab-case, as <see cref="SkinValidator"/> asks).</summary>
-    public static bool IsSkinId(string? id) => id is not null && SkinId().IsMatch(id);
+    public static bool IsSkinId(string? id) => id is not null && SkinId().IsMatch(id) && !IsDeviceName(id);
+
+    // Windows device names (con.json can still mean the console); the patterns already exclude everything else.
+    private static bool IsDeviceName(string name) =>
+        name.ToLowerInvariant() is "con" or "prn" or "aux" or "nul"
+        || (name.Length == 4 && (name.StartsWith("com", StringComparison.OrdinalIgnoreCase) || name.StartsWith("lpt", StringComparison.OrdinalIgnoreCase)) && char.IsAsciiDigit(name[3]));
 
     /// <summary>Parses a skin for check_skin/save_skin: the skin and its validator warnings, or an error for the model.</summary>
     public static (Skin? Skin, IReadOnlyList<string> Warnings, string? Error) ParseSkin(string json)
@@ -140,7 +146,7 @@ public static partial class McpConfigTools
                     ("offset", "integer", "First entry of the page (default 0).", false),
                     ("limit", "integer", $"Entries per page (default {DefaultKitPage}, max {MaxKitPage}).", false)),
                 McpToolMode.Allow),
-            (call, ct) => Task.Run(() => TranslationKitPage(context, call), CancellationToken.None),
+            (call, _) => Task.Run(() => Guarded(() => TranslationKitPage(context, call)), CancellationToken.None),
             args => "get_translation_kit " + args["language"]),
         new McpTool(
             new McpToolDefinition(
@@ -149,7 +155,7 @@ public static partial class McpConfigTools
                 + "placeholders ({0}, {1:N0}…) that differ from the key, wrong number of plural forms, and how many entries are still missing.",
                 TranslationSchema(),
                 McpToolMode.Allow),
-            (call, _) => Task.Run(() => CheckTranslation(context, call, save: false), CancellationToken.None),
+            (call, _) => Task.Run(() => Guarded(() => CheckTranslation(context, call, save: false)), CancellationToken.None),
             args => $"check_translation {args["language"]} ({(args["entries"] as JsonObject)?.Count ?? 0} entries)"),
         new McpTool(
             new McpToolDefinition(
@@ -159,7 +165,7 @@ public static partial class McpConfigTools
                 + "To use the language: set_setting language = <code>, then the user restarts Commander4K.",
                 TranslationSchema(),
                 McpToolMode.Ask),
-            (call, _) => Task.Run(() => CheckTranslation(context, call, save: true), CancellationToken.None),
+            (call, _) => Task.Run(() => Guarded(() => CheckTranslation(context, call, save: true)), CancellationToken.None),
             args => $"save_translation {args["language"]} ({(args["entries"] as JsonObject)?.Count ?? 0} entries)"),
         new McpTool(
             new McpToolDefinition(
@@ -518,6 +524,26 @@ public static partial class McpConfigTools
             : new McpToolResult("Warnings (fix them before save_skin):\n- " + string.Join("\n- ", warnings));
     }
 
+    /// <summary>
+    /// Expected failures (missing argument, unreadable or broken language file, disk errors) become tool errors here,
+    /// inside the Task.Run lambda, so they never leave it (debugger rule in CLAUDE.md).
+    /// </summary>
+    private static McpToolResult Guarded(Func<McpToolResult> run)
+    {
+        try
+        {
+            return run();
+        }
+        catch (JsonException ex)
+        {
+            return McpToolResult.Error("The existing language file is not valid JSON; the user has to fix or delete it first. " + ex.Message);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return McpToolResult.Error(ex.Message);
+        }
+    }
+
     private static Dictionary<string, string> Reference() => Loc.BuiltInFile("en") is { } en ? Loc.Parse(en) : [];
 
     private static string LanguageFile(McpConfigContext context, string code) =>
@@ -573,9 +599,10 @@ public static partial class McpConfigTools
         _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
     };
 
-    [GeneratedRegex("^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$")]
+    // \z, not $: $ also matches before a final newline, which would end up in the file name.
+    [GeneratedRegex(@"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?\z")]
     private static partial Regex LanguageCode();
 
-    [GeneratedRegex("^[a-z0-9][a-z0-9-]{0,63}$")]
+    [GeneratedRegex(@"^[a-z0-9][a-z0-9-]{0,63}\z")]
     private static partial Regex SkinId();
 }

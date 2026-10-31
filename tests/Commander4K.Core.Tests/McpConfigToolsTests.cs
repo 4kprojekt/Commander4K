@@ -191,6 +191,8 @@ public sealed class McpConfigToolsTests : IDisposable
     [InlineData("C:\\x")]
     [InlineData("de/../../x")]
     [InlineData("")]
+    [InlineData("con")]
+    [InlineData("nul")]
     public async Task Save_translation_refuses_bad_codes(string code)
     {
         var key = Reference().Keys.First(k => !k.StartsWith('_'));
@@ -209,6 +211,31 @@ public sealed class McpConfigToolsTests : IDisposable
         Assert.True((await Call("save_translation", Entries("de", ("Nie ma takiego klucza 123", "x")))).IsError);
         Assert.False(File.Exists(LanguageFile("de")));
     }
+
+    [Fact]
+    public async Task Broken_language_file_and_missing_arguments_are_tool_errors()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(LanguageFile("de"))!);
+        await File.WriteAllTextAsync(LanguageFile("de"), "{ broken", TestContext.Current.CancellationToken);
+        Assert.True((await Call("get_translation_kit", new JsonObject { ["language"] = "de", ["onlyMissing"] = true })).IsError);
+        Assert.True((await Call("save_translation", Entries("de", ("x", "y")))).IsError);
+        Assert.True((await Call("get_translation_kit", new JsonObject())).IsError);
+        Assert.True((await Call("check_translation", new JsonObject { ["entries"] = new JsonObject() })).IsError);
+    }
+
+    [Theory]
+    [InlineData("mine\n")]
+    [InlineData("con")]
+    [InlineData("com1")]
+    public void Skin_ids_that_are_not_safe_file_names_are_refused(string id) =>
+        Assert.False(McpConfigTools.IsSkinId(id));
+
+    [Theory]
+    [InlineData("de\n", false)]
+    [InlineData("lpt1", false)]
+    [InlineData("pt-BR", true)]
+    public void Language_codes_are_safe_file_names(string code, bool valid) =>
+        Assert.Equal(valid, McpConfigTools.IsLanguageCode(code));
 
     [Fact]
     public async Task Check_skin_reports_low_contrast_and_bad_json()
