@@ -1063,5 +1063,11 @@
   "Żaden odbiorca nie przyjmuje folderów.": "No receiver accepts folders.",
   "Odbiorca „{0}” przyjmuje tylko jeden plik.": "Receiver “{0}” accepts only one file.",
   "Wtyczka nie podała żadnego odbiorcy dla tych plików.": "The plugin offered no receiver for these files.",
-  "Żaden odbiorca nie przyjmuje plików tego typu.": "No receiver accepts files of this type."
+  "Żaden odbiorca nie przyjmuje plików tego typu.": "No receiver accepts files of this type.",
+  "brak zawartości lub niedozwolony adres": "no content or address not allowed",
+  "już istnieje, pominięto": "already exists, skipped",
+  "niedozwolona nazwa pliku": "file name not allowed",
+  "zawartość większa niż 16 MB": "content larger than 16 MB",
+  "Pobieranie z „{0}” → {1}": "Fetching from “{0}” → {1}",
+  "Wysyłanie {0} → {1}": "Sending {0} → {1}"
 }

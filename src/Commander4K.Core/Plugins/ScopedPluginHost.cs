@@ -308,6 +308,31 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
             }
         });
 
+    /// <summary>
+    /// Streamed download for the host's own jobs (files a plugin panel provides by url). Unlike <c>net.get</c> it has
+    /// no time or size limit: it ends with the caller's token. Gated by <c>net</c> and audited.
+    /// </summary>
+    public Task<Stream> OpenHttpReadAsync(Uri url, CancellationToken cancellationToken = default) =>
+        Gate(PluginPermissions.Network, "net.download", url.ToString(), async () =>
+        {
+            if (url.Scheme is not ("http" or "https"))
+            {
+                throw new ArgumentException(Loc.T("Dozwolone są tylko adresy http i https."), nameof(url));
+            }
+
+            var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                response.EnsureSuccessStatusCode();
+                return await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                response.Dispose();
+                throw;
+            }
+        });
+
     private static TimeoutException TimedOut(Uri url) =>
         new(Loc.T("Serwer {0} nie odpowiedział w ciągu {1:0} min.", url.Host, RequestTimeout.TotalMinutes));
 
