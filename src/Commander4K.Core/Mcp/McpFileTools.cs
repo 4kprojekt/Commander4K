@@ -158,6 +158,11 @@ public static class McpFileTools
         {
             return McpToolResult.Error($"Listing {path} timed out after {ListingTimeout.TotalSeconds:0} s.");
         }
+        finally
+        {
+            // Stops the router's producer (and the provider's enumerator) when we leave early at the cap.
+            timeout.Cancel();
+        }
 
         return new McpToolResult(count == 0 ? $"{path} is empty." : text.ToString());
     }

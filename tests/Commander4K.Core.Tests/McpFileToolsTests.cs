@@ -129,6 +129,45 @@ public sealed class McpFileToolsTests
     }
 
     [Fact]
+    public async Task List_directory_caps_at_500_and_releases_the_provider()
+    {
+        var result = await Call("list_directory", ("path", "mfs://many"));
+        Assert.Contains("… (more entries not shown)", result.Text);
+        Assert.Equal(McpFileTools.MaxListing, result.Text.Split((char)10).Count(l => l.StartsWith("e", StringComparison.Ordinal)));
+        await _fs.ManyEnded.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Write_limit_is_8_MB()
+    {
+        Assert.False((await Call("write_file", ("path", "mfs://d/max"), ("content", new string('a', McpFileTools.MaxWriteBytes)))).IsError);
+        Assert.Equal(McpFileTools.MaxWriteBytes, _fs.Files["mfs://d/max"].Length);
+        Assert.True((await Call("write_file", ("path", "mfs://d/over"), ("content", new string('a', McpFileTools.MaxWriteBytes + 1)))).IsError);
+        Assert.False(_fs.Files.ContainsKey("mfs://d/over"));
+        var big = Convert.ToBase64String(new byte[McpFileTools.MaxWriteBytes + 1]);
+        Assert.True((await Call("write_file", ("path", "mfs://d/over64"), ("content", big), ("encoding", "base64"))).IsError);
+    }
+
+    [Fact]
+    public async Task Invalid_base64_and_bad_encoding_are_errors()
+    {
+        Assert.True((await Call("write_file", ("path", "mfs://d/x"), ("content", "***"), ("encoding", "base64"))).IsError);
+        Assert.True((await Call("write_file", ("path", "mfs://d/x"), ("content", "a"), ("encoding", "utf16"))).IsError);
+        _fs.Files["mfs://d/r"] = [1];
+        Assert.True((await Call("read_file", ("path", "mfs://d/r"), ("encoding", "hex"))).IsError);
+        Assert.False(_fs.Files.ContainsKey("mfs://d/x"));
+    }
+
+    [Fact]
+    public async Task Offset_past_end_returns_empty()
+    {
+        _fs.Files["mfs://d/s"] = new byte[10];
+        var result = await Call("read_file", ("path", "mfs://d/s"), ("encoding", "base64"), ("offset", 100));
+        Assert.False(result.IsError);
+        Assert.Equal(string.Empty, result.Text);
+    }
+
+    [Fact]
     public void Summaries_name_the_paths()
     {
         var move = Tool("move").Summary!(new JsonObject { ["source"] = "mfs://d/a", ["destination"] = "mfs://d/b" });
@@ -149,6 +188,8 @@ public sealed class McpFileToolsTests
 
         public long[]? Counter { get; set; }
 
+        public TaskCompletionSource ManyEnded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public string Id => "test.memfs";
 
         public string DisplayName => "MemFs";
@@ -162,6 +203,23 @@ public sealed class McpFileToolsTests
         public async IAsyncEnumerable<VfsEntry> EnumerateAsync(string path, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.Yield();
+            if (path == "mfs://many")
+            {
+                try
+                {
+                    for (var i = 0; i < 5000; i++)
+                    {
+                        yield return new VfsEntry("e" + i, "mfs://many/e" + i, VfsEntryKind.File, i);
+                    }
+                }
+                finally
+                {
+                    ManyEnded.TrySetResult();
+                }
+
+                yield break;
+            }
+
             var prefix = path.TrimEnd('/') + "/";
             foreach (var dir in Dirs.Where(d => IsChild(d, prefix)).ToList())
             {
