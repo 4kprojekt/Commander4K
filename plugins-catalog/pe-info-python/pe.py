@@ -26,6 +26,10 @@ class ReadLimit(Exception):
     """A read past the end of the file or over the per-render budget."""
 
 
+class ReadFailed(ReadLimit):
+    """The host could not read the file (not a property of the file itself)."""
+
+
 class PeError(Exception):
     """The file is not a usable PE image."""
 
@@ -60,7 +64,7 @@ class RangeReader:
         try:
             data = self._fetch(self.path, start, count)
         except c4k.HostError as error:
-            raise ReadLimit(f"odczyt nie powiódł się: {error}") from None
+            raise ReadFailed(f"odczyt nie powiódł się: {error}") from None
         self.used += cost
         if len(data) < count:
             raise ReadLimit("nieoczekiwany koniec pliku")
@@ -186,6 +190,8 @@ def parse(reader):
     size = reader.size
     try:
         dos = reader.read(0, min(64, size))
+    except ReadFailed:
+        raise
     except ReadLimit as error:
         raise PeError(f"nie można odczytać nagłówka: {error}") from None
     if len(dos) < 64 or dos[:2] != b"MZ":
@@ -203,6 +209,8 @@ def parse(reader):
         opt = reader.read_clamped(e_lfanew + 24, optsize)
         if len(opt) < 70:
             raise PeError("nagłówek opcjonalny jest ucięty")
+    except ReadFailed:
+        raise
     except ReadLimit as error:
         raise PeError(f"nagłówek PE jest ucięty: {error}") from None
     except struct.error:
@@ -261,7 +269,7 @@ def parse(reader):
     step("tabela importów opóźnionych", lambda: _imports(reader, image, delayed=True))
     step("tabela eksportów", lambda: _exports(reader, image))
     step("katalog TLS", lambda: _tls(reader, image))
-    step("overlay", lambda: _overlay(image))
+    step("overlay", lambda: _overlay(reader, image))
     step("entropia sekcji", lambda: _entropy(reader, image))
     return image
 
@@ -374,8 +382,8 @@ def _exports(reader, image):
     offset = _need(image, rva, label)
     raw = reader.read(offset, 40)
     _chars, _stamp, _major, _minor, name_rva, base, n_funcs, n_names, funcs_rva, names_rva, ords_rva = struct.unpack_from("<IIHHIIIIIII", raw, 0)
-    name_at = rva_to_offset(image, name_rva)
-    dll_name = _clean(reader.cstring(name_at, 260)) if name_at is not None else ""
+    name_at = rva_to_offset(image, name_rva) if name_rva else None
+    dll_name = _clean(reader.cstring(name_at, 260)) if name_rva and name_at is not None else ""
     exports = Exports(dll_name, [], n_funcs)
     image.exports = exports
     if n_funcs > MAX_TABLE or n_names > MAX_TABLE:
@@ -433,10 +441,42 @@ def _tls(reader, image):
         image.tls_callbacks += 1
 
 
-def _overlay(image):
+def _sniff(data):
+    if data[:4] == b"PK\x03\x04":
+        return "archiwum ZIP"
+    if data[:6] == b"7z\xbc\xaf\x27\x1c":
+        return "archiwum 7-Zip"
+    if b"Nullsoft" in data:
+        return "instalator Nullsoft (NSIS)"
+    if b"Inno Setup" in data:
+        return "instalator Inno Setup"
+    return None
+
+
+def _overlay(reader, image):
+    """Data after the last section, minus the Authenticode certificate table (data directory 4 is a FILE OFFSET)."""
     end = max((s.raw_offset + s.raw_size for s in image.sections), default=0)
-    if end and end < image.file_size:
-        image.overlay = (end, image.file_size - end)
+    if not end or end >= image.file_size:
+        return
+    cert_at, cert_size = image.data_dirs[DIR_SECURITY]
+    start, stop = end, image.file_size
+    if cert_at and cert_size and cert_at < stop and cert_at + cert_size > start:
+        # the certificate table normally ends the file; keep the pieces of the tail it does not cover
+        before = max(0, min(cert_at, stop) - start)
+        after = max(0, stop - max(cert_at + cert_size, start))
+        if before:
+            stop = start + before
+        elif after:
+            start = cert_at + cert_size
+        else:
+            return
+    if start >= stop:
+        return
+    try:
+        kind = _sniff(reader.read_clamped(start, 16))
+    except ReadLimit:
+        kind = None
+    image.overlay = (start, stop - start, kind)
 
 
 def _entropy(reader, image):

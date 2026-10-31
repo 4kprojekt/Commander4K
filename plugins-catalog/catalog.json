@@ -348,16 +348,20 @@
           "path": "c4k.py"
         },
         {
-          "sha256": "086cf5341c33c2b570f53faf83e593c3b6ed98a2df6958d397642f42e8ce8f0f",
+          "sha256": "58daa8f568476b6d8e8efae0c31e32454dc10990dd12164882ecb516cf1e3418",
           "path": "main.py"
         },
         {
-          "sha256": "d542ff4979292bbbbc5dc820b121685fee99753fccf01646c1fdf09c5a3bf9c0",
+          "sha256": "a1d46f785dd3cb0cf402f204fa5b5c4a7a12daab2425652b29394a7874664d24",
           "path": "pe.py"
         },
         {
           "sha256": "64573df805583bcb3a0d431922aa5da98effaec444dff9944b938911936eab3f",
           "path": "plugin.json"
+        },
+        {
+          "sha256": "1324e63eb559597c19af1c0baeebdf68aaea3961594be4acc055a6d901fff633",
+          "path": "resources.py"
         }
       ]
     }
