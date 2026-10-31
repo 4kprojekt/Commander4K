@@ -3,8 +3,11 @@
 The panel lists saved HTTP endpoints (kept in the plugin's storage). Files marked in the other panel and copied here
 (F5) are POSTed to the chosen endpoint as multipart forms. The app reads the files itself, only during that call, so
 this plugin needs just the `net` permission. In the other direction, F5 on an endpoint saves the response of a GET
-request as a file in the other panel. Everything goes through the SDK.
+request as a file in the other panel; a failed request is reported for that file instead. Everything goes through
+the SDK.
 """
+import re
+
 import c4k
 
 
@@ -12,9 +15,21 @@ def endpoints():
     return c4k.storage_get("endpoints", []) or []
 
 
-def host_name(url):
-    authority = url.split("://", 1)[-1].split("/", 1)[0].split("?", 1)[0]
-    return authority.replace(":", "_") or "odpowiedz"
+def file_name(url):
+    """A file name from host and path, so two endpoints on the same host get different files."""
+    rest = url.split("://", 1)[-1].split("?", 1)[0].split("#", 1)[0]
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", rest).strip("._") or "odpowiedz"
+    return name + ".json"
+
+
+def unique(name, taken):
+    base, dot, extension = name.rpartition(".")
+    candidate, number = name, 2
+    while candidate.lower() in taken:
+        candidate = f"{base}-{number}{dot}{extension}"
+        number += 1
+    taken.add(candidate.lower())
+    return candidate
 
 
 @c4k.handler("panel.load")
@@ -32,7 +47,13 @@ def action(params):
     urls = endpoints()
     if params["action"] == "add":
         url = c4k.prompt("Dodaj endpoint", "Adres http(s), na który wysyłać pliki:", "http://")
-        if url and url.startswith(("http://", "https://")) and url not in urls:
+        if not url:
+            return {}
+        if not url.startswith(("http://", "https://")) or len(url.split("://", 1)[1].strip("/")) == 0:
+            c4k.notify(f"To nie jest adres http(s): {url}", error=True)
+        elif url in urls:
+            c4k.notify(f"Ten adres już jest na liście: {url}")
+        else:
             c4k.storage_set("endpoints", urls + [url])
     elif params["action"] == "remove":
         gone = set(params["rowIds"])
@@ -52,15 +73,14 @@ def receivers(params):
 @c4k.handler("panel.receive")
 def receive(params):
     url = params["receiver"]
-    files = params["files"]
+    items = params["files"]
+    # Folders are not uploaded; N/M and the progress bar count files only.
+    files = [item for item in items if item["kind"] == "file"]
+    results = [{"path": item["path"], "ok": False, "error": "Foldery nie są obsługiwane"} for item in items if item["kind"] != "file"]
     sent = 0
     lines = []
-    results = []
     done_bytes = 0
     for index, item in enumerate(files):
-        if item["kind"] != "file":
-            results.append({"path": item["path"], "ok": False, "error": "Foldery nie są obsługiwane"})
-            continue
         try:
             response = c4k.http_request(url, "POST", multipart={"field": "file", "path": item["path"]})
             ok = 200 <= response["status"] < 300
@@ -83,14 +103,20 @@ def providers(params):
 @c4k.handler("panel.provide")
 def provide(params):
     files = []
+    taken = set()
     rows = params["rowIds"]
     for index, url in enumerate(rows):
+        name = unique(file_name(url), taken)
         try:
             response = c4k.http_request(url, "GET")
-            files.append({"name": f"{host_name(url)}.json", "text": response["body"]})
+            if 200 <= response["status"] < 300:
+                files.append({"name": name, "text": response["body"]})
+            else:
+                # Reported to the user for this file; nothing is written.
+                files.append({"name": name, "error": f"HTTP {response['status']}"})
         except c4k.HostError as error:
-            files.append({"name": f"{host_name(url)}.json", "text": f"{error}"})
-        c4k.report_progress(params["jobId"], index + 1, len(rows))
+            files.append({"name": name, "error": str(error)})
+        c4k.report_progress(params["jobId"], index + 1, len(rows), text=url)
     return {"files": files}
 
 

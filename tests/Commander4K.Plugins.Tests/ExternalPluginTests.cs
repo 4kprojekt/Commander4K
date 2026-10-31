@@ -235,10 +235,17 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.True(receiver.Multiple);
         Assert.True(receiver.ReturnsMessage);
 
-        var progress = new List<TransferProgress>();
-        var result = await session.ReceiveAsync(receiver.Id, items, new Progress<TransferProgress>(progress.Add), TestToken);
+        // A folder is refused per item and not counted: N/M and the progress count files only.
+        var withFolder = items.Append(new TransferItem(_folder, Path.GetFileName(_folder), TransferItemKind.Folder, 0)).ToList();
+        var progress = new SyncProgress();
+        var result = await session.ReceiveAsync(receiver.Id, withFolder, progress, TestToken);
 
         Assert.Contains("2/2", result.Text, StringComparison.Ordinal);
+        Assert.Equal([1, 2], progress.Items.Select(p => p.Done));
+        Assert.All(progress.Items, p => Assert.Equal(2, p.Total));
+        Assert.Equal(9, progress.Items[^1].Bytes);
+        var refused = Assert.Single(result.Results!, r => !r.Ok);
+        Assert.Equal(_folder, refused.Path);
         Assert.Equal(2, server.Posts.Count);
         Assert.All(server.Posts, post => Assert.Contains("multipart/form-data", post.ContentType, StringComparison.Ordinal));
         Assert.Contains(server.Posts, post => post.Body.Contains("alpha", StringComparison.Ordinal));
@@ -247,11 +254,53 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         var providers = await session.GetProvidersAsync([server.Url], TestToken);
         Assert.Contains(providers, p => p.Id == "save-response");
 
-        var provided = await session.ProvideAsync("save-response", [server.Url], null, TestToken);
+        var provideProgress = new SyncProgress();
+        var provided = await session.ProvideAsync("save-response", [server.Url, server.Url + "api/data", server.Url + "missing"], provideProgress, TestToken);
 
-        var file = Assert.Single(provided.Files);
-        Assert.EndsWith(".json", file.Name, StringComparison.Ordinal);
-        Assert.Equal("{\"ok\":true}", file.Text);
+        Assert.Equal(3, provided.Files.Count);
+        Assert.Equal(3, provided.Files.Select(f => f.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(provided.Files, f => Assert.EndsWith(".json", f.Name, StringComparison.Ordinal));
+        Assert.Equal("{\"ok\":true}", provided.Files[0].Text);
+        Assert.Equal("{\"ok\":true}", provided.Files[1].Text);
+        Assert.Contains("api_data", provided.Files[1].Name, StringComparison.Ordinal);
+
+        // A failed GET is that file's error, never an error text saved as the file.
+        Assert.Null(provided.Files[2].Text);
+        Assert.Contains("404", provided.Files[2].Error, StringComparison.Ordinal);
+        Assert.Equal([1, 2, 3], provideProgress.Items.Select(p => p.Done));
+
+        // An address that is not http(s) is refused with an error, not silently dropped.
+        _ui.PromptAnswer = "ftp://example.com/";
+        await session.ExecuteActionAsync("add", [], TestToken);
+        Assert.True(_ui.LastNotificationWasError);
+        Assert.Contains("ftp://example.com/", _ui.LastNotification, StringComparison.Ordinal);
+        Assert.Equal([server.Url], ((System.Text.Json.Nodes.JsonArray)_storage.Get("examples.upload-client", "endpoints")!).Select(n => n!.GetValue<string>()));
+    }
+
+    /// <summary>Records progress on the reporting thread (Progress&lt;T&gt; would post it later).</summary>
+    private sealed class SyncProgress : IProgress<TransferProgress>
+    {
+        private readonly Lock _gate = new();
+        private readonly List<TransferProgress> _items = [];
+
+        public IReadOnlyList<TransferProgress> Items
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return [.. _items];
+                }
+            }
+        }
+
+        public void Report(TransferProgress value)
+        {
+            lock (_gate)
+            {
+                _items.Add(value);
+            }
+        }
     }
 
     [Fact]
@@ -484,7 +533,9 @@ public sealed class ExternalPluginTests : IAsyncLifetime
 
         public Task NavigateAsync(string path, string? focusName) => Task.CompletedTask;
 
-        public void Notify(string message, bool isError) => LastNotification = message;
+        public bool LastNotificationWasError { get; private set; }
+
+        public void Notify(string message, bool isError) => (LastNotification, LastNotificationWasError) = (message, isError);
 
         public Task ShowTextAsync(string title, string text)
         {
@@ -553,7 +604,10 @@ public sealed class ExternalPluginTests : IAsyncLifetime
                             }
                         }
 
-                        var bytes = Encoding.UTF8.GetBytes(response);
+                        // Paths containing "missing" answer 404, so error handling can be tested.
+                        var missing = context.Request.Url?.AbsolutePath.Contains("missing", StringComparison.Ordinal) == true;
+                        var bytes = Encoding.UTF8.GetBytes(missing ? "not here" : response);
+                        context.Response.StatusCode = missing ? 404 : 200;
                         context.Response.ContentType = "application/json";
                         await context.Response.OutputStream.WriteAsync(bytes);
                         context.Response.Close();

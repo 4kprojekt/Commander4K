@@ -153,7 +153,7 @@ Ask for the fewest permissions that do the job.
 | `panel.receivers` | `{ panel, files: [{ path, name, kind: "file"\|"folder", size }], context }` | `[{ id, title, description?, extensions?, multiple?, folders?, returnsMessage? }]`. Panels with `accepts` only; answer within 5 s. See [Receiving and providing files](#receiving-and-providing-files). |
 | `panel.receive` | `{ panel, receiver, jobId, files, context }` | `{ text?, results?: [{ path, ok, error? }] }`. One call for the whole selection; no time limit. |
 | `panel.providers` | `{ panel, rowIds, context }` | `[{ id, title, description? }]`. Panels with `provides` only; answer within 5 s. |
-| `panel.provide` | `{ panel, provider, jobId, rowIds, context }` | `{ files: [{ name, text? \| base64? \| url? }], text? }`. No time limit. |
+| `panel.provide` | `{ panel, provider, jobId, rowIds, context }` | `{ files: [{ name, text? \| base64? \| url? \| error? }], text? }`. No time limit; the whole reply must stay under 16 MB. |
 | `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }`. A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). |
 | `palette.items` | `{ palette, context }` | `{ items: [{ id, title, icon?, tooltip? }] }`. Buttons of a docked palette. Asked again after every navigation and after every `palette.action`, so items may depend on `context.activePath`. |
 | `palette.invoke` | `{ palette, item, context }` | Same as `command.execute`. The user clicked an item. |
@@ -224,11 +224,15 @@ as files (`"provides": true`).
 **Receiving** — the user marks files in one panel, your panel is open in the other, and presses F5:
 1. The app calls `panel.receivers` with the selection and shows the receivers that fit. It checks `extensions`
    (`.ext`, file names, `*`/`?` patterns, as in previews), `multiple` (more than one item) and `folders` itself, so
-   you may return every receiver and let the app filter.
+   you may return every receiver and let the app filter. A missing or empty `extensions` (`[]`) means any file.
+   Folders are judged only by `folders`: `extensions` never applies to them. Receiver ids must be unique; a
+   repeated id keeps its first entry (the same goes for provider ids).
 2. The user picks one and the app calls `panel.receive` **once for the whole selection** as a background job.
 3. **While that call runs, your plugin may read the offered files** — and everything under offered folders — with
    `fs.readBytes`/`fs.readText`/`fs.list`/`fs.stat`, even without `fs.read`. The grant ends with the call (also when
-   it is cancelled). It covers every request your process makes meanwhile.
+   it is cancelled). It covers every request your process makes meanwhile. The grant is by path: links (junctions,
+   symbolic links) inside an offered folder are followed, so whatever they point to is readable too. Every granted
+   path is written to the audit log.
 4. To upload without loading the file into memory, pass the path to `net.request` as `bodyFile` (raw body, sent
    with `contentType`, default `application/octet-stream`) or as `multipart: { field, path, fileName? }`. The app
    streams it through its own file system layer, so it works for shares, SFTP and archives too. Such uploads have
@@ -241,9 +245,15 @@ as files (`"provides": true`).
 1. The app calls `panel.providers` with the selected row ids; the user picks one (no choice when there is one) and
    the target folder (the other panel, editable; created when missing) and overwrite policy.
 2. The app calls `panel.provide` and writes each returned file itself: `text` (UTF-8) or `base64` inline, up to
-   16 MB per file; larger files as an `http`/`https` `url` the app downloads (other schemes are refused). `name` may
-   contain subfolders (`docs/a.txt`), never `..` or an absolute path. A file that breaks these rules (too large, no
-   content, another URL scheme, no name) is reported to the user; the other files are still written.
+   8 MB per file; larger files as an `http`/`https` `url` the app downloads (other schemes are refused). **The whole
+   reply is one protocol message and must stay under 16 MB** (base64 adds a third): a longer reply closes the
+   connection, fails the job with "the reply exceeds 16 MB" and restarts your plugin on its next call — return big
+   or many files as `url`. `name` may contain subfolders (`docs/a.txt`), never `..` or an absolute path. A file that
+   breaks these rules (too large, no content, another URL scheme, no name) is reported to the user; the other files
+   are still written.
+3. When one row cannot become a file (its download failed, it has no data), return `{ name, error: "why" }` for it:
+   the app shows the reason and writes nothing for that entry. Every written, skipped or failed file is audited
+   under your plugin's id.
 
 Only copying works this way: F6 (move) into or out of a plugin panel is refused with a message, and so is F5 onto a
 panel without `accepts` (or onto the browser) — nothing is copied into the folder hidden under it.
