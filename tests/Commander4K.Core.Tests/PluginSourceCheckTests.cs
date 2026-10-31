@@ -81,4 +81,23 @@ public sealed class PluginSourceCheckTests
 
         return directory;
     }
+
+    [Fact]
+    public void WebRoot_files_are_not_linted()
+    {
+        const string manifest = """
+            { "id": "t.p", "name": "T", "version": "1.0.0", "author": "a", "description": "d",
+              "runtime": { "type": "node", "entry": "main.js" },
+              "contributes": { "previews": [ { "id": "v", "title": "V", "extensions": [".x"], "webRoot": "web" } ] } }
+            """;
+
+        var findings = PluginSourceCheck.Scan([
+            new GeneratedFile("plugin.json", manifest),
+            new GeneratedFile("web/app.js", "fetch('x');"),
+            new GeneratedFile("main.js", "fetch('x');"),
+        ]);
+
+        var finding = Assert.Single(findings);
+        Assert.Equal("main.js", finding.File);
+    }
 }

@@ -56,10 +56,12 @@ public static partial class PluginSourceCheck
     public static IReadOnlyList<SourceFinding> Scan(IEnumerable<GeneratedFile> files)
     {
         var findings = new List<SourceFinding>();
+        files = files.ToList();
+        var webRoots = WebRoots(files.FirstOrDefault(f => string.Equals(f.Path.Replace('\\', '/'), ManifestReader.FileName, StringComparison.OrdinalIgnoreCase))?.Content);
         foreach (var file in files)
         {
             var name = Path.GetFileName(file.Path);
-            if (file.Bytes is not null || PluginAuthoring.SdkClients.Values.Contains(name, StringComparer.OrdinalIgnoreCase) || RulesFor(name) is not { } rules)
+            if (InWebRoot(file.Path, webRoots) || file.Bytes is not null || PluginAuthoring.SdkClients.Values.Contains(name, StringComparer.OrdinalIgnoreCase) || RulesFor(name) is not { } rules)
             {
                 continue;
             }
@@ -87,10 +89,58 @@ public static partial class PluginSourceCheck
         return findings;
     }
 
+    /// <summary>
+    /// Pages in a preview's <c>webRoot</c> run in the browser engine, not as plugin code: they have no SDK and are
+    /// confined by the web view, so they are not linted.
+    /// </summary>
+    private static List<string> WebRoots(string? manifestJson)
+    {
+        var roots = new List<string>();
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(manifestJson ?? "{}", new System.Text.Json.JsonDocumentOptions { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            foreach (var property in document.RootElement.EnumerateObject().Where(p => string.Equals(p.Name, "contributes", StringComparison.OrdinalIgnoreCase)))
+            {
+                foreach (var previews in property.Value.EnumerateObject().Where(p => string.Equals(p.Name, "previews", StringComparison.OrdinalIgnoreCase)))
+                {
+                    foreach (var item in previews.Value.EnumerateArray())
+                    {
+                        foreach (var root in item.EnumerateObject().Where(p => string.Equals(p.Name, "webRoot", StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == System.Text.Json.JsonValueKind.String))
+                        {
+                            var value = root.Value.GetString()!.Trim().Replace('\\', '/').Trim('/');
+                            if (value.Length > 0 && !value.Contains("..", StringComparison.Ordinal))
+                            {
+                                roots.Add(value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException)
+        {
+            roots.Clear(); // Invalid manifest: skip nothing.
+        }
+
+        return roots;
+    }
+
+    private static bool InWebRoot(string path, List<string> webRoots)
+    {
+        var normalized = path.Replace('\\', '/').TrimStart('.', '/');
+        return webRoots.Any(root => normalized.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>Findings in an installed plugin folder (code files up to 1 MB each, at most 200 files). Blocking.</summary>
     public static IReadOnlyList<SourceFinding> ScanFolder(string folder)
     {
         var files = new List<GeneratedFile>();
+        var manifest = Path.Combine(folder, ManifestReader.FileName);
+        if (File.Exists(manifest) && new FileInfo(manifest).Length <= PluginAuthoring.MaxFileBytes)
+        {
+            files.Add(new GeneratedFile(ManifestReader.FileName, File.ReadAllText(manifest)));
+        }
+
         foreach (var path in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Take(200))
         {
             if (RulesFor(path) is not null && new FileInfo(path).Length <= PluginAuthoring.MaxFileBytes)

@@ -122,6 +122,15 @@ public static partial class ManifestReader
             }
         }
 
+        foreach (var preview in manifest.Contributes?.Previews ?? [])
+        {
+            if (preview.WebRoot is { } webRoot
+                && (!PluginAuthoring.IsSafeRelativePath(webRoot) || !Directory.Exists(Path.Combine(folder, webRoot))))
+            {
+                errors.Add(Loc.T("Podgląd „{0}”: webRoot „{1}” musi być folderem wewnątrz wtyczki.", preview.Id, webRoot));
+            }
+        }
+
         var ids = (manifest.Contributes?.Commands?.Select(c => "command:" + c.Id) ?? [])
             .Concat(manifest.Contributes?.Panels?.Select(p => "panel:" + p.Id) ?? [])
             .Concat(manifest.Contributes?.Previews?.Select(p => "preview:" + p.Id) ?? [])

@@ -184,6 +184,40 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Web_preview_round_trip()
+    {
+        var folder = Path.Combine(_folder, "web-tour");
+        Directory.CreateDirectory(Path.Combine(folder, "web"));
+        File.WriteAllText(Path.Combine(folder, "web", "index.html"), "<html></html>");
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", "python", "c4k.py"), Path.Combine(folder, "c4k.py"));
+        File.WriteAllText(Path.Combine(folder, ManifestReader.FileName), """
+            { "id": "tests.web-tour", "name": "Web tour", "version": "1.0.0", "author": "t", "description": "d",
+              "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+              "permissions": [],
+              "contributes": { "previews": [ { "id": "view", "title": "View", "extensions": [".webtest"], "webRoot": "web" } ] } }
+            """);
+        File.WriteAllText(Path.Combine(folder, "main.py"), """
+            import c4k
+
+            @c4k.handler("preview.render")
+            def render(params):
+                return {"kind": "web", "page": "index.html", "state": {"n": 1}}
+
+            c4k.serve()
+            """);
+        await using var plugin = StartFrom(folder);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var entry = new VfsEntry("a.webtest", Path.Combine(_folder, "a.webtest"), VfsEntryKind.File, 0);
+
+        var web = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, HostFor(plugin), null, TestToken));
+
+        Assert.Equal("tests.web-tour", web.PluginId);
+        Assert.Equal("index.html", web.Page);
+        Assert.Equal("{\"n\":1}", web.StateJson);
+        Assert.Equal(Path.Combine(folder, "web"), web.RootFolder);
+    }
+
+    [Fact]
     public async Task New_api_calls_are_gated_by_permissions()
     {
         var host = HostFor(new PluginManifest("acme.none", "None", "1.0.0", "a", "d", []));
