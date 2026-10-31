@@ -28,6 +28,19 @@ internal static class FileSystemListing
     public static FileSystemEnumerable<VfsEntry> Enumerate(string directory) =>
         new(directory, static (ref FileSystemEntry entry) => ToEntry(ref entry), Options);
 
+    /// <summary>
+    /// For tree walks: a directory that cannot be opened (access denied, vanished) calls <paramref name="inaccessible"/>
+    /// and yields nothing, without an exception.
+    /// </summary>
+    public static IEnumerable<VfsEntry> EnumerateForWalk(string directory, Action inaccessible)
+    {
+        using var enumerator = new WalkEnumerator(directory, inaccessible);
+        while (enumerator.MoveNext())
+        {
+            yield return enumerator.Current;
+        }
+    }
+
     public static VfsEntry ToEntry(FileSystemInfo info)
     {
         var isDirectory = (info.Attributes & FileAttributes.Directory) != 0;
@@ -92,6 +105,23 @@ internal static class FileSystemListing
         if ((attributes & FileAttributes.ReparsePoint) != 0) flags |= VfsEntryFlags.ReparsePoint;
         if ((attributes & FileAttributes.Offline) != 0) flags |= VfsEntryFlags.Offline;
         return flags;
+    }
+
+    /// <summary>
+    /// <see cref="ContinueOnError"/> is .NET's hook for skipping a directory it cannot open; it runs from the base
+    /// constructor, so the callback is a field initializer (assigned before the base constructor runs).
+    /// </summary>
+    private sealed class WalkEnumerator(string directory, Action inaccessible) : FileSystemEnumerator<VfsEntry>(directory, Options)
+    {
+        private readonly Action _inaccessible = inaccessible;
+
+        protected override VfsEntry TransformEntry(ref FileSystemEntry entry) => ToEntry(ref entry);
+
+        protected override bool ContinueOnError(int error)
+        {
+            _inaccessible();
+            return true;
+        }
     }
 
     private sealed class WatchSubscription(FileSystemWatcher watcher, Debouncer debouncer) : IDisposable

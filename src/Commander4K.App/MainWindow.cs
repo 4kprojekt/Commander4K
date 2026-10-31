@@ -227,6 +227,13 @@ public sealed class MainWindow : Window, IShell
             p.AddConnectionRequested += sender => _ = ExecuteAsync(CommandIds.AddConnection);
             p.LocationMenuRequested += sender => _ = ShowDriveMenuAsync(sender).AsTask();
             p.AuthenticationRequired += request => _ = LoginAndRetryAsync(request);
+            p.Canvas.ColumnWidthsChanged += () =>
+            {
+                // Both panels share the widths.
+                _left.Canvas.InvalidateVisual();
+                _right.Canvas.InvalidateVisual();
+                _ = host.SaveSettingsAsync();
+            };
         }
 
         _keyBar = BuildKeyBar();
@@ -415,6 +422,10 @@ public sealed class MainWindow : Window, IShell
                 break;
             case "density":
                 _skins!.Refresh();
+                break;
+            case "columnWidths":
+                _left.Canvas.InvalidateVisual();
+                _right.Canvas.InvalidateVisual();
                 break;
             case "showHidden":
                 _ = _left.ActiveTab.RefreshAsync();
@@ -749,6 +760,7 @@ public sealed class MainWindow : Window, IShell
             AskAiAboutFile = AskAiAboutFileAsync,
             CreatePreviewPlugin = CreatePreviewPluginAsync,
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
+            AskFolderTrust = AskFolderTrustAsync,
         };
 
     /// <summary>
@@ -782,6 +794,177 @@ public sealed class MainWindow : Window, IShell
     /// cm_FolderView: writes a c4k.dir for the folder under the cursor (or the current one) from a short choice — a
     /// view, a catalog plugin, an SSH connection with a key, a web page or a script — for its preview, its Enter or both.
     /// </summary>
+    /// <summary>
+    /// cm_AddApiCard: a sample request to an API, a pick of fields from its answer, and a card added to the dashboard of
+    /// the current folder's c4k.dir. An Authorization value goes to the secret store; the file only names it.
+    /// </summary>
+    private async ValueTask AddApiCardAsync(CommandInvocation _)
+    {
+        var folder = _active.ActiveTab.Path;
+        if (VfsPath.GetScheme(folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme) || folder.Contains("://", StringComparison.Ordinal))
+        {
+            Notify(Loc.T("Plik c4k.dir można utworzyć na dysku albo w udziale sieciowym."), isError: true);
+            return;
+        }
+
+        var brushes = _skins!.Current;
+        var url = (await new InputDialog(brushes, Loc.T("Dodaj kartę API"), Loc.T("Adres API (GET):"), "https://").ShowAsync(this))?.Trim();
+        if (!Core.Ai.AiInstallInfo.IsWebUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return;
+        }
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var authorization = (await new InputDialog(brushes, Loc.T("Dodaj kartę API"), Loc.T("Nagłówek Authorization (np. Bearer …; puste = bez):")).ShowAsync(this))?.Trim();
+        var origin = Plugins.BuiltIn.Dashboard.ApiCards.Origin(uri);
+        string? secretName = null;
+        if (!string.IsNullOrEmpty(authorization))
+        {
+            // One secret per origin; a name already bound elsewhere gets a suffix, so another card's token is never replaced.
+            var stem = new string([.. $"{uri.Host}-{uri.Port}".Select(c => char.IsAsciiLetterOrDigit(c) ? c : '-')]);
+            secretName = await Task.Run(() =>
+            {
+                var name = stem;
+                for (var n = 2; _host!.Secrets.Exists(name) && _host.Secrets.Get(name, origin) is null; n++)
+                {
+                    name = $"{stem}-{n}";
+                }
+
+                return name;
+            });
+            headers["Authorization"] = "{secret:" + secretName + "}";
+        }
+
+        var api = _host!.ApiCards;
+        Notify(Loc.T("Pytam {0}…", uri.Host));
+        HttpResponseData? sample;
+        IReadOnlyList<(string Path, string Preview)> fields = [];
+        try
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var sampleHeaders = authorization is null ? new Dictionary<string, string>() : new Dictionary<string, string> { ["Authorization"] = authorization };
+            (sample, fields) = await Task.Run(async () =>
+            {
+                var response = await _host.HostFor(api.Manifest).HttpRequestAsync(new HttpRequestSpec("GET", uri, sampleHeaders), limit.Token);
+                try
+                {
+                    using var document = System.Text.Json.JsonDocument.Parse(response.Body);
+                    return (response, Plugins.BuiltIn.Dashboard.JsonFieldPath.Flatten(document.RootElement));
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    return (response, (IReadOnlyList<(string, string)>)[]);
+                }
+            });
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or InvalidOperationException or ArgumentException)
+        {
+            Notify(Loc.T("Zapytanie nie powiodło się: {0}", ex.Message), isError: true);
+            return;
+        }
+
+        var choice = await new ApiFieldsDialog(brushes, uri.Host, Loc.T("Odpowiedź: HTTP {0}, {1} znaków.", sample.Status, sample.Body.Length), fields).ShowAsync(this);
+        if (choice is null)
+        {
+            return;
+        }
+
+        var tile = new System.Text.Json.Nodes.JsonObject
+        {
+            ["title"] = choice.Title,
+            ["card"] = FolderViewIds.Api,
+            ["api"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["url"] = url,
+                ["headers"] = new System.Text.Json.Nodes.JsonObject([.. headers.Select(h => KeyValuePair.Create(h.Key, (System.Text.Json.Nodes.JsonNode?)h.Value))]),
+                ["fields"] = new System.Text.Json.Nodes.JsonArray([.. choice.Fields.Select(f => (System.Text.Json.Nodes.JsonNode?)new System.Text.Json.Nodes.JsonObject
+                {
+                    ["path"] = f.Path,
+                    ["label"] = f.Label,
+                    ["as"] = f.As.ToString().ToLowerInvariant(),
+                })]),
+            },
+        };
+        if (choice.Refresh is { } refresh)
+        {
+            tile["refresh"] = refresh;
+        }
+
+        var file = FolderConfig.ChildPath(folder, FolderConfig.FileName);
+        var existing = await Task.Run(() => File.Exists(file) ? File.ReadAllText(file) : null);
+        if (existing is not null && FolderConfigWriter.HasComments(existing)
+            && !await new ConfirmDialog(brushes, Loc.T("Zapisać c4k.dir?"), Loc.T("{0} ma komentarze; zapis nowej karty je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
+        {
+            return;
+        }
+
+        var wasTrusted = existing is null || await Task.Run(() => _host.FolderTrust.IsTrusted(FolderConfig.Parse(folder, existing)));
+        string text;
+        try
+        {
+            text = FolderConfigWriter.AppendTile(existing, tile, replacePreview: false);
+        }
+        catch (InvalidOperationException)
+        {
+            if (!await new ConfirmDialog(brushes, Loc.T("Zamienić podgląd na dashboard?"),
+                    Loc.T("{0} pokazuje teraz coś innego. Podgląd stanie się dashboardem z tą kartą; dotychczasowy podgląd zostanie po wejściu do folderu, jeśli nic tam nie ustawiono.", file), Loc.T("Zamień")).ShowAsync(this))
+            {
+                return;
+            }
+
+            text = FolderConfigWriter.AppendTile(existing, tile, replacePreview: true);
+        }
+
+        try
+        {
+            // The folder may be on a share: opening the file must not wait on the UI thread.
+            await Task.Run(() => File.WriteAllTextAsync(file, text));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Notify(ex.Message, isError: true);
+            return;
+        }
+
+        // The token is stored only once the card exists, bound to the origin it was entered for.
+        if (secretName is not null)
+        {
+            await Task.Run(() => _host.Secrets.Set(secretName, authorization!, origin));
+        }
+
+        // The user just wrote this file; trust carries over only from a file that was trusted (or did not exist).
+        if (wasTrusted)
+        {
+            await Task.Run(() => _host.FolderTrust.Trust(FolderConfig.Parse(folder, text)));
+        }
+
+        Notify(Loc.T("Dodano kartę „{0}” do {1}.", choice.Title, file));
+        await _active.ActiveTab.RefreshAsync();
+    }
+
+    /// <summary><c>c4k:secret/&lt;name&gt;</c>: asks for a secret an API card needs and binds it to the origin (scheme, host, port) of that card's request.</summary>
+    private async Task AskSecretAsync(string name, VfsEntry? folder)
+    {
+        var config = folder is { } f ? await Task.Run(() => _host!.ReadFolderConfigAsync(f.Path, CancellationToken.None)) : null;
+        var request = config is null ? null
+            : new[] { config.Enter, config.Preview }.Where(a => a is not null).SelectMany(a => a!.Tiles.Select(t => t.Api).Append(a.Api))
+                .FirstOrDefault(r => r is not null && (Core.Security.SecretStore.NamesIn(r.Url).Contains(name)
+                    || r.Headers.Values.Any(v => Core.Security.SecretStore.NamesIn(v).Contains(name))
+                    || (r.Body is { } body && Core.Security.SecretStore.NamesIn(body).Contains(name))));
+        if (request is null || !Uri.TryCreate(request.Url, UriKind.Absolute, out var uri))
+        {
+            Notify(Loc.T("Nie znaleziono zapytania, które używa sekretu „{0}”.", name), isError: true);
+            return;
+        }
+
+        var value = await new InputDialog(_skins!.Current, Loc.T("Sekret „{0}”", name), Loc.T("Wartość dla {0} (zapisana zaszyfrowana, tylko dla tego serwera):", Plugins.BuiltIn.Dashboard.ApiCards.Origin(uri))).ShowAsync(this);
+        if (!string.IsNullOrEmpty(value))
+        {
+            await Task.Run(() => _host!.Secrets.Set(name, value, Plugins.BuiltIn.Dashboard.ApiCards.Origin(uri)));
+            Notify(Loc.T("Zapisano sekret „{0}”. Odśwież kartę.", name));
+        }
+    }
+
     private async ValueTask ConfigureFolderViewAsync(CommandInvocation _)
     {
         var tab = _active.ActiveTab;
@@ -1010,6 +1193,29 @@ public sealed class MainWindow : Window, IShell
     /// Runs a command from a <c>c4k.dir</c>. The first time (and after every change of the file) the user sees the
     /// exact command and decides; a folder copied from elsewhere cannot run anything on its own. Disks and shares only.
     /// </summary>
+    /// <summary>
+    /// Dashboard cards that sign in (SSH) or may change something (POST…) wait for trust in their c4k.dir. The dialog
+    /// lists everything the trust unlocks, scripts included, because it is given to the whole file content.
+    /// </summary>
+    private async Task<bool> AskFolderTrustAsync(FolderConfig config)
+    {
+        if (VfsPath.GetScheme(config.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
+        {
+            return false;
+        }
+
+        var message = Loc.T("Plik {0} chce:", config.FilePath) + "\n\n" + string.Join("\n", config.TrustSummary().Select(line => "    " + line)) + "\n\n" +
+            Loc.T("Zgoda dotyczy tej treści pliku — gdy c4k.dir się zmieni, zapytam ponownie. Zezwalaj tylko na adresy i serwery, które znasz.");
+        if (!await new ConfirmDialog(_skins!.Current, Loc.T("Zezwolić na ten plik c4k.dir?"), message, Loc.T("Zezwól")).ShowAsync(this))
+        {
+            return false;
+        }
+
+        await Task.Run(() => _host!.FolderTrust.Trust(config));
+        _host!.Audit.Record("c4k.dir", "trust", config.FilePath);
+        return true;
+    }
+
     private async Task RunFolderCommandAsync(FolderConfig config, FolderRun run)
     {
         if (VfsPath.GetScheme(config.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
@@ -1093,18 +1299,42 @@ public sealed class MainWindow : Window, IShell
             {
                 await RunTileCommandAsync(target["c4k:run/".Length..], folder);
             }
+            else if (target.StartsWith(Plugins.BuiltIn.Dashboard.ApiCards.SecretActionPrefix, StringComparison.Ordinal))
+            {
+                await AskSecretAsync(target[Plugins.BuiltIn.Dashboard.ApiCards.SecretActionPrefix.Length..], folder);
+            }
             else if (Core.Ai.AiInstallInfo.IsWebUrl(target))
             {
                 OpenBrowser(target);
             }
+            else if (Uri.TryCreate(target, UriKind.Absolute, out var page) && page.IsFile
+                && Path.GetExtension(page.LocalPath).ToLowerInvariant() is ".htm" or ".html")
+            {
+                // A local page (the HTML preview's "open in browser"): shown in the browser panel, not by Windows.
+                OpenBrowser(page.AbsoluteUri);
+            }
             else if (_host!.Router.TryResolve(target, out _) && !IsForeignUri(target))
             {
+                var entry = await Task.Run(() => _host.Router.GetEntryAsync(target, CancellationToken.None));
+
+                // A folder with its own view, opened from a folder view (a dashboard picked on a dashboard), opens in
+                // place so Back returns to the dashboard it came from.
+                if (listPanel.Mode is PreviewPanelView { IsPinned: true } pinnedView && entry is { IsContainer: true } folderEntry
+                    && VfsPath.GetScheme(folderEntry.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
+                {
+                    var config = await Task.Run(() => _host.ReadFolderConfigAsync(folderEntry.Path, CancellationToken.None));
+                    if (config is { Error: null } && (config.Enter ?? config.Preview) is { IsPlainFiles: false, Kind: FolderActionKind.View } view)
+                    {
+                        await pinnedView.OpenPinnedAsync(new PreviewPanelView.PinnedFolder(folderEntry, config, view));
+                        return;
+                    }
+                }
+
                 if (listPanel.Mode is PreviewPanelView { IsPinned: true })
                 {
                     listPanel.CloseMode();
                 }
 
-                var entry = await Task.Run(() => _host.Router.GetEntryAsync(target, CancellationToken.None));
                 if (entry is null)
                 {
                     Notify(Loc.T("Nie znaleziono {0}.", target), isError: true);
@@ -1739,6 +1969,7 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.Open, Loc.T("Otwórz / wejdź"), OpenCurrent)
          .Register(CommandIds.EnterFolderPlain, Loc.T("Wejdź do folderu jako lista plików (pomija c4k.dir)"), EnterFolderPlain)
          .Register(CommandIds.FolderView, Loc.T("Widok folderu (c4k.dir): galeria, kafelki, wtyczka, SSH, skrypt"), ConfigureFolderViewAsync)
+         .Register(CommandIds.AddApiCard, Loc.T("Dodaj kartę API do dashboardu folderu (wybór pól z odpowiedzi)"), AddApiCardAsync)
          .Register(CommandIds.GoToParent, Loc.T("Katalog wyżej"), () => _active.GoToParent())
          .Register(CommandIds.Refresh, Loc.T("Odśwież"), () => _ = _active.ActiveTab.RefreshAsync())
          .Register(CommandIds.NewTab, Loc.T("Nowa zakładka"), () => _active.AddTab(_active.ActiveTab.Path))

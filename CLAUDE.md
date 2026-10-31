@@ -49,6 +49,12 @@ The sections below (in Polish) are the project specification and implementation 
     - `c4k:install/<id>` and `c4k:plugins` go to the catalog and the plugin manager;
     - `c4k:run/<section>/<n>` re-reads the command from the file and never trusts the link.
   - `run` needs `FolderTrustStore` consent (`config/trusted-folders.json`, file path + SHA-256 of its content). It works on disks and shares only.
+- Dashboard cards (spec `docs/superpowers/specs/2026-10-31-dashboard-cards-design.md`):
+  - A tile with `card` (`FolderTile.Card`, `"auto"` for `true`) is drawn by a preview's small form: `IPreviewCardPlugin.LoadCardAsync` → `PreviewCard` (values, progress, text, thumbnails, `ChartData`, actions; `c4k:refresh`). External previews opt in with `contributes.previews[].card` and answer `preview.card`.
+  - `FolderViews.Dashboard` returns `DashboardPreview` (slots with the old shortcut tile); `Plugins.BuiltIn/Dashboard/CardResolver` maps a tile to a `CardSource` (built-in `FolderCards`, `ApiCards`, `Remote/SshMonitor`, plugins); `App/Preview/DashboardView` runs them with `Core/Dashboard/CardRefreshLoop` (4 at a time, 15 s per read, `refresh` timers only while visible) and draws charts with `ChartControl`.
+  - POST-like `api` cards and `ssh` cards set `CardSource.NeedsTrust`: they stay locked ("Zezwól" → `MainWindow.AskFolderTrustAsync`, `FolderConfig.TrustSummary()`) until the file is trusted. `{secret:name}` comes from `Core/Security/SecretStore` (`config/secrets.json`, DPAPI, bound to a host).
+  - A tile-less `"preview": "dashboard"` shares the `enter` dashboard's tiles. `cm_AddApiCard` writes tiles with `FolderConfigWriter`. Pinned views keep a `ViewHistory` (←, Alt+←, Backspace, breadcrumbs; Esc = files of the folder on screen).
+  - Catalog preview plugins with cards: `json-preview-python`, `openapi-preview-python` (own `yaml_lite.py`), `html-preview-python`.
 - Official plugin catalog (`plugins-catalog/catalog.json`, `Core/Plugins/PluginCatalog`):
   - It is embedded as a fallback and downloaded at start-up from `AppSettings.PluginCatalogUrl` (cached in `data/plugin-catalog.json`).
   - Entries point to a folder relative to `baseUrl` and list every file with the SHA-256 of its text without CR.
@@ -128,6 +134,7 @@ Core implementation notes that span files:
 - `VfsRouter` resolves providers via `VfsPath.GetScheme` (`C:\` → `file`, `\\srv\share` → `smb`, otherwise the `scheme://` prefix), and wraps every provider listing in `ResilientAsyncExecutor.StreamAsync`, so plugin code never needs its own hang protection. `OpenListing` returns a bounded `ChannelReader<VfsEntry>`; the UI consumes it with `ChannelBatching.ReadBatchesAsync` (first batch immediately, then ≤ one per 16 ms).
 - Debugger-friendly background work:
   - Expected failures (cancellation when leaving a folder, access denied, timeouts) must be caught in our code. They must never leave a lambda passed to `Task.Run`, `Task.Factory.StartNew` or a `Parallel.ForEachAsync` body. Otherwise VS Code with "Just My Code" stops on them as user-unhandled.
+  - Under a debugger every thrown exception suspends the whole process, UI thread included. Folder sizes therefore walk through `VfsRouter.EnumerateForWalkAsync` (`IVfsTreeListing`): an unreadable folder is counted, not thrown, via `FileSystemEnumerator.ContinueOnError`. Before that, sizing `C:\Windows` threw ~6 exceptions per locked folder and the UI stuttered at 2% CPU.
   - `ResilientAsyncExecutor` turns synchronous throws into faulted tasks. LAN discovery sources and probes end quietly on cancellation; only the consumer of the listing sees the cancellation.
   - Never call `.AsTask()` on an async iterator's `MoveNextAsync()`: .NET's adapter reads the failed result inside its own code. `StreamAsync` awaits steps in `StepAsync`/`AwaitStepAsync` instead (regression test: `StreamFaultTests`).
   - To see which exception a paused F5 session is on, take a dump with `MiniDumpWriteDump` and run `dotnet-dump analyze` → `clrthreads`, `setthread`, `pe -nested`.

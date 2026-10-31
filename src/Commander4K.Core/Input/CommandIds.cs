@@ -60,6 +60,9 @@ public static class CommandIds
 
     /// <summary>Create or edit the current folder's c4k.dir (how it is previewed and what entering it does).</summary>
     public const string FolderView = "cm_FolderView";
+
+    /// <summary>Asks an API for a sample response, lets the user pick fields and adds an API card to the folder's dashboard.</summary>
+    public const string AddApiCard = "cm_AddApiCard";
     public const string GoToParent = "cm_GoToParent";
     public const string Refresh = "cm_Refresh";
     public const string NewTab = "cm_NewTab";

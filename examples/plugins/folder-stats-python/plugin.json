@@ -21,7 +21,7 @@
       }
     ],
     "previews": [
-      { "id": "csv", "title": "Tabela CSV", "extensions": [".csv"], "priority": 60 }
+      { "id": "csv", "title": "Tabela CSV", "extensions": [".csv"], "priority": 60, "card": true }
     ]
   }
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
@@ -184,6 +185,7 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
     private readonly ClaudeSkinGenerator _generator = new();
     private readonly TextBox _description;
     private readonly TextBlock _status;
+    private readonly WaveDots _busy = new() { IsVisible = false, Margin = new Thickness(0, 8, 8, 0), VerticalAlignment = VerticalAlignment.Top };
     private readonly Button _generate;
     private readonly Button _save;
     private CancellationTokenSource? _running;
@@ -210,7 +212,7 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
             new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Margin(0, 8, 0, 0).Children(
                 _generate,
                 new Button().Content(Loc.T("📋 Kopiuj prompt (Claude.ai / Claude Design)")).OnClick(async _ => await CopyPromptAsync())),
-            _status,
+            new Grid().Cols("Auto,*").Children(_busy, _status.Col(1)),
             new StackPanel()
                 .Orientation(Orientation.Horizontal)
                 .HorizontalAlignment(HorizontalAlignment.Right)
@@ -253,7 +255,8 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
         _generate.IsEnabled = false;
         _save.IsEnabled = false;
         _status.Foreground = Brushes.FileForeground;
-        _status.Text = Loc.T("⏳ Claude projektuje skórkę… (Esc – anuluj)");
+        _busy.Foreground = Brushes.FileForeground;
+        SetStatus(Loc.T("Claude projektuje skórkę… (Esc – anuluj)"), busy: true);
         try
         {
             var result = await _generator.GenerateAsync(description, _running.Token);
@@ -269,18 +272,19 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
             else
             {
                 _status.Foreground = Brushes.Error;
-                _status.Text = "⚠ " + result.Error;
+                SetStatus("⚠ " + result.Error);
             }
         }
         catch (OperationCanceledException)
         {
-            _status.Text = Loc.T("Anulowano.");
+            SetStatus(Loc.T("Anulowano."));
         }
         finally
         {
             _running.Dispose();
             _running = null;
             _generate.IsEnabled = true;
+            _busy.IsVisible = false;
         }
     }
 
@@ -315,5 +319,12 @@ public sealed class AiSkinDialog : DialogWindow<Skin?>
         _running?.Cancel();
         _skins.Preview(_original);
         Complete(null);
+    }
+
+    /// <summary>Status line text; <paramref name="busy"/> shows the wave dots in front of it.</summary>
+    private void SetStatus(string? text, bool busy = false)
+    {
+        _status.Text = text;
+        _busy.IsVisible = busy;
     }
 }

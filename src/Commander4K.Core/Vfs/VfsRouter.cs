@@ -69,6 +69,19 @@ public sealed class VfsRouter
     }
 
     /// <summary>
+    /// Listing for tree walks: providers with <see cref="IVfsTreeListing"/> report unreadable containers through
+    /// <paramref name="inaccessible"/> instead of throwing; the rest behave like <see cref="EnumerateAsync"/>.
+    /// </summary>
+    public IAsyncEnumerable<VfsEntry> EnumerateForWalkAsync(string path, Action inaccessible, CancellationToken cancellationToken)
+    {
+        var provider = Resolve(path);
+        var source = provider is IVfsTreeListing walk
+            ? walk.EnumerateForWalkAsync(path, inaccessible, cancellationToken)
+            : provider.EnumerateAsync(path, cancellationToken);
+        return _executor.StreamAsync(source, cancellationToken, ListingStallTimeout);
+    }
+
+    /// <summary>
     /// Starts streaming a listing into a bounded channel on a background producer. The channel completes with the
     /// provider's exception (if any); cancelling the token detaches the consumer immediately, even if the provider
     /// itself is stuck in a blocking call.

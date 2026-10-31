@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.Core.Plugins;
@@ -133,8 +134,10 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
 }
 
 /// <summary>One <c>contributes.previews</c> entry: quick view rendered by the plugin (<c>preview.render</c>).</summary>
-public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewPlugin
+public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewCardPlugin
 {
+    private const int MaxCardImages = 4;
+
     public string Id => $"{plugin.Manifest.Id}/{preview.Id}";
 
     public string DisplayName => preview.Title;
@@ -181,11 +184,160 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
             return await ParseTilesAsync(result, host, cancellationToken).ConfigureAwait(false);
         }
 
+        if (string.Equals(kind, "chart", StringComparison.OrdinalIgnoreCase) && result.TryGetProperty("chart", out var chart))
+        {
+            return new ChartPreview(CardString(result, "title") ?? entry.Name, ParseChart(chart), CardString(result, "description"));
+        }
+
         var content = result.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty;
         var editable = result.TryGetProperty("editable", out var e) && e.ValueKind == JsonValueKind.True;
         return string.Equals(kind, "markdown", StringComparison.OrdinalIgnoreCase)
             ? new MarkdownPreview(content, editable)
             : new TextPreview(content, editable);
+    }
+
+    /// <summary>
+    /// <c>preview.card</c> with the same parameters as <c>preview.render</c> plus <c>previous</c> (the last card, so a
+    /// refresh can extend a chart). Previews that do not declare <c>"card": true</c> get the plain card: title and Open.
+    /// </summary>
+    public async Task<PreviewCard> LoadCardAsync(PreviewCardRequest request, IPluginHost host, CancellationToken cancellationToken)
+    {
+        if (!preview.Card)
+        {
+            return new PreviewCard(null, null, "🧩", CardStatus.None, [],
+                request.Target is { } target ? [new CardAction(Loc.T("Otwórz"), target.Path)] : []);
+        }
+
+        using var optionsDocument = request.OptionsJson is null ? null : JsonDocument.Parse(request.OptionsJson);
+        var result = await plugin.CallAsync("preview.card", new
+        {
+            preview = preview.Id,
+            entry = request.Target is { } entry ? ExternalPlugin.EntryDto(entry) : null,
+            context = ExternalPlugin.Context(host),
+            options = optionsDocument?.RootElement,
+            previous = request.Previous is { } previous ? CardDto(previous) : null,
+        }, cancellationToken).ConfigureAwait(false);
+        return await ParseCardAsync(result, host, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// <c>{ title?, subtitle?, icon?, status?, items: [{ kind: value|progress|text|chart|thumbnails, … }], actions: [{ label, target }] }</c>.
+    /// Thumbnails are paths read with the plugin's own fs.read; unknown item kinds are skipped.
+    /// </summary>
+    public static async Task<PreviewCard> ParseCardAsync(JsonElement result, IPluginHost host, CancellationToken cancellationToken)
+    {
+        var items = new List<CardItem>();
+        if (result.TryGetProperty("items", out var list) && list.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in list.EnumerateArray())
+            {
+                switch (CardString(item, "kind"))
+                {
+                    case "value":
+                        items.Add(new CardValue(CardString(item, "label") ?? string.Empty, item.TryGetProperty("value", out var v) ? Text(v) : string.Empty, Status(item)));
+                        break;
+                    case "progress":
+                        items.Add(new CardProgress(CardString(item, "label") ?? string.Empty,
+                            item.TryGetProperty("fraction", out var f) && f.TryGetDouble(out var fraction) ? Math.Clamp(fraction, 0, 1) : 0, CardString(item, "text")));
+                        break;
+                    case "text":
+                        items.Add(new CardText(CardString(item, "text") ?? string.Empty));
+                        break;
+                    case "chart" when item.TryGetProperty("chart", out var chart):
+                        items.Add(new CardChart(ParseChart(chart)));
+                        break;
+                    case "thumbnails" when item.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array:
+                        var pictures = new List<ReadOnlyMemory<byte>>();
+                        foreach (var path in images.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.String).Take(MaxCardImages))
+                        {
+                            if (await ReadImageAsync(path.GetString()!, host, cancellationToken).ConfigureAwait(false) is { } picture)
+                            {
+                                pictures.Add(picture);
+                            }
+                        }
+
+                        items.Add(new CardThumbnails(pictures));
+                        break;
+                }
+            }
+        }
+
+        var actions = result.TryGetProperty("actions", out var buttons) && buttons.ValueKind == JsonValueKind.Array
+            ? [.. buttons.EnumerateArray().Select(a => new CardAction(CardString(a, "label") ?? string.Empty, CardString(a, "target") ?? string.Empty)).Where(a => a.Target.Length > 0)]
+            : new List<CardAction>();
+        return new PreviewCard(CardString(result, "title"), CardString(result, "subtitle"), CardString(result, "icon"), Status(result), items, actions);
+    }
+
+    /// <summary><c>{ kind: line|bar, unit?, min?, max?, series: [{ name, points: [{ x, y, label? }] }] }</c>.</summary>
+    public static ChartData ParseChart(JsonElement chart)
+    {
+        static double? Number(JsonElement element, string name) => element.TryGetProperty(name, out var n) && n.TryGetDouble(out var d) ? d : null;
+        var series = chart.TryGetProperty("series", out var s) && s.ValueKind == JsonValueKind.Array
+            ? s.EnumerateArray().Select(one => new ChartSeries(CardString(one, "name") ?? string.Empty,
+                one.TryGetProperty("points", out var p) && p.ValueKind == JsonValueKind.Array
+                    ? [.. p.EnumerateArray().Select(point => new ChartPoint(Number(point, "x") ?? 0, Number(point, "y") ?? 0, CardString(point, "label"))).TakeLast(ChartData.MaxPoints)]
+                    : [])).ToList()
+            : [];
+        return new ChartData(string.Equals(CardString(chart, "kind"), "bar", StringComparison.OrdinalIgnoreCase) ? ChartKind.Bar : ChartKind.Line,
+            series, CardString(chart, "unit"), Number(chart, "min"), Number(chart, "max"));
+    }
+
+    /// <summary>The previous card as the plugin returned it (thumbnails become their count).</summary>
+    private static object CardDto(PreviewCard card) => new
+    {
+        title = card.Title,
+        subtitle = card.Subtitle,
+        icon = card.Icon,
+        status = card.Status.ToString().ToLowerInvariant(),
+        items = card.Items.Select(item => item switch
+        {
+            CardValue v => (object)new { kind = "value", label = v.Label, value = v.Value, status = v.Status.ToString().ToLowerInvariant() },
+            CardProgress p => new { kind = "progress", label = p.Label, fraction = p.Fraction, text = p.Text },
+            CardText t => new { kind = "text", text = t.Text },
+            CardChart c => new
+            {
+                kind = "chart",
+                chart = new
+                {
+                    kind = c.Chart.Kind.ToString().ToLowerInvariant(),
+                    unit = c.Chart.Unit,
+                    min = c.Chart.Min,
+                    max = c.Chart.Max,
+                    series = c.Chart.Series.Select(s => new { name = s.Name, points = s.Points.Select(p => new { x = p.X, y = p.Y, label = p.Label }) }),
+                },
+            },
+            CardThumbnails th => new { kind = "thumbnails", count = th.Images.Count },
+            _ => new { kind = "unknown" },
+        }),
+        actions = card.Actions.Select(a => new { label = a.Label, target = a.Target }),
+    };
+
+    private static CardStatus Status(JsonElement element) => CardString(element, "status")?.ToLowerInvariant() switch
+    {
+        "ok" => CardStatus.Ok,
+        "warning" => CardStatus.Warning,
+        "error" => CardStatus.Error,
+        _ => CardStatus.None,
+    };
+
+    private static string? CardString(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } text ? text : null;
+
+    private static string Text(JsonElement value) => value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : value.GetRawText();
+
+    private static async Task<ReadOnlyMemory<byte>?> ReadImageAsync(string path, IPluginHost host, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var stream = await host.OpenReadAsync(path, cancellationToken).ConfigureAwait(false);
+            var buffer = new byte[MaxTileImageBytes + 1];
+            var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
+            return read <= MaxTileImageBytes ? buffer.AsMemory(0, read) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PluginPermissionException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
     }
 
     private static async Task<TilesPreview> ParseTilesAsync(JsonElement result, IPluginHost host, CancellationToken cancellationToken)

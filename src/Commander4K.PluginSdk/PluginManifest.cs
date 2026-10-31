@@ -58,7 +58,8 @@ public sealed record PanelContribution(
     IReadOnlyList<PanelActionContribution>? Actions = null);
 
 /// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
-public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10);
+/// <param name="Card">The plugin answers <c>preview.card</c>, so dashboards can show this preview as a live card.</param>
+public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, bool Card = false);
 
 public sealed record PaletteActionContribution(string Id, string Title, string? Icon = null, bool ForItem = false);
 

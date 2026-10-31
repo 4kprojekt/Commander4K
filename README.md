@@ -45,10 +45,11 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - It can show a photo gallery, a dashboard of tiles (folders, pages, scripts), the notes view, a README, or a plugin's view (for example the games of a Steam library, with covers).
   - It can open an SFTP server with a key, a web page in the panel browser, or run a script. A script runs only after you have seen the command and trusted that exact file; a changed or copied file asks again.
   - "Widok folderu (c4k.dir)" in the command palette writes the file for you.
+  - Dashboard tiles can be live cards drawn by previews: folder statistics, gallery thumbnails, fields of any HTTP API (with charts that grow on every refresh), an SSH server's CPU, memory and disks, or another dashboard to open. Each card refreshes on its own interval while visible. "Dodaj kartę API" asks an API once and lets you pick the fields. Cards that sign in or change something wait until you trust the file, and API tokens stay encrypted outside it.
 - **Official plugin catalog:** [`plugins-catalog/catalog.json`](plugins-catalog/catalog.json) is downloaded at start-up. Its plugins install from the plugin manager (`Ctrl+I`), or with one click when a `c4k.dir` needs one.
   - Every file is checked against the catalog's SHA-256.
   - A new plugin stays disabled until you approve its permissions.
-  - The first catalog plugin is `official.steam-library`; the catalog will grow.
+  - Official plugins so far: `official.steam-library` (a Steam library as tiles and a table) and `official.git-repo` (a Git repository at a glance: branch and upstream, changes, recent commits, branches, tags, remotes).
 - **Palettes:** button bars docked to the left, the right, the bottom or between the panels. Each palette's position is a setting.
   - Quick actions: any command, panel or plugin command, one click away.
   - Favourite folders (`Ctrl+D` adds the current one) and recently used folders.

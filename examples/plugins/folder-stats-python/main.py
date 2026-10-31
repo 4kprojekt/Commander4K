@@ -109,4 +109,29 @@ def preview(params):
     return {"kind": "markdown", "content": "\n".join(lines), "editable": False}
 
 
+@c4k.handler("preview.card")
+def card(params):
+    """Dashboard card for a .csv file: rows and columns, plus a button that opens it."""
+    import csv
+    import io
+
+    path = params["entry"]["path"]
+    text = c4k.read_text(path, max_bytes=512 * 1024)
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    rows = list(csv.reader(io.StringIO(text), dialect))
+    width = max((len(r) for r in rows), default=0)
+    return {
+        "icon": "📊",
+        "status": "ok" if rows else "warning",
+        "items": [
+            {"kind": "value", "label": "Wiersze", "value": str(max(len(rows) - 1, 0))},
+            {"kind": "value", "label": "Kolumny", "value": str(width)},
+        ],
+        "actions": [{"label": "Otwórz", "target": path}],
+    }
+
+
 c4k.serve()

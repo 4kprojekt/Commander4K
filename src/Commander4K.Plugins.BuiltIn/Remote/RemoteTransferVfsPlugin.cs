@@ -54,6 +54,18 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
         }
     }
 
+    /// <summary>
+    /// How an SFTP session for <paramref name="path"/> would sign in: a password in the path, a saved login, or the
+    /// default <c>~/.ssh</c> keys as the given or Windows user; <c>null</c> when there is nothing to try.
+    /// </summary>
+    public RemoteLogin? LoginFor(string path)
+    {
+        var endpoint = RemoteEndpoint.Parse(path);
+        return endpoint.Password is not null ? new RemoteLogin(endpoint.UserName ?? string.Empty, endpoint.Password)
+            : _logins.GetValueOrDefault(endpoint.SessionKey)
+            ?? (RemoteLogin.DefaultKeyFiles().Count > 0 ? new RemoteLogin(endpoint.UserName ?? Environment.UserName) : null);
+    }
+
     /// <summary>The session key of a path (user, host and port), or the realm itself when it already is one.</summary>
     public static string RealmFor(string realmOrPath)
     {

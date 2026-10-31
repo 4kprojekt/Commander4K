@@ -149,6 +149,12 @@ public sealed class AppSettings
     /// <summary>Plugin columns shown in the file lists, as <c>pluginId/columnId</c>, in display order.</summary>
     public List<string> Columns { get; set; } = [];
 
+    /// <summary>
+    /// Column key (<c>size</c>, <c>date</c> or <c>pluginId/columnId</c>) → width dragged in the list header, at the
+    /// 13 px font size; missing = the default width. The name column takes the rest.
+    /// </summary>
+    public Dictionary<string, double> ColumnWidths { get; set => field = value ?? new(StringComparer.OrdinalIgnoreCase); } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Docked palettes (quick actions, favourites, views, plugin palettes) are visible; off by default (Ctrl+B).</summary>
     public bool ShowPalettes { get; set; }
 

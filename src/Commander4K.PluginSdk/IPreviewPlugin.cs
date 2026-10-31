@@ -32,6 +32,9 @@ public sealed record PreviewTile(string Title, string? Subtitle = null, string? 
 /// <param name="TileWidth">Tile width in pixels (images keep their aspect ratio).</param>
 public sealed record TilesPreview(string Title, IReadOnlyList<PreviewTile> Tiles, string? Description = null, double TileWidth = 200) : PreviewContent;
 
+/// <summary>A chart as the whole preview.</summary>
+public sealed record ChartPreview(string Title, ChartData Chart, string? Description = null) : PreviewContent;
+
 /// <summary>Plain message (nothing to preview, access denied...).</summary>
 public sealed record MessagePreview(string Message) : PreviewContent;
 
