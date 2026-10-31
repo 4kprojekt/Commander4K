@@ -1052,5 +1052,17 @@
   "🖼 Galeria": "🖼 Gallery",
   "🗒 Notatki": "🗒 Notes",
   "Zainstalować wtyczkę od klienta MCP?": "Install the plugin from the MCP client?",
-  "Klient MCP „{0}” prosi o włączenie wtyczki {1}.": "The MCP client \"{0}\" asks to enable the plugin {1}."
+  "Klient MCP „{0}” prosi o włączenie wtyczki {1}.": "The MCP client \"{0}\" asks to enable the plugin {1}.",
+  "MCP (AI z zewnątrz)": "MCP (external AI)",
+  "Serwer MCP dla Claude Code": "MCP server for Claude Code",
+  "Udostępnia aplikację przez Model Context Protocol na lokalnym porcie (tylko 127.0.0.1, z tokenem), żeby Claude Code mógł przeglądać pliki, pisać wtyczki i sterować panelami. Dostęp ogranicza lista folderów poniżej, a każde narzędzie ma własny tryb: zezwalaj, pytaj albo zablokuj.": "Exposes the app through the Model Context Protocol on a local port (127.0.0.1 only, with a token) so Claude Code can browse files, write plugins and drive the panels. Access is limited by the folder list below, and every tool has its own mode: allow, ask or block.",
+  "Port serwera MCP": "MCP server port",
+  "Port na 127.0.0.1 (1024–65535). Po zmianie podłącz Claude Code ponownie.": "Port on 127.0.0.1 (1024–65535). After changing it, reconnect Claude Code.",
+  "Foldery dostępne dla MCP": "Folders available to MCP",
+  "Foldery (dowolna ścieżka: dysk, udział sieciowy, sftp://…), do których AI może zaglądać i w których może pisać; kilka oddziel średnikiem. Pusta lista: żaden.": "Folders (any path: disk, network share, sftp://…) the AI may look into and write to; separate several with a semicolon. Empty list: none.",
+  "Narzędzie MCP „{0}”": "MCP tool \"{0}\"",
+  "Co robi AI z Claude Code, gdy użyje tego narzędzia: zezwalaj, pytaj albo zablokuj. {0}": "What happens when the AI in Claude Code uses this tool: allow, ask or block. {0}",
+  "Zezwalaj": "Allow",
+  "Pytaj": "Ask",
+  "Zablokuj": "Block"
 }

@@ -562,4 +562,29 @@ public sealed class McpPolicyTests
         public Task<McpToolResult> CallAsync(string name, JsonObject arguments, string client = Client) =>
             Dispatcher.CallAsync(name, new McpCall(client, arguments), TestContext.Current.CancellationToken);
     }
+
+    [Fact]
+    public void Mcp_settings_are_searchable()
+    {
+        var catalog = SettingsCatalog.Create(() => []);
+        Assert.Contains(SettingsCatalog.Search(catalog, "claude code"), d => d.Key == "mcp.enabled");
+        Assert.Contains(SettingsCatalog.Search(catalog, "port mcp"), d => d.Key == "mcp.port");
+    }
+
+    [Fact]
+    public void Mcp_port_and_roots_settings_parse_input()
+    {
+        var catalog = SettingsCatalog.Create(() => []);
+        var settings = new AppSettings();
+        var port = catalog.Single(d => d.Key == "mcp.port");
+        var roots = catalog.Single(d => d.Key == "mcp.roots");
+        port.Set(settings, "50000");
+        Assert.Equal(50000, settings.Mcp.Port);
+        port.Set(settings, "80");
+        port.Set(settings, "abc");
+        Assert.Equal(50000, settings.Mcp.Port);
+        roots.Set(settings, @" C:\A ; ;D:\B;C:\A ");
+        Assert.Equal([@"C:\A", @"D:\B"], settings.Mcp.AllowedRoots);
+        Assert.Equal(@"C:\A;D:\B", roots.Get(settings));
+    }
 }

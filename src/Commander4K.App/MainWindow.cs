@@ -8,6 +8,8 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Commander4K.App.Ai;
+using Commander4K.App.Mcp;
+using Commander4K.Core.Mcp;
 using Commander4K.App.Browser;
 using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
@@ -431,6 +433,7 @@ public sealed class MainWindow : Window, IShell
     }
 
     private const string PaletteSettingPrefix = "palette:";
+    private const string McpSettingPrefix = "mcp:";
 
     private IEnumerable<IPalettePlugin> AllPalettes => [.. _builtInPalettes, .. _host!.ExternalPalettes];
 
@@ -498,7 +501,7 @@ public sealed class MainWindow : Window, IShell
             },
             ["kolumna", "kolumny", "wdx", column.Definition.Header, column.Plugin.DisplayName]));
 
-        _host.ExtraSettings = [.. columnSettings, .. AllPalettes.Select(p => new SettingDescriptor(
+        _host.ExtraSettings = [.. columnSettings, .. McpToolSettings(), .. AllPalettes.Select(p => new SettingDescriptor(
             PaletteSettingPrefix + p.Id,
             SettingsCatalog.Palettes,
             Loc.T("Paleta „{0}”", p.Title),
@@ -511,6 +514,32 @@ public sealed class MainWindow : Window, IShell
             [Loc.T("paleta"), "pasek", Loc.T("położenie"), "dokowanie", "przyciski", p.Title])
         { Choices = () => DockChoices })];
     }
+
+    /// <summary>
+    /// Every MCP tool the app offers (file, plugin and window tools). Definitions only; handlers are never called here,
+    /// so this works without a running server.
+    /// </summary>
+    internal IReadOnlyList<McpToolDefinition> McpToolDefinitions() =>
+    [
+        .. McpFileTools.Create(_host!.Router).Select(t => t.Definition),
+        .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit).Select(t => t.Definition),
+        .. McpAppTools.Create(this, _host, AiContext, () => _host.Settings.Mcp.AllowedRoots).Select(t => t.Definition),
+    ];
+
+    private IEnumerable<SettingDescriptor> McpToolSettings() => McpToolDefinitions().Select(tool => new SettingDescriptor(
+        McpSettingPrefix + tool.Name,
+        SettingsCatalog.Mcp,
+        Loc.T("Narzędzie MCP „{0}”", tool.Name),
+        Loc.T("Co robi AI z Claude Code, gdy użyje tego narzędzia: zezwalaj, pytaj albo zablokuj. {0}", tool.Description),
+        SettingKind.Choice,
+        s => s.Mcp.ToolModes.TryGetValue(tool.Name, out var mode) ? mode : tool.DefaultMode.ToString().ToLowerInvariant(),
+        (s, v) => s.Mcp.ToolModes[tool.Name] = (string)v!,
+        ["mcp", "claude", "claude code", "ai", tool.Name])
+    {
+        Choices = () => tool.AlwaysAsk
+            ? [new("ask", Loc.T("Pytaj")), new("block", Loc.T("Zablokuj"))]
+            : [new("allow", Loc.T("Zezwalaj")), new("ask", Loc.T("Pytaj")), new("block", Loc.T("Zablokuj"))],
+    });
 
     /// <summary>Recreates every palette view in its dock (after a dock change, skin-independent plugin reloads, Ctrl+B).</summary>
     private void RebuildPalettes()
@@ -1280,15 +1309,13 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
-        await UseClaudeCodeAsync(request + PluginMcpHint);
+        await UseClaudeCodeAsync(request + McpPrompts.PluginHint);
     }
 
     /// <summary>What the AI chat is told about the app.</summary>
     internal AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
 
     private AiAppContext? _aiContext;
-
-    private const string PluginMcpHint = "\n\nUse the commander4k MCP tools (get_plugin_guide, check_plugin, install_plugin) to write and install it.";
 
     private Task OpenPluginManagerAsync() => ExecuteAsync(CommandIds.PanelPrefix + PluginManagerPanel.PluginId);
 
@@ -1306,7 +1333,7 @@ public sealed class MainWindow : Window, IShell
             Loc.T("Co ma robić wtyczka? (prośba trafi do Claude Code)")).ShowAsync(this);
         if (!string.IsNullOrWhiteSpace(wish))
         {
-            await UseClaudeCodeAsync(wish + PluginMcpHint);
+            await UseClaudeCodeAsync(wish + McpPrompts.PluginHint);
         }
     }
 
