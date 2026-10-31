@@ -48,6 +48,8 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
 {
     private const int MaxHttpBytes = 5 * 1024 * 1024;
 
+    private readonly ReadGrants _grants = new();
+
     public PluginManifest Manifest { get; } = manifest;
 
     public string? ActivePath => ui.ActivePath;
@@ -103,6 +105,17 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
     {
         audit.Record(Manifest.Id, "ui.copy", Loc.T("{0} znaków", text.Length), AuditOutcome.Info);
         return ui.CopyTextAsync(text);
+    }
+
+    /// <summary>
+    /// Lets the plugin read exactly these files (and folder subtrees) without <c>fs.read</c> until the result is
+    /// disposed. Not part of the protocol: the app grants it around a call that hands the plugin the user's files.
+    /// </summary>
+    public IDisposable GrantRead(IReadOnlyList<TransferItem> items)
+    {
+        var grant = _grants.Grant(items);
+        audit.Record(Manifest.Id, "fs.grant", $"{items.Count} paths", AuditOutcome.Info);
+        return new GrantScope(grant, () => audit.Record(Manifest.Id, "fs.grant.end", string.Empty, AuditOutcome.Info));
     }
 
     public Task<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken = default) =>
@@ -261,8 +274,15 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
     {
         if (!Manifest.Allows(permission))
         {
-            audit.Record(Manifest.Id, operation, detail, AuditOutcome.Denied);
-            throw new PluginPermissionException(Manifest.Id, permission);
+            if (permission == PluginPermissions.FileRead && _grants.Covers(detail))
+            {
+                detail += " (granted)";
+            }
+            else
+            {
+                audit.Record(Manifest.Id, operation, detail, AuditOutcome.Denied);
+                throw new PluginPermissionException(Manifest.Id, permission);
+            }
         }
 
         try
@@ -275,6 +295,20 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
         {
             audit.Record(Manifest.Id, operation, $"{detail} → {ex.GetType().Name}: {ex.Message}", AuditOutcome.Failed);
             throw;
+        }
+    }
+
+    private sealed class GrantScope(IDisposable grant, Action ended) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                grant.Dispose();
+                ended();
+            }
         }
     }
 
