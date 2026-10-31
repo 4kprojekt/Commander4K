@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Commander4K.Core.Plugins;
 using Microsoft.Extensions.Time.Testing;
 
@@ -5,27 +6,35 @@ namespace Commander4K.Core.Tests;
 
 public sealed class BackgroundTickLoopTests
 {
-    private static async Task SettleAsync()
+    /// <summary>
+    /// Waits for the loop's own signal that it is parked on a fake-clock timer (<see cref="BackgroundTickLoop.IsIdle"/>),
+    /// so the clock never moves while the loop is between reading the time and setting its next timer. No timing
+    /// assumption: the loop is checked, not given a head start.
+    /// </summary>
+    private static async Task SettleAsync(BackgroundTickLoop loop)
     {
-        for (var i = 0; i < 4; i++)
+        var limit = Stopwatch.StartNew();
+        while (!loop.IsIdle)
         {
-            await Task.Run(() => Thread.Sleep(2));
+            Assert.True(limit.Elapsed < TimeSpan.FromSeconds(30), "the loop never parked on a timer");
+            await Task.Yield();
+            await Task.Delay(1);
         }
     }
 
-    private static async Task AdvanceAsync(FakeTimeProvider time, TimeSpan by)
+    private static async Task AdvanceAsync(BackgroundTickLoop loop, FakeTimeProvider time, TimeSpan by)
     {
-        // Step in small slices so every timer the loop sets is registered before time moves on.
+        // Step in slices of at most a second, each from a parked loop.
         var left = by;
         while (left > TimeSpan.Zero)
         {
             var step = left > TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : left;
-            await SettleAsync();
+            await SettleAsync(loop);
             time.Advance(step);
             left -= step;
         }
 
-        await SettleAsync();
+        await SettleAsync(loop);
     }
 
     private static (Task Run, CancellationTokenSource Stop) Start(BackgroundTickLoop loop)
@@ -48,7 +57,7 @@ public sealed class BackgroundTickLoopTests
             return Task.FromResult(answers.Count > 0 && answers.Dequeue());
         });
         var (run, stop) = Start(loop);
-        await AdvanceAsync(time, TimeSpan.FromSeconds(63));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(63));
         await stop.CancelAsync();
         await run;
         Assert.Equal([0d, 2d, 62d], stamps);
@@ -67,7 +76,7 @@ public sealed class BackgroundTickLoopTests
             return Task.FromResult(false);
         });
         var (run, stop) = Start(loop);
-        await AdvanceAsync(time, TimeSpan.FromSeconds(61));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(61));
         await stop.CancelAsync();
         await run;
         Assert.Equal([0d, 60d], stamps);
@@ -86,9 +95,9 @@ public sealed class BackgroundTickLoopTests
             return await release.Task;
         });
         var (run, stop) = Start(loop);
-        await AdvanceAsync(time, TimeSpan.FromSeconds(59));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(59));
         loop.Wake("p");
-        await AdvanceAsync(time, TimeSpan.FromSeconds(0.5));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(0.5));
         Assert.Equal(1, count);
         release.SetResult(false);
         await stop.CancelAsync();
@@ -109,9 +118,9 @@ public sealed class BackgroundTickLoopTests
             return stamps.Count == 1 ? never.Task : Task.FromResult(false);
         });
         var (run, stop) = Start(loop);
-        await AdvanceAsync(time, TimeSpan.FromSeconds(125));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(125));
         never.SetException(new IOException("late failure"));
-        await SettleAsync();
+        await SettleAsync(loop);
         Assert.False(run.IsFaulted);
         await stop.CancelAsync();
         await run;
@@ -131,10 +140,10 @@ public sealed class BackgroundTickLoopTests
             return Task.FromResult(false);
         });
         var (run, stop) = Start(loop);
-        await AdvanceAsync(time, TimeSpan.FromMinutes(3));
+        await AdvanceAsync(loop, time, TimeSpan.FromMinutes(3));
         Assert.Equal(0, count);
         enabled = true;
-        await AdvanceAsync(time, TimeSpan.FromSeconds(3));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(3));
         Assert.Equal(1, count);
         await stop.CancelAsync();
         await run;
@@ -152,10 +161,10 @@ public sealed class BackgroundTickLoopTests
             return Task.FromResult(false);
         });
         var (run, stop) = Start(loop);
-        await AdvanceAsync(time, TimeSpan.FromSeconds(2));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(2));
         Assert.Equal(1, count);
         loop.Wake("p");
-        await AdvanceAsync(time, TimeSpan.FromSeconds(2));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(2));
         Assert.Equal(2, count);
         await stop.CancelAsync();
         await run;
@@ -175,7 +184,7 @@ public sealed class BackgroundTickLoopTests
             return Task.FromResult(false);
         });
         var (run, stop) = Start(loop);
-        await AdvanceAsync(time, TimeSpan.FromSeconds(7));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(7));
         await stop.CancelAsync();
         await run;
         Assert.True(stamps.Count >= 2);
@@ -197,11 +206,11 @@ public sealed class BackgroundTickLoopTests
             return Task.FromResult(false);
         });
         var (run, stop) = Start(loop);
-        await AdvanceAsync(time, TimeSpan.FromSeconds(59));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(59));
         Assert.Equal(1, count);
         time.Advance(TimeSpan.FromSeconds(1));
         loop.Wake("p");
-        await AdvanceAsync(time, TimeSpan.FromSeconds(1.5));
+        await AdvanceAsync(loop, time, TimeSpan.FromSeconds(1.5));
         Assert.Equal(2, count);
         await stop.CancelAsync();
         await run;

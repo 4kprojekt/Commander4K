@@ -48,6 +48,26 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
         }
     }
 
+    /// <summary>
+    /// Tests: true while every plugin's loop is parked on a timer of <c>time</c> that has not fired yet (interval, the
+    /// "disabled" poll or a running tick's timeout), with no wake request pending. Advancing a fake clock is then safe:
+    /// nothing is about to read the time.
+    /// </summary>
+    internal bool IsIdle
+    {
+        get
+        {
+            Entry[] entries;
+            lock (_gate)
+            {
+                entries = [.. _entries];
+            }
+
+            var now = time.GetUtcNow();
+            return entries.All(e => e.IsParked(now));
+        }
+    }
+
     /// <summary>The loop. Ends quietly when <paramref name="stop"/> is cancelled.</summary>
     public async Task RunAsync(CancellationToken stop)
     {
@@ -96,7 +116,17 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
                 entry.TakeWake();
                 if (!enabled())
                 {
-                    await Task.Delay(DisabledPoll, time, stop).ConfigureAwait(false);
+                    var poll = Task.Delay(DisabledPoll, time, stop);
+                    entry.Park(time.GetUtcNow() + DisabledPoll, interruptible: false);
+                    try
+                    {
+                        await poll.ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        entry.Unpark();
+                    }
+
                     continue;
                 }
 
@@ -113,8 +143,9 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
 
     private async Task<bool> TickOnceAsync(Entry entry, CancellationToken stop)
     {
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        limit.CancelAfter(TickTimeout);
+        // The tick's own timeout runs on the loop's clock, like the wait below.
+        using var timeout = new CancellationTokenSource(TickTimeout, time);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(stop, timeout.Token);
         Task<bool> task;
         try
         {
@@ -130,7 +161,20 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
         _ = task.ContinueWith(static t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         try
         {
-            return await task.WaitAsync(TickTimeout, time, stop).ConfigureAwait(false);
+            var waiting = task.WaitAsync(TickTimeout, time, stop);
+            if (!waiting.IsCompleted)
+            {
+                entry.Park(time.GetUtcNow() + TickTimeout, interruptible: false);
+            }
+
+            try
+            {
+                return await waiting.ConfigureAwait(false);
+            }
+            finally
+            {
+                entry.Unpark();
+            }
         }
         catch (TimeoutException)
         {
@@ -173,6 +217,8 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
 
         public void Wake()
         {
+            // Set before the release: a waiter already parked gets the count directly, so CurrentCount stays 0.
+            Volatile.Write(ref _wakeRequested, 1);
             try
             {
                 _wake.Release();
@@ -182,7 +228,30 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
             }
         }
 
-        public bool TakeWake() => _wake.Wait(0);
+        public bool TakeWake()
+        {
+            Volatile.Write(ref _wakeRequested, 0);
+            return _wake.Wait(0);
+        }
+
+        private long _parkedUntil;
+        private int _interruptible;
+        private int _wakeRequested;
+
+        /// <summary>Called after the timer that ends the wait exists, so a test clock cannot move past it unseen.</summary>
+        public void Park(DateTimeOffset until, bool interruptible)
+        {
+            Volatile.Write(ref _interruptible, interruptible ? 1 : 0);
+            Volatile.Write(ref _parkedUntil, until.UtcTicks);
+        }
+
+        public void Unpark() => Volatile.Write(ref _parkedUntil, 0);
+
+        public bool IsParked(DateTimeOffset now)
+        {
+            var until = Volatile.Read(ref _parkedUntil);
+            return until != 0 && until > now.UtcTicks && !(Volatile.Read(ref _interruptible) == 1 && Volatile.Read(ref _wakeRequested) == 1);
+        }
 
         /// <summary>Waits for the delay or a wake request; true when a wake request ended the wait (and was consumed).</summary>
         public async Task<bool> WaitAsync(TimeSpan delay, TimeProvider time, CancellationToken stop)
@@ -190,7 +259,16 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
             using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
             var timer = Task.Delay(delay, time, cancel.Token);
             var woken = _wake.WaitAsync(cancel.Token);
-            await Task.WhenAny(timer, woken).ConfigureAwait(false);
+            Park(time.GetUtcNow() + delay, interruptible: true);
+            try
+            {
+                await Task.WhenAny(timer, woken).ConfigureAwait(false);
+            }
+            finally
+            {
+                Unpark();
+            }
+
             await cancel.CancelAsync().ConfigureAwait(false);
             try
             {
@@ -201,6 +279,11 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
             }
 
             stop.ThrowIfCancellationRequested();
+            if (woken.IsCompletedSuccessfully)
+            {
+                Volatile.Write(ref _wakeRequested, 0);
+            }
+
             return woken.IsCompletedSuccessfully;
         }
     }

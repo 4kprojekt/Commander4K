@@ -348,7 +348,7 @@
         },
         {
           "path": "main.ps1",
-          "sha256": "d3ccf6e2bb93b32dc12bd6215f99b6fd7cc468e645e9088f1ea39aa2a4e563bf"
+          "sha256": "52c64bf9ec1b5faeaafef66103ef4211b12fb1dbe1322acda33823779357e076"
         },
         {
           "path": "plugin.json",
@@ -356,7 +356,7 @@
         },
         {
           "path": "sync.ps1",
-          "sha256": "a4149877e13d366312e6a1e19bc10505a141bbc98eda239f79f3ebc248d680f7"
+          "sha256": "2220ab7667020b5c6cd563233e41e1a95906bccbb29aa2ea75d7d07f97a62dea"
         }
       ]
     }

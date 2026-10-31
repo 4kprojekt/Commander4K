@@ -14,6 +14,7 @@
 $script:MailMaxFetches = 50
 $script:MailMaxSeconds = 15
 $script:MailLockMinutes = 10
+$script:MailMaxStateBytes = 16777216
 $script:MailUnread = [string][char]0x25CF + ' '
 $script:MailCheckRequested = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $script:MailUidPattern = '\[uid (\d+)\]\.eml$'
@@ -130,6 +131,7 @@ function Request-MailCheck([string] $Path) {
 
 # ---- state.json and lock ----
 
+
 function New-MailState {
     @{
         folders = @{}
@@ -140,22 +142,43 @@ function New-MailState {
         progress = $null
         flagged = [System.Collections.Generic.List[string]]::new()
         drafts = @{}
+        retired = [System.Collections.Generic.List[string]]::new()
     }
 }
 
 function Get-MailStatePath([string] $Folder) { Join-MailPath (Join-MailPath $Folder '.mail') 'state.json' }
 
+# The account's state. A missing state.json is a new account; one that exists but cannot be read or parsed gives
+# $null: the caller skips the account and never writes over the file (it holds known UIDs, drafts and authRequired).
 function Read-MailState([string] $Folder) {
+    $path = Get-MailStatePath $Folder
+    try {
+        $item = Get-C4KItem $path
+        if ($null -eq $item) { return New-MailState }
+        if ([long] $item.size -gt $script:MailMaxStateBytes) { throw "larger than $($script:MailMaxStateBytes) bytes" }
+        $stored = (Get-C4KText $path $script:MailMaxStateBytes) | ConvertFrom-Json -AsHashtable
+        if ($stored -isnot [hashtable]) { throw 'not a JSON object' }
+    }
+    catch {
+        Write-C4KLog "mail state $path cannot be read, account skipped: $_"
+        return $null
+    }
+
     $state = New-MailState
-    $stored = Read-MailJson (Get-MailStatePath $Folder)
-    if ($stored -isnot [hashtable]) { return $state }
     $state.lastCheck = Format-MailInstant $stored['lastCheck']
     $state.lastSuccess = Format-MailInstant $stored['lastSuccess']
     $state.error = $stored['error']
     $state.authRequired = [bool] $stored['authRequired']
     $state.progress = $stored['progress']
     foreach ($item in @($stored['flagged'])) { if ($item) { $state.flagged.Add([string] $item) } }
-    if ($stored['drafts'] -is [hashtable]) { $state.drafts = $stored['drafts'] }
+    foreach ($item in @($stored['retired'])) { if ($item) { $state.retired.Add([string] $item) } }
+    if ($stored['drafts'] -is [hashtable]) {
+        foreach ($name in $stored['drafts'].Keys) {
+            $draft = $stored['drafts'][$name]
+            # Older states stored the server uid only.
+            $state.drafts[$name] = if ($draft -is [hashtable]) { @{ uid = [long] $draft['uid']; modified = Format-MailInstant $draft['modified'] } } else { @{ uid = [long] $draft; modified = $null } }
+        }
+    }
     if ($stored['folders'] -is [hashtable]) {
         foreach ($server in $stored['folders'].Keys) {
             $entry = $stored['folders'][$server]
@@ -169,6 +192,7 @@ function Read-MailState([string] $Folder) {
                 lastUid = [long] $entry['lastUid']
                 modSeq = [long] $entry['modSeq']
                 known = $known
+                backfill = [bool] $entry['backfill']
             }
         }
     }
@@ -176,15 +200,24 @@ function Read-MailState([string] $Folder) {
 }
 
 function Save-MailState([string] $Folder, [hashtable] $State) {
-    Set-C4KText (Get-MailStatePath $Folder) ($State | ConvertTo-Json -Depth 10)
+    Set-C4KText (Get-MailStatePath $Folder) ($State | ConvertTo-Json -Depth 10 -Compress)
+}
+
+function Get-MailLock([string] $Folder) {
+    $lock = Read-MailJson (Join-MailPath (Join-MailPath $Folder '.mail') 'lock')
+    if ($lock -is [hashtable] -and $lock['machine']) { $lock } else { $null }
 }
 
 function Test-MailLockedElsewhere([string] $Folder) {
-    $lock = Read-MailJson (Join-MailPath (Join-MailPath $Folder '.mail') 'lock')
-    if ($lock -isnot [hashtable] -or -not $lock['machine']) { return $false }
-    if ([string] $lock['machine'] -ieq $env:COMPUTERNAME) { return $false }
+    $lock = Get-MailLock $Folder
+    if ($null -eq $lock -or [string] $lock['machine'] -ieq $env:COMPUTERNAME) { return $false }
     $last = Get-MailInstant $lock['lastTick']
     $null -ne $last -and ((Get-MailNow) - $last).TotalMinutes -lt $script:MailLockMinutes
+}
+
+function Test-MailLockOwned([string] $Folder) {
+    $lock = Get-MailLock $Folder
+    $null -ne $lock -and [string] $lock['machine'] -ieq $env:COMPUTERNAME
 }
 
 function Write-MailLock([string] $Folder) {
@@ -213,7 +246,7 @@ function Test-MailDue([string] $Folder, [hashtable] $Options, [hashtable] $State
     $null -ne $refresh -and ((Get-MailNow) - $last) -ge $refresh
 }
 
-# ---- folders ----
+# ---- folders and files ----
 
 function Get-MailUniqueLocal([string] $Name, [System.Collections.Generic.HashSet[string]] $Used) {
     $candidate = $Name
@@ -223,7 +256,9 @@ function Get-MailUniqueLocal([string] $Name, [System.Collections.Generic.HashSet
 }
 
 # Server folders -> local folders in state.folders. Known folders keep their local name; new ones get a free name
-# ("Wysłane", then "Wysłane (2)"); a folder renamed on the server (same UIDVALIDITY) moves its local folder.
+# ("Wysłane", then "Wysłane (2)"); a folder renamed on the server (one vanished folder with the same UIDVALIDITY)
+# moves its local folder. A folder that is gone from the server is forgotten, but its local name stays reserved in
+# state.retired: its files are never adopted by a later folder (whose "removed" would delete them).
 function Update-MailFolderMap([string] $Folder, [hashtable] $State, [object[]] $Folders) {
     $map = $State.folders
     $present = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -232,7 +267,8 @@ function Update-MailFolderMap([string] $Folder, [hashtable] $State, [object[]] $
     foreach ($server in @($map.Keys)) { if (-not $present.Contains($server)) { $vanished.Add($server) } }
     $used = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     [void] $used.Add('.mail')
-    foreach ($server in @($map.Keys)) { if ($present.Contains($server)) { [void] $used.Add($map[$server].local) } }
+    foreach ($name in $State.retired) { [void] $used.Add($name) }
+    foreach ($server in @($map.Keys)) { [void] $used.Add($map[$server].local) }
 
     foreach ($info in $Folders) {
         $server = [string] $info.serverName
@@ -240,12 +276,14 @@ function Update-MailFolderMap([string] $Folder, [hashtable] $State, [object[]] $
         $validity = [long] $info.uidValidity
         $renamed = @($vanished | Where-Object { $validity -ne 0 -and $map[$_].uidValidity -eq $validity })
         $sameValidity = @($Folders | Where-Object { [long] $_.uidValidity -eq $validity -and -not $map.ContainsKey([string] $_.serverName) })
-        $local = Get-MailUniqueLocal ([string] $info.localName) $used
         if ($renamed.Count -eq 1 -and $sameValidity.Count -eq 1) {
             $entry = $map[$renamed[0]]
-            $from = Join-MailPath $Folder $entry.local
-            if ($entry.local -ne $local -and $null -ne (Get-C4KItem $from) -and $null -eq (Get-C4KItem (Join-MailPath $Folder $local))) {
-                Move-C4KItem $from (Join-MailPath $Folder $local)
+            [void] $used.Remove($entry.local)
+            $local = Get-MailUniqueLocal ([string] $info.localName) $used
+            if ($entry.local -ne $local) {
+                $from = Join-MailPath $Folder $entry.local
+                if ($null -ne (Get-C4KItem $from) -and $null -eq (Get-C4KItem (Join-MailPath $Folder $local))) { Move-C4KItem $from (Join-MailPath $Folder $local) }
+                else { [void] $used.Remove($local); $local = $entry.local; [void] $used.Add($local) }
             }
             $entry.local = $local
             $map.Remove($renamed[0])
@@ -256,82 +294,131 @@ function Update-MailFolderMap([string] $Folder, [hashtable] $State, [object[]] $
             }
         }
         else {
-            $entry = @{ local = $local; uidValidity = 0; lastUid = 0; modSeq = 0; known = [System.Collections.Generic.List[long]]::new() }
+            $local = Get-MailUniqueLocal ([string] $info.localName) $used
+            $entry = @{ local = $local; uidValidity = 0; lastUid = 0; modSeq = 0; known = [System.Collections.Generic.List[long]]::new(); backfill = $true }
         }
         $entry.special = [string] $info.special
         $map[$server] = $entry
     }
 
-    # Gone from the server: forget the mapping, keep the files.
-    foreach ($server in $vanished) { $map.Remove($server) }
+    foreach ($server in $vanished) {
+        if (-not $State.retired.Contains($map[$server].local)) { $State.retired.Add($map[$server].local) }
+        $map.Remove($server)
+    }
     foreach ($server in $map.Keys) { New-C4KDirectory (Join-MailPath $Folder $map[$server].local) }
 }
 
-# uid -> file name of the synced messages in a local folder ("[uid N].eml" at the end; "[stary]" files are not ours).
+# The synced messages of a local folder ("[uid N].eml" at the end; "[stary]" files are not ours). Listing errors
+# propagate, so a folder that cannot be listed is skipped for this tick instead of looking empty.
+# Returns @{ files = uid -> name; dupes = uid -> all names when one uid has several files }; names in ordinal order.
 function Get-MailLocalFiles([string] $Dir) {
     $files = @{}
-    $entries = try { @(Get-C4KChildItem $Dir) } catch { @() }
-    foreach ($entry in $entries) {
-        if ($entry.kind -eq 'file' -and $entry.name -match $script:MailUidPattern) { $files[[long] $Matches[1]] = [string] $entry.name }
+    $dupes = @{}
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in @(Get-C4KChildItem $Dir)) {
+        if ($entry.kind -eq 'file' -and $entry.name -match $script:MailUidPattern) { $names.Add([string] $entry.name) }
     }
-    $files
+    $names.Sort([StringComparer]::Ordinal)
+    foreach ($name in $names) {
+        [void] ($name -match $script:MailUidPattern)
+        $uid = [long] $Matches[1]
+        if ($files.ContainsKey($uid)) {
+            if (-not $dupes.ContainsKey($uid)) { $dupes[$uid] = [System.Collections.Generic.List[string]]::new(); $dupes[$uid].Add($files[$uid]) }
+            $dupes[$uid].Add($name)
+            continue
+        }
+        $files[$uid] = $name
+    }
+    @{ files = $files; dupes = $dupes }
+}
+
+# A free file name in $Dir: $Name, or " (2)", " (3)"… inserted before " [uid N]" (or before ".eml"). Never overwrites.
+function Get-MailFreeName([string] $Dir, [string] $Name) {
+    if ($null -eq (Get-C4KItem (Join-MailPath $Dir $Name))) { return $Name }
+    $cut = $Name.IndexOf(' [uid ')
+    if ($cut -lt 0) { $cut = $Name.Length - 4 }
+    for ($n = 2; ; $n++) {
+        $candidate = $Name.Substring(0, $cut) + " ($n)" + $Name.Substring($cut)
+        if ($null -eq (Get-C4KItem (Join-MailPath $Dir $candidate))) { return $candidate }
+    }
+}
+
+function Rename-MailFile([string] $Dir, [string] $Name, [string] $Target) {
+    $free = Get-MailFreeName $Dir $Target
+    Move-C4KItem (Join-MailPath $Dir $Name) (Join-MailPath $Dir $free)
+    $free
 }
 
 function Save-MailMessage([hashtable] $Account, [string] $Server, [string] $Dir, $Header, [hashtable] $Files, [hashtable] $State) {
     $uid = [long] $Header.uid
     $flags = @($Header.flags)
     $seen = $flags -contains 'seen'
-    $name = $(if ($seen) { '' } else { $script:MailUnread }) + [string] $Header.fileName
+    $name = Get-MailFreeName $Dir ($(if ($seen) { '' } else { $script:MailUnread }) + [string] $Header.fileName)
     [void] (Save-C4KMail $Account $Server $uid (Join-MailPath $Dir $name))
     $Files[$uid] = $name
     Set-MailFlagged $State $Server $uid ($flags -contains 'flagged')
     -not $seen
 }
 
-# Local drafts (files without "[uid N]") that are new or changed since the last check go to the server's Drafts
-# folder (APPEND); the previous server copy is deleted. Their uids join "known", so sync does not download them back.
-function Push-MailDrafts([string] $Dir, [hashtable] $Account, [string] $Server, [hashtable] $Entry, [hashtable] $State, $PreviousCheck) {
-    $entries = try { @(Get-C4KChildItem $Dir) } catch { @() }
+# One uid with several files: when they are only the read and the unread variant of one name, keep the one that
+# matches the server's seen flag and delete the other; anything else stays (the first name in ordinal order is used).
+function Resolve-MailDuplicate([string] $Dir, [long] $Uid, [bool] $Seen, [hashtable] $Local) {
+    if (-not $Local.dupes.ContainsKey($Uid)) { return }
+    $names = @($Local.dupes[$Uid])
+    $bases = @($names | ForEach-Object { if ($_.StartsWith($script:MailUnread)) { $_.Substring($script:MailUnread.Length) } else { $_ } } | Select-Object -Unique)
+    if ($names.Count -ne 2 -or $bases.Count -ne 1) { return }
+    $keep = if ($Seen) { $bases[0] } else { $script:MailUnread + $bases[0] }
+    if ($names -cnotcontains $keep) { return }
+    foreach ($name in $names) { if ($name -cne $keep) { Remove-C4KItem (Join-MailPath $Dir $name) } }
+    $Local.files[$Uid] = $keep
+    $Local.dupes.Remove($Uid)
+}
+
+# Local drafts (files without "[uid N]") that are new or whose modification time differs from the one recorded at
+# their last upload go to the server's Drafts folder (APPEND); the previous server copy is deleted. Their uids join
+# "known", so sync does not download them back.
+function Push-MailDrafts([string] $Dir, [hashtable] $Account, [string] $Server, [hashtable] $Entry, [hashtable] $State) {
     $names = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($file in $entries) {
+    foreach ($file in @(Get-C4KChildItem $Dir)) {
         if ($file.kind -ne 'file' -or $file.name -notmatch '\.eml$' -or $file.name -match $script:MailUidPattern) { continue }
         [void] $names.Add($file.name)
         $old = $State.drafts[$file.name]
-        $modified = Get-MailInstant $file.modified
-        $changed = $null -eq $old -or $null -eq $PreviousCheck -or ($null -ne $modified -and $modified -gt $PreviousCheck)
-        if (-not $changed) { continue }
+        $modified = Format-MailInstant $file.modified
+        if ($null -ne $old -and $old.modified -eq $modified) { continue }
         $uid = Add-C4KMail $Account $Server (Join-MailPath $Dir $file.name) @('draft', 'seen')
-        if ($null -ne $old -and [long] $old -gt 0) { Remove-C4KMail $Account $Server @([long] $old) }
-        $State.drafts[$file.name] = $(if ($null -ne $uid) { [long] $uid } else { 0 })
+        if ($null -ne $old -and $old.uid -gt 0) { Remove-C4KMail $Account $Server @([long] $old.uid); [void] $Entry.known.Remove([long] $old.uid) }
+        $State.drafts[$file.name] = @{ uid = $(if ($null -ne $uid) { [long] $uid } else { 0 }); modified = $modified }
         if ($null -ne $uid -and -not $Entry.known.Contains([long] $uid)) { $Entry.known.Add([long] $uid) }
     }
     foreach ($name in @($State.drafts.Keys)) { if (-not $names.Contains($name)) { $State.drafts.Remove($name) } }
 }
 
-function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $State, $Info, [hashtable] $Budget, [string] $Since, $PreviousCheck) {
+function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $State, $Info, [hashtable] $Budget, [string] $Since) {
     $out = @{ more = $false; newUnread = 0; remaining = 0 }
     $server = [string] $Info.serverName
     $entry = $State.folders[$server]
     $dir = Join-MailPath $Folder $entry.local
     $known = $entry.known
-    $initial = $entry.lastUid -eq 0 -and $known.Count -eq 0
+    if ($entry.lastUid -eq 0 -and $known.Count -eq 0) { $entry.backfill = $true }
 
-    if ($entry.special -eq 'drafts') { Push-MailDrafts $dir $Account $server $entry $State $PreviousCheck }
+    if ($entry.special -eq 'drafts') { Push-MailDrafts $dir $Account $server $entry $State }
 
-    $files = Get-MailLocalFiles $dir
+    $local = Get-MailLocalFiles $dir
+    $files = $local.files
     $sync = Sync-C4KMail -Account $Account -Folder $server -UidValidity $entry.uidValidity -LastUid $entry.lastUid -ModSeq $entry.modSeq -Since $Since -KnownUids $known.ToArray()
 
     if ($sync.uidValidityChanged) {
         # The server renumbered the folder: keep the old files under "[stary]" and start again.
         foreach ($uid in @($files.Keys)) {
-            $name = $files[$uid]
-            Move-C4KItem (Join-MailPath $dir $name) (Join-MailPath $dir ($name.Substring(0, $name.Length - 4) + ' [stary].eml'))
+            $names = if ($local.dupes.ContainsKey($uid)) { @($local.dupes[$uid]) } else { @($files[$uid]) }
+            foreach ($name in $names) { [void] (Rename-MailFile $dir $name ($name.Substring(0, $name.Length - 4) + ' [stary].eml')) }
         }
-        $files = @{}
+        $local = @{ files = @{}; dupes = @{} }
+        $files = $local.files
         $known.Clear()
         $entry.lastUid = 0
         $entry.modSeq = 0
-        $initial = $true
+        $entry.backfill = $true
         foreach ($key in @($State.flagged | Where-Object { $_.StartsWith($server + '/') })) { [void] $State.flagged.Remove($key) }
     }
     $entry.uidValidity = [long] $sync.uidValidity
@@ -339,7 +426,10 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
 
     foreach ($uid in @($sync.removed)) {
         $uid = [long] $uid
-        if ($files.ContainsKey($uid)) { Remove-C4KItem (Join-MailPath $dir $files[$uid]); $files.Remove($uid) }
+        $names = if ($local.dupes.ContainsKey($uid)) { @($local.dupes[$uid]) } elseif ($files.ContainsKey($uid)) { @($files[$uid]) } else { @() }
+        foreach ($name in $names) { Remove-C4KItem (Join-MailPath $dir $name) }
+        $files.Remove($uid)
+        $local.dupes.Remove($uid)
         [void] $known.Remove($uid)
         Set-MailFlagged $State $server $uid $false
     }
@@ -348,29 +438,37 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
     foreach ($change in @($sync.flagChanges)) {
         $uid = [long] $change.uid
         $flags = @($change.flags)
+        $seen = $flags -contains 'seen'
         Set-MailFlagged $State $server $uid ($flags -contains 'flagged')
+        Resolve-MailDuplicate $dir $uid $seen $local
         if (-not $files.ContainsKey($uid)) { continue }
         $name = $files[$uid]
         $unread = $name.StartsWith($script:MailUnread)
         $target = $null
-        if (($flags -contains 'seen') -and $unread) { $target = $name.Substring($script:MailUnread.Length) }
-        elseif (-not ($flags -contains 'seen') -and -not $unread) { $target = $script:MailUnread + $name }
-        if ($target) { Move-C4KItem (Join-MailPath $dir $name) (Join-MailPath $dir $target); $files[$uid] = $target }
+        if ($seen -and $unread) { $target = $name.Substring($script:MailUnread.Length) }
+        elseif (-not $seen -and -not $unread) { $target = $script:MailUnread + $name }
+        if ($target) { $files[$uid] = Rename-MailFile $dir $name $target }
     }
 
-    $draftUids = @($State.drafts.Values | ForEach-Object { [long] $_ })
+    $draftUids = @($State.drafts.Values | ForEach-Object { [long] $_.uid })
     $missing = @($known | Where-Object { -not $files.ContainsKey([long] $_) -and $draftUids -notcontains [long] $_ })
 
     $fresh = @($sync['new'] | Sort-Object { [long] $_.uid })
     for ($i = 0; $i -lt $fresh.Count; $i++) {
-        if (Test-MailBudgetSpent $Budget) { $out.more = $true; $out.remaining = $fresh.Count - $i; break }
         $header = $fresh[$i]
         $uid = [long] $header.uid
+        if ($files.ContainsKey($uid)) {
+            # Saved by a tick that stopped before state.json was written: adopt the file, its flags follow next time.
+            if (-not $known.Contains($uid)) { $known.Add($uid) }
+            if ($uid -gt $entry.lastUid) { $entry.lastUid = $uid }
+            continue
+        }
+        if (Test-MailBudgetSpent $Budget) { $out.more = $true; $out.remaining = $fresh.Count - $i; break }
         $isUnread = Save-MailMessage $Account $server $dir $header $files $State
         $Budget.fetches++
         if (-not $known.Contains($uid)) { $known.Add($uid) }
         if ($uid -gt $entry.lastUid) { $entry.lastUid = $uid }
-        if ($isUnread -and -not $initial) { $out.newUnread++ }
+        if ($isUnread -and -not $entry.backfill) { $out.newUnread++ }
     }
 
     # A known message whose file is gone locally is downloaded again (sync never deletes on the server for it).
@@ -387,35 +485,49 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
             $Budget.fetches++
         }
     }
+
+    # The first download of a folder ends when nothing is left: from then on new unread mail notifies.
+    if (-not $out.more) { $entry.backfill = $false }
     $out
 }
 
 # One bounded pass over an account. Errors land in state.json (-32010 = login needed: background ticks skip the
-# account until an interactive check succeeds). Returns more (work left), newUnread and the Inbox folder.
+# account until an interactive check succeeds). A folder that fails for another reason is skipped for this pass;
+# the others still sync. Returns more (work left), newUnread and the Inbox folder.
 function Sync-MailAccount([string] $Folder, [hashtable] $Options, [hashtable] $State, [hashtable] $Budget, [bool] $Interactive) {
     $result = @{ more = $false; newUnread = 0; inbox = $null }
     $account = New-MailAccountParam $Options $Interactive
-    $previousCheck = Get-MailInstant $State.lastCheck
     New-C4KDirectory (Join-MailPath $Folder '.mail') -Hidden
     Write-MailLock $Folder
     $State.lastCheck = (Get-MailNow).ToString('o', [Globalization.CultureInfo]::InvariantCulture)
     $since = ConvertTo-MailSince $Options['since']
     $remaining = 0
+    $failures = [System.Collections.Generic.List[string]]::new()
     try {
         $folders = @(Get-C4KMailFolders $account)
         Update-MailFolderMap $Folder $State $folders
         $ordered = @($folders | Sort-Object { if ($_.special -eq 'inbox') { 0 } else { 1 } })
         foreach ($info in $ordered) {
             if (Test-MailBudgetSpent $Budget) { $result.more = $true; break }
-            $r = Sync-MailFolder $Folder $account $State $info $Budget $since $previousCheck
+            $r = $null
+            try {
+                $r = Sync-MailFolder $Folder $account $State $info $Budget $since
+            }
+            catch {
+                $code = if ($_.Exception.Data.Contains('Code')) { [int] $_.Exception.Data['Code'] } else { 0 }
+                if ($code -in -32010, -32011) { throw }
+                $failures.Add("$($info.serverName): $($_.Exception.Message)")
+                Write-C4KLog "mail folder $($info.serverName) of $Folder skipped: $($_.Exception.Message)"
+            }
+            finally { Save-MailState $Folder $State }
+            if ($null -eq $r) { continue }
             if ($r.more) { $result.more = $true }
             $remaining += $r.remaining
             if ([string] $info.special -notin 'trash', 'junk', 'sent', 'drafts') { $result.newUnread += $r.newUnread }
-            Save-MailState $Folder $State
         }
-        $State.error = $null
         $State.authRequired = $false
-        $State.lastSuccess = $State.lastCheck
+        if ($failures.Count -gt 0) { $State.error = $failures -join '; ' }
+        else { $State.error = $null; $State.lastSuccess = $State.lastCheck }
     }
     catch {
         $code = if ($_.Exception.Data.Contains('Code')) { [int] $_.Exception.Data['Code'] } else { 0 }
@@ -439,9 +551,25 @@ function Sync-MailAccount([string] $Folder, [hashtable] $Options, [hashtable] $S
     $result
 }
 
+# Sync-MailAccount guarded per account: whatever fails is logged and, when possible, recorded in that account's own
+# state; the caller goes on with the next account.
+function Invoke-MailAccountSafely([string] $Path, [hashtable] $Options, [hashtable] $State, [hashtable] $Budget, [bool] $Interactive) {
+    try {
+        return Sync-MailAccount $Path $Options $State $Budget $Interactive
+    }
+    catch {
+        $message = [string] $_.Exception.Message
+        Write-C4KLog "mail account $Path failed: $message"
+        try { $State.error = $message; $State.progress = $null; Save-MailState $Path $State } catch { Write-C4KLog "mail state of $Path not saved: $_" }
+        return @{ more = $false; newUnread = 0; inbox = $null }
+    }
+}
+
 # ---- entry points ----
 
-# background.tick: every due account that is not waiting for a login and not synced by another computer.
+# background.tick: every due account that is not waiting for a login and not synced by another computer. The lock of
+# every account this computer owns is refreshed on each tick, so another computer keeps seeing it as taken even when
+# "refresh" is longer than the lock's 10 minutes.
 function Invoke-MailTick {
     $budget = New-MailBudget
     $more = $false
@@ -458,13 +586,26 @@ function Invoke-MailTick {
             continue
         }
         $keep.Add($path)
-        if (Test-MailBudgetSpent $budget) { $more = $true; continue }
-        $state = Read-MailState $path
-        if ($state.authRequired) { continue }
-        if (-not (Test-MailDue $path $options $state)) { continue }
-        if (Test-MailLockedElsewhere $path) { continue }
+        $state = $null
+        $due = $false
+        try {
+            if (Test-MailLockedElsewhere $path) { continue }
+            $state = Read-MailState $path
+            if ($null -eq $state) { continue }
+            $spent = Test-MailBudgetSpent $budget
+            $due = -not $spent -and -not $state.authRequired -and (Test-MailDue $path $options $state)
+            if (-not $due) {
+                if ($spent) { $more = $true }
+                if (Test-MailLockOwned $path) { Write-MailLock $path }
+            }
+        }
+        catch {
+            Write-C4KLog "mail account $path skipped: $($_.Exception.Message)"
+            continue
+        }
+        if (-not $due) { continue }
         [void] $script:MailCheckRequested.Remove($path)
-        $r = Sync-MailAccount $path $options $state $budget $false
+        $r = Invoke-MailAccountSafely $path $options $state $budget $false
         if ($r.more) { $more = $true }
         if ($r.newUnread -gt 0) {
             $notes.Add((Get-MailLeaf $path) + ': ' + (Format-MailNewCount $r.newUnread))
@@ -482,8 +623,9 @@ function Invoke-MailCheck([string] $Path, $Options) {
     $config = Get-MailAccountConfig $Path $Options
     if ($null -eq $config -or (Test-MailLockedElsewhere $Path)) { return }
     $state = Read-MailState $Path
+    if ($null -eq $state) { return }
     $state.authRequired = $false
     [void] $script:MailCheckRequested.Remove($Path)
-    $r = Sync-MailAccount $Path $config $state (New-MailBudget) $true
+    $r = Invoke-MailAccountSafely $Path $config $state (New-MailBudget) $true
     if ($r.more) { Request-MailCheck $Path }
 }

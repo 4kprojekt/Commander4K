@@ -11,6 +11,10 @@ function Get-MailAccountStatus([string] $Path, $Options) {
     $state = Read-MailState $Path
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('Konto: ' + (Get-MailLeaf $Path))
+    if ($null -eq $state) {
+        $lines.Add('Nie można odczytać .mail\state.json: synchronizacja tego konta jest wstrzymana.')
+        return $lines -join "`n"
+    }
     if ($null -eq $config) {
         $lines.Add('Brak konfiguracji: dodaj imap i user w opcjach c4k.dir.')
         return $lines -join "`n"
@@ -23,9 +27,12 @@ function Get-MailAccountStatus([string] $Path, $Options) {
     if ($state.progress) { $lines.Add('Pobieram: ' + $state.progress.done + ' / ' + $state.progress.total) }
     foreach ($server in @($state.folders.Keys | Sort-Object)) {
         $local = $state.folders[$server].local
-        $files = Get-MailLocalFiles (Join-MailPath $Path $local)
-        $unread = @($files.Values | Where-Object { $_.StartsWith($script:MailUnread) }).Count
-        $lines.Add("  $local`: $($files.Count) (nieprzeczytane: $unread)")
+        try {
+            $files = (Get-MailLocalFiles (Join-MailPath $Path $local)).files
+            $unread = @($files.Values | Where-Object { $_.StartsWith($script:MailUnread) }).Count
+            $lines.Add("  $local`: $($files.Count) (nieprzeczytane: $unread)")
+        }
+        catch { $lines.Add("  $local`: nie można odczytać folderu") }
     }
     $lines -join "`n"
 }
@@ -36,14 +43,20 @@ function Get-MailAccountCard([string] $Path, $Options) {
     $items = [System.Collections.Generic.List[hashtable]]::new()
     $actions = [System.Collections.Generic.List[hashtable]]::new()
     $status = 'ok'
+    if ($null -eq $state) {
+        return @{ title = (Get-MailLeaf $Path); status = 'error'; items = @(@{ kind = 'text'; text = 'nie można odczytać .mail\state.json' }); actions = @() }
+    }
     $inbox = $null
     foreach ($server in $state.folders.Keys) {
         if ($state.folders[$server].special -eq 'inbox') { $inbox = Join-MailPath $Path $state.folders[$server].local }
     }
     if ($inbox) {
-        $files = Get-MailLocalFiles $inbox
-        $unread = @($files.Values | Where-Object { $_.StartsWith($script:MailUnread) }).Count
-        $items.Add(@{ kind = 'value'; label = 'Nieprzeczytane'; value = [string] $unread })
+        try {
+            $files = (Get-MailLocalFiles $inbox).files
+            $unread = @($files.Values | Where-Object { $_.StartsWith($script:MailUnread) }).Count
+            $items.Add(@{ kind = 'value'; label = 'Nieprzeczytane'; value = [string] $unread })
+        }
+        catch { $status = 'warning' }
         $actions.Add(@{ label = 'Otwórz'; target = $inbox })
     }
     $last = Get-MailInstant $state.lastCheck

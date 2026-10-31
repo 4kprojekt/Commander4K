@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.AccessControl;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -68,7 +69,7 @@ public sealed class MailPluginTests : IAsyncLifetime
     [Fact]
     public async Task Auth_failure_pauses_account_until_interactive_login()
     {
-        var backend = new CountingBackend { ThrowAuth = true };
+        var backend = new FakeMailServer { ThrowAuth = true };
         var plugin = Start(backend);
         var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
         await RenderAsync(plugin, account);
@@ -88,8 +89,7 @@ public sealed class MailPluginTests : IAsyncLifetime
 
         Assert.Equal(0, backend.Calls);
 
-        await AccountPreview(plugin).InvokeActionAsync(
-            new PreviewActionRequest(Entry(account), null, "check", new Dictionary<string, string>(), null), Host(plugin), Token);
+        await CheckAsync(plugin, account);
 
         Assert.Equal(1, backend.Calls);
         Assert.True(backend.LastAccount!.Interactive);
@@ -98,7 +98,7 @@ public sealed class MailPluginTests : IAsyncLifetime
     [Fact]
     public async Task Lock_held_by_other_machine_skips_sync()
     {
-        var backend = new CountingBackend();
+        var backend = new FakeMailServer();
         var plugin = Start(backend);
         var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
         WriteLock(account, "OTHER", DateTimeOffset.UtcNow.AddMinutes(-1));
@@ -111,31 +111,46 @@ public sealed class MailPluginTests : IAsyncLifetime
         await plugin.TickAsync(Token);
 
         Assert.True(backend.Calls > 0);
-        using var written = JsonDocument.Parse(File.ReadAllText(Path.Combine(account, ".mail", "lock")));
-        Assert.Equal(Environment.MachineName, written.RootElement.GetProperty("machine").GetString(), ignoreCase: true);
+        Assert.Equal(Environment.MachineName, ReadLock(account).Machine, ignoreCase: true);
         Assert.True(new DirectoryInfo(Path.Combine(account, ".mail")).Attributes.HasFlag(FileAttributes.Hidden));
         Assert.Equal("Odebrane", ReadState(account)["folders"]!["INBOX"]!["local"]!.GetValue<string>());
         Assert.True(Directory.Exists(Path.Combine(account, "Odebrane")));
     }
 
     [Fact]
+    public async Task Lock_is_refreshed_on_every_tick_while_the_account_is_not_due()
+    {
+        var backend = new FakeMailServer();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org", refresh: "30m");
+        await RenderAsync(plugin, account);
+        await plugin.TickAsync(Token);
+        var calls = backend.Calls;
+
+        // 11 minutes later, the account is still not due (refresh 30m).
+        WriteLock(account, Environment.MachineName, DateTimeOffset.UtcNow.AddMinutes(-11));
+        Age(account, TimeSpan.FromMinutes(11));
+        await plugin.TickAsync(Token);
+
+        Assert.Equal(calls, backend.Calls);
+        var (machine, lastTick) = ReadLock(account);
+        Assert.Equal(Environment.MachineName, machine, ignoreCase: true);
+        // What a second computer sees: a lock younger than 10 minutes.
+        Assert.True(DateTimeOffset.UtcNow - lastTick < TimeSpan.FromMinutes(1), $"lock is {DateTimeOffset.UtcNow - lastTick} old");
+    }
+
+    [Fact]
     public async Task Folders_with_the_same_local_name_get_distinct_stable_folders()
     {
-        var backend = new CountingBackend
-        {
-            Folders =
-            [
-                new MailFolderInfo("INBOX", "Odebrane", '/', MailSpecialFolder.Inbox, 1, 0, 0),
-                new MailFolderInfo("Sent", "Wysłane", '/', MailSpecialFolder.Sent, 2, 0, 0),
-                new MailFolderInfo("Sent Items", "Wysłane", '/', MailSpecialFolder.Sent, 3, 0, 0),
-            ],
-        };
+        var backend = new FakeMailServer();
+        backend.AddFolder("Sent", "Wysłane", MailSpecialFolder.Sent, 2);
+        backend.AddFolder("Sent Items", "Wysłane", MailSpecialFolder.Sent, 3);
         var plugin = Start(backend);
         var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
         await RenderAsync(plugin, account);
 
         await plugin.TickAsync(Token);
-        backend.Folders = [.. backend.Folders.Reverse()];
+        backend.Folders.Reverse();
         Age(account);
         await plugin.TickAsync(Token);
 
@@ -143,6 +158,232 @@ public sealed class MailPluginTests : IAsyncLifetime
         Assert.Equal("Wysłane", folders["Sent"]!["local"]!.GetValue<string>());
         Assert.Equal("Wysłane (2)", folders["Sent Items"]!["local"]!.GetValue<string>());
         Assert.True(Directory.Exists(Path.Combine(account, "Wysłane (2)")));
+    }
+
+    [Fact]
+    public async Task Unreadable_state_skips_the_account_and_is_never_overwritten()
+    {
+        var backend = new FakeMailServer();
+        backend.Inbox.Add();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        Directory.CreateDirectory(Path.Combine(account, ".mail"));
+        var statePath = Path.Combine(account, ".mail", "state.json");
+        const string corrupt = """{ "folders": { "INBOX": { "local": "Odebrane", "known": [1, 2""";
+        File.WriteAllText(statePath, corrupt);
+        await RenderAsync(plugin, account);
+
+        await plugin.TickAsync(Token);
+        await CheckAsync(plugin, account);
+
+        Assert.Equal(0, backend.Calls);
+        Assert.Equal(corrupt, File.ReadAllText(statePath));
+    }
+
+    [Fact]
+    public async Task First_sync_does_not_notify_and_later_mail_does()
+    {
+        var backend = new FakeMailServer();
+        for (var i = 0; i < 60; i++)
+        {
+            backend.Inbox.Add();
+        }
+
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+
+        Assert.True(await plugin.TickAsync(Token));
+        await TickUntilDoneAsync(plugin);
+        Assert.Equal(60, Directory.GetFiles(InboxFolder(account), "*.eml").Length);
+        Assert.Empty(_ui.Notifications);
+
+        backend.Inbox.Add();
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+
+        var (message, target) = Assert.Single(_ui.Notifications);
+        Assert.Equal("Firma: 1 nowa wiadomość", message);
+        Assert.Equal(InboxFolder(account), target);
+    }
+
+    [Fact]
+    public async Task A_file_already_saved_for_a_new_uid_is_adopted_not_fetched()
+    {
+        var backend = new FakeMailServer();
+        var uid = backend.Inbox.Add();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        var inbox = Path.Combine(account, "Odebrane");
+        Directory.CreateDirectory(inbox);
+        File.WriteAllText(Path.Combine(inbox, Unread + FakeMailServer.FileName(uid)), "Subject: saved before\r\n\r\nx");
+        await RenderAsync(plugin, account);
+
+        await TickUntilDoneAsync(plugin);
+
+        Assert.Equal(0, backend.Fetches);
+        var folder = ReadState(account)["folders"]!["INBOX"]!;
+        Assert.Equal(uid, folder["lastUid"]!.GetValue<long>());
+        Assert.Contains((long)uid, folder["known"]!.AsArray().Select(x => x!.GetValue<long>()));
+        Assert.Single(Directory.GetFiles(inbox, "*.eml"));
+    }
+
+    [Fact]
+    public async Task Read_and_unread_copies_of_one_uid_collapse_to_the_server_state()
+    {
+        var backend = new FakeMailServer();
+        var uid = backend.Inbox.Add();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var inbox = InboxFolder(account);
+        File.WriteAllText(Path.Combine(inbox, FakeMailServer.FileName(uid)), "copy");
+
+        backend.Inbox.Messages[uid] = MailFlags.Seen;
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+
+        var file = Assert.Single(Directory.GetFiles(inbox, "*.eml"));
+        Assert.Equal(FakeMailServer.FileName(uid), Path.GetFileName(file));
+        Assert.Null(ReadState(account)["error"]);
+    }
+
+    [Fact]
+    public async Task Files_of_a_folder_deleted_on_the_server_are_never_adopted()
+    {
+        var backend = new FakeMailServer();
+        var projects = backend.AddFolder("Projekty", "Projekty", MailSpecialFolder.None, 5);
+        projects.Add();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var oldFile = Assert.Single(Directory.GetFiles(Path.Combine(account, "Projekty"), "*.eml"));
+
+        backend.Folders.Remove(projects);
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+        var recreated = backend.AddFolder("Projekty", "Projekty", MailSpecialFolder.None, 9);
+        recreated.Add();
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+
+        Assert.True(File.Exists(oldFile), "the old folder's file was deleted");
+        Assert.Equal("Projekty (2)", ReadState(account)["folders"]!["Projekty"]!["local"]!.GetValue<string>());
+        Assert.Single(Directory.GetFiles(Path.Combine(account, "Projekty (2)"), "*.eml"));
+    }
+
+    [Fact]
+    public async Task A_folder_that_cannot_be_listed_is_skipped_and_keeps_its_drafts()
+    {
+        var backend = new FakeMailServer();
+        backend.AddFolder("Drafts", "Szkice", MailSpecialFolder.Drafts, 7);
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var drafts = Path.Combine(account, "Szkice");
+        File.WriteAllText(Path.Combine(drafts, "Odpowiedź.eml"), "Subject: draft\r\n\r\nv1");
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+        Assert.Single(backend.Appended);
+
+        DenyListing(drafts);
+        try
+        {
+            backend.Inbox.Add();
+            Age(account);
+            await TickUntilDoneAsync(plugin);
+        }
+        finally
+        {
+            AllowListing(drafts);
+        }
+
+        Assert.Single(backend.Appended);
+        Assert.Empty(backend.Deleted);
+        Assert.NotNull(ReadState(account)["drafts"]!["Odpowiedź.eml"]);
+        Assert.Single(Directory.GetFiles(InboxFolder(account), "*.eml"));
+        Assert.Contains("Drafts", ReadState(account)["error"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Drafts_are_appended_once_and_replaced_when_edited()
+    {
+        var backend = new FakeMailServer();
+        var serverDrafts = backend.AddFolder("Drafts", "Szkice", MailSpecialFolder.Drafts, 7);
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var draft = Path.Combine(account, "Szkice", "Nowa.eml");
+        File.WriteAllText(draft, "Subject: draft\r\n\r\nv1");
+
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+        var first = Assert.Single(backend.Appended);
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+        Assert.Single(backend.Appended);
+
+        File.WriteAllText(draft, "Subject: draft\r\n\r\nv2");
+        File.SetLastWriteTimeUtc(draft, DateTime.UtcNow.AddMinutes(1));
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+
+        Assert.Equal(2, backend.Appended.Count);
+        Assert.Equal([first], backend.Deleted);
+        Assert.Equal([backend.Appended[1]], serverDrafts.Messages.Keys.ToList());
+        Assert.Equal(["Nowa.eml"], Directory.GetFiles(Path.Combine(account, "Szkice")).Select(Path.GetFileName).ToList());
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+        Assert.Equal(2, backend.Appended.Count);
+    }
+
+    [Fact]
+    public async Task A_failing_account_does_not_stop_the_next_one()
+    {
+        var backend = new FakeMailServer();
+        backend.Inbox.Add();
+        var plugin = Start(backend);
+        var broken = WriteAccount("Zepsute", "imap.example.org:993", "broken@example.org");
+        File.WriteAllText(Path.Combine(broken, ".mail"), "a file where the folder should be");
+        var good = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, broken);
+        await RenderAsync(plugin, good);
+
+        await TickUntilDoneAsync(plugin);
+
+        Assert.Single(Directory.GetFiles(InboxFolder(good), "*.eml"));
+        Assert.Contains(_audit.Recent(PluginId), e => e.Detail.Contains("broken", StringComparison.OrdinalIgnoreCase) || e.Detail.Contains("Zepsute", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Renames_onto_an_existing_name_pick_a_free_name()
+    {
+        var backend = new FakeMailServer();
+        var uid = backend.Inbox.Add();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var inbox = InboxFolder(account);
+        var stale = Unread + FakeMailServer.FileName(uid)[..^4] + " [stary].eml";
+        File.WriteAllText(Path.Combine(inbox, stale), "from an earlier generation");
+
+        backend.Inbox.Validity = 2;
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+
+        Assert.Null(ReadState(account)["error"]);
+        var names = Directory.GetFiles(inbox, "*.eml").Select(Path.GetFileName).ToList();
+        Assert.Contains(stale, names);
+        Assert.Contains(names, n => n!.Contains(" (2) [uid ", StringComparison.Ordinal) && n.EndsWith("[stary].eml", StringComparison.Ordinal));
+        Assert.Contains(Unread + FakeMailServer.FileName(uid), names);
+        Assert.Equal(3, names.Count);
     }
 
     // ---------------------------------------------------------------- server-backed
@@ -183,6 +424,7 @@ public sealed class MailPluginTests : IAsyncLifetime
         Assert.Equal(await server.HighestUidAsync(), state["folders"]!["INBOX"]!["lastUid"]!.GetValue<long>());
         Assert.Null(state["progress"]);
         Assert.Null(state["error"]);
+        Assert.Empty(_ui.Notifications); // a first sync over several ticks is not "new mail"
         Assert.NotNull(state["lastSuccess"]);
     }
 
@@ -319,11 +561,40 @@ public sealed class MailPluginTests : IAsyncLifetime
 
     private static VfsEntry Entry(string folder) => new(Path.GetFileName(folder), folder, VfsEntryKind.Directory, -1);
 
-    private string WriteAccount(string name, string imap, string user, string? since = null)
+    private Task CheckAsync(ExternalPlugin plugin, string account) =>
+        AccountPreview(plugin).InvokeActionAsync(
+            new PreviewActionRequest(Entry(account), null, "check", new Dictionary<string, string>(), null), Host(plugin), Token);
+
+    private static (string Machine, DateTimeOffset LastTick) ReadLock(string account)
+    {
+        using var lockFile = JsonDocument.Parse(File.ReadAllText(Path.Combine(account, ".mail", "lock")));
+        return (lockFile.RootElement.GetProperty("machine").GetString()!, DateTimeOffset.Parse(lockFile.RootElement.GetProperty("lastTick").GetString()!, System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    private static FileSystemAccessRule ListRule() =>
+        new(System.Security.Principal.WindowsIdentity.GetCurrent().User!, FileSystemRights.ListDirectory, AccessControlType.Deny);
+
+    private static void DenyListing(string folder)
+    {
+        var info = new DirectoryInfo(folder);
+        var security = info.GetAccessControl();
+        security.AddAccessRule(ListRule());
+        info.SetAccessControl(security);
+    }
+
+    private static void AllowListing(string folder)
+    {
+        var info = new DirectoryInfo(folder);
+        var security = info.GetAccessControl();
+        security.RemoveAccessRule(ListRule());
+        info.SetAccessControl(security);
+    }
+
+    private string WriteAccount(string name, string imap, string user, string? since = null, string refresh = "1m")
     {
         var folder = Path.Combine(_dir, "Poczta", name);
         Directory.CreateDirectory(folder);
-        var options = new JsonObject { ["imap"] = imap, ["smtp"] = null, ["user"] = user, ["refresh"] = "1m" };
+        var options = new JsonObject { ["imap"] = imap, ["smtp"] = null, ["user"] = user, ["refresh"] = refresh };
         if (since is not null)
         {
             options["since"] = since;
@@ -348,10 +619,10 @@ public sealed class MailPluginTests : IAsyncLifetime
         JsonNode.Parse(File.ReadAllText(Path.Combine(account, ".mail", "state.json")))!;
 
     /// <summary>Makes the account due again (its last check an hour ago), as if <c>refresh</c> had passed.</summary>
-    private static void Age(string account)
+    private static void Age(string account, TimeSpan? by = null)
     {
         var state = ReadState(account);
-        state["lastCheck"] = DateTimeOffset.UtcNow.AddHours(-1).ToString("O");
+        state["lastCheck"] = DateTimeOffset.UtcNow.Subtract(by ?? TimeSpan.FromHours(1)).ToString("O");
         File.WriteAllText(Path.Combine(account, ".mail", "state.json"), state.ToJsonString());
     }
 
@@ -477,15 +748,59 @@ public sealed class MailPluginTests : IAsyncLifetime
         });
     }
 
-    private sealed class CountingBackend : IMailBackend
+    /// <summary>An IMAP server in memory: folders with UIDVALIDITY and messages with flags, answering like MailService without CONDSTORE.</summary>
+    private sealed class FakeMailServer : IMailBackend
     {
+        public FakeMailServer() => Inbox = AddFolder("INBOX", "Odebrane", MailSpecialFolder.Inbox, 1);
+
+        public sealed class Folder(string server, string local, MailSpecialFolder special, uint validity)
+        {
+            public string Server { get; } = server;
+
+            public string Local { get; } = local;
+
+            public MailSpecialFolder Special { get; } = special;
+
+            public uint Validity { get; set; } = validity;
+
+            public SortedDictionary<uint, MailFlags> Messages { get; } = [];
+
+            public uint NextUid { get; set; } = 1;
+
+            public uint Add(MailFlags flags = MailFlags.None)
+            {
+                var uid = NextUid++;
+                Messages[uid] = flags;
+                return uid;
+            }
+        }
+
+        public List<Folder> Folders { get; } = [];
+
+        public Folder Inbox { get; }
+
         public int Calls { get; set; }
+
+        public int Fetches { get; private set; }
+
+        public List<uint> Appended { get; } = [];
+
+        public List<uint> Deleted { get; } = [];
 
         public bool ThrowAuth { get; set; }
 
         public MailAccount? LastAccount { get; private set; }
 
-        public IReadOnlyList<MailFolderInfo> Folders { get; set; } = [new MailFolderInfo("INBOX", "Odebrane", '/', MailSpecialFolder.Inbox, 1, 0, 0)];
+        public static string FileName(uint uid) => $"2026-10-31 1200 Jan - Temat {uid} [uid {uid}].eml";
+
+        public Folder AddFolder(string server, string local, MailSpecialFolder special, uint validity)
+        {
+            var folder = new Folder(server, local, special, validity);
+            Folders.Add(folder);
+            return folder;
+        }
+
+        private Folder Find(string server) => Folders.Single(f => f.Server == server);
 
         private void Count(MailAccount account)
         {
@@ -500,20 +815,31 @@ public sealed class MailPluginTests : IAsyncLifetime
         public Task<IReadOnlyList<MailFolderInfo>> FoldersAsync(string pluginId, MailAccount account, CancellationToken ct)
         {
             Count(account);
-            return Task.FromResult(Folders);
+            return Task.FromResult<IReadOnlyList<MailFolderInfo>>([.. Folders.Select(f => new MailFolderInfo(f.Server, f.Local, '/', f.Special, f.Validity, f.Messages.Count, 0))]);
         }
 
         public Task<MailSyncResult> SyncAsync(string pluginId, MailAccount account, MailSyncRequest request, CancellationToken ct)
         {
             Count(account);
-            var validity = Folders.FirstOrDefault(f => f.ServerName == request.Folder)?.UidValidity ?? 1;
-            return Task.FromResult(new MailSyncResult(validity, false, 0, [], [], []));
+            var folder = Find(request.Folder);
+            var changed = request.UidValidity != 0 && request.UidValidity != folder.Validity;
+            var lastUid = changed ? 0 : request.LastUid;
+            var known = changed ? [] : request.KnownUids.ToHashSet();
+            var fresh = folder.Messages.Where(m => m.Key > lastUid && !known.Contains(m.Key))
+                .Select(m => new MailHeader(m.Key, DateTimeOffset.UtcNow, "Jan <jan@example.org>", $"Temat {m.Key}", m.Value, 10, FileName(m.Key)))
+                .ToList();
+            var removed = known.Where(u => !folder.Messages.ContainsKey(u)).Order().ToList();
+            var flags = known.Where(folder.Messages.ContainsKey).Order().Select(u => (u, folder.Messages[u])).ToList();
+            return Task.FromResult(new MailSyncResult(folder.Validity, changed, 0, fresh, flags, removed));
         }
 
-        public Task<long> FetchAsync(string pluginId, MailAccount account, string folder, uint uid, Stream destination, CancellationToken ct)
+        public async Task<long> FetchAsync(string pluginId, MailAccount account, string folder, uint uid, Stream destination, CancellationToken ct)
         {
             Count(account);
-            return Task.FromResult(0L);
+            Fetches++;
+            var bytes = Encoding.ASCII.GetBytes($"Subject: Temat {uid}\r\n\r\nbody");
+            await destination.WriteAsync(bytes, ct);
+            return bytes.Length;
         }
 
         public Task SetFlagsAsync(string pluginId, MailAccount account, string folder, IReadOnlyList<uint> uids, MailFlags add, MailFlags remove, CancellationToken ct)
@@ -531,13 +857,21 @@ public sealed class MailPluginTests : IAsyncLifetime
         public Task DeleteAsync(string pluginId, MailAccount account, string folder, IReadOnlyList<uint> uids, CancellationToken ct)
         {
             Count(account);
+            foreach (var uid in uids)
+            {
+                Find(folder).Messages.Remove(uid);
+                Deleted.Add(uid);
+            }
+
             return Task.CompletedTask;
         }
 
         public Task<uint?> AppendAsync(string pluginId, MailAccount account, string folder, Stream message, MailFlags flags, CancellationToken ct)
         {
             Count(account);
-            return Task.FromResult<uint?>(null);
+            var uid = Find(folder).Add(flags);
+            Appended.Add(uid);
+            return Task.FromResult<uint?>(uid);
         }
 
         public Task<string> SendAsync(string pluginId, MailAccount account, Stream message, CancellationToken ct)
