@@ -1,6 +1,6 @@
 // window.c4k: the bridge between a web preview page and Commander4K (see "Web previews" in docs/plugins.md).
 // Injected into the top frame before any page script runs; the app appends "(<initial data as JSON>);" to this file.
-// Messages to the app: { type: "request", id, token, method, params } | { type: "notify", text, error } | { type: "copyText", text }.
+// Messages to the app: { type: "request", id, token, method, params } | { type: "notify", text, error } | { type: "copyText", text } | { type: "key", key: "Escape" }.
 // Messages from the app: { type: "reply", id, token, result | error } | { type: "entry", token, entry, fileUrl, state } | { type: "skin", skin }.
 (function (init) {
   'use strict';
@@ -110,6 +110,19 @@
     } else if (message.type === 'skin') {
       c4k.skin = message.skin;
       fire('skin', c4k.skin);
+    }
+  });
+
+  // Esc the page did not use closes the preview. WebView2 usually reports Esc to the app itself (then the page never
+  // sees it); this covers the case where it does not. Checked after dispatch, so the page's own handlers (on window
+  // too) can call preventDefault() first; the app ignores this when it already got the same Esc.
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !event.repeat) {
+      setTimeout(() => {
+        if (!event.defaultPrevented) {
+          webview.postMessage({ type: 'key', key: 'Escape' });
+        }
+      }, 0);
     }
   });
 

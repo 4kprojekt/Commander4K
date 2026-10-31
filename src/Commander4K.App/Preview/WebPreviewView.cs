@@ -77,6 +77,8 @@ public sealed class WebPreviewView : UserControl, IDisposable
     private string? _hostName;
     private string? _root;
     private long _lastExternalOpen;
+    private long _lastAcceleratorEscape = long.MinValue / 2;
+    private string? _pageUrl;
     private bool _disposed;
 
     public WebPreviewView(AppHost app, SkinBrushes brushes, Func<KeyStroke, bool> runShortcut)
@@ -255,7 +257,7 @@ public sealed class WebPreviewView : UserControl, IDisposable
         settings.IsGeneralAutofillEnabled = false;
         settings.IsPasswordAutosaveEnabled = false;
 
-        core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+        core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All, CoreWebView2WebResourceRequestSourceKinds.All); // Workers too.
         core.WebResourceRequested += OnResourceRequested;
         core.NavigationStarting += OnNavigationStarting;
         core.FrameNavigationStarting += OnFrameNavigationStarting;
@@ -296,9 +298,12 @@ public sealed class WebPreviewView : UserControl, IDisposable
         var pageUrl = $"https://{hostName}/{string.Join('/', state.Preview.Page.Split('/').Select(Uri.EscapeDataString))}";
         try
         {
+            // The page's own #hash or replaceState changes (PDF.js: #page=3) keep it the same page; only the path counts.
             var samePage = hostName == _hostName
                 && string.Equals(_root, state.Preview.RootFolder, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(core.Source, pageUrl, StringComparison.Ordinal);
+                && string.Equals(_pageUrl, pageUrl, StringComparison.Ordinal)
+                && Uri.TryCreate(core.Source, UriKind.Absolute, out var shown)
+                && string.Equals(shown.GetLeftPart(UriPartial.Path), pageUrl, StringComparison.OrdinalIgnoreCase);
             if (samePage)
             {
                 Post(core, writer =>
@@ -311,6 +316,7 @@ public sealed class WebPreviewView : UserControl, IDisposable
 
             _hostName = hostName;
             _root = state.Preview.RootFolder;
+            _pageUrl = pageUrl;
             core.Navigate(pageUrl);
         }
         catch (Exception ex) when (ex is COMException or InvalidOperationException or ObjectDisposedException)
@@ -385,7 +391,7 @@ public sealed class WebPreviewView : UserControl, IDisposable
 
     private void OnResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
     {
-        // After Dispose the controller may still deliver a request or two: refused like any other.
+        // Set in OnReady, before any request can arrive, and kept after Dispose: a late request still gets its 403 below.
         if (_environment is not { } environment)
         {
             return;
@@ -681,31 +687,52 @@ public sealed class WebPreviewView : UserControl, IDisposable
 
         using (document)
         {
-            var message = document.RootElement;
-            if (message.ValueKind != JsonValueKind.Object || !message.TryGetProperty("type", out var typeElement) || typeElement.ValueKind != JsonValueKind.String)
+            try
             {
-                return;
+                HandleMessage(core, state, document.RootElement);
             }
+            catch (Exception ex) when (ex is InvalidOperationException or FormatException or ArgumentException)
+            {
+                // A malformed message from the page is ignored.
+            }
+        }
+    }
 
-            switch (typeElement.GetString())
-            {
-                case "request" when message.TryGetProperty("id", out var idElement) && idElement.TryGetInt64(out var id)
-                    && message.TryGetProperty("method", out var methodElement) && methodElement.ValueKind == JsonValueKind.String
-                    && methodElement.GetString() is { Length: > 0 and <= 200 } method
-                    && message.TryGetProperty("token", out var tokenElement) && tokenElement.ValueKind == JsonValueKind.String
-                    && tokenElement.GetString() == state.Token:
-                    var parameters = message.TryGetProperty("params", out var p) ? p.Clone() : NullElement;
-                    _ = HandleRequestAsync(core, state, id, method, parameters);
-                    break;
-                case "notify" when message.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String:
-                    var notice = text.GetString() ?? string.Empty;
-                    state.Host.Notify(notice.Length > MaxNotifyChars ? notice[..MaxNotifyChars] + "…" : notice,
-                        message.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.True);
-                    break;
-                case "copyText" when message.TryGetProperty("text", out var copy) && copy.ValueKind == JsonValueKind.String:
-                    _ = CopyAsync(state.Host, copy.GetString() ?? string.Empty);
-                    break;
-            }
+    private void HandleMessage(CoreWebView2 core, EntryState state, JsonElement message)
+    {
+        if (message.ValueKind != JsonValueKind.Object || !message.TryGetProperty("type", out var typeElement) || typeElement.ValueKind != JsonValueKind.String)
+        {
+            return;
+        }
+
+        switch (typeElement.GetString())
+        {
+            case "request" when message.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.Number && idElement.TryGetInt64(out var id)
+                && message.TryGetProperty("method", out var methodElement) && methodElement.ValueKind == JsonValueKind.String
+                && methodElement.GetString() is { Length: > 0 and <= 200 } method
+                && message.TryGetProperty("token", out var tokenElement) && tokenElement.ValueKind == JsonValueKind.String
+                && tokenElement.GetString() == state.Token:
+                var parameters = message.TryGetProperty("params", out var p) ? p.Clone() : NullElement;
+                _ = HandleRequestAsync(core, state, id, method, parameters);
+                break;
+            case "notify" when message.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String:
+                var notice = text.GetString() ?? string.Empty;
+                state.Host.Notify(notice.Length > MaxNotifyChars ? notice[..MaxNotifyChars] + "…" : notice,
+                    message.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.True);
+                break;
+            case "copyText" when message.TryGetProperty("text", out var copy) && copy.ValueKind == JsonValueKind.String:
+                _ = CopyAsync(state.Host, copy.GetString() ?? string.Empty);
+                break;
+            case "key" when message.TryGetProperty("key", out var keyElement) && keyElement.ValueKind == JsonValueKind.String
+                && keyElement.GetString() == "Escape":
+                // Fallback for an Esc the page left alone that WebView2 did not report as an accelerator key
+                // (when it did, OnAcceleratorKey already offered it to the app moments ago).
+                if (Environment.TickCount64 - _lastAcceleratorEscape > 1000)
+                {
+                    _runShortcut(new KeyStroke("Escape"));
+                }
+
+                break;
         }
     }
 
@@ -788,7 +815,11 @@ public sealed class WebPreviewView : UserControl, IDisposable
 
     // ---- keys ----
 
-    /// <summary>Keys pressed inside the page: F-keys, Esc, Tab, Ctrl+Q and Alt / Ctrl+Shift combos go to the app; the rest stay with the page.</summary>
+    /// <summary>
+    /// Keys pressed inside the page: F-keys (with any modifiers), Esc, Tab, Ctrl+Q, Alt combos without Ctrl and Ctrl+Shift
+    /// combos without Alt are offered to the app first (handled = the page never sees them); the rest stay with the page.
+    /// Ctrl+Alt is AltGr on many keyboards (Polish ą, ł…), so Ctrl+Alt+&lt;character key&gt; always goes to the page.
+    /// </summary>
     private void OnAcceleratorKey(object? sender, CoreWebView2AcceleratorKeyPressedEventArgs e)
     {
         if (e.KeyEventKind is not (CoreWebView2KeyEventKind.KeyDown or CoreWebView2KeyEventKind.SystemKeyDown))
@@ -800,10 +831,16 @@ public sealed class WebPreviewView : UserControl, IDisposable
         var ctrl = WebView2Host.IsKeyDown(VkControl);
         var alt = WebView2Host.IsKeyDown(VkMenu);
         var shift = WebView2Host.IsKeyDown(VkShift);
-        var forwarded = vk is (>= VkF1 and <= VkF12) or VkEscape or VkTab
+        if (vk == VkEscape)
+        {
+            _lastAcceleratorEscape = Environment.TickCount64;
+        }
+
+        var forwarded = vk is (>= VkF1 and <= VkF12)
+            || (!(ctrl && alt) && vk is VkEscape or VkTab)
             || (ctrl && !alt && !shift && vk == 'Q')
-            || alt
-            || (ctrl && shift);
+            || (alt && !ctrl)
+            || (ctrl && shift && !alt);
         if (!forwarded || KeyName(vk) is not { } key)
         {
             return;
