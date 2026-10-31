@@ -26,26 +26,29 @@ public static class AiPluginInstaller
     public static async Task<AiInstallResult> InstallAsync(Window owner, SkinBrushes brushes, AiAppContext context, IReadOnlyList<GeneratedFile> files, Func<Task> openPluginManager,
         bool fromCatalog = false, PluginLimits? limits = null, bool forMcp = false)
     {
-        PluginDraft draft;
-        IReadOnlyList<SourceFinding> findings;
-        try
+        // Expected validation failures are caught inside the lambda, so they never leave Task.Run (debugger-friendly).
+        var (draft, findings, error) = await Task.Run<(PluginDraft?, IReadOnlyList<SourceFinding>, string?)>(() =>
         {
-            (draft, findings) = await Task.Run(() =>
+            try
             {
                 var prepared = context.PrepareInstall(files, limits);
-                return (prepared, PluginSourceCheck.Scan(prepared.Files));
-            });
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException)
+                return (prepared, PluginSourceCheck.Scan(prepared.Files), null);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                return (null, [], ex.Message);
+            }
+        });
+        if (draft is null)
         {
             if (forMcp)
             {
-                return new AiInstallResult("The plugin was not installed: " + ex.Message);
+                return new AiInstallResult("The plugin was not installed: " + error);
             }
 
-            await new MessageDialog(brushes, Loc.T("Nie można zainstalować wtyczki"), ex.Message).ShowAsync(owner);
-            return new AiInstallResult(Loc.T("Wtyczka nie została zainstalowana: {0}", ex.Message),
-                "The plugin could not be installed: " + ex.Message + "\nFix it and send all files again (`File: <path>` + one code block each).");
+            await new MessageDialog(brushes, Loc.T("Nie można zainstalować wtyczki"), error!).ShowAsync(owner);
+            return new AiInstallResult(Loc.T("Wtyczka nie została zainstalowana: {0}", error!),
+                "The plugin could not be installed: " + error + "\nFix it and send all files again (`File: <path>` + one code block each).");
         }
 
         if (findings.Count > 0 && forMcp)

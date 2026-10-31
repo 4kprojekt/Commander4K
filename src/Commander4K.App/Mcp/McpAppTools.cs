@@ -118,7 +118,7 @@ public static class McpAppTools
                 "Runs a Commander4K command as if its key were pressed (ids from list_commands: cm_* or panel:<id>). It acts on the active panel and may open dialogs for the user.",
                 McpSchema.Object(("id", "string", "Command id, e.g. cm_CalculateDirSizes.", true)),
                 McpToolMode.Ask),
-            (call, ct) => RunCommandAsync(window, host, call.Required("id"), ct),
+            (call, ct) => RunCommandAsync(window, host, call.Required("id"), allowedRoots, ct),
             args => "run_command " + args["id"]),
         new McpTool(
             new McpToolDefinition(
@@ -139,7 +139,7 @@ public static class McpAppTools
                     ("argument", "string", "What the panel is opened for, e.g. a log file path for panels that need a file (must be inside the allowed folders).", false),
                     ("filter", "string", "Filter text, as typed into the panel's filter box.", false)),
                 McpToolMode.Ask),
-            (call, ct) => LoadPanelAsync(host, call, allowedRoots, ct),
+            (call, ct) => LoadPanelAsync(window, host, call, allowedRoots, ct),
             args => $"load_plugin_panel {args["plugin"]} {args["argument"]}".TrimEnd()),
         new McpTool(
             new McpToolDefinition(
@@ -179,7 +179,7 @@ public static class McpAppTools
                 "reload_plugin",
                 "Restarts an installed plugin's process so it picks up edited code (Commander4K restarts all external plugins together). Permissions are checked again: grown permissions need enable_plugin.",
                 McpSchema.Object(("id", "string", "Plugin id.", true)),
-                McpToolMode.Allow),
+                McpToolMode.Ask),
             (call, _) => ReloadAsync(host, call.Required("id")),
             args => "reload_plugin " + args["id"]),
     ];
@@ -376,12 +376,20 @@ public static class McpAppTools
                 return McpToolResult.Error(McpToolDispatcher.OutsideRootsMessage(path));
             }
 
-            var missing = window.McpSelect(panel, names, cursor);
-            var marked = names.Count - missing.Count(m => names.Contains(m, StringComparer.OrdinalIgnoreCase));
-            var text = $"Marked {marked} of {names.Count} entries in {path}.";
-            return missing.Count == 0
-                ? new McpToolResult(text)
-                : new McpToolResult(text + " Not found: " + string.Join(", ", missing.Distinct(StringComparer.OrdinalIgnoreCase)) + ".");
+            var (marked, missing, cursorFound) = window.McpSelect(panel, names, cursor);
+            var requested = names.Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var text = new StringBuilder($"Marked {marked} of {requested} entries in {path}.");
+            if (missing.Count > 0)
+            {
+                text.Append(" Not found: ").Append(string.Join(", ", missing)).Append('.');
+            }
+
+            if (!cursorFound)
+            {
+                text.Append($" Cursor entry not found: {cursor}.");
+            }
+
+            return new McpToolResult(text.ToString());
         });
     }
 
@@ -399,7 +407,7 @@ public static class McpAppTools
             : McpToolResult.Error($"Could not switch the {which} panel to '{mode}'. Use files, preview or panel:<id> with an id from list_plugins (panels that need a file use the other panel's cursor).");
     }
 
-    private static async Task<McpToolResult> RunCommandAsync(MainWindow window, AppHost host, string id, CancellationToken ct)
+    private static async Task<McpToolResult> RunCommandAsync(MainWindow window, AppHost host, string id, Func<IReadOnlyList<string>> allowedRoots, CancellationToken ct)
     {
         if (id.StartsWith(CommandIds.PluginPrefix, StringComparison.OrdinalIgnoreCase))
         {
@@ -413,18 +421,35 @@ public static class McpAppTools
             return McpToolResult.Error($"Unknown command '{id}'. Call list_commands.");
         }
 
-        // ExecuteCommandAsync reports failures in the status bar itself; it never throws.
-        var run = await Dispatcher.UIThread.InvokeAsync<Task>(() => window.ExecuteCommandAsync(command.Id));
+        var roots = allowedRoots();
+        var (refusal, target, run) = await Dispatcher.UIThread.InvokeAsync<(string?, string?, Task?)>(() =>
+        {
+            // Checked and started in one UI-thread step. Built-in commands act on the active panel's folder and
+            // selection and write into the other panel (copy/move), so all of them must be inside the allowed folders.
+            var context = window.McpCommandContext();
+            if (context.FirstOutside(roots) is { } outside)
+            {
+                return (McpToolDispatcher.OutsideRootsMessage(outside), null, null);
+            }
+
+            // ExecuteCommandAsync reports failures in the status bar itself; it never throws.
+            return (null, context.Describe(), window.ExecuteCommandAsync(command.Id));
+        });
+        if (refusal is not null)
+        {
+            return McpToolResult.Error(refusal);
+        }
+
         try
         {
-            await run.WaitAsync(CommandWait, ct).ConfigureAwait(false);
+            await run!.WaitAsync(CommandWait, ct).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
-            return new McpToolResult($"Started {command.Id} ({command.Description}); it is still running (it may be waiting for the user).");
+            return new McpToolResult($"Started {command.Id} ({command.Description}) on {target}; it is still running (it may be waiting for the user).");
         }
 
-        return new McpToolResult($"Ran {command.Id} ({command.Description}). Errors, if any, are shown in Commander4K's status bar.");
+        return new McpToolResult($"Ran {command.Id} ({command.Description}) on {target}. Errors, if any, are shown in Commander4K's status bar.");
     }
 
     private static async Task<McpToolResult> RunPluginCommandAsync(MainWindow window, McpCall call, Func<IReadOnlyList<string>> allowedRoots, CancellationToken ct)
@@ -435,13 +460,10 @@ public static class McpAppTools
         var (refusal, run) = await Dispatcher.UIThread.InvokeAsync<(string?, Task<string?>?)>(() =>
         {
             // Checked and started in one UI-thread step, so the context cannot change in between.
-            var (path, selected) = window.McpPluginContext();
-            foreach (var candidate in selected.Prepend(path))
+            // The plugin is told the active path, the other path and the selection (ExternalPlugin.Context).
+            if (window.McpPluginContext().FirstOutside(roots) is { } outside)
             {
-                if (!McpPathPolicy.IsAllowed(candidate, roots))
-                {
-                    return (McpToolDispatcher.OutsideRootsMessage(candidate), null);
-                }
+                return (McpToolDispatcher.OutsideRootsMessage(outside), null);
             }
 
             return (null, window.McpRunPluginCommandAsync(plugin, command, ct));
@@ -466,12 +488,20 @@ public static class McpAppTools
             : McpToolResult.Error(failure);
     }
 
-    private static async Task<McpToolResult> LoadPanelAsync(AppHost host, McpCall call, Func<IReadOnlyList<string>> allowedRoots, CancellationToken ct)
+    private static async Task<McpToolResult> LoadPanelAsync(MainWindow window, AppHost host, McpCall call, Func<IReadOnlyList<string>> allowedRoots, CancellationToken ct)
     {
         var id = call.Required("plugin");
         if (host.FindPanel(id) is not { } plugin)
         {
             return McpToolResult.Error($"No panel '{id}'. Panels: {string.Join(", ", host.PanelPlugins.Select(p => p.Id))}.");
+        }
+
+        // Panels are given the window's context (active path, other path, selection) and their rows come back to the
+        // model, so that context must be inside the allowed folders too.
+        var roots = allowedRoots();
+        if (await Dispatcher.UIThread.InvokeAsync(() => window.McpPluginContext().FirstOutside(roots)) is { } outside)
+        {
+            return McpToolResult.Error(McpToolDispatcher.OutsideRootsMessage(outside));
         }
 
         var argument = call.Optional("argument");
@@ -483,7 +513,7 @@ public static class McpAppTools
             }
 
             // File-bound panels read the argument; it is not a declared path argument, so it is checked here.
-            if (!McpPathPolicy.IsAllowed(argument, allowedRoots()))
+            if (!McpPathPolicy.IsAllowed(argument, roots))
             {
                 return McpToolResult.Error(McpToolDispatcher.OutsideRootsMessage(argument));
             }
@@ -681,7 +711,15 @@ public static class McpAppTools
         PluginLimits limits;
         if (hasFiles)
         {
-            files = McpPluginTools.ReadFiles((JsonArray)call.Arguments["files"]!);
+            try
+            {
+                files = McpPluginTools.ReadFiles((JsonArray)call.Arguments["files"]!);
+            }
+            catch (ArgumentException ex)
+            {
+                return McpToolResult.Error(ex.Message);
+            }
+
             limits = PluginLimits.Answer;
         }
         else
@@ -788,4 +826,24 @@ public static class McpAppTools
     private static bool IsExpected(Exception ex) =>
         ex is IOException or UnauthorizedAccessException or InvalidOperationException or NotSupportedException or TimeoutException
             or JsonRpcException or System.Text.Json.JsonException or ArgumentException;
+}
+
+/// <summary>The locations a command or plugin works on, read from the window on the UI thread.</summary>
+/// <param name="Selected">Marked entries, or the entry under the cursor.</param>
+public sealed record McpPanelContext(string ActivePath, string OtherPath, IReadOnlyList<VfsEntry> Selected)
+{
+    private const int DescribedNames = 20;
+
+    /// <summary>The first of active path, other path and selected entries outside <paramref name="roots"/>, or <c>null</c>.</summary>
+    public string? FirstOutside(IReadOnlyList<string> roots) =>
+        new[] { ActivePath, OtherPath }.Concat(Selected.Select(e => e.Path)).FirstOrDefault(path => !McpPathPolicy.IsAllowed(path, roots));
+
+    /// <summary>"folder X, selection a, b (other panel Y)" for results and the audit.</summary>
+    public string Describe()
+    {
+        var names = Selected.Count == 0
+            ? "nothing selected"
+            : "selection " + string.Join(", ", Selected.Take(DescribedNames).Select(e => e.Name)) + (Selected.Count > DescribedNames ? $" and {Selected.Count - DescribedNames} more" : string.Empty);
+        return $"{ActivePath} ({names}; other panel {OtherPath})";
+    }
 }

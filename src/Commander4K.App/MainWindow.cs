@@ -1815,8 +1815,9 @@ public sealed class MainWindow : Window, IShell
     /// <summary>Plain navigation (no c4k.dir action runs); completes when the listing has loaded or failed.</summary>
     internal Task McpNavigateAsync(FilePanelView panel, string path) => panel.NavigateAsync(path);
 
-    /// <summary>Marks exactly <paramref name="names"/> (replacing earlier marks) and moves the cursor; returns the names not found.</summary>
-    internal IReadOnlyList<string> McpSelect(FilePanelView panel, IReadOnlyList<string> names, string? cursor)
+    /// <summary>Marks exactly <paramref name="names"/> (replacing earlier marks) and moves the cursor.</summary>
+    /// <returns>How many entries are marked, the names not found (once each) and whether the cursor name was found.</returns>
+    internal (int Marked, IReadOnlyList<string> Missing, bool CursorFound) McpSelect(FilePanelView panel, IReadOnlyList<string> names, string? cursor)
     {
         var tab = panel.ActiveTab;
         var missing = new List<string>();
@@ -1827,13 +1828,14 @@ public sealed class MainWindow : Window, IShell
             {
                 tab.Marked.Add(tab.Entries[index].Path);
             }
-            else
+            else if (!missing.Contains(name, StringComparer.OrdinalIgnoreCase))
             {
                 missing.Add(name);
             }
         }
 
         var target = tab.Cursor;
+        var cursorFound = true;
         if (cursor is not null)
         {
             if (FindRow(cursor) is { } index)
@@ -1842,12 +1844,12 @@ public sealed class MainWindow : Window, IShell
             }
             else
             {
-                missing.Add(cursor);
+                cursorFound = false;
             }
         }
 
         tab.MoveCursor(target); // Raises Changed, which repaints the marks too.
-        return missing;
+        return (tab.Marked.Count, missing, cursorFound);
 
         int? FindRow(string name)
         {
@@ -1888,12 +1890,20 @@ public sealed class MainWindow : Window, IShell
         }
     }
 
-    /// <summary>What a plugin command would work on: the visible file panel's path and its marked entries (or the cursor).</summary>
-    internal (string Path, IReadOnlyList<string> Selected) McpPluginContext()
+    /// <summary>
+    /// What plugin code is told (<c>ExternalPlugin.Context</c>, via <see cref="PluginHostAdapter"/>): the visible file
+    /// panel's path, the other path and the marked entries (or the cursor).
+    /// </summary>
+    internal Mcp.McpPanelContext McpPluginContext()
     {
         var panel = _active.Mode is null ? _active : Other;
-        return (panel.ActiveTab.Path, [.. panel.ActiveTab.MarkedOrCurrent().Select(e => e.Path)]);
+        var other = (_active.Mode is null ? Other : _active).ActiveTab.Path;
+        return new Mcp.McpPanelContext(panel.ActiveTab.Path, other, [.. panel.ActiveTab.MarkedOrCurrent()]);
     }
+
+    /// <summary>What a built-in command acts on: the active panel (location and selection) and the other panel (copy/move target).</summary>
+    internal Mcp.McpPanelContext McpCommandContext() =>
+        new(_active.ActiveTab.Path, Other.ActiveTab.Path, [.. _active.ActiveTab.MarkedOrCurrent()]);
 
     /// <summary>Runs a plugin's command like the menu does; <c>null</c> on success, otherwise why it did not run.</summary>
     internal async Task<string?> McpRunPluginCommandAsync(string pluginId, string commandId, CancellationToken cancellationToken = default)

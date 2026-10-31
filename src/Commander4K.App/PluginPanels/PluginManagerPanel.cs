@@ -76,7 +76,6 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
         }
     }
 
-
     private sealed class Session(AppHost app, IPluginHost host) : IPanelSession
     {
         private static readonly ColumnDefinition[] Columns =
