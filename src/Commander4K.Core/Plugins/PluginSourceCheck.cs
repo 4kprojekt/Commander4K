@@ -57,11 +57,13 @@ public static partial class PluginSourceCheck
     {
         var findings = new List<SourceFinding>();
         files = files.ToList();
-        var webRoots = WebRoots(files.FirstOrDefault(f => string.Equals(f.Path.Replace('\\', '/'), ManifestReader.FileName, StringComparison.OrdinalIgnoreCase))?.Content);
+        var (webRoots, entry) = WebRoots(files.FirstOrDefault(f => string.Equals(f.Path.Replace('\\', '/'), ManifestReader.FileName, StringComparison.OrdinalIgnoreCase))?.Content);
+        var webLoads = webRoots.Select(WebLoadRegex).ToList();
         foreach (var file in files)
         {
             var name = Path.GetFileName(file.Path);
-            if (InWebRoot(file.Path, webRoots) || file.Bytes is not null || PluginAuthoring.SdkClients.Values.Contains(name, StringComparer.OrdinalIgnoreCase) || RulesFor(name) is not { } rules)
+            var isEntry = entry is not null && string.Equals(NormalizeFolder(file.Path), entry, StringComparison.OrdinalIgnoreCase);
+            if ((!isEntry && InWebRoot(file.Path, webRoots)) || file.Bytes is not null || PluginAuthoring.SdkClients.Values.Contains(name, StringComparer.OrdinalIgnoreCase) || RulesFor(name) is not { } rules)
             {
                 continue;
             }
@@ -83,6 +85,11 @@ public static partial class PluginSourceCheck
                 {
                     findings.Add(new SourceFinding(file.Path.Replace('\\', '/'), i + 1, rule.Api, rule.Instead));
                 }
+
+                if (webLoads.Any(r => r.IsMatch(line)))
+                {
+                    findings.Add(new SourceFinding(file.Path.Replace('\\', '/'), i + 1, "loads code from the web page folder (webRoot), which is not checked", "keep page code in the page and talk to it through preview.message"));
+                }
             }
         }
 
@@ -93,12 +100,21 @@ public static partial class PluginSourceCheck
     /// Pages in a preview's <c>webRoot</c> run in the browser engine, not as plugin code: they have no SDK and are
     /// confined by the web view, so they are not linted.
     /// </summary>
-    private static List<string> WebRoots(string? manifestJson)
+    private static (List<string> Roots, string? Entry) WebRoots(string? manifestJson)
     {
         var roots = new List<string>();
+        string? entry = null;
         try
         {
             using var document = System.Text.Json.JsonDocument.Parse(manifestJson ?? "{}", new System.Text.Json.JsonDocumentOptions { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            foreach (var runtime in document.RootElement.EnumerateObject().Where(p => string.Equals(p.Name, "runtime", StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == System.Text.Json.JsonValueKind.Object))
+            {
+                foreach (var e in runtime.Value.EnumerateObject().Where(p => string.Equals(p.Name, "entry", StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == System.Text.Json.JsonValueKind.String))
+                {
+                    entry = NormalizeFolder(e.Value.GetString()!);
+                }
+            }
+
             foreach (var property in document.RootElement.EnumerateObject().Where(p => string.Equals(p.Name, "contributes", StringComparison.OrdinalIgnoreCase)))
             {
                 foreach (var previews in property.Value.EnumerateObject().Where(p => string.Equals(p.Name, "previews", StringComparison.OrdinalIgnoreCase)))
@@ -107,7 +123,7 @@ public static partial class PluginSourceCheck
                     {
                         foreach (var root in item.EnumerateObject().Where(p => string.Equals(p.Name, "webRoot", StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == System.Text.Json.JsonValueKind.String))
                         {
-                            var value = root.Value.GetString()!.Trim().Replace('\\', '/').Trim('/');
+                            var value = NormalizeFolder(root.Value.GetString()!);
                             if (value.Length > 0 && !value.Contains("..", StringComparison.Ordinal))
                             {
                                 roots.Add(value);
@@ -122,13 +138,36 @@ public static partial class PluginSourceCheck
             roots.Clear(); // Invalid manifest: skip nothing.
         }
 
-        return roots;
+        return (roots, entry);
+    }
+
+    /// <summary>Forward slashes, no leading <c>./</c> and no trailing slash.</summary>
+    internal static string NormalizeFolder(string path)
+    {
+        var value = path.Trim().Replace('\\', '/');
+        while (value.StartsWith("./", StringComparison.Ordinal))
+        {
+            value = value[2..];
+        }
+
+        return value.Trim('/');
     }
 
     private static bool InWebRoot(string path, List<string> webRoots)
     {
-        var normalized = path.Replace('\\', '/').TrimStart('.', '/');
+        var normalized = NormalizeFolder(path);
         return webRoots.Any(root => normalized.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>A line of process code that loads something from the web root (require/import/dot-source of a path, or a module named like the folder).</summary>
+    private static Regex WebLoadRegex(string root)
+    {
+        var path = Regex.Escape(root).Replace("/", @"[/\\]", StringComparison.Ordinal);
+        var module = Regex.Escape(root).Replace("/", @"[./\\]", StringComparison.Ordinal);
+        return new Regex(
+            @"((\b(require|import|importlib|runpy|run_path|import_module|Import-Module|spec_from_file_location)\b|^\s*(\.|&)\s).*(?<![\w.-])(\.{1,2}[/\\])?" + path + @"[/\\]"
+            + @"|^\s*(from|import)\s+" + module + @"\b)",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     }
 
     /// <summary>Findings in an installed plugin folder (code files up to 1 MB each, at most 200 files). Blocking.</summary>
@@ -136,16 +175,24 @@ public static partial class PluginSourceCheck
     {
         var files = new List<GeneratedFile>();
         var manifest = Path.Combine(folder, ManifestReader.FileName);
+        string? manifestText = null;
         if (File.Exists(manifest) && new FileInfo(manifest).Length <= PluginAuthoring.MaxFileBytes)
         {
-            files.Add(new GeneratedFile(ManifestReader.FileName, File.ReadAllText(manifest)));
+            manifestText = File.ReadAllText(manifest);
+            files.Add(new GeneratedFile(ManifestReader.FileName, manifestText));
         }
 
-        foreach (var path in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Take(200))
+        // Web-root files are not linted, so they must not use up the cap of 200 files.
+        var (webRoots, entry) = WebRoots(manifestText);
+        var candidates = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+            .Select(path => (Path: path, Relative: Path.GetRelativePath(folder, path)))
+            .Where(f => RulesFor(f.Path) is not null && (!InWebRoot(f.Relative, webRoots) || string.Equals(NormalizeFolder(f.Relative), entry, StringComparison.OrdinalIgnoreCase)))
+            .Take(200);
+        foreach (var (path, relative) in candidates)
         {
-            if (RulesFor(path) is not null && new FileInfo(path).Length <= PluginAuthoring.MaxFileBytes)
+            if (new FileInfo(path).Length <= PluginAuthoring.MaxFileBytes)
             {
-                files.Add(new GeneratedFile(Path.GetRelativePath(folder, path), File.ReadAllText(path)));
+                files.Add(new GeneratedFile(relative, File.ReadAllText(path)));
             }
         }
 

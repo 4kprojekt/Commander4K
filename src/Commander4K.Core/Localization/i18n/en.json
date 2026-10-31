@@ -437,6 +437,7 @@
   "Wtyczka wymaga protokołu {0}, aplikacja obsługuje {1}.": "The plugin requires protocol {0}; the app supports {1}.",
   "runtime.type musi być jednym z: {0}.": "runtime.type must be one of: {0}.",
   "Podgląd „{0}”: webRoot „{1}” musi być folderem wewnątrz wtyczki.": "Preview '{0}': webRoot '{1}' must be a folder inside the plugin.",
+  "Podgląd „{0}”: webRoot „{1}” nie może zawierać pliku startowego wtyczki ani leżeć w jego folderze.": "Preview '{0}': webRoot '{1}' must not contain the plugin's start file or lie inside its folder.",
   "Brak runtime.entry (plik startowy).": "Missing runtime.entry (start file).",
   "runtime.entry musi wskazywać plik wewnątrz folderu wtyczki.": "runtime.entry must point to a file inside the plugin folder.",
   "Nie znaleziono pliku startowego {0}.": "Start file {0} not found.",

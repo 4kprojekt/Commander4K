@@ -82,4 +82,45 @@ public sealed class WebPreviewParsingTests : IDisposable
 
         Assert.Empty(ManifestReader.Validate(manifest, _folder));
     }
+
+    [Fact]
+    public void Dot_slash_webRoot_works()
+    {
+        var web = Assert.IsType<WebPreview>(ExternalPreviewPlugin.ParseWeb(Json("""{"kind":"web","page":"index.html"}"""), "t.p", _folder, "./web"));
+        Assert.EndsWith("web", web.RootFolder, StringComparison.Ordinal);
+        Assert.Equal("index.html", web.Page);
+        Assert.Empty(ManifestReader.Validate(Manifest("./web", "main.js"), _folder));
+    }
+
+    [Theory]
+    [InlineData("web", "web/main.js")]
+    [InlineData("web", "web/sub/main.js")]
+    [InlineData("web/ui", "web/main.js")]
+    [InlineData("./web", "./web/main.js")]
+    public void WebRoot_overlapping_the_entry_folder_is_an_error(string webRoot, string entry)
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "web", "ui"));
+        Directory.CreateDirectory(Path.Combine(_folder, "web", "sub"));
+        File.WriteAllText(Path.Combine(_folder, "web", "main.js"), "//");
+        File.WriteAllText(Path.Combine(_folder, "web", "sub", "main.js"), "//");
+
+        var errors = ManifestReader.Validate(Manifest(webRoot, entry), _folder);
+
+        Assert.Contains(errors, e => e.Contains("webRoot", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WebRoot_inside_a_sibling_of_the_entry_folder_is_fine()
+    {
+        Directory.CreateDirectory(Path.Combine(_folder, "src"));
+        File.WriteAllText(Path.Combine(_folder, "src", "main.js"), "//");
+
+        Assert.Empty(ManifestReader.Validate(Manifest("web", "src/main.js"), _folder));
+    }
+
+    private static PluginManifest Manifest(string webRoot, string entry) => new("t.p", "T", "1.0.0", "a", "d", [])
+    {
+        Runtime = new PluginRuntime("node", entry),
+        Contributes = new PluginContributions(Previews: [new PreviewContribution("v", "V", [".x"], WebRoot: webRoot)]),
+    };
 }

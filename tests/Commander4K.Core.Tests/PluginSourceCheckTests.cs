@@ -100,4 +100,40 @@ public sealed class PluginSourceCheckTests
         var finding = Assert.Single(findings);
         Assert.Equal("main.js", finding.File);
     }
+
+    private const string WebManifest = """
+        { "id": "t.p", "name": "T", "version": "1.0.0", "author": "a", "description": "d",
+          "runtime": { "type": "node", "entry": "main.js" },
+          "contributes": { "previews": [ { "id": "v", "title": "V", "extensions": [".x"], "webRoot": "./web" } ] } }
+        """;
+
+    [Theory]
+    [InlineData("main.js", "const lib = require('./web/lib.js');")]
+    [InlineData("main.js", "import { x } from './web/lib.js';")]
+    [InlineData("main.js", "const m = await import('./web/lib.js');")]
+    [InlineData("main.py", "from web import x")]
+    [InlineData("main.py", "import web.helpers")]
+    [InlineData("main.py", "runpy.run_path('web/x.py')")]
+    [InlineData("main.ps1", ". ./web/x.ps1")]
+    [InlineData("main.ps1", @"Import-Module .\web\x.psm1")]
+    public void Process_code_loading_from_webRoot_is_a_finding(string file, string code)
+    {
+        var findings = PluginSourceCheck.Scan([new GeneratedFile("plugin.json", WebManifest), new GeneratedFile(file, code)]);
+
+        Assert.Contains(findings, f => f.Api.Contains("webRoot", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Dot_slash_webRoot_is_skipped_but_the_entry_file_never_is()
+    {
+        var manifest = WebManifest.Replace("\"entry\": \"main.js\"", "\"entry\": \"web/main.js\"", StringComparison.Ordinal);
+
+        var findings = PluginSourceCheck.Scan([
+            new GeneratedFile("plugin.json", manifest),
+            new GeneratedFile("web/app.js", "fetch('x');"),
+            new GeneratedFile("web/main.js", "fetch('x');"),
+        ]);
+
+        Assert.Equal("web/main.js", Assert.Single(findings).File);
+    }
 }
