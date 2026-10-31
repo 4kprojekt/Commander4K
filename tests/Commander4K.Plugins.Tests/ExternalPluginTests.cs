@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -317,7 +318,74 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         return (preview, HostFor(plugin), entry);
     }
 
+    /// <summary>A catalog plugin started from its folder, previewing an existing file; the preview is the one with this id, else the first that accepts the entry.</summary>
+    private async Task<(ExternalPreviewPlugin Preview, IPluginHost Host, VfsEntry Entry)> CatalogPreviewOfAsync(string folder, string path, string? previewId = null)
+    {
+        var plugin = StartFrom(Path.Combine(RepositoryRoot(), "plugins-catalog", folder));
+        _started.Add(plugin);
+        var entry = new VfsEntry(Path.GetFileName(path), path, VfsEntryKind.File, new FileInfo(path).Length);
+        var previews = plugin.Manifest.Contributes!.Previews!.Select(p => new ExternalPreviewPlugin(plugin, p)).ToList();
+        var preview = previewId is null
+            ? previews.First(p => p.CanPreview(entry))
+            : previews.First(p => p.Id.EndsWith("/" + previewId, StringComparison.Ordinal));
+        return (preview, HostFor(plugin), entry);
+    }
+
     private readonly List<ExternalPlugin> _started = [];
+
+    [Fact]
+    public async Task Pe_preview_reads_native_exe_headers_and_imports()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe"); // MTP apphost
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", exe, "exe");
+        var md = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+        Assert.Contains(RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "ARM64" : "x64", md, StringComparison.Ordinal);
+        Assert.Contains("konsola", md, StringComparison.Ordinal);
+        Assert.Contains("KERNEL32.dll", md, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ASLR: ✅", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_lists_dll_exports_and_forwarders()
+    {
+        var kernel32 = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", kernel32, "dll");
+        var md = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+        Assert.Contains("## Eksporty", md, StringComparison.Ordinal);
+        Assert.Contains("CreateFileW", md, StringComparison.Ordinal);
+        Assert.Contains("→", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_of_non_pe_file()
+    {
+        var path = Path.Combine(_folder, "fake.exe");
+        var bytes = new byte[128];
+        bytes[0] = (byte)'M';
+        bytes[1] = (byte)'Z';
+        BitConverter.GetBytes(0x7FFFFFF0).CopyTo(bytes, 0x3C);
+        await File.WriteAllBytesAsync(path, bytes, TestToken);
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", path, "exe");
+        var md = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+        Assert.Contains("nie jest prawidłowym plikiem PE", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_survives_broken_import_table()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var bytes = await File.ReadAllBytesAsync(exe, TestToken);
+        var lfanew = BitConverter.ToInt32(bytes, 0x3C);
+        var plus = BitConverter.ToUInt16(bytes, lfanew + 24) == 0x20B;
+        BitConverter.GetBytes(0x7FFFFFF0).CopyTo(bytes, lfanew + 24 + (plus ? 112 : 96) + 8);
+        var path = Path.Combine(_folder, "broken.exe");
+        await File.WriteAllBytesAsync(path, bytes, TestToken);
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", path, "exe");
+        var md = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+        Assert.Contains("## Nagłówek", md, StringComparison.Ordinal);
+        Assert.Contains("⚠", md, StringComparison.Ordinal);
+        Assert.Contains("tabela importów", md, StringComparison.Ordinal);
+    }
 
     [Fact]
     public async Task Python_preview_returns_a_card()
@@ -713,6 +781,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("../../plugins-catalog/json-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/openapi-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/html-preview-python", "python", "c4k.py")]
+    [InlineData("../../plugins-catalog/pe-info-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/git-repo-powershell", "powershell", "c4k.ps1")]
     public void Example_sdk_clients_match_plugins_sdk(string example, string language, string file) =>
         Assert.Equal(

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "official.pe-info",
+  "name": "Podgląd EXE i DLL",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Oficjalna wtyczka: nagłówki, zabezpieczenia, sekcje, importy i eksporty plików wykonywalnych Windows (PE); tylko odczyt, nic nie jest uruchamiane.",
+  "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+  "permissions": ["fs.read"],
+  "contributes": {
+    "previews": [
+      { "id": "exe", "title": "EXE", "extensions": [".exe", ".scr", ".cpl", ".efi"], "priority": 55, "card": true },
+      { "id": "dll", "title": "DLL", "extensions": [".dll", ".sys", ".ocx", ".drv", ".ax", ".winmd", ".mui"], "priority": 55, "card": true }
+    ]
+  }
+}
