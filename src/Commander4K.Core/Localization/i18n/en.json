@@ -1050,5 +1050,10 @@
   "📄 README": "📄 README",
   "🔐 Połączenie SSH": "🔐 SSH connection",
   "🖼 Galeria": "🖼 Gallery",
-  "🗒 Notatki": "🗒 Notes"
+  "🗒 Notatki": "🗒 Notes",
+  "_// Panel transfer": "",
+  "Żaden odbiorca nie przyjmuje folderów.": "No receiver accepts folders.",
+  "Odbiorca „{0}” przyjmuje tylko jeden plik.": "Receiver “{0}” accepts only one file.",
+  "Wtyczka nie podała żadnego odbiorcy dla tych plików.": "The plugin offered no receiver for these files.",
+  "Żaden odbiorca nie przyjmuje plików tego typu.": "No receiver accepts files of this type."
 }

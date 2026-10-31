@@ -58,6 +58,44 @@ public interface IPanelPlugin : IPlugin
     IPanelSession CreateSession(PanelRequest request, IPluginHost host);
 }
 
+public enum TransferItemKind : byte
+{
+    File,
+    Folder,
+}
+
+/// <summary>One file or folder sent from a file panel to a plugin panel.</summary>
+public sealed record TransferItem(string Path, string Name, TransferItemKind Kind, long Size);
+
+/// <summary>A way a plugin panel can receive the offered items (e.g. "Add to library").</summary>
+/// <param name="Extensions">Extensions, file names or <c>*</c>/<c>?</c> patterns every offered file must match; <c>null</c> = any.</param>
+/// <param name="Multiple">Accepts more than one item at once.</param>
+/// <param name="Folders">Accepts folders.</param>
+/// <param name="ReturnsMessage">The result carries text to show to the user.</param>
+public sealed record PanelReceiver(
+    string Id,
+    string Title,
+    string? Description = null,
+    IReadOnlyList<string>? Extensions = null,
+    bool Multiple = false,
+    bool Folders = false,
+    bool ReturnsMessage = false);
+
+/// <summary>A way a plugin panel can provide the rows under selection as files.</summary>
+public sealed record PanelProvider(string Id, string Title, string? Description = null);
+
+public sealed record TransferItemResult(string Path, bool Ok, string? Error = null);
+
+/// <param name="Text">Message for the user, or <c>null</c>.</param>
+public sealed record ReceiveResult(string? Text, IReadOnlyList<TransferItemResult>? Results = null);
+
+/// <summary>A file a plugin provides: exactly one of <paramref name="Text"/>, <paramref name="Data"/> or <paramref name="Url"/>.</summary>
+public sealed record ProvidedFile(string Name, string? Text = null, byte[]? Data = null, Uri? Url = null);
+
+public sealed record ProvideResult(IReadOnlyList<ProvidedFile> Files, string? Text = null);
+
+public readonly record struct TransferProgress(int Done, int Total, long Bytes = 0, string? Text = null);
+
 public interface IPanelSession : IAsyncDisposable
 {
     /// <summary>Re-loads automatically at this interval while visible (task manager); <c>null</c> = manual refresh only.</summary>
@@ -72,4 +110,22 @@ public interface IPanelSession : IAsyncDisposable
 
     /// <returns>Text to show to the user, or <c>null</c>. The host reloads the panel afterwards.</returns>
     Task<string?> ExecuteActionAsync(string actionId, IReadOnlyList<string> rowIds, CancellationToken cancellationToken);
+
+    /// <summary>The panel can receive files sent from a file panel.</summary>
+    bool CanReceive => false;
+
+    /// <summary>The panel can provide files for a file panel.</summary>
+    bool CanProvide => false;
+
+    Task<IReadOnlyList<PanelReceiver>> GetReceiversAsync(IReadOnlyList<TransferItem> items, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<PanelReceiver>>([]);
+
+    Task<ReceiveResult> ReceiveAsync(string receiverId, IReadOnlyList<TransferItem> items, IProgress<TransferProgress>? progress, CancellationToken ct) =>
+        throw new NotSupportedException();
+
+    Task<IReadOnlyList<PanelProvider>> GetProvidersAsync(IReadOnlyList<string> rowIds, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<PanelProvider>>([]);
+
+    Task<ProvideResult> ProvideAsync(string providerId, IReadOnlyList<string> rowIds, IProgress<TransferProgress>? progress, CancellationToken ct) =>
+        throw new NotSupportedException();
 }

@@ -49,13 +49,17 @@ public sealed record CommandContribution(string Id, string Title, string Categor
 
 public sealed record PanelActionContribution(string Id, string Title, string? Shortcut = null, bool Confirm = false, bool AppliesToRows = true);
 
+/// <param name="Accepts">The panel can receive files sent from a file panel (F5); see <c>IPanelSession.GetReceiversAsync</c>.</param>
+/// <param name="Provides">The panel can provide files for a file panel (F5 from the plugin panel).</param>
 public sealed record PanelContribution(
     string Id,
     string Title,
     string? Description = null,
     bool RequiresArgument = false,
     int? RefreshSeconds = null,
-    IReadOnlyList<PanelActionContribution>? Actions = null);
+    IReadOnlyList<PanelActionContribution>? Actions = null,
+    bool Accepts = false,
+    bool Provides = false);
 
 /// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
 public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10);
