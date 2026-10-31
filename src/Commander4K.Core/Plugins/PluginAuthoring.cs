@@ -105,13 +105,6 @@ public static partial class PluginAuthoring
         return Deduplicate(files);
     }
 
-    /// <summary>Code blocks read from a web page: each with the nearest text before it, which should hold <c>File: path</c>.</summary>
-    public static IReadOnlyList<GeneratedFile> FromBlocks(IEnumerable<(string? Label, string Code)> blocks) =>
-        Deduplicate([.. blocks
-            .Select(b => (Path: b.Label is null ? null : (b.Label.Split('\n').Select(FileLabel).LastOrDefault(p => p is not null)), b.Code))
-            .Where(b => b.Path is not null)
-            .Select(b => new GeneratedFile(b.Path!, b.Code.EndsWith('\n') ? b.Code : b.Code + "\n"))]);
-
     /// <summary>
     /// Validates the files in a staging folder (paths, sizes, manifest) and returns where they would go. Throws
     /// <see cref="InvalidOperationException"/> with a readable reason.

@@ -91,15 +91,14 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         };
         ToolTip.SetTip(_engine, Loc.T("Wyszukiwarka dla tekstu wpisanego w pasek adresu"));
 
-        var toolbar = new Grid().Cols("Auto,Auto,Auto,*,Auto,Auto,Auto,Auto").Children(
+        var toolbar = new Grid().Cols("Auto,Auto,Auto,*,Auto,Auto,Auto").Children(
             _back.Col(0),
             _forward.Col(1),
             ToolButton("⟳", Loc.T("Odśwież (F5)"), () => Core?.Reload()).Col(2),
             _address.Col(3).Margin(4, 0, 0, 0),
             _engine.Col(4),
-            AiMenuButton().Col(5).Margin(4, 0, 0, 0),
-            ToolButton("↗", Loc.T("Otwórz w przeglądarce systemowej"), OpenExternally).Col(6).Margin(4, 0, 0, 0),
-            ToolButton("✕", Loc.T("Zamknij przeglądarkę (Esc)"), () => CloseRequested?.Invoke()).Col(7).Margin(4, 0, 0, 0));
+            ToolButton("↗", Loc.T("Otwórz w przeglądarce systemowej"), OpenExternally).Col(5).Margin(4, 0, 0, 0),
+            ToolButton("✕", Loc.T("Zamknij przeglądarkę (Esc)"), () => CloseRequested?.Invoke()).Col(6).Margin(4, 0, 0, 0));
         _toolbar = new Border().Padding(4).Child(toolbar);
         _toolbar.PointerPressed += (_, _) => Activated?.Invoke();
 
@@ -162,7 +161,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
 
     /// <summary>
     /// Searches with <paramref name="engine"/>. Assistants that take no query in the address (Gemini), and prompts too
-    /// long for one, are typed into the chat box once the page is ready (see <see cref="AskWithPromptAsync"/>).
+    /// long for one, go to the clipboard with the chat opened (see <see cref="AskWithPromptAsync"/>).
     /// </summary>
     public async Task SearchAsync(string query, SearchEngine engine)
     {
@@ -176,8 +175,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
     }
 
     /// <summary>
-    /// Opens the assistant's chat and types <paramref name="prompt"/> into its message box without sending it, so the
-    /// user can read it and press Enter. The text also goes to the clipboard in case the page's box is not found.
+    /// Opens the assistant's chat and puts <paramref name="prompt"/> on the clipboard; the user pastes it (Ctrl+V) on the page.
     /// </summary>
     public async Task AskWithPromptAsync(string prompt, SearchEngine engine)
     {
@@ -193,68 +191,8 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
             Navigate(engine.ChatUrl);
         }
 
-        await TypeIntoChatAsync(prompt, engine.Name);
+        _notify(Loc.T("Pytanie jest w schowku — wklej je na stronie (Ctrl+V)."), false);
     }
-
-    /// <summary>Types text into the chat box of the page shown now (Gemini, ChatGPT, Claude, Perplexity or any page with one).</summary>
-    public async Task TypeIntoChatAsync(string text, string? siteName = null)
-    {
-        _status.Text = Loc.T("Czekam na pole czatu na stronie…");
-        var script = PageScripts.TypeIntoChat(text);
-        for (var attempt = 0; attempt < 60; attempt++)
-        {
-            if (Core is { } core && !_disposed)
-            {
-                try
-                {
-                    if (await core.ExecuteScriptAsync(script) == "\"ok\"")
-                    {
-                        _status.Text = string.Empty;
-                        _notify(Loc.T("Treść wpisana w pole czatu{0} — sprawdź ją i naciśnij Enter, żeby wysłać.", siteName is null ? string.Empty : " (" + siteName + ")"), false);
-                        _web.FocusPage();
-                        return;
-                    }
-                }
-                catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
-                {
-                    // Navigation in progress; try again.
-                }
-            }
-
-            await Task.Delay(250);
-        }
-
-        _status.Text = string.Empty;
-        _notify(Loc.T("Nie znalazłem pola czatu na stronie — treść jest w schowku, wklej ją (Ctrl+V)."), true);
-    }
-
-    /// <summary>Code blocks on the page with the text just before each (where "File: path" should be).</summary>
-    public async Task<IReadOnlyList<(string? Label, string Code)>> ReadCodeBlocksAsync()
-    {
-        if (Core is not { } core)
-        {
-            return [];
-        }
-
-        var json = await core.ExecuteScriptAsync(PageScripts.ReadCodeBlocks);
-        try
-        {
-            using var document = System.Text.Json.JsonDocument.Parse(json);
-            return [.. document.RootElement.EnumerateArray().Select(block => (
-                block.TryGetProperty("label", out var label) && label.ValueKind == System.Text.Json.JsonValueKind.String ? label.GetString() : null,
-                block.GetProperty("code").GetString() ?? string.Empty))];
-        }
-        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or KeyNotFoundException)
-        {
-            return [];
-        }
-    }
-
-    /// <summary>App state and plugin guide for the assistant on the page; set by the window.</summary>
-    public AiAppContext? Ai { get; init; }
-
-    /// <summary>Installs plugin files found in an answer and returns a status message; set by the window.</summary>
-    public Func<IReadOnlyList<GeneratedFile>, Task<AiInstallResult>>? InstallPlugin { get; init; }
 
     private SkinBrushes? _brushes;
 
@@ -425,99 +363,6 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
             Navigate(url);
             _web.FocusPage();
         }
-    }
-
-    private async Task AskAssistantAsync()
-    {
-        var question = _address.Text?.Trim();
-        if (string.IsNullOrEmpty(question) || question == CurrentUrl)
-        {
-            _notify(Loc.T("Wpisz pytanie w pasek adresu, a potem kliknij „Zapytaj AI”."), false);
-            FocusAddress();
-            return;
-        }
-
-        // The question goes with the app state, so "this folder" or "the marked files" mean something to the assistant.
-        await AskWithPromptAsync(Ai is null ? question : question + "\n\n" + ContextNote(), CurrentAssistant());
-    }
-
-    /// <summary>"🤖 AI ▾": ask with context, type the app state into the chat, write a plugin, install a plugin from the answer.</summary>
-    private Button AiMenuButton()
-    {
-        var menu = new MenuFlyout();
-        void Add(string header, Func<Task> action) =>
-            menu.Items.Add(new MenuItem { Header = header }.OnClick(click => _ = action()));
-        Add(Loc.T("✨ Zapytaj o tekst z paska adresu (ze stanem aplikacji)"), AskAssistantAsync);
-        Add(Loc.T("📋 Wpisz w czat aktualny stan aplikacji"), () => Ai is null ? Task.CompletedTask
-            : AskWithPromptAsync(ContextNote(), CurrentAssistant()));
-        Add(Loc.T("🧩 Napisz wtyczkę według przewodnika…"), WritePluginAsync);
-        Add(Loc.T("⬇ Zainstaluj wtyczkę z odpowiedzi na stronie"), InstallPluginFromPageAsync);
-        var button = new Button().Content(Loc.T("🤖 AI ▾")).Padding(8, 2).MinHeight(24);
-        button.Flyout = menu;
-        ToolTip.SetTip(button, Loc.T("Asystent AI na stronie (Gemini, ChatGPT, Claude…) ze stanem aplikacji i przewodnikiem po wtyczkach"));
-        return button;
-    }
-
-    private string ContextNote() =>
-        "---\nContext: the state of Commander4K, the Windows file manager I am using right now (for reference; ask me if something is missing):\n\n" + Ai!.Describe();
-
-    /// <summary>The assistant shown in the panel now, or the one chosen in the settings.</summary>
-    private SearchEngine CurrentAssistant()
-    {
-        if (CurrentUrl is { } url && Uri.TryCreate(url, UriKind.Absolute, out var page)
-            && SearchEngines.All.FirstOrDefault(e => e.IsAssistant && Uri.TryCreate(e.ChatUrl, UriKind.Absolute, out var chat) && chat.Host == page.Host) is { } shown)
-        {
-            return shown;
-        }
-
-        return SearchEngines.Get(_app.Settings.AssistantEngine, SearchEngines.DefaultAssistant);
-    }
-
-    private async Task WritePluginAsync()
-    {
-        if (Ai is null || _brushes is null || TopLevel.GetTopLevel(this) is not Window owner)
-        {
-            return;
-        }
-
-        var wish = await new Dialogs.InputDialog(_brushes, Loc.T("Napisz wtyczkę z AI"),
-            Loc.T("Co ma robić wtyczka? (prośba trafi do asystenta na stronie razem z przewodnikiem i stanem aplikacji)")).ShowAsync(owner);
-        if (!string.IsNullOrWhiteSpace(wish))
-        {
-            await AskWithPromptAsync(Ai.PluginPrompt(wish), CurrentAssistant());
-        }
-    }
-
-    /// <summary>Files from the page's code blocks ("File: path" before each); the clipboard (a copied answer) as a fallback.</summary>
-    private async Task InstallPluginFromPageAsync()
-    {
-        if (InstallPlugin is null)
-        {
-            return;
-        }
-
-        var files = PluginAuthoring.FromBlocks(await ReadCodeBlocksAsync());
-        if (!HasManifest(files) && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard
-            && await clipboard.TryGetTextAsync() is { Length: > 0 } copied)
-        {
-            files = PluginAuthoring.ParseFiles(copied);
-        }
-
-        if (!HasManifest(files))
-        {
-            _notify(Loc.T("Nie znalazłem wtyczki w odpowiedzi: potrzebne są bloki kodu z linią „File: plugin.json” itd. przed każdym. Możesz też skopiować całą odpowiedź (przycisk Kopiuj na stronie) i spróbować ponownie."), true);
-            return;
-        }
-
-        var result = await InstallPlugin(files);
-        _notify(result.Message, false);
-        if (result.FixRequest is { } fix)
-        {
-            await TypeIntoChatAsync(fix, CurrentAssistant().Name); // Back to the same chat: the assistant fixes its own plugin.
-        }
-
-        static bool HasManifest(IReadOnlyList<GeneratedFile> found) =>
-            found.Any(f => string.Equals(f.Path, ManifestReader.FileName, StringComparison.OrdinalIgnoreCase));
     }
 
     private void OpenExternally()

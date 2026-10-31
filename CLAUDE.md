@@ -12,7 +12,7 @@ The sections below (in Polish) are the project specification and implementation 
   - Core has no native interop: `process.list` gets parent PIDs and image paths from `Plugins.BuiltIn.Interop.ProcessLookups`, passed into `ScopedPluginHost`.
   - `PluginSourceCheck` lints plugin code for SDK bypasses (`open()`, `fs`, `subprocess`, `fetch`, `Get-Content`, stdout writes…; calls through the SDK alias are excluded). The AI installer turns its findings into a fix request, and the plugin manager shows them in the details and warns on enable. The bundled examples must stay clean (test).
 - Preview `extensions` accept `.ext`, file names and `*`/`?` patterns (`ExternalPreviewPlugin.Matches`). The example `project-modules-python` shows this: dependencies and OpenAPI modules.
-- Unknown files: `PreviewPanelView` shows a bar over hex / "no preview". Its buttons call `MainWindow.AskAiAboutFileAsync` (format question with the first 512 bytes, via `AiAppContext.DescribeFileAsync`) and `CreatePreviewPluginAsync` (preview-plugin request; the chat in plugin mode, otherwise the browser assistant with the guide and the preview example).
+- Unknown files: `PreviewPanelView` shows a bar over hex / "no preview". Its buttons call `MainWindow.AskAiAboutFileAsync` (format question with the first 512 bytes, via `AiAppContext.DescribeFileAsync`) and `CreatePreviewPluginAsync` (preview-plugin request; the chat in plugin mode, otherwise Claude Code via `UseClaudeCodeDialog`).
 - This PC (`local://`, `LocalFileSystemPlugin`):
   - It lists drives, then `KnownFolders` (libraries via SpecialFolder; Downloads from the User Shell Folders registry key), then a `net://` entry.
   - After that it streams `NetworkEntries`: AppHost passes the network plugin's root, i.e. saved connections, Explorer network locations and discovered hosts.
@@ -84,8 +84,7 @@ AI providers (`Core/Ai`): every provider speaks the OpenAI-compatible chat compl
 - The chat sends it with every question and offers tools (`AiChatTools`: `get_context`, `list_directory`, `read_text_file` behind a consent dialog, `get_plugin_guide`). Models that reject tools get the conversation flattened (`AiMessage.WithoutTools`).
 - `Core/Plugins/PluginAuthoring` holds the prompt and output format (`File: path` + one fenced block per file), the parser for Markdown and for page code blocks, and `Prepare`/`Install`. `Prepare` validates in a temp folder: safe relative paths, `ManifestReader`, and it adds the SDK client.
 - `AiPluginInstaller` shows the permissions and revokes any earlier approval before installing (new code is never auto-enabled).
-- Browser panel "🤖 AI" menu: `PageScripts.TypeIntoChat` fills the page's lowest visible message box and never sends. It was checked live on Gemini (Quill editor under an `aria-hidden` ancestor when signed out) and ChatGPT (textarea). `ReadCodeBlocks` labels each `pre` with the nearest preceding "File:" text.
-- `SearchEngine.ChatUrl` opens an empty chat for prompts that are too long for `?q=`.
+- AI outside the app goes through Claude Code (MCP server coming; until then `UseClaudeCodeDialog` copies the prompt and shows it). The browser panel no longer types into or reads assistant pages; `SearchEngine.ChatUrl` is used when an assistant engine takes no query (the prompt goes to the clipboard).
 
 JSON source-generated records pass `null` for missing keys, so their defaults use `init => field = value ?? …`. Non-modal windows follow skin changes via `MainWindow.FollowSkin` (each has `ApplySkin` that rebuilds its layout).
 

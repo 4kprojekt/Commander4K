@@ -84,18 +84,6 @@ public sealed class PluginAuthoringTests : IDisposable
         Assert.Equal("print(2)\n", file.Content);
     }
 
-    [Fact]
-    public void Blocks_read_from_a_page_use_the_label_text()
-    {
-        var files = PluginAuthoring.FromBlocks([
-            ("Some intro\nFile: plugin.json", Manifest),
-            ("Python", "print('no label')"),
-            ("File: main.py", "import c4k"),
-        ]);
-
-        Assert.Equal(["plugin.json", "main.py"], files.Select(f => f.Path));
-    }
-
     [Theory]
     [InlineData("main.py", true)]
     [InlineData("lib/util.py", true)]

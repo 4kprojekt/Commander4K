@@ -689,11 +689,7 @@ public sealed class MainWindow : Window, IShell
             return existing;
         }
 
-        var browser = new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut)
-        {
-            Ai = AiContext,
-            InstallPlugin = files => AiPluginInstaller.InstallAsync(this, _skins.Current, AiContext, files, OpenPluginManagerAsync),
-        };
+        var browser = new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut);
         target.ShowMode(browser);
         SetActive(target);
         return browser;
@@ -720,12 +716,11 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
-        var assistant = SearchEngines.Get(_host!.Settings.AssistantEngine, SearchEngines.DefaultAssistant);
-        var question = await new InputDialog(_skins!.Current, Loc.T("Zapytaj AI ({0})", assistant.Name),
-            Loc.T("Pytanie (asystenta zmienisz w ustawieniach: „Asystent AI”):"), string.Empty).ShowAsync(this);
+        var question = await new InputDialog(_skins!.Current, Loc.T("Zapytaj AI"),
+            Loc.T("Pytanie (trafi do Claude Code):"), string.Empty).ShowAsync(this);
         if (!string.IsNullOrWhiteSpace(question))
         {
-            await SearchWebAsync(question, "assistant");
+            await UseClaudeCodeAsync(question);
         }
     }
 
@@ -1240,7 +1235,7 @@ public sealed class MainWindow : Window, IShell
 
     /// <summary>
     /// "What format is this?" for a file no preview recognises: name, size and its first bytes go to the AI chat when
-    /// a provider is signed in, otherwise to the assistant in the browser panel (Gemini, ChatGPT… — the settings' choice).
+    /// a provider is signed in, otherwise to Claude Code (dialog with the prompt on the clipboard).
     /// </summary>
     private async Task AskAiAboutFileAsync(VfsEntry file)
     {
@@ -1254,18 +1249,21 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
-        await OpenBrowser(null).AskWithPromptAsync(question, SearchEngines.Get(_host.Settings.AssistantEngine, SearchEngines.DefaultAssistant));
+        await UseClaudeCodeAsync(question);
     }
+
+    /// <summary>AI outside the app goes through Claude Code: the prompt is copied and shown.</summary>
+    private Task UseClaudeCodeAsync(string prompt) => new Mcp.UseClaudeCodeDialog(_skins!.Current, prompt).ShowAsync(this);
 
     /// <summary>
     /// A preview plugin for the unknown file's type: the wish (editable) plus a sample of the file goes to the chat in
-    /// plugin mode, or with the guide and the preview example to the browser assistant.
+    /// plugin mode, otherwise to Claude Code.
     /// </summary>
     private async Task CreatePreviewPluginAsync(VfsEntry file)
     {
         var extension = Path.GetExtension(file.Name) is { Length: > 0 } ext ? ext : file.Name;
         var wish = await new InputDialog(_skins!.Current, Loc.T("Podgląd dla {0} (AI)", extension),
-            Loc.T("Co ma pokazywać podgląd? (AI dostanie też przewodnik po wtyczkach i początek tego pliku)"),
+            Loc.T("Co ma pokazywać podgląd? (AI dostanie też początek tego pliku)"),
             Loc.T("Napisz wtyczkę z podglądem (Ctrl+Q) dla plików {0}: pokaż czytelnie ich zawartość i strukturę jako Markdown.", extension)).ShowAsync(this);
         if (string.IsNullOrWhiteSpace(wish))
         {
@@ -1282,17 +1280,19 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
-        await OpenBrowser(null).AskWithPromptAsync(AiContext.PluginPrompt(request, preview: true), SearchEngines.Get(_host.Settings.AssistantEngine, SearchEngines.DefaultAssistant));
+        await UseClaudeCodeAsync(request + PluginMcpHint);
     }
 
-    /// <summary>What AI assistants (chat and browser panel) are told about the app.</summary>
+    /// <summary>What the AI chat is told about the app.</summary>
     private AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
 
     private AiAppContext? _aiContext;
 
+    private const string PluginMcpHint = "\n\nUse the commander4k MCP tools (get_plugin_guide, check_plugin, install_plugin) to write and install it.";
+
     private Task OpenPluginManagerAsync() => ExecuteAsync(CommandIds.PanelPrefix + PluginManagerPanel.PluginId);
 
-    /// <summary>cm_AiWritePlugin: the chat in plugin mode when a provider is signed in, otherwise the web assistant with the guide typed in.</summary>
+    /// <summary>cm_AiWritePlugin: the chat in plugin mode when a provider is signed in, otherwise Claude Code.</summary>
     private async Task WritePluginWithAiAsync()
     {
         if (_host!.Ai.IsConfigured)
@@ -1303,10 +1303,10 @@ public sealed class MainWindow : Window, IShell
         }
 
         var wish = await new InputDialog(_skins!.Current, Loc.T("Napisz wtyczkę z AI"),
-            Loc.T("Co ma robić wtyczka? (prośba trafi do asystenta w przeglądarce razem z przewodnikiem i stanem aplikacji)")).ShowAsync(this);
+            Loc.T("Co ma robić wtyczka? (prośba trafi do Claude Code)")).ShowAsync(this);
         if (!string.IsNullOrWhiteSpace(wish))
         {
-            await OpenBrowser(null).AskWithPromptAsync(AiContext.PluginPrompt(wish), SearchEngines.Get(_host.Settings.AssistantEngine, SearchEngines.DefaultAssistant));
+            await UseClaudeCodeAsync(wish + PluginMcpHint);
         }
     }
 
@@ -1755,7 +1755,7 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.QuickView, Loc.T("Szybki podgląd"), TogglePreview)
          .Register(CommandIds.PanelModes, Loc.T("Tryb panelu (pliki, podgląd, panele wtyczek)"), ShowPanelModesAsync)
          .Register(CommandIds.Browser, Loc.T("Przeglądarka (WWW, wyszukiwarki, asystenci AI)"), () => OpenBrowser(null))
-         .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (czat z darmowymi dostawcami lub asystent w przeglądarce)"), _ => new ValueTask(AskAiAsync()))
+         .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (czat z darmowymi dostawcami lub Claude Code)"), _ => new ValueTask(AskAiAsync()))
          .Register(CommandIds.AiProviders, Loc.T("Dostawcy AI — logowanie, kolejność, limity"), _ => { OpenAiProviders(); return ValueTask.CompletedTask; })
          .Register(CommandIds.AiWritePlugin, Loc.T("Napisz wtyczkę z AI (według przewodnika, z instalacją)"), _ => new ValueTask(WritePluginWithAiAsync()))
          .Register(CommandIds.TogglePalettes, Loc.T("Palety: pokaż / ukryj"), _ => new ValueTask(TogglePalettesAsync()))
