@@ -43,6 +43,35 @@ public sealed class ManifestReaderTests : IDisposable
     }
 
     [Fact]
+    public void Background_only_plugin_is_valid()
+    {
+        var plugin = Read("""["background"]""", """{ "background": { "interval": "90s" } }""");
+
+        Assert.Empty(plugin.Errors);
+    }
+
+    [Fact]
+    public void Background_requires_the_permission()
+    {
+        var plugin = Read("""[]""", """{ "background": { "interval": "5m" } }""");
+
+        Assert.Contains(plugin.Errors, e => e.Contains("background"));
+    }
+
+    [Theory]
+    [InlineData("soon")]
+    [InlineData("")]
+    [InlineData("5")]
+    [InlineData("5x")]
+    [InlineData("-5m")]
+    public void Background_interval_must_parse(string interval)
+    {
+        var plugin = Read("""["background"]""", $$"""{ "background": { "interval": "{{interval}}" } }""");
+
+        Assert.Contains(plugin.Errors, e => e.Contains("interval"));
+    }
+
+    [Fact]
     public void Manifest_rejects_unknown_permission_still()
     {
         var plugin = Read("""["mail.raw"]""", """{ "previews": [{ "id": "eml", "title": "Mail", "extensions": [".eml"] }] }""");

@@ -213,6 +213,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `mail.reply` | `{ path, mode: "reply"\|"replyAll"\|"forward", self }` | draft | `mail` + `fs.read` |
 | `mail.compose` | `{ path, draft }` (writes the draft as a message file) | `null` | `mail` + `fs.write` (+ `fs.read` for attachments) |
 | `mail.send` | `{ account, path }` (sends the draft file, then copies it to Sent) | `{ messageId }` | `mail` + `fs.read` |
+| `background.wake` | `{}` (asks for a `background.tick` now) | — | `background` |
 
 `entry` = `{ name, path, kind, size, modified, hidden }`:
 - `kind`: `file`, `directory`, `drive`, `archive`, `share`, `host`, `registrykey`…;
@@ -244,7 +245,12 @@ The `mail` permission gives a plugin IMAP/SMTP access **without** the credential
 
 ### Background work
 
-A plugin with the `background` permission and `contributes.background: { "interval": "5m" }` is called by the app on a timer (`background.tick`), also while its panel is closed. The interval is at least one minute, one tick runs per plugin at a time, a tick that takes longer than 60 seconds is abandoned, and a tick that answers `{ "more": true }` is followed by the next one after 2 seconds. A tick should do bounded work (for example at most 50 downloads or 15 seconds) and report `more` instead of running long. The user can switch background work off in the settings.
+A plugin with the `background` permission and `contributes.background: { "interval": "5m" }` is called by the app on a timer (`background.tick`), also while its panel is closed. The interval is at least one minute, one tick runs per plugin at a time, a tick that takes longer than 60 seconds is abandoned, and a tick that answers `{ "more": true }` is followed by the next one after 2 seconds. A tick should do bounded work (for example at most 50 downloads or 15 seconds) and report `more` instead of running long. The user can switch background work off in the settings (`PluginBackground`, "Wtyczki mogą działać w tle"); while it is off, or until the user has approved the `background` permission, no tick is sent.
+
+- `contributes.background.interval` is `<n>s`, `<n>m` or `<n>h`; shorter than a minute is raised to one minute. A manifest that declares `contributes.background` without the `background` permission, or with an interval that does not parse, is rejected. A plugin may contribute only `background`.
+- Answer `background.tick` with a handler (`@c4k.handler("background.tick")`, `c4k.on('background.tick', …)`, `Register-C4KHandler 'background.tick'`). The result is `{ "more": true }` when there is more work (the next tick follows after 2 seconds) or `null` / `{}` when done. The first tick runs right after the app has started the plugin loop, then once per interval after the previous tick ended.
+- `background.wake` (plugin to app, needs `background`; `background_wake()`, `backgroundWake()`, `Request-C4KBackgroundTick`) asks for a tick as soon as the current one ends. Use it after the plugin learns that something changed, for example after a user action.
+- A tick that gets no answer within 60 seconds is abandoned and the next one runs on schedule; a failed tick is written to the audit log. Ticks stop when the app closes (it waits at most 2 seconds).
 
 ## SDK clients
 
@@ -307,6 +313,7 @@ Every helper maps to one protocol method above:
 | `mail.reply` | `mail_reply(path, mode="reply", self_address="")` | `mailReply(path, mode, self)` | `New-C4KMailReply $Path [$Mode] [$Self]` |
 | `mail.compose` | `mail_compose(path, draft)` | `mailCompose(path, draft)` | `Write-C4KMailDraft $Path $Draft` |
 | `mail.send` | `mail_send(account, path)` → Message-ID | `mailSend(account, path)` | `Send-C4KMail $Account $Path` |
+| `background.wake` | `background_wake()` | `backgroundWake()` | `Request-C4KBackgroundTick` |
 | any other | `call("method", **params)` | `call('method', params)` | `Invoke-C4K 'method' @{ … }` |
 
 Minimal plugin (Python): a quick view for `.ini` files:

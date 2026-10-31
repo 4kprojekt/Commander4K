@@ -193,6 +193,7 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>Re-scans plugin folders and (re)starts approved plugins; call after enabling or installing one.</summary>
     public async Task ReloadExternalPluginsAsync()
     {
+        await Task.Run(Background.Stop);
         foreach (var running in ExternalPlugins)
         {
             await running.DisposeAsync();
@@ -212,8 +213,14 @@ public sealed class AppHost : IAsyncDisposable
         CommandPlugins = [PowerShell, .. external.Where(e => e.Manifest.Contributes?.Commands is { Count: > 0 }).Select(e => (ICommandPlugin)new ExternalCommandPlugin(e))];
         PreviewPlugins = [.. BuiltInPreviews, .. external.SelectMany(e => (e.Manifest.Contributes?.Previews ?? []).Select(p => (IPreviewPlugin)new ExternalPreviewPlugin(e, p)))];
         ExternalPalettes = [.. external.SelectMany(e => (e.Manifest.Contributes?.Palettes ?? []).Select(p => (IPalettePlugin)new ExternalPalettePlugin(e, p)))];
+        Background.Restart(external);
         PluginsChanged?.Invoke();
     }
+
+    /// <summary>Periodic <c>background.tick</c> for approved plugins; follows <see cref="AppSettings.PluginBackground"/>.</summary>
+    public PluginBackgroundService Background => _background ??= new PluginBackgroundService(() => Settings.PluginBackground, Audit);
+
+    private PluginBackgroundService? _background;
 
     /// <summary>Plugins' own settings and data (<c>storage.get/set</c>), in <c>data/plugin-data</c>.</summary>
     public PluginStorage PluginData => _pluginData ??= new PluginStorage(Path.Combine(DataDirectory, "data", "plugin-data"));
@@ -438,6 +445,7 @@ public sealed class AppHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _background?.Stop();
         foreach (var plugin in ExternalPlugins)
         {
             await plugin.DisposeAsync();

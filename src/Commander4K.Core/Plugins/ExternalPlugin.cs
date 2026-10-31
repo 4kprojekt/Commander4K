@@ -58,6 +58,16 @@ public sealed class ExternalPlugin : IAsyncDisposable
         }
     }
 
+    /// <summary>Raised when the plugin asks for a tick now (<c>background.wake</c>); the argument is the plugin id.</summary>
+    public event Action<string>? WakeRequested;
+
+    /// <summary><c>background.tick</c>; true when the plugin answered <c>{ "more": true }</c> (it has more work, tick again soon).</summary>
+    public async Task<bool> TickAsync(CancellationToken cancellationToken)
+    {
+        var result = await CallAsync("background.tick", null, cancellationToken, BackgroundTickLoop.TickTimeout).ConfigureAwait(false);
+        return result.ValueKind == JsonValueKind.Object && result.TryGetProperty("more", out var more) && more.ValueKind == JsonValueKind.True;
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_connection is { } connection)
@@ -137,6 +147,16 @@ public sealed class ExternalPlugin : IAsyncDisposable
         {
             case "context.get":
                 return Context(_host);
+            case "background.wake":
+                if (!Manifest.Allows(PluginPermissions.Background))
+                {
+                    _audit.Record(Manifest.Id, "background.wake", string.Empty, AuditOutcome.Denied);
+                    throw new PluginPermissionException(Manifest.Id, PluginPermissions.Background);
+                }
+
+                _audit.Record(Manifest.Id, "background.wake", string.Empty);
+                WakeRequested?.Invoke(Manifest.Id);
+                return null;
             case "log.write":
                 _host.Log(Str("message"));
                 return null;

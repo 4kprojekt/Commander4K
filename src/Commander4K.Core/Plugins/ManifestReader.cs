@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Commander4K.Core.Folders;
 using Commander4K.Core.Localization;
 using Commander4K.Core.Updates;
 using Commander4K.PluginSdk;
@@ -132,12 +133,37 @@ public static partial class ManifestReader
             errors.Add(Loc.T("Powtórzony identyfikator {0}.", duplicate.Key));
         }
 
-        if (ids.Count == 0)
+        if (manifest.Contributes?.Background is { } background)
+        {
+            if (!manifest.Allows(PluginPermissions.Background))
+            {
+                errors.Add(Loc.T("contributes.background wymaga uprawnienia „{0}”.", PluginPermissions.Background));
+            }
+
+            if (!IsInterval(background.Interval))
+            {
+                errors.Add(Loc.T("background.interval „{0}” musi wyglądać tak: 90s, 5m lub 1h.", background.Interval));
+            }
+        }
+
+        if (ids.Count == 0 && manifest.Contributes?.Background is null)
         {
             errors.Add(Loc.T("Wtyczka nic nie dodaje (contributes.commands / panels / previews / palettes są puste)."));
         }
 
         return errors;
+    }
+
+    private static bool IsInterval(string? text)
+    {
+        try
+        {
+            return FolderConfig.ParseRefresh(text) is not null;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 
     [GeneratedRegex("^[a-z0-9][a-z0-9._-]{1,63}$")]

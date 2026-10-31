@@ -164,6 +164,9 @@ public sealed class AppSettings
     /// <summary>Right click opens the Windows (Explorer) context menu; off = right click marks, as in Total Commander.</summary>
     public bool ShellContextMenu { get; set; } = true;
 
+    /// <summary>Approved plugins with <c>contributes.background</c> are called on a timer, also while their panel is closed.</summary>
+    public bool PluginBackground { get; set; } = true;
+
     public List<FavoriteSetting> Favorites { get; set; } = [];
 
     /// <summary>Command ids on the quick-actions palette; <c>null</c> = the default set.</summary>
