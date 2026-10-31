@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Commander4K.App.Composition;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
@@ -21,6 +22,8 @@ public sealed class FilePanelView : ViewBase
     private readonly List<PanelTab> _tabs = [];
     private int _activeIndex;
     private bool _isActive;
+    private string? _tabsKey;
+    private bool _statusScheduled;
 
     private Border _tabBorder = null!;
     private StackPanel _tabStrip = null!;
@@ -223,6 +226,7 @@ public sealed class FilePanelView : ViewBase
         var tab = new PanelTab(_host, path);
         tab.ColumnData.SetColumns(_columns);
         tab.Changed += OnAnyTabChanged;
+        tab.SizesUpdated += () => OnSizesUpdated(tab);
         tab.AuthenticationRequired += (t, ex) => AuthenticationRequired?.Invoke(new AuthenticationRequest(t, ex));
         _tabs.Add(tab);
         SelectTab(_tabs.Count - 1);
@@ -328,21 +332,46 @@ public sealed class FilePanelView : ViewBase
     private void OnTabChanged()
     {
         var tab = ActiveTab;
-        if (!_pathBox.IsFocused && Mode is null)
+        if (!_pathBox.IsFocused && Mode is null && _pathBox.Text != tab.Path)
         {
             _pathBox.Text = tab.Path;
         }
 
+        UpdateStatus();
+        // Changed fires on every cursor move and streamed batch: rebuild the tab buttons only when they would differ.
+        if (_tabStrip.Children.Count > 0 && TabsKey() != _tabsKey)
+        {
+            RebuildTabs();
+        }
+    }
+
+    private void UpdateStatus()
+    {
+        var tab = ActiveTab;
         var (main, marked) = StatusText(tab);
         _status.Text = main;
         _status.Foreground = tab.Error is null ? _skins.Current.StatusForeground : _skins.Current.Error;
         _statusMarked.Text = marked ?? string.Empty;
         _statusMarkedBox.IsVisible = marked is not null;
-        if (_tabStrip.Children.Count > 0)
-        {
-            RebuildTabs();
-        }
     }
+
+    /// <summary>Running folder sizes: the list repaints itself; the totals in the status line follow at most 4× a second.</summary>
+    private void OnSizesUpdated(PanelTab tab)
+    {
+        if (tab != ActiveTab || _statusScheduled || _tabStrip is null)
+        {
+            return;
+        }
+
+        _statusScheduled = true;
+        DispatcherTimer.RunOnce(() =>
+        {
+            _statusScheduled = false;
+            UpdateStatus();
+        }, TimeSpan.FromMilliseconds(250), DispatcherPriority.Background);
+    }
+
+    private string TabsKey() => _activeIndex + "|" + _skins.Current.Skin.Id + "|" + string.Join('\n', _tabs.Select(t => t.Title));
 
     /// <summary>Counts on the left; the marked set (if any) on the right, in the marking colour.</summary>
     private (string Main, string? Marked) StatusText(PanelTab tab)
@@ -415,6 +444,7 @@ public sealed class FilePanelView : ViewBase
 
     private void RebuildTabs()
     {
+        _tabsKey = TabsKey();
         _tabStrip.Children.Clear();
         var b = _skins.Current;
         if (b.IsModern)

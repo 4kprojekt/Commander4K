@@ -38,6 +38,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private readonly Button _saveButton;
     private readonly ContentControl _content = new();
     private readonly TextBlock _status;
+    private readonly WaveDots _busy = new() { IsVisible = false, Margin = new Thickness(8, 0, 0, 0) };
     private SkinBrushes _brushes;
     private string? _loadedKey;
     private CancellationTokenSource? _loading;
@@ -80,7 +81,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         RowDefinitions = new RowDefinitions("Auto,*,Auto");
         Children.Add(_header);
         Children.Add(_content.Row(1));
-        Children.Add(_status.Row(2));
+        Children.Add(new Grid().Row(2).Cols("Auto,*").Children(_busy, _status.Col(1)));
         PointerPressed += (_, _) => Activated?.Invoke();
 
         ApplySkin(brushes);
@@ -127,6 +128,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _header.Background = brushes.HeaderBackground;
         _title.Foreground = brushes.HeaderForeground;
         _status.Foreground = brushes.StatusForeground;
+        _busy.Foreground = brushes.StatusForeground;
         if (_shown is { } shown)
         {
             Show(shown);
@@ -332,7 +334,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             return;
         }
 
-        _status.Text = $"⏳ {plugin.DisplayName}: wczytywanie…";
+        SetStatus($"{plugin.DisplayName}: wczytywanie…", busy: true);
         var host = _app.HostFor(plugin.Manifest);
         var progress = new Progress<PreviewContent>(partial =>
         {
@@ -437,7 +439,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _editButton.IsVisible = editable;
         _editButton.Content = _editing ? Loc.T("Podgląd (F4)") : Loc.T("Edytuj (F4)");
         _saveButton.IsVisible = _editing;
-        _status.Text = _plugin is null ? string.Empty : $"{_plugin.DisplayName} · {_entry?.Path}";
+        SetStatus(_plugin is null ? string.Empty : $"{_plugin.DisplayName} · {_entry?.Path}");
 
         Control? view = content switch
         {
@@ -658,7 +660,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         };
         if (note is not null)
         {
-            _status.Text = note;
+            SetStatus(note);
         }
 
         return new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto, Content = box };
@@ -670,7 +672,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             using var stream = new MemoryStream(image.EncodedImage.ToArray());
             var bitmap = new Bitmap(stream);
-            _status.Text = $"{bitmap.PixelSize.Width} × {bitmap.PixelSize.Height} px · {_entry?.Path}";
+            SetStatus($"{bitmap.PixelSize.Width} × {bitmap.PixelSize.Height} px · {_entry?.Path}");
             return new Image { Source = bitmap, Stretch = Stretch.Uniform, Margin = new Thickness(8) };
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException)
@@ -739,7 +741,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             list.Children.Add(new TextBlock { Text = $"… i {ordered.Count - MaxFolderRows} mniejszych", Foreground = _brushes.HiddenForeground, Margin = new Thickness(0, 6) });
         }
 
-        _status.Text = folder.Complete ? Loc.T("Gotowe · {0}", folder.Path) : Loc.T("⏳ Liczenie rozmiarów… · {0}", folder.Path);
+        SetStatus(folder.Complete ? Loc.T("Gotowe · {0}", folder.Path) : Loc.T("Liczenie rozmiarów… · {0}", folder.Path), busy: !folder.Complete);
         return Scroll(list);
     }
 
@@ -820,7 +822,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
 
         stack.Children.Add(wrap);
-        _status.Text = Loc.P(tiles.Tiles.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty);
+        SetStatus(Loc.P(tiles.Tiles.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty));
         return Scroll(stack);
     }
 
@@ -844,4 +846,11 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
 
     private static ScrollViewer Scroll(Control content) => new() { Content = content, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+
+    /// <summary>Status line text; <paramref name="busy"/> shows the wave dots in front of it.</summary>
+    private void SetStatus(string? text, bool busy = false)
+    {
+        _status.Text = text;
+        _busy.IsVisible = busy;
+    }
 }
