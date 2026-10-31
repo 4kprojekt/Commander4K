@@ -8,10 +8,14 @@ public readonly record struct DirectorySize(long Bytes, long Files, long Directo
 
 /// <summary>
 /// Computes the recursive size of a directory on any VFS provider with a pool of workers sharing one work queue, so
-/// wide trees use every core. Reparse points are counted but not followed.
+/// wide trees use every core. Reparse points are counted but not followed. Directory reads of all calculations share
+/// one gate of half the cores, so marking ten folders with Space does not starve the UI and render threads (more
+/// readers barely speed up a disk walk; measured on 12 cores, the total time stayed the same).
 /// </summary>
 public sealed class DirectorySizeCalculator(VfsRouter router)
 {
+    private static readonly SemaphoreSlim SharedGate = new(Math.Max(1, Environment.ProcessorCount / 2));
+
     private readonly VfsRouter _router = router ?? throw new ArgumentNullException(nameof(router));
 
     /// <summary>0 means <see cref="Environment.ProcessorCount"/>.</summary>
@@ -38,13 +42,18 @@ public sealed class DirectorySizeCalculator(VfsRouter router)
             Interlocked.Read(ref directories),
             Volatile.Read(ref inaccessible));
 
+        void Inaccessible() => Interlocked.Increment(ref inaccessible);
+
         async Task WorkerAsync()
         {
             await foreach (var directory in queue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
+                var entered = false;
                 try
                 {
-                    await foreach (var entry in _router.EnumerateAsync(directory, cancellationToken).ConfigureAwait(false))
+                    await SharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    entered = true;
+                    await foreach (var entry in _router.EnumerateForWalkAsync(directory, Inaccessible, cancellationToken).ConfigureAwait(false))
                     {
                         switch (entry.Kind)
                         {
@@ -70,6 +79,11 @@ public sealed class DirectorySizeCalculator(VfsRouter router)
                 }
                 finally
                 {
+                    if (entered)
+                    {
+                        SharedGate.Release();
+                    }
+
                     if (Interlocked.Decrement(ref outstanding) == 0)
                     {
                         queue.Writer.TryComplete();

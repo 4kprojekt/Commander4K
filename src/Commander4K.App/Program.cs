@@ -1,7 +1,9 @@
 using Avalonia;
 using Commander4K.App.Composition;
+using Commander4K.App.Splash;
 using Commander4K.Core.Configuration;
 using Commander4K.Core.Localization;
+using Commander4K.Core.Theming;
 
 namespace Commander4K.App;
 
@@ -17,7 +19,13 @@ internal static class Program
             ? forced
             : Loc.ReadLanguageSetting(Path.Combine(config, "settings.json"));
         Loc.Initialize(language, config);
-        MainWindow.StartupPlacement = AppSettings.ReadWindowPlacement(Path.Combine(config, "settings.json"));
+        var startup = AppSettings.ReadStartupSettings(Path.Combine(config, "settings.json"));
+        MainWindow.StartupPlacement = startup?.Window;
+        // User skins load with the host; until then the splash uses the built-in skin of that id, or Grafit.
+        SplashWindow.StartupSkin = startup?.SplashScreen == false
+            ? null
+            : BuiltInSkins.All.FirstOrDefault(s => s.Id == startup?.Skin) ?? BuiltInSkins.ModernDark;
+        SplashWindow.StartupDensity = startup?.Density;
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
 

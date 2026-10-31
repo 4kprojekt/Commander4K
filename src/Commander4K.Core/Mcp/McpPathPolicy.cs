@@ -6,7 +6,8 @@ namespace Commander4K.Core.Mcp;
 /// Decides whether a VFS path lies inside one of the folders the user allowed for MCP. Paths are normalized by
 /// text only (no disk or network access): <c>.</c> and <c>..</c> are resolved, and <c>..</c> never climbs above the
 /// root of a path (drive, <c>\\server\share</c>, registry hive, remote host), so it cannot reach a different root.
-/// Paths that are not recognised (relative, drive-relative, device paths) are never inside anything.
+/// Paths that are not recognised (relative, drive-relative, device paths, NTFS stream syntax such as
+/// <c>name:stream</c> or <c>folder::$INDEX_ALLOCATION</c>) are never inside anything.
 /// </summary>
 public static class McpPathPolicy
 {
@@ -28,6 +29,13 @@ public static class McpPathPolicy
 
         return false;
     }
+
+    /// <summary>
+    /// True when <paramref name="path"/> is inside one of the protected folders or, with <paramref name="orAbove"/>
+    /// (writing and recursive tools), when a protected folder is inside it.
+    /// </summary>
+    public static bool IsProtected(string path, IReadOnlyList<string> protectedRoots, bool orAbove = false) =>
+        protectedRoots.Any(p => IsInside(path, p) || (orAbove && IsInside(p, path)));
 
     /// <summary>True when <paramref name="path"/> is <paramref name="root"/> or below it.</summary>
     public static bool IsInside(string path, string root)
@@ -160,6 +168,14 @@ public static class McpPathPolicy
 
         // Drive roots keep their separator (C:\); \\server\share has none.
         var root = Path.GetPathRoot(full) ?? string.Empty;
+
+        // NTFS stream syntax (name:stream, folder::$INDEX_ALLOCATION) opens the real file or folder under a name that
+        // is not textually inside the protected folders; ':' is never part of a plain Windows name, so refuse it.
+        if (full.AsSpan(root.Length).Contains(':'))
+        {
+            return null;
+        }
+
         var trimmed = full.TrimEnd('\\');
         return trimmed.Length < root.Length ? root : trimmed;
     }

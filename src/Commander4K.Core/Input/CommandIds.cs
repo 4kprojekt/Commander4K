@@ -38,6 +38,8 @@ public static class CommandIds
     public const string AskAi = "cm_AskAi";
     public const string AiProviders = "cm_AiProviders";
     public const string AiWritePlugin = "cm_AiWritePlugin";
+    /// <summary>Connects Claude Code (or another MCP client): the MCP server, its token and the allowed folders.</summary>
+    public const string McpConnect = "cm_McpConnect";
     public const string OpenInVsCode = "cm_OpenInVsCode";
 
     /// <summary>Shows or hides all docked palettes (Ctrl+B).</summary>

@@ -124,6 +124,40 @@ Zmiany w `PluginAuthoring` dla instalacji z folderu: pliki binarne (`GeneratedFi
 - `preview_plugin_for_file` (`path`, `wish?`) — to samo co dziś „utwórz wtyczkę podglądu”: prośba + próbka pliku (`AiAppContext.DescribeFileAsync`) + wskazówka, żeby pobrać przewodnik narzędziem i przetestować `render_preview`,
 - `explain_file_format` (`path`).
 
+### Konfiguracja aplikacji, tłumaczenia, skórki
+
+Dopisane 2026-10-31 na prośbę użytkownika. Klient MCP sam jest modelem, więc MCP nie woła API (`ClaudeSkinGenerator`, dostawcy z `Core/Ai`). Daje modelowi to samo, co dziś trafia do promptu kopiowanego do schowka (`TranslationKit.PromptFor`, `SkinPrompt.ForChat`, schemat skórki), sprawdza wynik i zapisuje go. `config/` jest chroniony przed `write_file`, więc do każdego z tych plików prowadzi osobne narzędzie. Zapisuje ono tylko do pliku o nazwie wyliczonej z walidowanego id albo kodu, a nigdy pod ścieżkę podaną przez model.
+
+Konfiguracja (przez `AppHost.SettingsCatalog`, czyli te same wpisy co w oknie `Ctrl+,`, razem z `column:` i `mcp:`):
+| narzędzie | co robi | domyślnie |
+|---|---|---|
+| `list_settings` | `{ query? }` → `SettingsCatalog.Search`: klucz, kategoria, tytuł, opis, rodzaj (toggle/text/choice), bieżąca wartość, dozwolone wartości, „wymaga restartu” | zezwalaj |
+| `set_setting` | `{ key, value }`: `SettingDescriptor.Set` → `MainWindow.OnSettingChanged(key)` (skórka, gęstość, kolumny… działają od razu) → `SaveSettingsAsync`. Wartość jest walidowana według rodzaju i listy wyborów. Wynik podaje starą i nową wartość oraz to, czy zmiana wymaga restartu | pytaj |
+| `list_key_bindings` | skróty z `AppHost.KeyBindings` z opisem komendy (`CommandRegistry`) | zezwalaj |
+| `set_key_binding` | `{ keys, command }` (`command: null` usuwa skrót): kopia słownika → `AppHost.SaveKeyBindingsAsync` (odrzuca złą sekwencję). Jeśli skrót był już przypisany, wynik podaje poprzednią komendę | pytaj |
+
+Ustawień, które poszerzają uprawnienia albo podmieniają źródło kodu, MCP nie zmienia, w żadnym trybie: `mcp.*` i `mcp:*` (włączenie serwera, port, dozwolone foldery, tryby narzędzi), `pluginCatalogUrl`, `aiCatalogUrl` i `updateRepository`. Nie zmienia też `tools.json` (polecenia zewnętrzne, czyli uruchamianie programów), połączeń (sekrety) ani kluczy dostawców AI. `set_setting` odpowiada wtedy błędem „change this in the Commander4K settings window”. `list_settings` pokazuje te wpisy z adnotacją „read-only over MCP”, żeby model wiedział dlaczego. To **moja decyzja**: inaczej „Tak do końca sesji” dla `set_setting` pozwoliłoby modelowi samemu dodać sobie folder albo przełączyć `delete` na „zezwalaj”.
+
+Tłumaczenia (`config/i18n/<kod>.json`, `TranslationKit`):
+| narzędzie | co robi | domyślnie |
+|---|---|---|
+| `get_translation_kit` | `{ language, name?, onlyMissing?, offset?, limit? }`: zasady z `TranslationKit.PromptFor` (bez wklejonego pliku) + liczba form mnogich + strona wpisów z en.json (klucz PL → wartość EN). Przy `onlyMissing` tylko klucze, których brakuje w istniejącym pliku języka. en.json ma ok. 80 KB, więc stronicowanie (domyślnie 300 wpisów) pozwala modelowi tłumaczyć partiami i uzupełniać istniejące języki | zezwalaj |
+| `check_translation` | `{ language, entries }`: `TranslationKit.Check` na pliku po scaleniu, bez zapisu | zezwalaj |
+| `save_translation` | `{ language, entries }`: scala z istniejącym plikiem (nowe wartości nadpisują stare) i zapisuje atomowo. Odmawia, jeśli scalone wpisy mają błędy placeholderów/form mnogich albo nieznane klucze; brakujące klucze tylko zgłasza (aplikacja pokaże wtedy tekst angielski). Kod `pl` odrzucony (język źródłowy). Kod walidowany: `^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$`. Wynik: liczba wpisów, ile brakuje, i podpowiedź `set_setting language` (wymaga restartu) | pytaj |
+
+Skórki (`config/skins/<id>.json`):
+| narzędzie | co robi | domyślnie |
+|---|---|---|
+| `get_skin_guide` | `SkinPrompt.DesignBrief` + `SkinSchema.Create()` + JSON bieżącej skórki jako punkt wyjścia | zezwalaj |
+| `list_skins` | id, nazwa, wbudowana/użytkownika, bieżąca, ostrzeżenia `SkinValidator` | zezwalaj |
+| `get_skin` | `{ id }` → JSON skórki (`SkinJson.Serialize`) | zezwalaj |
+| `check_skin` | `{ json }`: `SkinJson.Deserialize` + `SkinValidator.Validate` (kontrast WCAG), bez zmian na ekranie | zezwalaj |
+| `save_skin` | `{ json, apply? }`: własne okno potwierdzenia z **podglądem na żywo** (`SkinManager.Preview`) i ostrzeżeniami walidatora. „Tak” zapisuje plik jak `AiSkinDialog.SaveAsync` (id wbudowanej skórki dostaje `-ai`, id walidowane `^[a-z0-9][a-z0-9-]{0,63}$`), robi `ReloadSkinsAsync` i ustawia skórkę, gdy `apply` (domyślnie tak; inaczej przywraca poprzednią). „Nie” przywraca poprzednią skórkę | pytaj, sam potwierdza |
+
+Zmiana skórki bez zapisu to `set_setting skin`. Wszystkie te narzędzia nie mają argumentów ścieżek, więc dozwolone foldery ich nie dotyczą. Zapisy idą tylko do `settings.json`, `keymap.json`, `i18n/<kod>.json` i `skins/<id>.json` w `config/` aplikacji.
+
+Prompty MCP dla tych obszarów: `translate_ui` (`language`, `name?`) — „pobierz `get_translation_kit` partiami, sprawdzaj `check_translation`, zapisuj `save_translation`”; `design_skin` (`description`) — „`get_skin_guide`, zaprojektuj, `check_skin`, popraw ostrzeżenia, `save_skin`”.
+
 ### Potwierdzenia i konfiguracja
 
 - `AppSettings.Mcp`: `Enabled`, `Port`, `AllowedRoots`, `ToolModes: { "<tool>": "allow"|"ask"|"block" }` (brak wpisu = domyślny). Token osobno (DPAPI).
@@ -184,6 +218,7 @@ Każdy z trzech klientów (`plugins-sdk/{python,node,powershell}`) dostaje pomoc
 ## Testy
 
 - Core: protokół MCP (initialize, sesje, token, Origin, tools/list, tools/call, błędy JSON-RPC, anulowanie), dozwolone foldery (granice ścieżek, `..`, schematy, ścieżki chronione), tryby narzędzi i „zawsze pyta” (nie da się ustawić allow), mapowanie odmowy na `isError`.
+- Konfiguracja/tłumaczenia/skórki: `set_setting` odrzuca `mcp.*`/`mcp:*`/adresy katalogów i aktualizacji, waliduje wartości wyborów i liczby; stronicowanie i `onlyMissing` w `get_translation_kit`; `save_translation` scala, odrzuca `pl`, zły kod i błędy placeholderów; `check_skin` zgłasza niski kontrast; nazwy plików tylko z walidowanych id.
 - Integracyjny: prawdziwy `HttpClient` przeciw serwerowi na porcie 0 z atrapą narzędzi.
 - `ExternalPluginAdapters`: parsowanie `kind: "web"` i walidacja `page`; `preview.message` w trzech SDK (`ExternalPluginTests` z prawdziwymi runtime'ami).
 - `LocalizationTests`, `PluginCatalogTests`, test kopii SDK — jak zawsze.
@@ -192,7 +227,7 @@ Każdy z trzech klientów (`plugins-sdk/{python,node,powershell}`) dostaje pomoc
 ## Kolejność
 
 1. Usunięcie AI z przeglądarki (+ okno „Użyj Claude Code” jako zaślepka bez MCP lub od razu z MCP).
-2. Serwer MCP: protokół i transport w Core → narzędzia kontekstu/sterowania/plików → potwierdzenia i ustawienia → wtyczki → prompty.
+2. Serwer MCP: protokół i transport w Core → narzędzia kontekstu/sterowania/plików → potwierdzenia i ustawienia → wtyczki → prompty → konfiguracja, tłumaczenia, skórki.
 3. `kind: "web"`: protokół i SDK → wyświetlanie i most → `preview.message`.
 4. `pdf-viewer` i test akceptacyjny przez Claude Code.
 

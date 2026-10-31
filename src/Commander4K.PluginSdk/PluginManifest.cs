@@ -62,7 +62,8 @@ public sealed record PanelContribution(
     bool Provides = false);
 
 /// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
-public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10);
+/// <param name="WebRoot">Folder inside the plugin (relative) with the HTML/JS shown for <c>kind: "web"</c> results.</param>
+public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, string? WebRoot = null);
 
 public sealed record PaletteActionContribution(string Id, string Title, string? Icon = null, bool ForItem = false);
 

@@ -38,6 +38,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private readonly Button _saveButton;
     private readonly ContentControl _content = new();
     private readonly TextBlock _status;
+    private readonly WaveDots _busy = new() { IsVisible = false, Margin = new Thickness(8, 0, 0, 0) };
     private SkinBrushes _brushes;
     private string? _loadedKey;
     private CancellationTokenSource? _loading;
@@ -50,6 +51,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private bool _escapeArmed;
     private string _savedText = string.Empty;
     private TextBox? _editor;
+    private WebPreviewView? _web;
+    private WebPreview? _webShown;
     private ScrollViewer? _livePreview;
     private DispatcherTimer? _liveDelay;
 
@@ -80,7 +83,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         RowDefinitions = new RowDefinitions("Auto,*,Auto");
         Children.Add(_header);
         Children.Add(_content.Row(1));
-        Children.Add(_status.Row(2));
+        Children.Add(new Grid().Row(2).Cols("Auto,*").Children(_busy, _status.Col(1)));
         PointerPressed += (_, _) => Activated?.Invoke();
 
         ApplySkin(brushes);
@@ -108,6 +111,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     /// <summary>A tile was clicked; the folder is the one whose preview (or <c>c4k.dir</c>) produced it.</summary>
     public Func<PreviewTile, VfsEntry?, Task>? OpenTile { get; init; }
 
+    /// <summary>App shortcuts pressed inside a web preview page (Avalonia never sees those keys); Esc closes the preview first.</summary>
+    public Func<Core.Input.KeyStroke, bool>? RunShortcut { get; init; }
+
     public string Title => _pinned is { } pinned ? pinned.Config.Title ?? pinned.Folder.Name : Loc.T("Podgląd");
 
     public Control View => this;
@@ -127,6 +133,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _header.Background = brushes.HeaderBackground;
         _title.Foreground = brushes.HeaderForeground;
         _status.Foreground = brushes.StatusForeground;
+        _busy.Foreground = brushes.StatusForeground;
         if (_shown is { } shown)
         {
             Show(shown);
@@ -176,6 +183,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     {
         _loading?.Cancel();
         _debounce?.Cancel();
+        DisposeWeb();
         if (_pinned is not null)
         {
             return ValueTask.CompletedTask;
@@ -332,7 +340,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             return;
         }
 
-        _status.Text = $"⏳ {plugin.DisplayName}: wczytywanie…";
+        SetStatus($"{plugin.DisplayName}: wczytywanie…", busy: true);
         var host = _app.HostFor(plugin.Manifest);
         var progress = new Progress<PreviewContent>(partial =>
         {
@@ -437,10 +445,16 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _editButton.IsVisible = editable;
         _editButton.Content = _editing ? Loc.T("Podgląd (F4)") : Loc.T("Edytuj (F4)");
         _saveButton.IsVisible = _editing;
-        _status.Text = _plugin is null ? string.Empty : $"{_plugin.DisplayName} · {_entry?.Path}";
+        SetStatus(_plugin is null ? string.Empty : $"{_plugin.DisplayName} · {_entry?.Path}");
+
+        if (content is not WebPreview)
+        {
+            DisposeWeb(); // Another kind of preview: the page and its WebView2 go away.
+        }
 
         Control? view = content switch
         {
+            WebPreview web => WebView(web),
             MarkdownPreview markdown when _editing => MarkdownEditor(markdown.Markdown),
             MarkdownPreview markdown => Scroll(MarkdownRenderer.Render(markdown.Markdown, _brushes)),
             TextPreview text => TextView(text),
@@ -467,6 +481,61 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
         _content.Content = view;
     }
+
+    /// <summary>
+    /// One <see cref="WebPreviewView"/> serves consecutive web previews (the same page gets an "entry" event instead of
+    /// a reload); re-showing the same content (a skin change) only repaints it.
+    /// </summary>
+    private Control WebView(WebPreview web)
+    {
+        if (!WebPreviewView.IsSupported)
+        {
+            return MessageText(WebPreviewView.UnavailableMessage);
+        }
+
+        if (_entry is not { } entry || _plugin is not ExternalPreviewPlugin plugin)
+        {
+            return MessageText(Loc.T("Strony podglądu pokazują tylko wtyczki zewnętrzne."));
+        }
+
+        if (_web is null)
+        {
+            _web = new WebPreviewView(_app, _brushes, RunWebShortcut);
+        }
+        else
+        {
+            _web.ApplySkin(_brushes);
+        }
+
+        if (!ReferenceEquals(_webShown, web))
+        {
+            _webShown = web;
+            _ = _web.ShowAsync(web, entry, plugin, _app.HostFor(plugin.Manifest));
+        }
+
+        return _web;
+    }
+
+    private bool RunWebShortcut(Core.Input.KeyStroke stroke)
+    {
+        if (stroke.Key == "ESCAPE" && stroke.Modifiers == Core.Input.KeyModifiers.None)
+        {
+            CloseRequested?.Invoke();
+            return true;
+        }
+
+        return RunShortcut?.Invoke(stroke) ?? false;
+    }
+
+    private void DisposeWeb()
+    {
+        _web?.Dispose();
+        _web = null;
+        _webShown = null;
+    }
+
+    private TextBlock MessageText(string text) =>
+        new() { Text = text, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap };
 
     private Border UnknownFileBanner(VfsEntry file)
     {
@@ -658,7 +727,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         };
         if (note is not null)
         {
-            _status.Text = note;
+            SetStatus(note);
         }
 
         return new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto, Content = box };
@@ -670,7 +739,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             using var stream = new MemoryStream(image.EncodedImage.ToArray());
             var bitmap = new Bitmap(stream);
-            _status.Text = $"{bitmap.PixelSize.Width} × {bitmap.PixelSize.Height} px · {_entry?.Path}";
+            SetStatus($"{bitmap.PixelSize.Width} × {bitmap.PixelSize.Height} px · {_entry?.Path}");
             return new Image { Source = bitmap, Stretch = Stretch.Uniform, Margin = new Thickness(8) };
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException)
@@ -739,7 +808,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             list.Children.Add(new TextBlock { Text = $"… i {ordered.Count - MaxFolderRows} mniejszych", Foreground = _brushes.HiddenForeground, Margin = new Thickness(0, 6) });
         }
 
-        _status.Text = folder.Complete ? Loc.T("Gotowe · {0}", folder.Path) : Loc.T("⏳ Liczenie rozmiarów… · {0}", folder.Path);
+        SetStatus(folder.Complete ? Loc.T("Gotowe · {0}", folder.Path) : Loc.T("Liczenie rozmiarów… · {0}", folder.Path), busy: !folder.Complete);
         return Scroll(list);
     }
 
@@ -820,7 +889,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
 
         stack.Children.Add(wrap);
-        _status.Text = Loc.P(tiles.Tiles.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty);
+        SetStatus(Loc.P(tiles.Tiles.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty));
         return Scroll(stack);
     }
 
@@ -844,4 +913,11 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
 
     private static ScrollViewer Scroll(Control content) => new() { Content = content, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+
+    /// <summary>Status line text; <paramref name="busy"/> shows the wave dots in front of it.</summary>
+    private void SetStatus(string? text, bool busy = false)
+    {
+        _status.Text = text;
+        _busy.IsVisible = busy;
+    }
 }

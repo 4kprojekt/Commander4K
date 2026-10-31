@@ -24,16 +24,16 @@
       "path": "plugins-catalog/steam-library-powershell",
       "files": [
         {
-          "sha256": "5fffff896c6ad537fa926627568f3279e0b4a06505b4c050d17495f1ed1ee39d",
-          "path": "c4k.ps1"
+          "path": "c4k.ps1",
+          "sha256": "75f3d55f3260c8f3185724bf94400cb87b984fe6a5af27a03998d8998e30779f"
         },
         {
-          "sha256": "f980608a8748b13d6951e79adebe2f053b3a62dc4ccea64bffc7fd9ba463cafd",
-          "path": "main.ps1"
+          "path": "main.ps1",
+          "sha256": "f980608a8748b13d6951e79adebe2f053b3a62dc4ccea64bffc7fd9ba463cafd"
         },
         {
-          "sha256": "749bcba76cfc65e416760f11f8d6e183c0eb197706a67555a48989be43bd07b7",
-          "path": "plugin.json"
+          "path": "plugin.json",
+          "sha256": "749bcba76cfc65e416760f11f8d6e183c0eb197706a67555a48989be43bd07b7"
         }
       ]
     },
@@ -59,16 +59,16 @@
       "path": "examples/plugins/project-modules-python",
       "files": [
         {
-          "sha256": "f11623dc5e9857061187271082ca50571a8be02f0a8582ea5b58d414a8b8a126",
-          "path": "c4k.py"
+          "path": "c4k.py",
+          "sha256": "1483805fb31580f4d6099e979f06564530c90c62b2badf29d35d1b8dfa0aadd4"
         },
         {
-          "sha256": "4e5de27a6bed899e2c815f5da82ce784567c20a89c3fad87554d2e4be1d15fae",
-          "path": "main.py"
+          "path": "main.py",
+          "sha256": "4e5de27a6bed899e2c815f5da82ce784567c20a89c3fad87554d2e4be1d15fae"
         },
         {
-          "sha256": "aed790a4a2f4b9f1bb9e4f4b9cea7154131e313e44c7ac387a5308648559aea0",
-          "path": "plugin.json"
+          "path": "plugin.json",
+          "sha256": "aed790a4a2f4b9f1bb9e4f4b9cea7154131e313e44c7ac387a5308648559aea0"
         }
       ]
     },
@@ -92,16 +92,16 @@
       "path": "examples/plugins/git-powershell",
       "files": [
         {
-          "sha256": "5fffff896c6ad537fa926627568f3279e0b4a06505b4c050d17495f1ed1ee39d",
-          "path": "c4k.ps1"
+          "path": "c4k.ps1",
+          "sha256": "75f3d55f3260c8f3185724bf94400cb87b984fe6a5af27a03998d8998e30779f"
         },
         {
-          "sha256": "39270d49015211223a9cb641d457fd34056f887b2fa096f58dfbcfe8af15f282",
-          "path": "main.ps1"
+          "path": "main.ps1",
+          "sha256": "39270d49015211223a9cb641d457fd34056f887b2fa096f58dfbcfe8af15f282"
         },
         {
-          "sha256": "8bfdcedb6764dd54ad3723c797c2aa9993db03a9ae74ec1ebf65f79b5c607759",
-          "path": "plugin.json"
+          "path": "plugin.json",
+          "sha256": "8bfdcedb6764dd54ad3723c797c2aa9993db03a9ae74ec1ebf65f79b5c607759"
         }
       ]
     },
@@ -124,16 +124,16 @@
       "path": "examples/plugins/folder-stats-python",
       "files": [
         {
-          "sha256": "f11623dc5e9857061187271082ca50571a8be02f0a8582ea5b58d414a8b8a126",
-          "path": "c4k.py"
+          "path": "c4k.py",
+          "sha256": "1483805fb31580f4d6099e979f06564530c90c62b2badf29d35d1b8dfa0aadd4"
         },
         {
-          "sha256": "0048d20bede7a1be92a4a997a8fc466deac1a54f8b5e64d887b406c38e25df12",
-          "path": "main.py"
+          "path": "main.py",
+          "sha256": "0048d20bede7a1be92a4a997a8fc466deac1a54f8b5e64d887b406c38e25df12"
         },
         {
-          "sha256": "b33b94c6558f631afaba21d2a33a4aea1e4047e98e7ad17b452b20bb48d7b01b",
-          "path": "plugin.json"
+          "path": "plugin.json",
+          "sha256": "b33b94c6558f631afaba21d2a33a4aea1e4047e98e7ad17b452b20bb48d7b01b"
         }
       ]
     },
@@ -157,16 +157,16 @@
       "path": "examples/plugins/site-check-node",
       "files": [
         {
-          "sha256": "f3a3b9006b6094c73f17335e609dffe8dd5491e63b201cdfc3ce60d1762b0aa3",
-          "path": "c4k.js"
+          "path": "c4k.js",
+          "sha256": "365d83129ee625266340b9965e72dcc43f638308e305d17344c606197679f980"
         },
         {
-          "sha256": "f0aea0ff2ba11363f35bc516e5a4efe4e2db117a54e849a55ae3c2a0d0e17014",
-          "path": "main.js"
+          "path": "main.js",
+          "sha256": "f0aea0ff2ba11363f35bc516e5a4efe4e2db117a54e849a55ae3c2a0d0e17014"
         },
         {
-          "sha256": "a29e0efd1197a62135eca97bb9629ac16c55b5f3cf81fc966c2b0ff0b64c35b3",
-          "path": "plugin.json"
+          "path": "plugin.json",
+          "sha256": "a29e0efd1197a62135eca97bb9629ac16c55b5f3cf81fc966c2b0ff0b64c35b3"
         }
       ]
     }

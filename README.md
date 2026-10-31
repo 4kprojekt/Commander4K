@@ -33,6 +33,7 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - **Claude Code:** with the MCP server connected, Claude Code can read the app state and write and install plugins itself; otherwise the question or plugin request is copied for you to paste there.
   - Keys are stored in `config/ai/credentials.json`, encrypted for the current Windows user (DPAPI). After moving a portable copy to another account or PC, sign in again.
   - The plugin manager's "Szukaj rozwiązania" sends a plugin's problem to that assistant, and plugins can open pages or searches here too.
+- **Claude Code over MCP:** Commander4K runs a local MCP server (127.0.0.1 only, with a token). Open "Połącz Claude Code" (command palette, or the MCP badge in the status bar), switch it on, add the folders the AI may use and run the `claude mcp add …` command it shows. Claude Code can then browse those folders, drive the panels, and write, check, install and try plugins. Every tool can be set to allow, ask or block. Risky calls (reading and writing files, running commands, installing or enabling a plugin) open a confirmation in the app. The app's own plugin, `config/` and `data/` folders cannot be read or written through MCP, and every call is logged. Details: [plugin guide](docs/plugins.md#writing-plugins-with-claude-code-over-mcp).
 - **Quick view (`Ctrl+Q`):** previews the entry under the cursor in the opposite panel:
   - Markdown is rendered with formatting, and `F4` switches to side-by-side editing with a live preview. ` ```mermaid ` diagrams are drawn offline with the bundled [Mermaid](https://mermaid.js.org) 12.2.0 (MIT), in the skin's colours;
   - the folder preview adapts to the content: an Obsidian vault, or a folder of Markdown notes, shows a link graph, the most linked notes, recent notes with excerpts, tags, unlinked notes and broken links. Obsidian `.canvas` boards show as diagrams;
@@ -40,7 +41,7 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - images are shown;
   - folders show their total size and per-subfolder bars, filled in as they are computed.
 
-  Moving the cursor cancels the running load at once. Plugins can add previews too.
+  Moving the cursor cancels the running load at once. Plugins can add previews too, including HTML/JS pages in a sandboxed WebView2 ([web previews](docs/plugins.md#web-previews)); [`examples/plugins/pdf-viewer-node`](examples/plugins/pdf-viewer-node) shows PDFs with PDF.js (search, zoom, print).
 - **Folders that decide how they look (`c4k.dir`):** a small JSON file in a folder sets what its preview shows and what `Enter` does ([guide](docs/plugins.md#folder-files-c4kdir), [schema](docs/c4k.dir.schema.json)). `Shift+Enter` always opens the plain file list.
   - It can show a photo gallery, a dashboard of tiles (folders, pages, scripts), the notes view, a README, or a plugin's view (for example the games of a Steam library, with covers).
   - It can open an SFTP server with a key, a web page in the panel browser, or run a script. A script runs only after you have seen the command and trusted that exact file; a changed or copied file asks again.

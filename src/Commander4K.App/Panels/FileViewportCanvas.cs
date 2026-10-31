@@ -17,24 +17,20 @@ namespace Commander4K.App.Panels;
 /// </summary>
 public sealed class FileViewportCanvas : Control
 {
-    private static readonly string[] SpinnerFrames = ["|", "/", "-", "\\"];
     private static readonly CultureInfo Culture = CultureInfo.CurrentCulture;
+    private static readonly Dictionary<ShapedKey, FormattedText> ShapedCache = [];
 
     private readonly DispatcherTimer _spinner;
     private PanelTab? _tab;
     private SkinBrushes? _brushes;
     private bool _isActive;
-    private int _spinnerFrame;
 
     public FileViewportCanvas()
     {
         ClipToBounds = true;
         Focusable = false;
-        _spinner = new DispatcherTimer(TimeSpan.FromMilliseconds(120), DispatcherPriority.Render, (_, _) =>
-        {
-            _spinnerFrame = (_spinnerFrame + 1) % SpinnerFrames.Length;
-            InvalidateVisual();
-        });
+        // Animates the wave dots (loading bar, folders being sized); runs only while something is busy.
+        _spinner = new DispatcherTimer(WaveDots.FrameInterval, DispatcherPriority.Render, (_, _) => InvalidateVisual());
     }
 
     /// <summary>Raised when the user clicks into the panel (it becomes the active one).</summary>
@@ -69,6 +65,7 @@ public sealed class FileViewportCanvas : Control
             if (_tab is not null)
             {
                 _tab.Changed -= OnTabChanged;
+                _tab.SizesUpdated -= InvalidateVisual;
                 _tab.ColumnData.Updated -= InvalidateVisual;
             }
 
@@ -76,6 +73,7 @@ public sealed class FileViewportCanvas : Control
             if (_tab is not null)
             {
                 _tab.Changed += OnTabChanged;
+                _tab.SizesUpdated += InvalidateVisual;
                 _tab.ColumnData.Updated += InvalidateVisual;
             }
 
@@ -498,7 +496,7 @@ public sealed class FileViewportCanvas : Control
 
         if (layout.SizeWidth > 0)
         {
-            DrawText(context, b, SizeText(tab, entry), foreground, layout.SizeX, y, layout.SizeWidth, b.Typeface, TextAlignment.Right);
+            DrawSize(context, b, layout, tab, entry, foreground, y);
         }
 
         if (layout.DateWidth > 0)
@@ -582,7 +580,7 @@ public sealed class FileViewportCanvas : Control
 
         if (layout.SizeWidth > 0)
         {
-            DrawText(context, b, SizeText(tab, entry), meta, layout.SizeX, y, layout.SizeWidth, b.Typeface, TextAlignment.Right);
+            DrawSize(context, b, layout, tab, entry, meta, y);
         }
 
         if (layout.DateWidth > 0)
@@ -593,6 +591,20 @@ public sealed class FileViewportCanvas : Control
             DrawText(context, b, info, meta, layout.DateX, y, layout.DateWidth, b.Typeface);
         }
     }
+
+    /// <summary>Size column; a folder still being sized shows the wave dots before its running total.</summary>
+    private static void DrawSize(DrawingContext context, SkinBrushes b, CanvasLayout layout, PanelTab tab, VfsEntry entry, IBrush brush, double y)
+    {
+        var shown = DrawText(context, b, SizeText(tab, entry), brush, layout.SizeX, y, layout.SizeWidth, b.Typeface, TextAlignment.Right);
+        if (entry.IsContainer && tab.SizesInProgress.Contains(entry.Path))
+        {
+            var dot = DotSize(b);
+            var x = layout.SizeX + layout.SizeWidth - shown - (shown > 0 ? dot * 1.5 : 0) - WaveDots.WidthFor(dot);
+            WaveDots.Draw(context, brush, Math.Max(layout.SizeX, x), y + (b.RowHeight / 2), dot);
+        }
+    }
+
+    private static double DotSize(SkinBrushes b) => Math.Max(3, Math.Round(b.FontSize * 0.3));
 
     private static string SizeText(PanelTab tab, VfsEntry entry)
     {
@@ -605,7 +617,12 @@ public sealed class FileViewportCanvas : Control
         {
             if (tab.DirectorySizes.TryGetValue(entry.Path, out var size))
             {
-                return (tab.SizesInProgress.Contains(entry.Path) ? "…" : string.Empty) + FormatSize(size);
+                return FormatSize(size);
+            }
+
+            if (tab.SizesInProgress.Contains(entry.Path))
+            {
+                return string.Empty; // Only the dots until the first total arrives.
             }
 
             return entry.Kind switch
@@ -697,8 +714,10 @@ public sealed class FileViewportCanvas : Control
         var bar = new Rect(layout.Inner.X, layout.RowsArea.Bottom, layout.Inner.Width, b.RowHeight);
         context.FillRectangle(b.StatusBackground, bar);
         var count = Math.Max(0, tab.Entries.Count - (tab.Entries.Count > 0 && tab.Entries[0].Kind == VfsEntryKind.ParentLink ? 1 : 0));
-        var text = $" {SpinnerFrames[_spinnerFrame]}  " + Loc.T("Wczytywanie… {0:N0}   [Esc – Anuluj]", count);
-        DrawText(context, b, text, b.StatusForeground, bar.X + 4, bar.Y, bar.Width - 8, b.Typeface);
+        var dot = DotSize(b);
+        WaveDots.Draw(context, b.StatusForeground, bar.X + 10, bar.Y + (b.RowHeight / 2), dot);
+        var textX = bar.X + 10 + WaveDots.WidthFor(dot) + 10;
+        DrawText(context, b, Loc.T("Wczytywanie… {0:N0}   [Esc – Anuluj]", count), b.StatusForeground, textX, bar.Y, bar.Right - textX - 4, b.Typeface);
     }
 
     private static void DrawScrollbar(DrawingContext context, SkinBrushes b, Rect rows, PanelTab tab, int visible)
@@ -730,11 +749,36 @@ public sealed class FileViewportCanvas : Control
             return 0;
         }
 
-        var formatted = Format(b, text, brush, typeface, width, fontSize);
-        formatted.TextAlignment = alignment;
+        var formatted = Shaped(b, text, brush, typeface, width, alignment, fontSize);
         context.DrawText(formatted, new Point(x, Math.Round(y + (((height ?? b.RowHeight) - formatted.Height) / 2))));
         return Math.Min(width, formatted.WidthIncludingTrailingWhitespace);
     }
+
+    /// <summary>
+    /// Shaping text (HarfBuzz) is most of a frame's cost, and the list repaints 30× a second while folders are sized
+    /// or a listing streams in; unchanged cells reuse their shaped line. UI thread only.
+    /// </summary>
+    private static FormattedText Shaped(SkinBrushes b, string text, IBrush brush, Typeface typeface, double width, TextAlignment alignment,
+        double? fontSize)
+    {
+        var key = new ShapedKey(text, brush, typeface, Math.Round(width), fontSize ?? b.FontSize, alignment);
+        if (ShapedCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        if (ShapedCache.Count >= 4096)
+        {
+            ShapedCache.Clear(); // Scrolling through a huge folder: start over rather than grow without bound.
+        }
+
+        var formatted = Format(b, text, brush, typeface, key.Width, key.FontSize);
+        formatted.TextAlignment = alignment;
+        ShapedCache[key] = formatted;
+        return formatted;
+    }
+
+    private readonly record struct ShapedKey(string Text, IBrush Brush, Typeface Typeface, double Width, double FontSize, TextAlignment Alignment);
 
     private static FormattedText Format(SkinBrushes b, string text, IBrush brush, Typeface typeface, double width, double? fontSize = null) =>
         new(text, Culture, FlowDirection.LeftToRight, typeface, fontSize ?? b.FontSize, brush)
