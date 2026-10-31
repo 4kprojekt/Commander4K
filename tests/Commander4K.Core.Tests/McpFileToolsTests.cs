@@ -207,7 +207,7 @@ public sealed class McpFileToolsTests
             {
                 try
                 {
-                    for (var i = 0; i < 5000; i++)
+                    for (var i = 0; i < 40_000; i++)
                     {
                         yield return new VfsEntry("e" + i, "mfs://many/e" + i, VfsEntryKind.File, i);
                     }
