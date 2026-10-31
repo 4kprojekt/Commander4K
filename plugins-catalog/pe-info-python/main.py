@@ -6,6 +6,7 @@ sections of each preview id. Nothing raises out of preview.render.
 import datetime
 
 import c4k
+import deps
 import pe
 import resources
 
@@ -23,6 +24,10 @@ LEVELS = {"asInvoker": "uprawnienia użytkownika",
           "highestAvailable": "najwyższe dostępne (administrator pyta o UAC)",
           "requireAdministrator": "wymaga administratora (UAC)"}
 NO_MANIFEST = "brak manifestu — uprawnienia użytkownika, wirtualizacja UAC dla starszych programów"
+NO_LEVEL = "manifest bez requestedExecutionLevel — uprawnienia użytkownika"
+MAX_MODULES = 60
+DEPENDENCY_KINDS = {"apiset": ("ℹ️", "zestaw API systemu"), "known": ("✅", "znana systemowa (KnownDLLs)"),
+                    "local": ("✅", "obok pliku"), "missing": ("❌", "nie znaleziono")}
 
 
 def _size(count):
@@ -117,8 +122,9 @@ def section_exports(image, entry, ctx):
 def section_permissions(image, entry, ctx):
     manifest = ctx.manifest()
     lines = ["## Uprawnienia", ""]
-    if ctx.manifest_error:
-        lines += [f"⚠ Manifest: {ctx.manifest_error}", ""]
+    error = ctx.manifest_error or (manifest.error if manifest is not None else None)
+    if error:
+        return lines + [f"- Poziom wykonania: ⚠ nie odczytano manifestu: {_cell(error)}", ""]
     if manifest is None:
         return lines + [f"- Poziom wykonania: {NO_MANIFEST}", ""]
     if manifest.skipped_reason:
@@ -127,7 +133,7 @@ def section_permissions(image, entry, ctx):
     if level:
         lines.append(f"- Poziom wykonania: **{_cell(level)}** — {LEVELS.get(level, 'nieznany poziom')}")
     else:
-        lines.append(f"- Poziom wykonania: {NO_MANIFEST}")
+        lines.append(f"- Poziom wykonania: {NO_LEVEL}")
     lines.append(f"- uiAccess: {'tak' if manifest.ui_access else 'nie'}")
     if manifest.auto_elevate:
         lines.append("- autoElevate: tak (podnosi uprawnienia bez pytania, jeśli to program systemowy)")
@@ -141,6 +147,33 @@ def section_permissions(image, entry, ctx):
     return lines + [""]
 
 
+def _dependency_line(node):
+    resolution = node.resolution
+    if resolution.kind == "system":
+        icon, text = "✅", f"systemowa ({deps.base_name(deps.folder_of(resolution.path))})"
+    else:
+        icon, text = DEPENDENCY_KINDS[resolution.kind]
+    if node.delayed:
+        if resolution.kind == "missing":
+            icon = "ℹ️"
+        text += " (opóźnione)"
+    if node.error:
+        text += f" — ⚠ nie odczytano importów: {_cell(node.error)}"
+    return f"{'  ' * node.depth}- {icon} {_cell(resolution.name)} — {text}"
+
+
+def section_dependencies(image, entry, ctx):
+    nodes = ctx.dependencies()
+    if ctx.dependencies_error:
+        return ["## Zależności", "", f"⚠ Nie udało się ustalić zależności: {_cell(ctx.dependencies_error)}", ""]
+    if not nodes:
+        return []
+    lines = ["## Zależności", ""] + [_dependency_line(node) for node in nodes]
+    if nodes.truncated:
+        lines.append(f"- … pominięto dalsze moduły (limit {MAX_MODULES})")
+    return lines + [""]
+
+
 def section_version(image, entry, ctx):
     info = ctx.version()
     labels = (("FileDescription", "Opis"), ("CompanyName", "Firma"), ("ProductName", "Produkt"), ("FileVersion", "Wersja pliku"),
@@ -150,7 +183,7 @@ def section_version(image, entry, ctx):
     return ["## Wersja", "", "| Pole | Wartość |", "|---|---|"] + rows + [""] if rows else []
 
 
-def notes(image, manifest, signature):
+def notes(image, manifest, signature, missing=()):
     """Facts about the file, never a verdict. `signature` is None until the signature reader exists: then it adds nothing."""
     result = []
     d = image.dll_characteristics
@@ -174,6 +207,8 @@ def notes(image, manifest, signature):
             result.append("Manifest wymaga uprawnień administratora (requireAdministrator).")
         if manifest.ui_access:
             result.append("Manifest ustawia uiAccess=true (dostęp do interfejsu innych programów).")
+    if missing:
+        result.append(f"Nie znaleziono bibliotek: {', '.join(_cell(n) for n in missing)}.")
     names = {f for item in image.imports for f in item.functions}
     used = sorted(SENSITIVE & names)
     if used:
@@ -183,25 +218,28 @@ def notes(image, manifest, signature):
 
 def section_notes(image, entry, ctx):
     manifest = ctx.manifest()
-    lines = [f"⚠ {w}" for w in image.warnings] + notes(image, manifest, None)
+    lines = [f"⚠ {w}" for w in image.warnings] + notes(image, manifest, None, ctx.missing())
     return ["## Uwagi", ""] + [f"- {n}" for n in lines] + [""] if lines else []
 
 
 ORDER = {
-    "exe": [section_permissions, section_version, section_header, section_security, section_sections, section_imports,
-            section_exports, section_notes],
-    "dll": [section_header, section_exports, section_version, section_security, section_sections, section_imports,
-            section_notes],
+    "exe": [section_permissions, section_dependencies, section_version, section_header, section_security, section_sections,
+            section_imports, section_exports, section_notes],
+    "dll": [section_header, section_exports, section_permissions, section_dependencies, section_version, section_security,
+            section_sections, section_imports, section_notes],
 }
 
 
 class Context:
     """The reader and the lazily read resources of one render; a failure is kept, never raised."""
 
-    def __init__(self, reader, image):
+    def __init__(self, reader, image, path=None):
         self.reader = reader
         self.image = image
+        self.path = path
         self.manifest_error = None
+        self.dependencies_error = None
+        self._dependencies = None
         self._manifest = None
         self._version = None
         self._done = set()
@@ -212,11 +250,12 @@ class Context:
         self._done.add(name)
         try:
             return read()
-        except (pe.ReadLimit, pe.PeError, ValueError, IndexError, OverflowError, UnicodeError) as error:
+        except Exception as error:  # render reads resources before any section's own try: nothing may escape
+            text = str(error) or type(error).__name__
             if name == "manifest":
-                self.manifest_error = str(error)
+                self.manifest_error = text
             else:
-                self.image.warnings.append(f"zasoby wersji: {error}")
+                self.image.warnings.append(f"zasoby wersji: {text}")
         return None
 
     def manifest(self):
@@ -231,14 +270,29 @@ class Context:
             self._version = value
         return self._version or {}
 
+    def dependencies(self):
+        """The dependency tree (deps.tree), built once; a failure is kept in dependencies_error."""
+        if self._dependencies is None:
+            self._dependencies = deps.Tree()
+            if self.path is not None:
+                try:
+                    self._dependencies = deps.tree(self.path, self.image, max_modules=MAX_MODULES)
+                except Exception as error:  # nothing may raise out of preview.render
+                    self.dependencies_error = str(error) or type(error).__name__
+        return self._dependencies
 
-def _analyze(entry):
+    def missing(self):
+        """Names of dependencies that were not found and are not delay-loaded (the card counts them)."""
+        return [n.resolution.name for n in self.dependencies() if n.resolution.kind == "missing" and not n.delayed]
+
+
+def _analyze(entry, entropy=True):
     size = entry.get("size")
     if not size:
         found = c4k.stat(entry["path"])
         size = (found or {}).get("size") or 0
     reader = pe.RangeReader(entry["path"], size)
-    return reader, pe.parse(reader)
+    return reader, pe.parse(reader, entropy=entropy)
 
 
 @c4k.handler("preview.render")
@@ -247,12 +301,15 @@ def render(params):
     kind = params.get("preview") or "exe"
     lines = [f"# {entry['name']}", ""]
     try:
-        reader, image = _analyze(entry)
+        reader, image = _analyze(entry, entropy=False)
     except pe.PeError as error:
         return {"kind": "markdown", "content": "\n".join(lines + [f"⚠ To nie jest prawidłowym plikiem PE ({error})."])}
     except Exception as error:  # nothing may raise out of preview.render
         return {"kind": "markdown", "content": "\n".join(lines + [f"⚠ Nie udało się odczytać pliku: {error}"])}
-    ctx = Context(reader, image)
+    ctx = Context(reader, image, entry["path"])
+    ctx.manifest()   # resources first: the section entropy reads must not use up the budget before them
+    ctx.version()
+    pe.add_entropy(reader, image)
     for build in ORDER.get(kind, ORDER["exe"]):
         try:
             lines += build(image, entry, ctx)

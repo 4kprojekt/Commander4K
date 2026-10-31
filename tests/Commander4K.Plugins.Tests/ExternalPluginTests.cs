@@ -458,6 +458,91 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Contains("możliwa pętla", md, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("x86", @"C:\Windows", @"C:\Windows\SysWOW64")]
+    [InlineData("x64", @"C:\Windows", @"C:\Windows\System32")]
+    [InlineData("ARM64", @"C:\Windows", @"C:\Windows\System32")]
+    public async Task Dependency_folder_for_machine(string machine, string root, string expected)
+    {
+        var output = await RunPluginPythonAsync("pe-info-python", $"import deps; sys.stdout.write(deps.system_folder('{machine}', r'{root}'))");
+        Assert.Equal(expected, output);
+    }
+
+    /// <summary>Runs a snippet with the detected Python in isolated mode, with a catalog plugin's folder on sys.path; returns stdout.</summary>
+    private async Task<string> RunPluginPythonAsync(string folder, string code)
+    {
+        var python = _runtimes.FirstOrDefault(r => r.Type == "python" && r.Executable is not null);
+        Assert.SkipWhen(python is null, "Python is not installed");
+        var pluginFolder = Path.Combine(RepositoryRoot(), "plugins-catalog", folder);
+        var start = new System.Diagnostics.ProcessStartInfo(python!.Executable!) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var argument in new[] { "-I", "-c", $"import sys; sys.path.insert(0, r'{pluginFolder}'); {code}" })
+        {
+            start.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var error = process.StandardError.ReadToEndAsync(TestToken);
+        var output = await process.StandardOutput.ReadToEndAsync(TestToken);
+        await process.WaitForExitAsync(TestToken);
+        Assert.True(process.ExitCode == 0, await error);
+        return output;
+    }
+
+    [Fact]
+    public async Task Pe_preview_resolves_dependencies()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var md = await RenderAsync("pe-info-python", exe, "exe");
+        Assert.Contains("## Zależności", md, StringComparison.Ordinal);
+        var lines = md.Split('\n');
+        var kernel = lines.Single(l => l.Contains("KERNEL32.dll", StringComparison.OrdinalIgnoreCase) && l.TrimStart().StartsWith("- ", StringComparison.Ordinal) && l.Contains('—', StringComparison.Ordinal) && !l.Contains("**", StringComparison.Ordinal));
+        Assert.True(kernel.Contains("KnownDLLs", StringComparison.Ordinal) || kernel.Contains("System32", StringComparison.Ordinal), kernel);
+        var apiSets = lines.Where(l => l.Contains("api-ms-win-", StringComparison.Ordinal) && !l.Contains("**", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(apiSets);
+        Assert.All(apiSets, l => Assert.Contains("zestaw API", l, StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, l => l.Contains('❌', StringComparison.Ordinal) && l.Contains("nie znaleziono", StringComparison.Ordinal));
+        Assert.True(md.IndexOf("## Uprawnienia", StringComparison.Ordinal) < md.IndexOf("## Zależności", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Pe_preview_marks_missing_local_dependency()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var bytes = await File.ReadAllBytesAsync(exe, TestToken);
+        var name = Encoding.ASCII.GetBytes("KERNEL32.dll\0");
+        var at = bytes.AsSpan().IndexOf(name);
+        Assert.True(at > 0, "the apphost imports KERNEL32.dll");
+        Encoding.ASCII.GetBytes("KERNEQ32.dll").CopyTo(bytes, at);
+        var path = Path.Combine(_folder, "app.exe");
+        await File.WriteAllBytesAsync(path, bytes, TestToken);
+        var md = await RenderAsync("pe-info-python", path, "exe");
+        Assert.Contains("❌ KERNEQ32.dll — nie znaleziono", md, StringComparison.Ordinal);
+        var notes = md[md.IndexOf("## Uwagi", StringComparison.Ordinal)..];
+        Assert.Contains("KERNEQ32.dll", notes, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_of_dll_shows_permissions_and_dependencies_after_exports()
+    {
+        var kernel32 = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var md = await RenderAsync("pe-info-python", kernel32, "dll");
+        var exports = md.IndexOf("## Eksporty", StringComparison.Ordinal);
+        var permissions = md.IndexOf("## Uprawnienia", StringComparison.Ordinal);
+        var dependencies = md.IndexOf("## Zależności", StringComparison.Ordinal);
+        Assert.True(exports >= 0 && exports < permissions && permissions < dependencies, $"{exports} {permissions} {dependencies}");
+    }
+
+    [Fact]
+    public async Task Pe_manifest_text_is_trimmed_and_failures_are_named()
+    {
+        var output = await RunPluginPythonAsync("pe-info-python",
+            "import resources; m = resources.parse_manifest('<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\"><trustInfo><security><requestedPrivileges>"
+            + "<requestedExecutionLevel level=\"asInvoker\"/></requestedPrivileges></security></trustInfo></assembly>\\0\\0 \\r\\n'); "
+            + "broken = resources.parse_manifest('<assembly>'); "
+            + "sys.stdout.write(str(m.execution_level) + '|' + str(m.error) + '|' + str(broken.error is not None))");
+        Assert.Equal("asInvoker|None|True", output);
+    }
+
     [Fact]
     public async Task Python_preview_returns_a_card()
     {

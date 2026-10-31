@@ -186,7 +186,9 @@ def _section_name(raw):
     return "".join(ch if ch.isprintable() else "?" for ch in text)
 
 
-def parse(reader):
+def parse(reader, details=True, entropy=True):
+    """The image's headers, sections and imports; `details` adds exports, TLS and the overlay, `entropy` the section
+    entropy (callers that read resources first pass False and call add_entropy afterwards, so it cannot use up the budget)."""
     size = reader.size
     try:
         dos = reader.read(0, min(64, size))
@@ -267,11 +269,21 @@ def parse(reader):
     step("tabela sekcji", lambda: _sections(reader, image, e_lfanew + 24 + optsize, nsections))
     step("tabela importów", lambda: _imports(reader, image, delayed=False))
     step("tabela importów opóźnionych", lambda: _imports(reader, image, delayed=True))
-    step("tabela eksportów", lambda: _exports(reader, image))
-    step("katalog TLS", lambda: _tls(reader, image))
-    step("overlay", lambda: _overlay(reader, image))
-    step("entropia sekcji", lambda: _entropy(reader, image))
+    if details:
+        step("tabela eksportów", lambda: _exports(reader, image))
+        step("katalog TLS", lambda: _tls(reader, image))
+        step("overlay", lambda: _overlay(reader, image))
+    if entropy:
+        add_entropy(reader, image)
     return image
+
+
+def add_entropy(reader, image):
+    """Section entropy (first ENTROPY_BYTES of each section); a failure becomes a warning."""
+    try:
+        _entropy(reader, image)
+    except _RECOVERABLE as error:
+        image.warnings.append(f"entropia sekcji: {error}")
 
 
 def _sections(reader, image, table_at, count):
