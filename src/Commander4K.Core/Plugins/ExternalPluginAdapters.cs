@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.Core.Plugins;
@@ -139,10 +140,7 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
                 }
 
                 var results = result.TryGetProperty("results", out var list) && list.ValueKind == JsonValueKind.Array
-                    ? list.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).Select(e => new TransferItemResult(
-                        RequiredString(e, "path"),
-                        e.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True,
-                        OptionalString(e, "error"))).ToList()
+                    ? list.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).Select(ParseItemResult).ToList()
                     : null;
                 return new ReceiveResult(OptionalString(result, "text"), results);
             }
@@ -179,7 +177,7 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
             }
 
             var files = result.TryGetProperty("files", out var list) && list.ValueKind == JsonValueKind.Array
-                ? list.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).Select(ParseProvidedFile).ToList()
+                ? list.EnumerateArray().Select(ParseProvidedFile).ToList()
                 : [];
             return new ProvideResult(files, OptionalString(result, "text"));
         }
@@ -201,30 +199,59 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
         size = item.Size,
     };
 
-    private static ProvidedFile ParseProvidedFile(JsonElement file)
+    /// <summary>
+    /// One entry of <c>panel.provide</c>'s <c>files</c>. Problems with one file become its <see cref="ProvidedFile.Error"/>
+    /// (shown to the user), so the other files of the reply still come through.
+    /// </summary>
+    private static ProvidedFile ParseProvidedFile(JsonElement file, int index)
     {
-        var name = RequiredString(file, "name");
+        if (file.ValueKind != JsonValueKind.Object || OptionalString(file, "name") is not { Length: > 0 } name)
+        {
+            var placeholder = (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return new ProvidedFile(placeholder, Error: Loc.T("Wtyczka nie podała nazwy pliku nr {0}.", placeholder));
+        }
+
         if (OptionalString(file, "url") is { } url)
         {
             return Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
                 ? new ProvidedFile(name, Url: uri)
-                : throw new FormatException($"Provided file '{name}': only http and https URLs are allowed, got '{url}'.");
+                : new ProvidedFile(name, Error: Loc.T("Plik „{0}”: dozwolone są tylko adresy http i https.", name));
         }
 
         if (OptionalString(file, "base64") is { } base64)
         {
-            var data = Convert.FromBase64String(base64);
-            return data.Length <= MaxInlineBytes ? new ProvidedFile(name, Data: data) : throw TooLarge(name);
+            // Checked before decoding, so an oversized reply never allocates the decoded copy.
+            if (base64.Length / 4 * 3 > MaxInlineBytes)
+            {
+                return TooLarge(name);
+            }
+
+            try
+            {
+                return new ProvidedFile(name, Data: Convert.FromBase64String(base64));
+            }
+            catch (FormatException)
+            {
+                return new ProvidedFile(name, Error: Loc.T("Plik „{0}”: uszkodzona treść base64.", name));
+            }
         }
 
-        var text = OptionalString(file, "text") ?? string.Empty;
-        return System.Text.Encoding.UTF8.GetByteCount(text) <= MaxInlineBytes
-            ? new ProvidedFile(name, Text: text)
-            : throw TooLarge(name);
+        if (OptionalString(file, "text") is { } text)
+        {
+            return System.Text.Encoding.UTF8.GetByteCount(text) <= MaxInlineBytes ? new ProvidedFile(name, Text: text) : TooLarge(name);
+        }
+
+        return new ProvidedFile(name, Error: Loc.T("Plik „{0}”: wtyczka nie podała treści (text, base64 ani url).", name));
     }
 
-    private static InvalidDataException TooLarge(string name) =>
-        new($"Provided file '{name}' is larger than {MaxInlineBytes / (1024 * 1024)} MB inline; provide it as a url.");
+    private static ProvidedFile TooLarge(string name) =>
+        new(name, Error: Loc.T("Plik „{0}” przekracza {1} MB; wtyczka powinna podać go jako adres url.", name, MaxInlineBytes / (1024 * 1024)));
+
+    /// <summary>An entry without <c>path</c> does not fail the whole receive: it becomes a failed result.</summary>
+    private static TransferItemResult ParseItemResult(JsonElement entry) =>
+        OptionalString(entry, "path") is { } path
+            ? new TransferItemResult(path, entry.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True, OptionalString(entry, "error"))
+            : new TransferItemResult(string.Empty, false, OptionalString(entry, "error") ?? Loc.T("Wtyczka zwróciła wynik bez ścieżki pliku."));
 
     private static IEnumerable<JsonElement> Objects(JsonElement result) =>
         result.ValueKind == JsonValueKind.Array ? result.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object) : [];

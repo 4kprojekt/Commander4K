@@ -90,7 +90,8 @@ public sealed record TransferItemResult(string Path, bool Ok, string? Error = nu
 public sealed record ReceiveResult(string? Text, IReadOnlyList<TransferItemResult>? Results = null);
 
 /// <summary>A file a plugin provides: exactly one of <paramref name="Text"/>, <paramref name="Data"/> or <paramref name="Url"/>.</summary>
-public sealed record ProvidedFile(string Name, string? Text = null, byte[]? Data = null, Uri? Url = null);
+/// <param name="Error">Why this file cannot be written (too large, no content, bad url…), for the user; the content is then empty.</param>
+public sealed record ProvidedFile(string Name, string? Text = null, byte[]? Data = null, Uri? Url = null, string? Error = null);
 
 public sealed record ProvideResult(IReadOnlyList<ProvidedFile> Files, string? Text = null);
 

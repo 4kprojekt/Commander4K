@@ -49,6 +49,13 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
 {
     private const int MaxHttpBytes = 5 * 1024 * 1024;
 
+    /// <summary>
+    /// Limit for <c>net.get</c> and <c>net.request</c> with an in-memory body. Requests that stream a file
+    /// (<c>bodyFile</c>/<c>multipart</c>) have none: big uploads may take hours; they end with the caller's token or
+    /// with the read grant they stream under. The app's client therefore has no timeout of its own.
+    /// </summary>
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(10);
+
     private readonly ReadGrants _grants = new();
 
     public PluginManifest Manifest { get; } = manifest;
@@ -170,42 +177,61 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
                 throw new ArgumentException("Use only one of body, bodyFile and multipart.", nameof(request));
             }
 
-            using var message = new HttpRequestMessage(new HttpMethod(request.Method.ToUpperInvariant()), request.Url);
-            if (request.Body is not null)
+            // Parsed before any file is opened, so a malformed type cannot leave a stream behind.
+            var fileType = request.BodyFile is null && request.Part is null
+                ? null
+                : MediaTypeHeaderValue.Parse(request.ContentType ?? "application/octet-stream");
+            var filePath = request.BodyFile ?? request.Part?.Path;
+
+            // A file readable only through a grant stops streaming when the grant ends (panel.receive cancelled).
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, filePath is null ? CancellationToken.None : GrantEnded(filePath));
+            if (filePath is null)
             {
-                message.Content = new StringContent(request.Body, Encoding.UTF8, request.ContentType ?? "application/json");
-            }
-            else if (request.BodyFile is { } bodyFile)
-            {
-                // Streamed through the router (disk, share, SFTP, archive), never loaded into memory. The read is gated
-                // like fs.read, so it works with fs.read or while the file is granted (panel.receive).
-                var content = new StreamContent(await OpenReadAsync(bodyFile, cancellationToken).ConfigureAwait(false));
-                content.Headers.ContentType = MediaTypeHeaderValue.Parse(request.ContentType ?? "application/octet-stream");
-                message.Content = content;
-            }
-            else if (request.Part is { } part)
-            {
-                var form = new MultipartFormDataContent();
-                message.Content = form;
-                var content = new StreamContent(await OpenReadAsync(part.Path, cancellationToken).ConfigureAwait(false));
-                content.Headers.ContentType = MediaTypeHeaderValue.Parse(request.ContentType ?? "application/octet-stream");
-                form.Add(content, part.Field, part.FileName ?? FileNameOf(part.Path));
+                limit.CancelAfter(RequestTimeout);
             }
 
-            foreach (var (name, value) in request.Headers ?? new Dictionary<string, string>())
+            try
             {
-                if (!message.Headers.TryAddWithoutValidation(name, value))
+                using var message = new HttpRequestMessage(new HttpMethod(request.Method.ToUpperInvariant()), request.Url);
+                if (request.Body is not null)
                 {
-                    message.Content?.Headers.TryAddWithoutValidation(name, value);
+                    message.Content = new StringContent(request.Body, Encoding.UTF8, request.ContentType ?? "application/json");
                 }
-            }
+                else if (request.BodyFile is { } bodyFile)
+                {
+                    // Streamed through the router (disk, share, SFTP, archive), never loaded into memory. The read is
+                    // gated like fs.read, so it works with fs.read or while the file is granted (panel.receive).
+                    message.Content = new StreamContent(await OpenReadAsync(bodyFile, limit.Token).ConfigureAwait(false)) { Headers = { ContentType = fileType } };
+                }
+                else if (request.Part is { } part)
+                {
+                    var form = new MultipartFormDataContent();
+                    message.Content = form;
+                    form.Add(
+                        new StreamContent(await OpenReadAsync(part.Path, limit.Token).ConfigureAwait(false)) { Headers = { ContentType = fileType } },
+                        part.Field,
+                        part.FileName ?? FileNameOf(part.Path));
+                }
 
-            using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-            var headers = response.Headers.Concat(response.Content.Headers)
-                .GroupBy(h => h.Key, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => string.Join(", ", g.SelectMany(h => h.Value)), StringComparer.OrdinalIgnoreCase);
-            var body = await ReadLimitedAsync(response, cancellationToken).ConfigureAwait(false);
-            return new HttpResponseData((int)response.StatusCode, headers, body);
+                foreach (var (name, value) in request.Headers ?? new Dictionary<string, string>())
+                {
+                    if (!message.Headers.TryAddWithoutValidation(name, value))
+                    {
+                        message.Content?.Headers.TryAddWithoutValidation(name, value);
+                    }
+                }
+
+                using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, limit.Token).ConfigureAwait(false);
+                var headers = response.Headers.Concat(response.Content.Headers)
+                    .GroupBy(h => h.Key, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => string.Join(", ", g.SelectMany(h => h.Value)), StringComparer.OrdinalIgnoreCase);
+                var body = await ReadLimitedAsync(response, limit.Token).ConfigureAwait(false);
+                return new HttpResponseData((int)response.StatusCode, headers, body);
+            }
+            catch (OperationCanceledException) when (limit.IsCancellationRequested && !cancellationToken.IsCancellationRequested && filePath is null)
+            {
+                throw TimedOut(request.Url);
+            }
         });
 
     public Task<IReadOnlyList<VfsEntry>> ListAsync(string path, CancellationToken cancellationToken = default) =>
@@ -268,10 +294,29 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
                 throw new ArgumentException(Loc.T("Dozwolone są tylko adresy http i https."), nameof(url));
             }
 
-            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            return await ReadLimitedAsync(response, cancellationToken).ConfigureAwait(false);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(RequestTimeout);
+            try
+            {
+                using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, limit.Token).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                return await ReadLimitedAsync(response, limit.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw TimedOut(url);
+            }
         });
+
+    private static TimeoutException TimedOut(Uri url) =>
+        new(Loc.T("Serwer {0} nie odpowiedział w ciągu {1:0} min.", url.Host, RequestTimeout.TotalMinutes));
+
+    /// <summary>
+    /// Cancelled when the read grant that lets this plugin read <paramref name="path"/> ends; never cancelled when the
+    /// plugin has <c>fs.read</c> itself or no grant covers the path (the read gate then decides).
+    /// </summary>
+    private CancellationToken GrantEnded(string path) =>
+        !Manifest.Allows(PluginPermissions.FileRead) && _grants.TryCover(path, out var ended) ? ended : CancellationToken.None;
 
     private static async Task<string> ReadLimitedAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {

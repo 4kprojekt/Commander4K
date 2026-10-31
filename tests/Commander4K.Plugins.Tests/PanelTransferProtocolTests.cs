@@ -40,6 +40,11 @@ public sealed class PanelTransferProtocolTests : IAsyncLifetime
                 c4k.report_progress(params["jobId"], 1, 2)
                 c4k.report_progress(params["jobId"], 2, 2, bytes=50, text="half")
                 return {"text": "done"}
+            if receiver == "malformed":
+                return {"results": [{"ok": True, "error": None}, {"path": "x", "ok": True}]}
+            if receiver == "slow-upload":
+                c4k.http_request(c4k.prompt("url", "url"), method="POST", body_file=files[0]["path"])
+                return {"text": "uploaded"}
             if receiver == "upload":
                 url = c4k.prompt("url", "url")
                 plain = c4k.http_request(url, method="POST", body_file=files[0]["path"], content_type="application/x-test")
@@ -61,7 +66,11 @@ public sealed class PanelTransferProtocolTests : IAsyncLifetime
         @c4k.handler("panel.provide")
         def provide(params):
             if params["provider"] == "bad":
-                return {"files": [{"name": "x.txt", "url": "file:///c:/x"}]}
+                return {"files": [{"name": "x.txt", "url": "file:///c:/x"}, {"base64": "AA=="}, {"name": "empty.txt"},
+                                  {"name": "broken.bin", "base64": "@@@"}, {"name": "ok.txt", "text": "y"}]}
+            if params["provider"] == "big":
+                # 9 M characters on the wire (under the 16 M message limit), 18 MB as UTF-8: over the inline limit.
+                return {"files": [{"name": "big.txt", "text": "ż" * 9000000}, {"name": "ok.txt", "text": "fine"}]}
             return {"text": "3 files", "files": [
                 {"name": "a.txt", "text": "hello"},
                 {"name": "b.bin", "base64": "AAEC"},
@@ -193,7 +202,89 @@ public sealed class PanelTransferProtocolTests : IAsyncLifetime
         Assert.Equal(("a.txt", "hello"), (result.Files[0].Name, result.Files[0].Text));
         Assert.Equal(new byte[] { 0, 1, 2 }, result.Files[1].Data);
         Assert.Equal(new Uri("https://example.com/c.zip"), result.Files[2].Url);
-        await Assert.ThrowsAsync<FormatException>(() => session.ProvideAsync("bad", ["row1"], null, TestToken));
+        Assert.All(result.Files, f => Assert.Null(f.Error));
+
+        // Problems with one file are reported on that file; the rest of the reply still comes through.
+        var bad = await session.ProvideAsync("bad", ["row1"], null, TestToken);
+        Assert.Equal(["x.txt", "2", "empty.txt", "broken.bin", "ok.txt"], bad.Files.Select(f => f.Name));
+        Assert.All(bad.Files.Take(4), f => Assert.NotNull(f.Error));
+        Assert.All(bad.Files.Take(4), f => Assert.True(f.Text is null && f.Data is null && f.Url is null));
+        Assert.Equal(new ProvidedFile("ok.txt", Text: "y"), bad.Files[4]);
+    }
+
+    [Fact]
+    public async Task Provide_reports_an_over_limit_file_and_keeps_the_others()
+    {
+        var (plugin, host) = Start();
+        await using var owned = plugin;
+
+        var result = await Session(plugin, host, "main").ProvideAsync("big", ["row1"], null, TestToken);
+
+        Assert.Equal(2, result.Files.Count);
+        Assert.Equal("big.txt", result.Files[0].Name);
+        Assert.Null(result.Files[0].Text);
+        Assert.Contains("16 MB", result.Files[0].Error, StringComparison.Ordinal);
+        Assert.Equal(new ProvidedFile("ok.txt", Text: "fine"), result.Files[1]);
+    }
+
+    [Fact]
+    public async Task Receive_result_without_path_becomes_a_failed_entry()
+    {
+        var (plugin, host) = Start();
+        await using var owned = plugin;
+
+        var result = await Session(plugin, host, "main").ReceiveAsync("malformed", [Item(A)], null, TestToken);
+
+        Assert.Equal(2, result.Results!.Count);
+        Assert.False(result.Results[0].Ok);
+        Assert.Equal(string.Empty, result.Results[0].Path);
+        Assert.NotNull(result.Results[0].Error);
+        Assert.Equal(new TransferItemResult("x", true), result.Results[1]);
+    }
+
+    [Fact]
+    public async Task Bad_content_type_leaves_no_file_open()
+    {
+        var host = new ScopedPluginHost(new PluginManifest("tests.ct", "CT", "1.0.0", "a", "d", [PluginPermissions.Network]), _ui, _router, _http, _audit);
+        using (host.GrantRead([Item(A)]))
+        {
+            await Assert.ThrowsAsync<FormatException>(() =>
+                host.HttpRequestAsync(new HttpRequestSpec("POST", new Uri("http://127.0.0.1:9/"), ContentType: "not a type", BodyFile: A), TestToken));
+            await Assert.ThrowsAsync<FormatException>(() =>
+                host.HttpRequestAsync(new HttpRequestSpec("POST", new Uri("http://127.0.0.1:9/"), ContentType: "not a type", Part: new HttpFilePart("f", A)), TestToken));
+        }
+
+        using var exclusive = new FileStream(A, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+
+    [Fact]
+    public async Task Cancelling_receive_stops_a_streaming_upload()
+    {
+        var (plugin, host) = Start();
+        await using var owned = plugin;
+        using var server = new RecordingServer(respond: false);
+        _ui.PromptAnswer = server.Url;
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(TestToken);
+
+        var receive = Session(plugin, host, "main").ReceiveAsync("slow-upload", [Item(A)], null, cancel.Token);
+        await WaitUntil(() => server.Requests.Count == 1, TimeSpan.FromSeconds(20));
+        var clock = Stopwatch.StartNew();
+        await cancel.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => receive);
+        await WaitUntil(() => _audit.Recent("tests.transfer").Any(e => e.Operation == "net.request" && e.Outcome == AuditOutcome.Failed), TimeSpan.FromSeconds(10));
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(3), $"The upload ran on for {clock.Elapsed}.");
+        using var exclusive = new FileStream(A, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+
+    private static async Task WaitUntil(Func<bool> condition, TimeSpan limit)
+    {
+        var clock = Stopwatch.StartNew();
+        while (!condition())
+        {
+            Assert.True(clock.Elapsed < limit, "Condition not met in time.");
+            await Task.Delay(20, TestToken);
+        }
     }
 
     [Fact]
@@ -371,7 +462,8 @@ public sealed class PanelTransferProtocolTests : IAsyncLifetime
         private readonly Lock _gate = new();
         private readonly List<ReceivedRequest> _requests = [];
 
-        public RecordingServer()
+        /// <param name="respond">False: record the request on arrival, never read its body and never answer.</param>
+        public RecordingServer(bool respond = true)
         {
             using (var socket = new TcpListener(IPAddress.Loopback, 0))
             {
@@ -388,6 +480,16 @@ public sealed class PanelTransferProtocolTests : IAsyncLifetime
                     try
                     {
                         var context = await _listener.GetContextAsync();
+                        if (!respond)
+                        {
+                            lock (_gate)
+                            {
+                                _requests.Add(new ReceivedRequest(context.Request.ContentType, []));
+                            }
+
+                            continue;
+                        }
+
                         using var body = new MemoryStream();
                         await context.Request.InputStream.CopyToAsync(body);
                         lock (_gate)

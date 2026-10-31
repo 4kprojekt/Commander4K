@@ -231,7 +231,9 @@ as files (`"provides": true`).
    it is cancelled). It covers every request your process makes meanwhile.
 4. To upload without loading the file into memory, pass the path to `net.request` as `bodyFile` (raw body, sent
    with `contentType`, default `application/octet-stream`) or as `multipart: { field, path, fileName? }`. The app
-   streams it through its own file system layer, so it works for shares, SFTP and archives too.
+   streams it through its own file system layer, so it works for shares, SFTP and archives too. Such uploads have
+   no time limit (other `net.*` calls stop after 10 minutes); they end when the job is cancelled, which also ends
+   the read grant.
 5. Return `{ text?, results? }`: `text` is shown to the user (set `returnsMessage` on the receiver), `results` lists
    per-file failures (`{ path, ok: false, error }`). Your panel reloads afterwards.
 
@@ -240,7 +242,8 @@ as files (`"provides": true`).
    the target folder (the other panel, editable) and overwrite policy.
 2. The app calls `panel.provide` and writes each returned file itself: `text` (UTF-8) or `base64` inline, up to
    16 MB per file; larger files as an `http`/`https` `url` the app downloads (other schemes are refused). `name` may
-   contain subfolders (`docs/a.txt`), never `..` or an absolute path.
+   contain subfolders (`docs/a.txt`), never `..` or an absolute path. A file that breaks these rules (too large, no
+   content, another URL scheme, no name) is reported to the user; the other files are still written.
 
 **Progress:** `panel.receive` and `panel.provide` carry a `jobId`. Send `job.progress { jobId, done, total, bytes?,
 text? }` as a notification (`report_progress` in the SDKs) and the job's progress bar follows it; without it the bar

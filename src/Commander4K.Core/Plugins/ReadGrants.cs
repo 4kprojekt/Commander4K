@@ -6,15 +6,18 @@ namespace Commander4K.Core.Plugins;
 /// <summary>
 /// Temporary read permission for exactly the files and folders the user sent to a plugin: a file grant covers that
 /// path only, a folder grant covers the folder and everything below it. Matching reuses <see cref="McpPathPolicy"/>
-/// (text-only normalization, separators, case per scheme, <c>..</c> resolved, segment boundaries). Grants stack: each
-/// entry has a counter and disappears when its last holder is disposed. Thread-safe.
+/// (text-only normalization, separators, case per scheme, <c>..</c> resolved, segment boundaries). Grants stack: a path
+/// stays covered while any grant that covers it is held. Thread-safe.
 /// </summary>
 public sealed class ReadGrants
 {
     private readonly Lock _gate = new();
-    private readonly Dictionary<(bool Folder, string Path), int> _counts = [];
+    private readonly List<Entry> _active = [];
 
-    /// <summary>Grants read access; paths that are not recognised absolute VFS paths are ignored. Disposing releases once.</summary>
+    /// <summary>
+    /// Grants read access; paths that are not recognised absolute VFS paths are ignored. Disposing releases this grant
+    /// and cancels its <see cref="TryCover"/> token, so work started under it (a streamed upload) stops with it.
+    /// </summary>
     public IDisposable Grant(IReadOnlyList<TransferItem> items)
     {
         var keys = new List<(bool Folder, string Path)>();
@@ -28,56 +31,62 @@ public sealed class ReadGrants
             keys.Add((item.Kind == TransferItemKind.Folder, McpPathPolicy.Normalize(item.Path)));
         }
 
+        var entry = new Entry(keys);
         lock (_gate)
         {
-            foreach (var key in keys)
-            {
-                _counts[key] = _counts.GetValueOrDefault(key) + 1;
-            }
+            _active.Add(entry);
         }
 
-        return new Releaser(this, keys);
+        return new Releaser(this, entry);
     }
 
     /// <summary>True when <paramref name="path"/> is a granted file or lies inside a granted folder.</summary>
-    public bool Covers(string path)
+    public bool Covers(string path) => TryCover(path, out _);
+
+    /// <summary>Like <see cref="Covers"/>; <paramref name="ended"/> is cancelled when the covering grant is released.</summary>
+    public bool TryCover(string path, out CancellationToken ended)
     {
-        (bool Folder, string Path)[] snapshot;
+        Entry[] snapshot;
         lock (_gate)
         {
-            snapshot = [.. _counts.Keys];
+            snapshot = [.. _active];
         }
 
-        foreach (var (folder, granted) in snapshot)
+        foreach (var entry in snapshot)
         {
-            if (McpPathPolicy.IsInside(path, granted) && (folder || McpPathPolicy.IsInside(granted, path)))
+            foreach (var (folder, granted) in entry.Keys)
             {
-                return true;
+                if (McpPathPolicy.IsInside(path, granted) && (folder || McpPathPolicy.IsInside(granted, path)))
+                {
+                    ended = entry.Ended.Token;
+                    return true;
+                }
             }
         }
 
+        ended = CancellationToken.None;
         return false;
     }
 
-    private void Release(List<(bool Folder, string Path)> keys)
+    private void Release(Entry entry)
     {
         lock (_gate)
         {
-            foreach (var key in keys)
-            {
-                if (_counts.TryGetValue(key, out var count) && count > 1)
-                {
-                    _counts[key] = count - 1;
-                }
-                else
-                {
-                    _counts.Remove(key);
-                }
-            }
+            _active.Remove(entry);
         }
+
+        // Not disposed: a request may still be linking to the token; cancelling is all that is needed.
+        entry.Ended.Cancel();
     }
 
-    private sealed class Releaser(ReadGrants owner, List<(bool Folder, string Path)> keys) : IDisposable
+    private sealed class Entry(List<(bool Folder, string Path)> keys)
+    {
+        public List<(bool Folder, string Path)> Keys { get; } = keys;
+
+        public CancellationTokenSource Ended { get; } = new();
+    }
+
+    private sealed class Releaser(ReadGrants owner, Entry entry) : IDisposable
     {
         private int _released;
 
@@ -85,7 +94,7 @@ public sealed class ReadGrants
         {
             if (Interlocked.Exchange(ref _released, 1) == 0)
             {
-                owner.Release(keys);
+                owner.Release(entry);
             }
         }
     }

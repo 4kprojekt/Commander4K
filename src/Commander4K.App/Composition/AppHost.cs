@@ -149,7 +149,7 @@ public sealed class AppHost : IAsyncDisposable
         {
             if (!_hosts.TryGetValue(manifest.Id, out var host))
             {
-                host = new ScopedPluginHost(manifest, PluginUi, Router, Http, Audit,
+                host = new ScopedPluginHost(manifest, PluginUi, Router, PluginHttp, Audit,
                     () => SystemSnapshots.Processes(Plugins.BuiltIn.Interop.ProcessLookups.ParentIds, Plugins.BuiltIn.Interop.ProcessLookups.ImagePath));
                 _hosts[manifest.Id] = host;
             }
@@ -240,6 +240,12 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>Shared client for GitHub release checks and downloads.</summary>
     public HttpClient Http { get; } = new() { Timeout = TimeSpan.FromMinutes(10) };
+
+    /// <summary>
+    /// Plugins' <c>net.*</c> calls. No client timeout: <see cref="ScopedPluginHost"/> applies its own 10-minute limit to
+    /// every request except streamed file uploads, which may take longer and end with their job.
+    /// </summary>
+    public HttpClient PluginHttp { get; } = new() { Timeout = Timeout.InfiniteTimeSpan };
 
     public UpdateService Updates { get; }
 
@@ -414,6 +420,7 @@ public sealed class AppHost : IAsyncDisposable
         await Remote.DisposeAsync();
         await Audit.DisposeAsync();
         Http.Dispose();
+        PluginHttp.Dispose();
         if (Index is not null)
         {
             await Index.DisposeAsync();
