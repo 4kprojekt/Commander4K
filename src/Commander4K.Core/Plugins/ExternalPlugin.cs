@@ -128,6 +128,11 @@ public sealed class ExternalPlugin : IAsyncDisposable
         bool Bool(string name) => p?.TryGetProperty(name, out var v) == true && v.ValueKind == JsonValueKind.True;
         long Long(string name, long fallback) => p?.TryGetProperty(name, out var v) == true && v.TryGetInt64(out var number) ? number : fallback;
 
+        if (MailRpc.Handles(method))
+        {
+            return await MailRpc.HandleAsync(method, p, _host.Mail, cancellationToken).ConfigureAwait(false);
+        }
+
         switch (method)
         {
             case "context.get":

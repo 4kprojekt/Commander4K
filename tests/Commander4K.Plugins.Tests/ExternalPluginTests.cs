@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Commander4K.Core.Execution;
+using Commander4K.Core.Mail;
 using Commander4K.Core.Plugins;
 using Commander4K.Core.Updates;
 using Commander4K.Core.Vfs;
@@ -502,6 +503,123 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Contains(_audit.Recent("examples.site-check"), e => e.Operation == "net.get" && e.Detail.StartsWith(server.Url, StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("python")]
+    [InlineData("node")]
+    [InlineData("powershell")]
+    public async Task Notify_target_reaches_the_ui_from_every_sdk_client(string language)
+    {
+        var (client, entry, version, source) = language switch
+        {
+            "python" => ("c4k.py", "main.py", ">=3.9", """
+                import c4k
+
+                @c4k.handler("command.execute")
+                def run(params):
+                    c4k.notify("hello", False, "mail-target")
+
+                c4k.serve()
+                """),
+            "node" => ("c4k.js", "main.js", ">=18", """
+                const c4k = require('./c4k');
+                c4k.on('command.execute', async () => { await c4k.notify('hello', false, 'mail-target'); });
+                """),
+            _ => ("c4k.ps1", "main.ps1", ">=7", """
+                . "$PSScriptRoot/c4k.ps1"
+                Register-C4KHandler 'command.execute' { param($p) Show-C4KNotification 'hello' -Target 'mail-target' }
+                Start-C4KPlugin
+                """),
+        };
+        var folder = Path.Combine(_folder, "notify-" + language);
+        Directory.CreateDirectory(folder);
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", language, client), Path.Combine(folder, client));
+        File.WriteAllText(Path.Combine(folder, entry), source);
+        File.WriteAllText(Path.Combine(folder, ManifestReader.FileName), $$"""
+            { "id": "tests.notify-{{language}}", "name": "Notify", "version": "1.0.0", "author": "t", "description": "d",
+              "runtime": { "type": "{{language}}", "entry": "{{entry}}", "version": "{{version}}" },
+              "permissions": [],
+              "contributes": { "commands": [ { "id": "go", "title": "Go", "category": "T" } ] } }
+            """);
+        await using var plugin = StartFrom(folder);
+        _ui.LastNotificationTarget = null;
+
+        await new ExternalCommandPlugin(plugin).ExecuteAsync("go", HostFor(plugin), TestToken);
+
+        Assert.Equal("hello", _ui.LastNotification);
+        Assert.Equal("mail-target", _ui.LastNotificationTarget);
+    }
+
+    [Fact]
+    public async Task Mail_errors_reach_the_plugin_with_code_and_data()
+    {
+        var folder = Path.Combine(_folder, "mail-errors");
+        Directory.CreateDirectory(folder);
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", "python", "c4k.py"), Path.Combine(folder, "c4k.py"));
+        File.WriteAllText(Path.Combine(folder, ManifestReader.FileName), """
+            { "id": "tests.mail-errors", "name": "Mail errors", "version": "1.0.0", "author": "t", "description": "d",
+              "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+              "permissions": ["mail"],
+              "contributes": { "commands": [ { "id": "go", "title": "Go", "category": "T" } ] } }
+            """);
+        File.WriteAllText(Path.Combine(folder, "main.py"), """
+            import c4k
+
+            ACCOUNT = {"imap": "imap.example.org:993", "smtp": "smtp.example.org:465", "user": "anna", "interactive": False}
+
+            def attempt(call):
+                try:
+                    call()
+                    return "ok"
+                except c4k.HostError as error:
+                    return f"{error.code} {error.data}"
+
+            @c4k.handler("command.execute")
+            def go(params):
+                lines = [str(len(c4k.mail_folders(ACCOUNT)))]
+                lines.append(attempt(lambda: c4k.mail_sync(ACCOUNT, "INBOX")))
+                lines.append(attempt(lambda: c4k.mail_set_flags(ACCOUNT, "INBOX", [1], ["seen"], [])))
+                lines.append(attempt(lambda: c4k.mail_set_flags(ACCOUNT, "INBOX", [1], ["bogus"], [])))
+                return {"text": {"title": "mail", "content": "|".join(lines)}}
+
+            c4k.serve()
+            """);
+        await using var plugin = StartFrom(folder, new ErrorMailBackend());
+
+        await new ExternalCommandPlugin(plugin).ExecuteAsync("go", HostFor(plugin), TestToken);
+
+        Assert.Equal(
+            "1|-32010 {'authRequired': True, 'realm': 'anna@imap.example.org'}|-32011 {'host': 'imap.example.org:993', 'fingerprint': 'AB12'}|-32602 None",
+            _ui.LastText);
+        Assert.Contains(_audit.Recent("tests.mail-errors"), e => e.Operation == "mail.sync" && e.Outcome == AuditOutcome.Failed);
+    }
+
+    private sealed class ErrorMailBackend : IMailBackend
+    {
+        public Task<IReadOnlyList<MailFolderInfo>> FoldersAsync(string pluginId, MailAccount account, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<MailFolderInfo>>([new MailFolderInfo("INBOX", "Odebrane", '/', MailSpecialFolder.Inbox, 1, 0, 0)]);
+
+        public Task<MailSyncResult> SyncAsync(string pluginId, MailAccount account, MailSyncRequest request, CancellationToken ct) =>
+            throw new MailAuthenticationRequiredException("anna@imap.example.org");
+
+        public Task<long> FetchAsync(string pluginId, MailAccount account, string folder, uint uid, Stream destination, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task SetFlagsAsync(string pluginId, MailAccount account, string folder, IReadOnlyList<uint> uids, MailFlags add, MailFlags remove, CancellationToken ct) =>
+            throw new MailCertificateUntrustedException("imap.example.org:993", "AB12");
+
+        public Task MoveAsync(string pluginId, MailAccount account, string folder, IReadOnlyList<uint> uids, string targetFolder, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task DeleteAsync(string pluginId, MailAccount account, string folder, IReadOnlyList<uint> uids, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<uint?> AppendAsync(string pluginId, MailAccount account, string folder, Stream message, MailFlags flags, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<string> SendAsync(string pluginId, MailAccount account, Stream message, CancellationToken ct) =>
+            throw new NotSupportedException();
+    }
+
     [Fact]
     public async Task Node_plugin_palette_lists_adds_invokes_and_removes_items()
     {
@@ -747,14 +865,14 @@ public sealed class ExternalPluginTests : IAsyncLifetime
 
     private ExternalPlugin Start(string example) => StartFrom(Path.Combine(Examples, example));
 
-    private ExternalPlugin StartFrom(string folder)
+    private ExternalPlugin StartFrom(string folder, IMailBackend? mail = null)
     {
         var discovered = ManifestReader.Read(folder);
         Assert.True(discovered.IsValid, string.Join("; ", discovered.Errors));
         var missing = RuntimeCatalog.CheckRequirement(discovered.Manifest!.Runtime, _runtimes);
         Assert.SkipWhen(missing is not null, missing ?? string.Empty);
         var runtime = _runtimes.First(r => r.Type == discovered.Manifest.Runtime.Type);
-        return new ExternalPlugin(discovered, runtime, HostFor(discovered.Manifest), _audit, _storage);
+        return new ExternalPlugin(discovered, runtime, new ScopedPluginHost(discovered.Manifest, _ui, _router, _http, _audit, null, mail), _audit, _storage);
     }
 
     private ScopedPluginHost HostFor(ExternalPlugin plugin) => HostFor(plugin.Manifest);
@@ -788,7 +906,13 @@ public sealed class ExternalPluginTests : IAsyncLifetime
 
         public Task NavigateAsync(string path, string? focusName) => Task.CompletedTask;
 
-        public void Notify(string message, bool isError, string? target) => LastNotification = message;
+        public string? LastNotificationTarget { get; set; }
+
+        public void Notify(string message, bool isError, string? target)
+        {
+            LastNotification = message;
+            LastNotificationTarget = target;
+        }
 
         public Task ShowTextAsync(string title, string text)
         {

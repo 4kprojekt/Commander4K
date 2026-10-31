@@ -5,8 +5,14 @@ using Commander4K.Core.Localization;
 
 namespace Commander4K.Core.Plugins;
 
-public sealed class JsonRpcException(int code, string message) : Exception(message)
+public sealed class JsonRpcException(int code, string message, object? data = null) : Exception(message)
 {
+    /// <summary>Mail login needed (non-interactive call or refused); <c>data</c> = <c>{ authRequired, realm }</c>.</summary>
+    public const int MailAuthenticationRequired = -32010;
+
+    /// <summary>Mail server certificate not trusted yet; <c>data</c> = <c>{ host, fingerprint }</c>.</summary>
+    public const int MailCertificateUntrusted = -32011;
+
     public const int MethodNotFound = -32601;
     public const int InvalidParams = -32602;
     public const int InternalError = -32603;
@@ -15,6 +21,9 @@ public sealed class JsonRpcException(int code, string message) : Exception(messa
     public const int RequestCancelled = -32800;
 
     public int Code { get; } = code;
+
+    /// <summary>Structured detail sent as the JSON-RPC <c>error.data</c>.</summary>
+    public object? ErrorData { get; } = data;
 }
 
 /// <summary>
@@ -160,7 +169,8 @@ public sealed class JsonRpcConnection : IAsyncDisposable
             {
                 var code = error.TryGetProperty("code", out var c) ? c.GetInt32() : JsonRpcException.ServerError;
                 var text = error.TryGetProperty("message", out var m) ? m.GetString() : Loc.T("Błąd wtyczki");
-                waiting.TrySetException(new JsonRpcException(code, text ?? Loc.T("Błąd wtyczki")));
+                waiting.TrySetException(new JsonRpcException(code, text ?? Loc.T("Błąd wtyczki"),
+                    error.TryGetProperty("data", out var data) ? data.Clone() : null));
             }
             else
             {
@@ -190,12 +200,13 @@ public sealed class JsonRpcConnection : IAsyncDisposable
                 ArgumentException or KeyNotFoundException or FormatException or InvalidOperationException => JsonRpcException.InvalidParams,
                 _ => JsonRpcException.ServerError,
             };
-            response = new JsonObject
+            var error = new JsonObject { ["code"] = code, ["message"] = ex.Message };
+            if ((ex as JsonRpcException)?.ErrorData is { } data)
             {
-                ["jsonrpc"] = "2.0",
-                ["id"] = JsonNode.Parse(id.GetRawText()),
-                ["error"] = new JsonObject { ["code"] = code, ["message"] = ex.Message },
-            };
+                error["data"] = ToNode(data);
+            }
+
+            response = new JsonObject { ["jsonrpc"] = "2.0", ["id"] = JsonNode.Parse(id.GetRawText()), ["error"] = error };
         }
         finally
         {

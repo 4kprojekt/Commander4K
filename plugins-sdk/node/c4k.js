@@ -19,9 +19,10 @@ const pending = new Map();
 let nextId = 0;
 
 class HostError extends Error {
-  constructor(code, message) {
+  constructor(code, message, data = null) {
     super(message);
-    this.code = code; // -32001: permission missing from plugin.json
+    this.code = code; // -32001: permission missing from plugin.json; -32010: mail login needed; -32011: untrusted mail certificate
+    this.data = data; // -32010: { authRequired: true, realm }; -32011: { host, fingerprint }
   }
 }
 
@@ -46,7 +47,7 @@ async function dispatch(message) {
     const waiter = pending.get(message.id);
     if (waiter) {
       pending.delete(message.id);
-      if (message.error) waiter.reject(new HostError(message.error.code, message.error.message));
+      if (message.error) waiter.reject(new HostError(message.error.code, message.error.message, message.error.data ?? null));
       else waiter.resolve(message.result);
     }
     return;
@@ -63,7 +64,7 @@ async function dispatch(message) {
     if (message.id !== undefined) send({ jsonrpc: '2.0', id: message.id, result: result ?? null });
   } catch (error) {
     if (message.id !== undefined) {
-      send({ jsonrpc: '2.0', id: message.id, error: { code: error.code ?? -32000, message: String(error.message ?? error) } });
+      send({ jsonrpc: '2.0', id: message.id, error: { code: error.code ?? -32000, message: String(error.message ?? error), ...(error.data ? { data: error.data } : {}) } });
     }
   }
 }
@@ -82,7 +83,7 @@ module.exports = {
   HostError,
   context: () => call('context.get'),                                            // {activePath, otherPath, selection}
   log: message => call('log.write', { message }),                                // audit log (use instead of console.log)
-  notify: (message, error = false) => call('ui.notify', { message, error }),
+  notify: (message, error = false, target = null) => call('ui.notify', { message, error, target }), // target: path/link opened when the toast is clicked
   showText: (title, text) => call('ui.showText', { title, text }),
   confirm: (title, message) => call('ui.confirm', { title, message }),           // true/false
   prompt: (title, message, initial = '') => call('ui.prompt', { title, message, initial }), // string or null
@@ -109,4 +110,22 @@ module.exports = {
   httpGet: url => call('net.get', { url }),                                      // net -> body text (error on non-2xx)
   httpRequest: (url, { method = 'GET', headers = {}, body = null, contentType = null } = {}) => // net -> {status, headers, body}
     call('net.request', { url, method, headers, body, contentType }),
+
+  // ---- mail (permission 'mail'; fetch/compose/attachments also need fs.write, parse/send/append fs.read) ----
+  // account = { imap: 'host:993', smtp: 'host:465' | null, user: 'name', interactive: true }. The app owns the password
+  // and certificates: interactive: false never shows a dialog and rejects with HostError -32010/-32011 instead.
+  // Flags are 'seen', 'flagged', 'answered', 'draft'. Message files are .eml paths (any location the app can open).
+  mailFolders: account => call('mail.folders', { account }),                     // -> [{serverName, localName, separator, special, uidValidity, count, unread}]
+  mailSync: (account, folder, { uidValidity = 0, lastUid = 0, modSeq = 0, since = null, knownUids = [] } = {}) => // -> {uidValidity, uidValidityChanged, modSeq, new, flagChanges, removed}
+    call('mail.sync', { account, folder, uidValidity, lastUid, modSeq, since, knownUids }),
+  mailFetch: async (account, folder, uid, path) => (await call('mail.fetch', { account, folder, uid, path })).bytes, // fs.write -> bytes written
+  mailSetFlags: (account, folder, uids, add = [], remove = []) => call('mail.setFlags', { account, folder, uids, add, remove }),
+  mailMove: (account, folder, uids, target) => call('mail.move', { account, folder, uids, target }),
+  mailDelete: (account, folder, uids) => call('mail.delete', { account, folder, uids }), // Trash, or expunge inside Trash
+  mailAppend: async (account, folder, path, flags = []) => (await call('mail.append', { account, folder, path, flags })).uid, // fs.read -> new uid or null
+  mailParse: path => call('mail.parse', { path }),                               // fs.read -> {from, to, cc, subject, date, messageId, references, bodyText, attachments}
+  mailSaveAttachment: (path, index, target) => call('mail.saveAttachment', { path, index, target }), // fs.read + fs.write
+  mailReply: (path, mode = 'reply', self = '') => call('mail.reply', { path, mode, self }), // mode: reply | replyAll | forward -> draft (fs.read)
+  mailCompose: (path, draft) => call('mail.compose', { path, draft }),           // fs.write (+ fs.read for draft.attachments); draft = {to, cc, bcc, subject, body, inReplyTo, references, attachments, from}
+  mailSend: async (account, path) => (await call('mail.send', { account, path })).messageId, // fs.read -> Message-ID
 };

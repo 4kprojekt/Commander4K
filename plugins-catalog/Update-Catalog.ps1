@@ -17,7 +17,7 @@ foreach ($plugin in $document.plugins) {
         Sort-Object FullName
     $plugin.files = @(foreach ($file in $files) {
         $text = [System.IO.File]::ReadAllText($file.FullName, [System.Text.UTF8Encoding]::new($false)) -replace "`r", ''
-        @{
+        [ordered]@{
             path = [System.IO.Path]::GetRelativePath($folder, $file.FullName).Replace('\', '/')
             sha256 = [Convert]::ToHexStringLower($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)))
         }

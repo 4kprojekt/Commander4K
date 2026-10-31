@@ -24,11 +24,13 @@ _next_id = 0
 
 
 class HostError(Exception):
-    """The app refused or failed a call; code -32001 means a permission missing from plugin.json."""
+    """The app refused or failed a call. code -32001: a permission missing from plugin.json; -32010: mail login
+    needed (data = {"authRequired": True, "realm": ...}); -32011: untrusted mail certificate (data = {"host", "fingerprint"})."""
 
-    def __init__(self, code, message):
+    def __init__(self, code, message, data=None):
         super().__init__(message)
         self.code = code
+        self.data = data
 
 
 def handler(method):
@@ -63,7 +65,7 @@ def call(method, /, **params):
         message = _read()
         if message.get("id") == request_id and "method" not in message:
             if "error" in message:
-                raise HostError(message["error"].get("code"), message["error"].get("message"))
+                raise HostError(message["error"].get("code"), message["error"].get("message"), message["error"].get("data"))
             return message.get("result")
         _queue.append(message)
 
@@ -73,7 +75,7 @@ def call(method, /, **params):
 # "archive"…), size (-1 = unknown), modified (ISO 8601 or None), hidden.
 def context():                       return call("context.get")                              # {activePath, otherPath, selection}
 def log(message):                    call("log.write", message=message)                      # audit log (use instead of print)
-def notify(message, error=False):    call("ui.notify", message=message, error=error)
+def notify(message, error=False, target=None): call("ui.notify", message=message, error=error, target=target)  # target: path/link opened when the toast is clicked
 def show_text(title, text):          call("ui.showText", title=title, text=text)
 def confirm(title, message):         return call("ui.confirm", title=title, message=message)  # True/False
 def prompt(title, message, initial=""): return call("ui.prompt", title=title, message=message, initial=initial)  # str or None
@@ -106,6 +108,25 @@ def http_request(url, method="GET", headers=None, body=None, content_type=None):
     return call("net.request", url=url, method=method, headers=headers or {}, body=body, contentType=content_type)
 
 
+# ---- mail (permission "mail"; fetch/compose/attachments also need fs.write, parse/send/append fs.read) ----
+# account = {"imap": "host:993", "smtp": "host:465" or None, "user": "name", "interactive": True}. The app owns the
+# password and certificates: interactive=False never shows a dialog and raises HostError -32010/-32011 instead.
+# Flags are "seen", "flagged", "answered", "draft". Message files are .eml paths (any location the app can open).
+def mail_folders(account):           return call("mail.folders", account=account)             # -> [{serverName, localName, separator, special, uidValidity, count, unread}]
+def mail_sync(account, folder, uid_validity=0, last_uid=0, mod_seq=0, since=None, known_uids=()):  # -> {uidValidity, uidValidityChanged, modSeq, new, flagChanges, removed}
+    return call("mail.sync", account=account, folder=folder, uidValidity=uid_validity, lastUid=last_uid, modSeq=mod_seq, since=since, knownUids=list(known_uids))
+def mail_fetch(account, folder, uid, path): return call("mail.fetch", account=account, folder=folder, uid=uid, path=path)["bytes"]  # fs.write -> bytes written
+def mail_set_flags(account, folder, uids, add=(), remove=()): call("mail.setFlags", account=account, folder=folder, uids=list(uids), add=list(add), remove=list(remove))
+def mail_move(account, folder, uids, target): call("mail.move", account=account, folder=folder, uids=list(uids), target=target)
+def mail_delete(account, folder, uids): call("mail.delete", account=account, folder=folder, uids=list(uids))  # Trash, or expunge inside Trash
+def mail_append(account, folder, path, flags=()): return call("mail.append", account=account, folder=folder, path=path, flags=list(flags))["uid"]  # fs.read -> new uid or None
+def mail_parse(path):                return call("mail.parse", path=path)                      # fs.read -> {from, to, cc, subject, date, messageId, references, bodyText, attachments}
+def mail_save_attachment(path, index, target): call("mail.saveAttachment", path=path, index=index, target=target)  # fs.read + fs.write
+def mail_reply(path, mode="reply", self_address=""): return call("mail.reply", path=path, mode=mode, self=self_address)  # mode: reply | replyAll | forward -> draft (fs.read)
+def mail_compose(path, draft):       call("mail.compose", path=path, draft=draft)              # fs.write (+ fs.read for draft["attachments"]); draft = {to, cc, bcc, subject, body, inReplyTo, references, attachments, from}
+def mail_send(account, path):        return call("mail.send", account=account, path=path)["messageId"]  # fs.read -> Message-ID
+
+
 def _dispatch(message):
     method = message.get("method")
     if method is None or method.startswith("$/"):
@@ -127,7 +148,10 @@ def _dispatch(message):
             _send({"jsonrpc": "2.0", "id": request_id, "result": result})
     except HostError as error:
         if request_id is not None:
-            _send({"jsonrpc": "2.0", "id": request_id, "error": {"code": error.code or -32000, "message": str(error)}})
+            failure = {"code": error.code or -32000, "message": str(error)}
+            if error.data is not None:
+                failure["data"] = error.data
+            _send({"jsonrpc": "2.0", "id": request_id, "error": failure})
     except Exception as error:  # noqa: BLE001 - report any plugin failure to the app instead of dying
         if request_id is not None:
             _send({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32000, "message": f"{type(error).__name__}: {error}"}})

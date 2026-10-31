@@ -120,6 +120,8 @@ Commands get the keymap id `plugin:<pluginId>:<commandId>`, and panels get `pane
 | `shell.run` | `shell.run` |
 | `net` | `net.get`, `net.request` |
 | `system.info` | `system.info` |
+| `mail` | `mail.*` (see [Mail](#mail)). Calls that read or write message files also need `fs.read` / `fs.write` for those paths. |
+| `background` | Lets the app call the plugin on a timer (see [Background work](#background-work)). Calls nothing itself. |
 
 These calls need no permission:
 - the UI and context calls: `ui.*`, `context.get`, `log.write`;
@@ -173,7 +175,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 |---|---|---|---|
 | `context.get` | — | context, as above | — |
 | `log.write` | `{ message }` | `null` | — |
-| `ui.notify` | `{ message, error? }` | `null` | — |
+| `ui.notify` | `{ message, error?, target? }` | `null` | — (`target`: a path or link opened when the toast is clicked) |
 | `ui.showText` | `{ title, text }` | `null` | — |
 | `ui.confirm` | `{ title, message }` | `true`/`false` | — |
 | `ui.prompt` | `{ title, message, initial? }` | string or `null` | — |
@@ -199,6 +201,18 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `system.info` | — | `{ os, osVersion, architecture, machine, user, processors, memoryBytes, drives: [{ name, type, format, label, totalBytes, freeBytes }] }` | `system.info` |
 | `net.get` | `{ url }` (http/https, max 5 MB) | string (error on non-2xx) | `net` |
 | `net.request` | `{ url, method?, headers?, body?, contentType? }` (http/https, max 5 MB) | `{ status, headers, body }` (any status) | `net` |
+| `mail.folders` | `{ account }` | `[{ serverName, localName, separator, special, uidValidity, count, unread }]` | `mail` |
+| `mail.sync` | `{ account, folder, uidValidity, lastUid, modSeq, since?, knownUids? }` | `{ uidValidity, uidValidityChanged, modSeq, new: [{ uid, date, from, subject, flags, size, fileName }], flagChanges: [{ uid, flags }], removed: [uid] }` | `mail` |
+| `mail.fetch` | `{ account, folder, uid, path }` (downloads the message to `path`) | `{ bytes }` | `mail` + `fs.write` |
+| `mail.setFlags` | `{ account, folder, uids, add?, remove? }` | `null` | `mail` |
+| `mail.move` | `{ account, folder, uids, target }` | `null` | `mail` |
+| `mail.delete` | `{ account, folder, uids }` (to Trash; inside Trash the messages are expunged) | `null` | `mail` |
+| `mail.append` | `{ account, folder, path, flags? }` (uploads a message file) | `{ uid }` (`null` when the server does not report it) | `mail` + `fs.read` |
+| `mail.parse` | `{ path }` | `{ from, to, cc, subject, date, messageId, references, bodyText, attachments: [{ index, fileName, contentType, size }] }` | `mail` + `fs.read` |
+| `mail.saveAttachment` | `{ path, index, target }` | `null` | `mail` + `fs.read` + `fs.write` |
+| `mail.reply` | `{ path, mode: "reply"\|"replyAll"\|"forward", self }` | draft | `mail` + `fs.read` |
+| `mail.compose` | `{ path, draft }` (writes the draft as a message file) | `null` | `mail` + `fs.write` (+ `fs.read` for attachments) |
+| `mail.send` | `{ account, path }` (sends the draft file, then copies it to Sent) | `{ messageId }` | `mail` + `fs.read` |
 
 `entry` = `{ name, path, kind, size, modified, hidden }`:
 - `kind`: `file`, `directory`, `drive`, `archive`, `share`, `host`, `registrykey`…;
@@ -207,10 +221,30 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 
 **Errors** use standard JSON-RPC codes:
 - `-32001`: permission denied. The message names the missing permission.
+- `-32010`: mail login needed, with `data: { authRequired: true, realm }`.
+- `-32011`: the mail server's certificate is not trusted yet, with `data: { host, fingerprint }`.
 - `-32601`: unknown method.
 - `-32602`: invalid parameters.
 
 The SDK clients turn these into exceptions.
+
+### Mail
+
+The `mail` permission gives a plugin IMAP/SMTP access **without** the credentials. The app keeps the passwords (encrypted, per plugin, user and server) and the trusted certificates; the plugin names an account and the app does the rest.
+
+- `account` = `{ imap: "host:993", smtp: "host:465" | null, user, interactive? }`. `interactive` defaults to `true`.
+- TLS is mandatory: ports 993 and 465 use implicit TLS, any other port requires STARTTLS. Plain-text login is never attempted. A certificate that fails validation is trusted only after the user confirms its SHA-256 fingerprint.
+- An interactive call may show the password or certificate dialog. With `interactive: false` (background work) the app never shows a dialog: a missing or refused password fails with `-32010`, an untrusted certificate with `-32011`. After `-32010` stop background syncs for that account until an interactive call succeeds.
+- Limits: at most 2 IMAP connections per account (closed after 5 minutes idle) and 30 seconds per operation (fetch and send add 1 second per 100 KB). Every call can be cancelled.
+- Flags are the strings `seen`, `flagged`, `answered` and `draft`.
+- Messages live as `.eml` files at paths the plugin chooses; the app writes and reads them through the file permissions. A forward lists the original's attachments as `<file>.eml#<n>` in `draft.attachments`, and `mail.compose` copies them from there.
+- A `draft` is `{ to, cc, bcc, subject, body, inReplyTo, references, attachments, from }`. Addresses are `{ name, address }` (a plain string is accepted as the address).
+- File names in attachments come from the sender and are untrusted: `mail.saveAttachment` writes only to the `target` the plugin gives, so build that name yourself and sanitize it.
+- Every call is written to the audit log with the account and counts, never with message content or passwords.
+
+### Background work
+
+A plugin with the `background` permission and `contributes.background: { "interval": "5m" }` is called by the app on a timer (`background.tick`), also while its panel is closed. The interval is at least one minute, one tick runs per plugin at a time, a tick that takes longer than 60 seconds is abandoned, and a tick that answers `{ "more": true }` is followed by the next one after 2 seconds. A tick should do bounded work (for example at most 50 downloads or 15 seconds) and report `more` instead of running long. The user can switch background work off in the settings.
 
 ## SDK clients
 
@@ -230,14 +264,14 @@ Every helper maps to one protocol method above:
 - Python helpers block until the app answers.
 - Node helpers return Promises.
 - PowerShell functions return hashtables.
-- A refused call raises (`HostError` in Python and Node, a terminating error in PowerShell). Code `-32001` means a permission is missing from `plugin.json`.
+- A refused call raises (`HostError` in Python and Node, a terminating error in PowerShell). Code `-32001` means a permission is missing from `plugin.json`. `HostError` carries `code` and `data`; in PowerShell they are the exception's `Data['Code']` and `Data['ErrorData']`.
 
 | Protocol method | Python (`import c4k`) | Node (`const c4k = require('./c4k')`) | PowerShell (`. "$PSScriptRoot/c4k.ps1"`) |
 |---|---|---|---|
 | handlers | `@c4k.handler("command.execute")` + `c4k.serve()` | `c4k.on('command.execute', async p => …)` | `Register-C4KHandler 'command.execute' { param($p) … }` + `Start-C4KPlugin` |
 | `context.get` | `context()` | `context()` | `Get-C4KContext` |
 | `log.write` | `log(message)` | `log(message)` | `Write-C4KLog $Message` |
-| `ui.notify` | `notify(message, error=False)` | `notify(message, error)` | `Show-C4KNotification $Message [-IsError]` |
+| `ui.notify` | `notify(message, error=False, target=None)` | `notify(message, error, target)` | `Show-C4KNotification $Message [-IsError] [-Target $Target]` |
 | `ui.showText` | `show_text(title, text)` | `showText(title, text)` | `Show-C4KText $Title $Text` |
 | `ui.confirm` | `confirm(title, message)` | `confirm(title, message)` | `Confirm-C4K $Title $Message` |
 | `ui.prompt` | `prompt(title, message, initial="")` | `prompt(title, message, initial)` | `Read-C4KInput $Title $Message $Initial` |
@@ -261,6 +295,18 @@ Every helper maps to one protocol method above:
 | `system.info` | `system_info()` | `systemInfo()` | `Get-C4KSystemInfo` |
 | `net.get` | `http_get(url)` | `httpGet(url)` | `Invoke-C4KHttpGet $Url` |
 | `net.request` | `http_request(url, method="GET", headers=None, body=None, content_type=None)` | `httpRequest(url, { method, headers, body, contentType })` | `Invoke-C4KHttpRequest $Url [$Method] [$Headers] [$Body] [$ContentType]` |
+| `mail.folders` | `mail_folders(account)` | `mailFolders(account)` | `Get-C4KMailFolders $Account` |
+| `mail.sync` | `mail_sync(account, folder, uid_validity, last_uid, mod_seq, since, known_uids)` | `mailSync(account, folder, { uidValidity, lastUid, modSeq, since, knownUids })` | `Sync-C4KMail $Account $Folder [$UidValidity] [$LastUid] [$ModSeq] [$Since] [$KnownUids]` |
+| `mail.fetch` | `mail_fetch(account, folder, uid, path)` → bytes written | `mailFetch(account, folder, uid, path)` | `Save-C4KMail $Account $Folder $Uid $Path` |
+| `mail.setFlags` | `mail_set_flags(account, folder, uids, add, remove)` | `mailSetFlags(account, folder, uids, add, remove)` | `Set-C4KMailFlags $Account $Folder $Uids [$Add] [$Remove]` |
+| `mail.move` | `mail_move(account, folder, uids, target)` | `mailMove(account, folder, uids, target)` | `Move-C4KMail $Account $Folder $Uids $Target` |
+| `mail.delete` | `mail_delete(account, folder, uids)` | `mailDelete(account, folder, uids)` | `Remove-C4KMail $Account $Folder $Uids` |
+| `mail.append` | `mail_append(account, folder, path, flags)` → uid or `None` | `mailAppend(account, folder, path, flags)` | `Add-C4KMail $Account $Folder $Path [$Flags]` |
+| `mail.parse` | `mail_parse(path)` | `mailParse(path)` | `Read-C4KMail $Path` |
+| `mail.saveAttachment` | `mail_save_attachment(path, index, target)` | `mailSaveAttachment(path, index, target)` | `Save-C4KMailAttachment $Path $Index $Target` |
+| `mail.reply` | `mail_reply(path, mode="reply", self_address="")` | `mailReply(path, mode, self)` | `New-C4KMailReply $Path [$Mode] [$Self]` |
+| `mail.compose` | `mail_compose(path, draft)` | `mailCompose(path, draft)` | `Write-C4KMailDraft $Path $Draft` |
+| `mail.send` | `mail_send(account, path)` → Message-ID | `mailSend(account, path)` | `Send-C4KMail $Account $Path` |
 | any other | `call("method", **params)` | `call('method', params)` | `Invoke-C4K 'method' @{ … }` |
 
 Minimal plugin (Python): a quick view for `.ini` files:

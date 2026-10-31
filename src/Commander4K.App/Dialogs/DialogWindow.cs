@@ -198,9 +198,11 @@ public sealed class LoginDialog : DialogWindow<LoginResult?>
     private readonly TextBox? _keyFile;
 
     /// <param name="allowKey">SSH: offer a private key file instead of a password.</param>
-    public LoginDialog(SkinBrushes brushes, string realm, string? userName = null, bool allowKey = false) : base(Loc.T("Logowanie"), brushes)
+    /// <param name="lockUser">The user name is fixed (mail accounts); only the password is asked.</param>
+    public LoginDialog(SkinBrushes brushes, string realm, string? userName = null, bool allowKey = false, bool lockUser = false) : base(Loc.T("Logowanie"), brushes)
     {
         _user = new TextBox().Text(userName ?? string.Empty).PlaceholderText(Loc.T("użytkownik (np. DOMENA\\jan)"));
+        _user.IsEnabled = !lockUser;
         _password = new TextBox().PasswordChar('•').PlaceholderText(Loc.T("hasło"));
         var body = new List<Control> { Label(Loc.T("„{0}” wymaga zalogowania.", realm)), _user, _password.Margin(0, 6, 0, 0) };
         if (allowKey)

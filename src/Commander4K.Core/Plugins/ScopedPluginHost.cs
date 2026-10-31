@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Commander4K.Core.Execution;
 using Commander4K.Core.Localization;
+using Commander4K.Core.Mail;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
 
@@ -43,8 +44,9 @@ public interface IPluginUi
 /// additionally require the user's confirmation every time.
 /// </summary>
 /// <param name="processes">Process list for <c>process.list</c>; the app passes one with parent PIDs and image paths.</param>
+/// <param name="mail">The app's mail service behind <see cref="Mail"/>; without it mail calls fail with "not available".</param>
 public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsRouter router, HttpClient http, AuditLog audit,
-    Func<IReadOnlyList<ProcessSnapshot>>? processes = null) : IPluginHost
+    Func<IReadOnlyList<ProcessSnapshot>>? processes = null, IMailBackend? mail = null) : IPluginHost
 {
     private const int MaxHttpBytes = 5 * 1024 * 1024;
 
@@ -140,8 +142,7 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
     public Task<IReadOnlyList<ProcessSnapshot>> ListProcessesAsync(CancellationToken cancellationToken = default) =>
         Gate(PluginPermissions.ProcessRead, "process.list", string.Empty, () => Task.Run(processes ?? (() => SystemSnapshots.Processes()), cancellationToken));
 
-    // Temporary: replaced by the MailKit-backed host.
-    public IMailHost Mail => throw new NotSupportedException();
+    public IMailHost Mail { get; } = new ScopedMailHost(manifest, router, mail, audit);
 
     public Task<SystemSnapshot> GetSystemInfoAsync(CancellationToken cancellationToken = default) =>
         Gate(PluginPermissions.SystemInfo, "system.info", string.Empty, () => Task.Run(SystemSnapshots.System, cancellationToken));

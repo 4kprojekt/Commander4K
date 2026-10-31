@@ -335,6 +335,8 @@ public sealed class MainWindow : Window, IShell
         RegisterPaletteSettings();
         host.Jobs.JobChanged += _ => Dispatcher.UIThread.Post(() => _jobsDirty = true);
         host.Remote.HostKeyValidator = ValidateHostKey;
+        host.MailPasswordPrompt = AskMailPasswordAsync;
+        host.MailCertificatePrompt = ConfirmMailCertificateAsync;
         // Mermaid diagrams in previews and the AI chat render in a hidden WebView2 parented to this window.
         MermaidRenderer.Configure(() => TryGetPlatformHandle()?.Handle ?? 0, host.DataDirectory);
         _jobsTimer.Start();
@@ -2973,6 +2975,22 @@ public sealed class MainWindow : Window, IShell
 
         return setting.Auth != "password" || await TryConnectShareAsync(setting.Path, setting.UserName, secret);
     }
+
+    /// <summary>Mail password for an interactive account; called from background threads, the dialog runs on the UI thread.</summary>
+    private Task<string?> AskMailPasswordAsync(string realm, string user) =>
+        Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            var credential = await new LoginDialog(_skins!.Current, realm, user, lockUser: true).ShowAsync(this);
+            return credential?.Password;
+        });
+
+    /// <summary>A mail server certificate that failed validation: trusted only after the user compares the fingerprint.</summary>
+    private Task<bool> ConfirmMailCertificateAsync(string hostPort, string fingerprint) =>
+        Dispatcher.UIThread.InvokeAsync(() => new ConfirmDialog(
+            _skins!.Current,
+            Loc.T("Certyfikat serwera poczty"),
+            Loc.T("Serwer {0} przedstawił certyfikat, którego system nie uznaje za zaufany. Sprawdź odcisk SHA-256 z administratorem serwera, zanim mu zaufasz.\n\nSHA-256:\n{1}", hostPort, fingerprint),
+            Loc.T("Zaufaj certyfikatowi")).ShowAsync(this));
 
     /// <summary>Called on SSH.NET's connection thread: blocks it (never the UI thread) while the user decides.</summary>
     private bool ValidateHostKey(string host, int port, string fingerprint)

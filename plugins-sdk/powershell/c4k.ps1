@@ -35,7 +35,9 @@ function Read-C4KMessage {
     return $line | ConvertFrom-Json -AsHashtable
 }
 
-# Request to the app; blocks until it answers. Throws on refusal (code -32001 = missing permission).
+# Request to the app; blocks until it answers. Throws on refusal: the exception's Data['Code'] is the error code
+# (-32001 = missing permission, -32010 = mail login needed, -32011 = untrusted mail certificate) and Data['ErrorData']
+# the structured detail (realm, host, fingerprint) or $null.
 function Invoke-C4K([string] $Method, [hashtable] $Params = @{}) {
     $script:C4KNextId++
     $id = "p$($script:C4KNextId)"
@@ -43,7 +45,12 @@ function Invoke-C4K([string] $Method, [hashtable] $Params = @{}) {
     while ($true) {
         $message = Read-C4KMessage
         if ($message.id -eq $id -and -not $message.ContainsKey('method')) {
-            if ($message.ContainsKey('error')) { throw "C4K $($message.error.code): $($message.error.message)" }
+            if ($message.ContainsKey('error')) {
+                $failure = [System.Exception]::new("C4K $($message.error.code): $($message.error.message)")
+                $failure.Data['Code'] = $message.error.code
+                $failure.Data['ErrorData'] = $message.error.data
+                throw $failure
+            }
             return $message.result
         }
         $script:C4KQueue.Enqueue($message)
@@ -55,7 +62,7 @@ function Invoke-C4K([string] $Method, [hashtable] $Params = @{}) {
 # 'drive', 'archive'…), size (-1 = unknown), modified (ISO 8601 or $null), hidden.
 function Get-C4KContext { Invoke-C4K 'context.get' }                                                                # activePath, otherPath, selection
 function Write-C4KLog([string] $Message) { [void](Invoke-C4K 'log.write' @{ message = $Message }) }                 # audit log (instead of Write-Host)
-function Show-C4KNotification([string] $Message, [switch] $IsError) { [void](Invoke-C4K 'ui.notify' @{ message = $Message; error = [bool]$IsError }) }
+function Show-C4KNotification([string] $Message, [switch] $IsError, [string] $Target) { [void](Invoke-C4K 'ui.notify' @{ message = $Message; error = [bool]$IsError; target = $(if ($Target) { $Target } else { $null }) }) }  # -Target: path/link opened when the toast is clicked
 function Show-C4KText([string] $Title, [string] $Text) { [void](Invoke-C4K 'ui.showText' @{ title = $Title; text = $Text }) }
 function Confirm-C4K([string] $Title, [string] $Message) { Invoke-C4K 'ui.confirm' @{ title = $Title; message = $Message } }  # $true/$false
 function Read-C4KInput([string] $Title, [string] $Message, [string] $Initial = '') { Invoke-C4K 'ui.prompt' @{ title = $Title; message = $Message; initial = $Initial } }  # string or $null
@@ -89,6 +96,25 @@ function Invoke-C4KHttpRequest([string] $Url, [string] $Method = 'GET', [hashtab
     Invoke-C4K 'net.request' @{ url = $Url; method = $Method; headers = $Headers; body = $(if ($Body) { $Body } else { $null }); contentType = $(if ($ContentType) { $ContentType } else { $null }) }
 }
 
+# ---- mail (permission "mail"; Save-C4KMail, Write-C4KMailDraft and Save-C4KMailAttachment also need fs.write, the others that read files fs.read) ----
+# $Account = @{ imap = 'host:993'; smtp = 'host:465' (or $null); user = 'name'; interactive = $true }. The app owns the
+# password and certificates: interactive = $false never shows a dialog and throws (Data['Code'] -32010/-32011) instead.
+# Flags are 'seen', 'flagged', 'answered', 'draft'. Message files are .eml paths (any location the app can open).
+function Get-C4KMailFolders([hashtable] $Account) { Invoke-C4K 'mail.folders' @{ account = $Account } }               # -> serverName, localName, separator, special, uidValidity, count, unread
+function Sync-C4KMail([hashtable] $Account, [string] $Folder, [long] $UidValidity = 0, [long] $LastUid = 0, [long] $ModSeq = 0, [string] $Since, [long[]] $KnownUids = @()) {  # -> uidValidity, uidValidityChanged, modSeq, new, flagChanges, removed
+    Invoke-C4K 'mail.sync' @{ account = $Account; folder = $Folder; uidValidity = $UidValidity; lastUid = $LastUid; modSeq = $ModSeq; since = $(if ($Since) { $Since } else { $null }); knownUids = @($KnownUids) }
+}
+function Save-C4KMail([hashtable] $Account, [string] $Folder, [long] $Uid, [string] $Path) { (Invoke-C4K 'mail.fetch' @{ account = $Account; folder = $Folder; uid = $Uid; path = $Path }).bytes }  # fs.write -> bytes written
+function Set-C4KMailFlags([hashtable] $Account, [string] $Folder, [long[]] $Uids, [string[]] $Add = @(), [string[]] $Remove = @()) { [void](Invoke-C4K 'mail.setFlags' @{ account = $Account; folder = $Folder; uids = @($Uids); add = @($Add); remove = @($Remove) }) }
+function Move-C4KMail([hashtable] $Account, [string] $Folder, [long[]] $Uids, [string] $Target) { [void](Invoke-C4K 'mail.move' @{ account = $Account; folder = $Folder; uids = @($Uids); target = $Target }) }
+function Remove-C4KMail([hashtable] $Account, [string] $Folder, [long[]] $Uids) { [void](Invoke-C4K 'mail.delete' @{ account = $Account; folder = $Folder; uids = @($Uids) }) }  # Trash, or expunge inside Trash
+function Add-C4KMail([hashtable] $Account, [string] $Folder, [string] $Path, [string[]] $Flags = @()) { (Invoke-C4K 'mail.append' @{ account = $Account; folder = $Folder; path = $Path; flags = @($Flags) }).uid }  # fs.read -> new uid or $null
+function Read-C4KMail([string] $Path) { Invoke-C4K 'mail.parse' @{ path = $Path } }                                 # fs.read -> from, to, cc, subject, date, messageId, references, bodyText, attachments
+function Save-C4KMailAttachment([string] $Path, [int] $Index, [string] $Target) { [void](Invoke-C4K 'mail.saveAttachment' @{ path = $Path; index = $Index; target = $Target }) }  # fs.read + fs.write
+function New-C4KMailReply([string] $Path, [string] $Mode = 'reply', [string] $Self = '') { Invoke-C4K 'mail.reply' @{ path = $Path; mode = $Mode; self = $Self } }  # Mode: reply | replyAll | forward -> draft (fs.read)
+function Write-C4KMailDraft([string] $Path, [hashtable] $Draft) { [void](Invoke-C4K 'mail.compose' @{ path = $Path; draft = $Draft }) }  # fs.write (+ fs.read for attachments); draft = to, cc, bcc, subject, body, inReplyTo, references, attachments, from
+function Send-C4KMail([hashtable] $Account, [string] $Path) { (Invoke-C4K 'mail.send' @{ account = $Account; path = $Path }).messageId }  # fs.read -> Message-ID
+
 function Start-C4KPlugin {
     while ($true) {
         $message = if ($script:C4KQueue.Count -gt 0) { $script:C4KQueue.Dequeue() } else { Read-C4KMessage }
@@ -104,7 +130,12 @@ function Start-C4KPlugin {
             if ($null -ne $id) { Send-C4KMessage @{ jsonrpc = '2.0'; id = $id; result = $result } }
         }
         catch {
-            if ($null -ne $id) { Send-C4KMessage @{ jsonrpc = '2.0'; id = $id; error = @{ code = -32000; message = "$_" } } }
+            if ($null -ne $id) {
+                $code = if ($_.Exception.Data.Contains('Code')) { $_.Exception.Data['Code'] } else { -32000 }
+                $failure = @{ code = $code; message = "$_" }
+                if ($null -ne $_.Exception.Data['ErrorData']) { $failure.data = $_.Exception.Data['ErrorData'] }
+                Send-C4KMessage @{ jsonrpc = '2.0'; id = $id; error = $failure }
+            }
         }
     }
 }

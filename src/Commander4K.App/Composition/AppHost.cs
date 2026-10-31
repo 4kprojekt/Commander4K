@@ -103,6 +103,11 @@ public sealed class AppHost : IAsyncDisposable
         PowerShell = new PowerShellCatalogPlugin(Path.Combine(config.ConfigDirectory, "powershell.json"));
         Audit = new AuditLog(Path.Combine(dataDirectory, "data", "logs"));
         Approvals = new PluginApprovalStore(Path.Combine(config.ConfigDirectory, "plugin-approvals.json"));
+        Mail = new Core.Mail.MailService(
+            new Core.Mail.MailCredentials(Secrets, (realm, user) => MailPasswordPrompt?.Invoke(realm, user) ?? Task.FromResult<string?>(null)),
+            new Core.Mail.MailCertificateStore(Path.Combine(config.ConfigDirectory, "mail_certificates.json"),
+                (hostPort, fingerprint) => MailCertificatePrompt?.Invoke(hostPort, fingerprint) ?? Task.FromResult(false)),
+            warning: message => Audit.Record("mail", "mail.warning", message, AuditOutcome.Failed));
         BuiltInPanels = [new SystemInfoPanelPlugin(), new TaskManagerPanelPlugin(), new LogAnalyzerPanelPlugin(), PowerShell, new PluginManagerPanel(this)];
         PanelPlugins = BuiltInPanels;
         CommandPlugins = [PowerShell];
@@ -113,6 +118,15 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>Receives plugin UI calls; the window plugs itself in once it exists.</summary>
     public PluginUiProxy PluginUi { get; } = new();
+
+    /// <summary>IMAP/SMTP behind the <c>mail</c> permission; passwords and certificate trust stay in the app.</summary>
+    public Core.Mail.MailService Mail { get; }
+
+    /// <summary>(realm text, user) → password or <c>null</c>; the window shows the dialog (called from background threads).</summary>
+    public Func<string, string, Task<string?>>? MailPasswordPrompt { get; set; }
+
+    /// <summary>(host:port, SHA-256 fingerprint) → trust; the window shows the dialog (called from background threads).</summary>
+    public Func<string, string, Task<bool>>? MailCertificatePrompt { get; set; }
 
     public AuditLog Audit { get; }
 
@@ -151,7 +165,8 @@ public sealed class AppHost : IAsyncDisposable
             if (!_hosts.TryGetValue(manifest.Id, out var host))
             {
                 host = new ScopedPluginHost(manifest, PluginUi, Router, Http, Audit,
-                    () => SystemSnapshots.Processes(Plugins.BuiltIn.Interop.ProcessLookups.ParentIds, Plugins.BuiltIn.Interop.ProcessLookups.ImagePath));
+                    () => SystemSnapshots.Processes(Plugins.BuiltIn.Interop.ProcessLookups.ParentIds, Plugins.BuiltIn.Interop.ProcessLookups.ImagePath),
+                    Mail);
                 _hosts[manifest.Id] = host;
             }
 
@@ -435,6 +450,7 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         await Remote.DisposeAsync();
+        await Mail.DisposeAsync();
         await Audit.DisposeAsync();
         Http.Dispose();
         if (Index is not null)
