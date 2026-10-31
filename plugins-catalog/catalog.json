@@ -24,7 +24,7 @@
       "path": "plugins-catalog/steam-library-powershell",
       "files": [
         {
-          "sha256": "194f6bd2b4c28032248dd0753b0677c4b68173efa821cf898c939983e5a4221c",
+          "sha256": "837a8df8fe67c3a9dc27d17de365ff217f49f7e1361b0a76c39278cb42a75191",
           "path": "c4k.ps1"
         },
         {
@@ -59,7 +59,7 @@
       "path": "examples/plugins/project-modules-python",
       "files": [
         {
-          "sha256": "8d9482a75ee60616b68d38d3df0795464ef6795e6292ddfb1328612dc3c8f943",
+          "sha256": "4b45b90cdf6f6def91aeb06e668aa848626815524269939a49d398c52a82890d",
           "path": "c4k.py"
         },
         {
@@ -92,7 +92,7 @@
       "path": "examples/plugins/git-powershell",
       "files": [
         {
-          "sha256": "194f6bd2b4c28032248dd0753b0677c4b68173efa821cf898c939983e5a4221c",
+          "sha256": "837a8df8fe67c3a9dc27d17de365ff217f49f7e1361b0a76c39278cb42a75191",
           "path": "c4k.ps1"
         },
         {
@@ -124,7 +124,7 @@
       "path": "examples/plugins/folder-stats-python",
       "files": [
         {
-          "sha256": "8d9482a75ee60616b68d38d3df0795464ef6795e6292ddfb1328612dc3c8f943",
+          "sha256": "4b45b90cdf6f6def91aeb06e668aa848626815524269939a49d398c52a82890d",
           "path": "c4k.py"
         },
         {
@@ -157,7 +157,7 @@
       "path": "examples/plugins/site-check-node",
       "files": [
         {
-          "sha256": "bb2b0dbdcd9585c322f77b1c2947bfa9d1ebcbf2f04ed8f0ce1cfbe2212ec21d",
+          "sha256": "d7b379e7aa3092662d1dc689f3c25a8399e86cbaca545ba5d43093ca94a4c6d7",
           "path": "c4k.js"
         },
         {

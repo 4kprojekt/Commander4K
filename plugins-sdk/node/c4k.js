@@ -90,6 +90,7 @@ module.exports = {
   openUrl: url => call('ui.openUrl', { url }),                                   // internal browser, http(s) only
   search: (query, engine = null) => call('ui.search', { query, engine }),        // engine: null, 'assistant', 'google', 'chatgpt'…
   copyText: text => call('ui.copyText', { text }),                               // clipboard (write only)
+  webPreview: (page, state = null) => ({ kind: 'web', page, state }),             // result of preview.render: an HTML page from the preview's webRoot
   storageGet: async (key, fallback = null) => (await call('storage.get', { key })) ?? fallback, // the plugin's own settings/data (no permission)
   storageSet: (key, value) => call('storage.set', { key, value }),              // any JSON value; null removes the key
   listDir: path => call('fs.list', { path }),                                  // fs.read -> [entry]

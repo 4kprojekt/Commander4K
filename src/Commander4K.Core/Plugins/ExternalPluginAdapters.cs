@@ -193,6 +193,12 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
             : new TextPreview(content, editable);
     }
 
+    /// <summary>Forwards a message from a web preview page (<c>c4k.request</c>) to the plugin's <c>preview.message</c> handler.</summary>
+    public Task<JsonElement> MessageAsync(VfsEntry entry, string method, JsonElement parameters, IPluginHost host, CancellationToken cancellationToken) =>
+        plugin.CallAsync("preview.message",
+            new { preview = preview.Id, entry = ExternalPlugin.EntryDto(entry), method, @params = parameters, context = ExternalPlugin.Context(host) },
+            cancellationToken, TimeSpan.FromSeconds(30));
+
     /// <summary><c>{ "kind": "web", "page": "index.html", "state"?: any }</c>; the page must be a file inside the preview's <c>webRoot</c>.</summary>
     internal static PreviewContent ParseWeb(JsonElement result, string pluginId, string pluginFolder, string? webRoot)
     {
