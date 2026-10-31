@@ -297,20 +297,3 @@ AI-written code can contain mistakes that look plausible. Review changes as you 
 ## License
 
 [MIT](LICENSE) © 2026 4Kprojekt
-
----
-
-### Po polsku
-
-Commander4K to szybki, dwupanelowy menedżer plików dla Windows 11 w stylu Norton, Midnight i Total Commandera, na licencji MIT.
-
-- **Interfejs:** po polsku.
-- **Konfiguracja:** `Ctrl+,` otwiera ustawienia z wyszukiwarką, a `Ctrl+Shift+P` paletę komend.
-- **Przeglądarka:** `Ctrl+Alt+W` otwiera stronę w panelu.
-- **Czat AI (`Ctrl+Alt+A`):** zaloguj się do kilku darmowych dostawców w „Konfiguracja → Dostawcy AI” (OpenRouter jednym kliknięciem, Groq, Cerebras, Mistral…) albo uruchom modele lokalnie w Ollamie lub LM Studio — okno pokazuje instrukcję i instaluje je przez winget. Gdy jeden wyczerpie limit, odpowiada następny. Bez logowania `Ctrl+Alt+A` otwiera asystenta w przeglądarce. AI zna stan aplikacji (ścieżki, zaznaczenie, wtyczki) i potrafi napisać wtyczkę według przewodnika, a aplikacja ją instaluje (wyłączoną do Twojej zgody). Gemini, ChatGPT i Claude otwarte w panelu przeglądarki dostają ten sam kontekst z menu „🤖 AI”.
-- **Foldery z własnym widokiem (`c4k.dir`):** pulpit z kartami (serwer SSH, API HTTP, galeria, notatki), SFTP z kluczem po `Enter`, galeria zdjęć, graf notatek. Zrzuty ekranu razem z plikami konfiguracji są w sekcji [Examples](#examples-folders-that-configure-themselves).
-- **MCP dla Claude Code:** „Połącz Claude Code” włącza lokalny serwer MCP. Claude Code czyta wtedy stan aplikacji, pracuje na plikach w dozwolonych folderach, pisze i instaluje wtyczki, zmienia ustawienia, tłumaczy interfejs i projektuje skórki. Każde narzędzie ma tryb: zezwalaj, pytaj albo zablokuj ([szczegóły](#claude-code-and-mcp)).
-- **Skórki:** są w `config/skins`. Możesz też wygenerować je z pomocą AI.
-- **Aktualizacje:** pobierane z GitHub Releases.
-
-Projekt powstaje z dużym udziałem AI (Claude Code). Błędy zgłaszaj w zakładce Issues.
