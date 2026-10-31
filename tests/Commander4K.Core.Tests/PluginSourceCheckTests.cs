@@ -55,6 +55,7 @@ public sealed class PluginSourceCheckTests
     [InlineData("site-check-node")]
     [InlineData("git-powershell")]
     [InlineData("project-modules-python")]
+    [InlineData("upload-client-python")]
     public void Bundled_examples_use_only_the_sdk(string example)
     {
         var findings = PluginSourceCheck.ScanFolder(Path.Combine(RepositoryRoot(), "examples", "plugins", example));

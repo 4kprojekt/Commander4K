@@ -333,6 +333,7 @@ These are in [`examples/plugins`](../examples/plugins), and the app embeds them 
 - **`site-check-node`** (`net`): a command, and a panel that refreshes itself every 60 s.
 - **`git-powershell`** (`shell.run`): `git status`, and a commit history panel. `git` runs through the app, so each command line is audited.
 - **`project-modules-python`** (`fs.read`): a dedicated quick view for chosen files. It shows the dependencies of `package.json`, `*.csproj`, `pyproject.toml`, `requirements*.txt`, `go.mod`, `Cargo.toml` and `composer.json`, and the modules of an HTTP API from OpenAPI/Swagger files (endpoints grouped by tag, plus data models). It shows file names and patterns in `extensions`.
+- **`upload-client-python`** (`net`): a panel that takes and gives files (`accepts`/`provides`, see [Receiving and providing files](#receiving-and-providing-files)). F5 from a file panel POSTs the marked files to a saved HTTP endpoint (multipart, with progress and a result message), and F5 on an endpoint saves its GET response as a file. It needs no `fs.read`: the app grants reading the offered files during the call.
 - `site-check-node` keeps its site list in the plugin's storage (`storageGet`/`storageSet`), not in a file.
 
 When the quick view cannot recognise a file (only hex is left), it offers to ask an AI what the format is. It can then have an AI write a preview plugin for that type, from a sample of the file.

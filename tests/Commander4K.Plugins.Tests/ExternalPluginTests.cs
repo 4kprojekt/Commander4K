@@ -210,6 +210,51 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Upload_client_receives_and_provides()
+    {
+        // The app keeps one host per plugin: the session and the plugin's own requests share it, so read grants apply.
+        var discovered = ManifestReader.Read(Path.Combine(Examples, "upload-client-python"));
+        Assert.True(discovered.IsValid, string.Join("; ", discovered.Errors));
+        var missing = RuntimeCatalog.CheckRequirement(discovered.Manifest!.Runtime, _runtimes);
+        Assert.SkipWhen(missing is not null, missing ?? string.Empty);
+        var host = HostFor(discovered.Manifest);
+        await using var plugin = new ExternalPlugin(discovered, _runtimes.First(r => r.Type == discovered.Manifest.Runtime.Type), host, _audit, _storage);
+        using var server = new RecordingServer("{\"ok\":true}");
+        _storage.Set("examples.upload-client", "endpoints", new System.Text.Json.Nodes.JsonArray(server.Url));
+        var session = new ExternalPanelPlugin(plugin, plugin.Manifest.Contributes!.Panels!.Single(p => p.Id == "endpoints"))
+            .CreateSession(new PanelRequest(null, null), host);
+        var a = Path.Combine(_folder, "a.txt");
+        var b = Path.Combine(_folder, "b.txt");
+        File.WriteAllText(a, "alpha");
+        File.WriteAllText(b, "beta");
+        var items = new[] { a, b }.Select(f => new TransferItem(f, Path.GetFileName(f), TransferItemKind.File, new FileInfo(f).Length)).ToList();
+
+        var receivers = await session.GetReceiversAsync(items, TestToken);
+
+        var receiver = Assert.Single(receivers);
+        Assert.True(receiver.Multiple);
+        Assert.True(receiver.ReturnsMessage);
+
+        var progress = new List<TransferProgress>();
+        var result = await session.ReceiveAsync(receiver.Id, items, new Progress<TransferProgress>(progress.Add), TestToken);
+
+        Assert.Contains("2/2", result.Text, StringComparison.Ordinal);
+        Assert.Equal(2, server.Posts.Count);
+        Assert.All(server.Posts, post => Assert.Contains("multipart/form-data", post.ContentType, StringComparison.Ordinal));
+        Assert.Contains(server.Posts, post => post.Body.Contains("alpha", StringComparison.Ordinal));
+        Assert.Contains(server.Posts, post => post.Body.Contains("beta", StringComparison.Ordinal));
+
+        var providers = await session.GetProvidersAsync([server.Url], TestToken);
+        Assert.Contains(providers, p => p.Id == "save-response");
+
+        var provided = await session.ProvideAsync("save-response", [server.Url], null, TestToken);
+
+        var file = Assert.Single(provided.Files);
+        Assert.EndsWith(".json", file.Name, StringComparison.Ordinal);
+        Assert.Equal("{\"ok\":true}", file.Text);
+    }
+
+    [Fact]
     public async Task Node_plugin_palette_lists_adds_invokes_and_removes_items()
     {
         // The site list lives in the plugin's storage (storage.get/set), not in its folder.
@@ -363,6 +408,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("site-check-node", "node", "c4k.js")]
     [InlineData("git-powershell", "powershell", "c4k.ps1")]
     [InlineData("project-modules-python", "python", "c4k.py")]
+    [InlineData("upload-client-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/steam-library-powershell", "powershell", "c4k.ps1")]
     public void Example_sdk_clients_match_plugins_sdk(string example, string language, string file) =>
         Assert.Equal(
@@ -475,6 +521,65 @@ public sealed class ExternalPluginTests : IAsyncLifetime
             LastCopied = text;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class RecordingServer : IDisposable
+    {
+        private readonly HttpListener _listener = new();
+        private readonly List<(string ContentType, string Body)> _posts = [];
+
+        public RecordingServer(string response)
+        {
+            using var socket = new TcpListener(IPAddress.Loopback, 0);
+            socket.Start();
+            Url = $"http://127.0.0.1:{((IPEndPoint)socket.LocalEndpoint).Port}/";
+            socket.Stop();
+            _listener.Prefixes.Add(Url);
+            _listener.Start();
+            _ = Task.Run(async () =>
+            {
+                while (_listener.IsListening)
+                {
+                    try
+                    {
+                        var context = await _listener.GetContextAsync();
+                        if (context.Request.HttpMethod == "POST")
+                        {
+                            using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
+                            var body = await reader.ReadToEndAsync();
+                            lock (_posts)
+                            {
+                                _posts.Add((context.Request.ContentType ?? string.Empty, body));
+                            }
+                        }
+
+                        var bytes = Encoding.UTF8.GetBytes(response);
+                        context.Response.ContentType = "application/json";
+                        await context.Response.OutputStream.WriteAsync(bytes);
+                        context.Response.Close();
+                    }
+                    catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException)
+                    {
+                        return;
+                    }
+                }
+            });
+        }
+
+        public string Url { get; }
+
+        public IReadOnlyList<(string ContentType, string Body)> Posts
+        {
+            get
+            {
+                lock (_posts)
+                {
+                    return [.. _posts];
+                }
+            }
+        }
+
+        public void Dispose() => _listener.Close();
     }
 
     private sealed class LocalHttpServer : IDisposable
