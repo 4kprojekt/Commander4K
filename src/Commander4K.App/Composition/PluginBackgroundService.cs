@@ -28,13 +28,9 @@ public sealed class PluginBackgroundService(Func<bool> enabled, AuditLog audit)
             audit.Record(split > 0 ? message[..split] : "background", "background.tick", split > 0 ? message[(split + 2)..] : message, AuditOutcome.Failed);
         };
         var any = false;
-        foreach (var plugin in plugins)
+        foreach (var plugin in BackgroundTickLoop.Select(plugins))
         {
-            if (plugin.Manifest.Contributes?.Background is not { } background || !plugin.Manifest.Allows(PluginPermissions.Background))
-            {
-                continue;
-            }
-
+            var background = plugin.Manifest.Contributes!.Background!;
             TimeSpan interval;
             try
             {
@@ -91,15 +87,20 @@ public sealed class PluginBackgroundService(Func<bool> enabled, AuditLog audit)
         }
     }
 
-    private static void Run(BackgroundTickLoop loop, CancellationToken stop)
+    private void Run(BackgroundTickLoop loop, CancellationToken stop)
     {
         try
         {
             loop.RunAsync(stop).GetAwaiter().GetResult();
         }
-        catch (Exception ex) when (ex is OperationCanceledException or AggregateException)
+        catch (OperationCanceledException)
         {
-            // Shutdown, or a tick that failed after the loop already reported it.
+            // Shutdown.
+        }
+        catch (Exception ex)
+        {
+            // Nothing may escape the thread (it would end the process): write it down and stop ticking.
+            audit.Record("background", "background.loop", ex.Message, AuditOutcome.Failed);
         }
     }
 }

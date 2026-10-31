@@ -160,4 +160,50 @@ public sealed class BackgroundTickLoopTests
         await stop.CancelAsync();
         await run;
     }
+
+    [Fact]
+    public async Task Wake_from_inside_a_tick_cannot_spin()
+    {
+        var time = new FakeTimeProvider();
+        var start = time.GetUtcNow();
+        var stamps = new List<double>();
+        var loop = new BackgroundTickLoop(time, () => true);
+        loop.Register("p", TimeSpan.FromMinutes(5), _ =>
+        {
+            stamps.Add((time.GetUtcNow() - start).TotalSeconds);
+            loop.Wake("p");
+            return Task.FromResult(false);
+        });
+        var (run, stop) = Start(loop);
+        await AdvanceAsync(time, TimeSpan.FromSeconds(7));
+        await stop.CancelAsync();
+        await run;
+        Assert.True(stamps.Count >= 2);
+        for (var i = 1; i < stamps.Count; i++)
+        {
+            Assert.True(stamps[i] - stamps[i - 1] >= 2, string.Join(",", stamps));
+        }
+    }
+
+    [Fact]
+    public async Task Wake_at_due_time_does_not_double_tick()
+    {
+        var time = new FakeTimeProvider();
+        var count = 0;
+        var loop = new BackgroundTickLoop(time, () => true);
+        loop.Register("p", TimeSpan.FromMinutes(1), _ =>
+        {
+            Interlocked.Increment(ref count);
+            return Task.FromResult(false);
+        });
+        var (run, stop) = Start(loop);
+        await AdvanceAsync(time, TimeSpan.FromSeconds(59));
+        Assert.Equal(1, count);
+        time.Advance(TimeSpan.FromSeconds(1));
+        loop.Wake("p");
+        await AdvanceAsync(time, TimeSpan.FromSeconds(1.5));
+        Assert.Equal(2, count);
+        await stop.CancelAsync();
+        await run;
+    }
 }

@@ -1,3 +1,5 @@
+using Commander4K.PluginSdk;
+
 namespace Commander4K.Core.Plugins;
 
 /// <summary>
@@ -17,6 +19,10 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
 
     /// <summary>Raised when a tick fails or times out (plugin id, message); for the audit log. Single argument by convention.</summary>
     public event Action<string>? TickFailed;
+
+    /// <summary>Only plugins that contribute background work AND hold the <c>background</c> permission are ticked.</summary>
+    public static IEnumerable<ExternalPlugin> Select(IEnumerable<ExternalPlugin> plugins) =>
+        plugins.Where(p => p.Manifest.Contributes?.Background is not null && p.Manifest.Allows(PluginPermissions.Background));
 
     /// <param name="tick">Returns true when the plugin reported more work. Register before <see cref="RunAsync"/>.</param>
     public void Register(string pluginId, TimeSpan interval, Func<CancellationToken, Task<bool>> tick)
@@ -63,26 +69,40 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
     private async Task RunEntryAsync(Entry entry, CancellationToken stop)
     {
         var due = time.GetUtcNow();
+        var lastEnd = DateTimeOffset.MinValue;
         while (!stop.IsCancellationRequested)
         {
             try
             {
                 var wait = due - time.GetUtcNow();
-                if (wait > TimeSpan.Zero && !entry.TakeWake())
+                if (wait > TimeSpan.Zero)
                 {
-                    await entry.WaitAsync(wait, time, stop).ConfigureAwait(false);
+                    if (await entry.WaitAsync(wait, time, stop).ConfigureAwait(false))
+                    {
+                        // A wake skips the interval but never the pause after the previous tick, so a plugin
+                        // that wakes itself from inside a tick cannot make the loop spin.
+                        var earliest = lastEnd + MoreDelay;
+                        var now = time.GetUtcNow();
+                        var target = earliest > now ? earliest : now;
+                        if (target < due)
+                        {
+                            due = target;
+                        }
+                    }
+
                     continue;
                 }
 
+                entry.TakeWake();
                 if (!enabled())
                 {
-                    entry.TakeWake();
                     await Task.Delay(DisabledPoll, time, stop).ConfigureAwait(false);
                     continue;
                 }
 
                 var more = await TickOnceAsync(entry, stop).ConfigureAwait(false);
-                due = time.GetUtcNow() + (more ? MoreDelay : entry.Interval);
+                lastEnd = time.GetUtcNow();
+                due = lastEnd + (more ? MoreDelay : entry.Interval);
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
             {
@@ -164,15 +184,14 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
 
         public bool TakeWake() => _wake.Wait(0);
 
-        /// <summary>Waits for the delay or a wake request, whichever comes first.</summary>
-        public async Task WaitAsync(TimeSpan delay, TimeProvider time, CancellationToken stop)
+        /// <summary>Waits for the delay or a wake request; true when a wake request ended the wait (and was consumed).</summary>
+        public async Task<bool> WaitAsync(TimeSpan delay, TimeProvider time, CancellationToken stop)
         {
             using var cancel = CancellationTokenSource.CreateLinkedTokenSource(stop);
             var timer = Task.Delay(delay, time, cancel.Token);
             var woken = _wake.WaitAsync(cancel.Token);
-            var first = await Task.WhenAny(timer, woken).ConfigureAwait(false);
+            await Task.WhenAny(timer, woken).ConfigureAwait(false);
             await cancel.CancelAsync().ConfigureAwait(false);
-            _ = first;
             try
             {
                 await Task.WhenAll(timer, woken).ConfigureAwait(false);
@@ -181,13 +200,8 @@ public sealed class BackgroundTickLoop(TimeProvider time, Func<bool> enabled)
             {
             }
 
-            if (woken.IsCompletedSuccessfully)
-            {
-                // The wake token was consumed: hand it back so the loop ticks at once.
-                Wake();
-            }
-
             stop.ThrowIfCancellationRequested();
+            return woken.IsCompletedSuccessfully;
         }
     }
 }

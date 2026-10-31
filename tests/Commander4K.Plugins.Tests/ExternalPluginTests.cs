@@ -867,6 +867,87 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.False(store.IsApproved(manifest));
     }
 
+    private string WriteBackgroundPlugin(string id, string permissions, bool contributesBackground)
+    {
+        var folder = Path.Combine(_folder, id);
+        Directory.CreateDirectory(folder);
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", "python", "c4k.py"), Path.Combine(folder, "c4k.py"));
+        File.WriteAllText(Path.Combine(folder, "main.py"), """
+            import c4k
+            ticks = [{"more": True}, {}, None]
+
+            @c4k.handler("background.tick")
+            def tick(p):
+                return ticks.pop(0) if ticks else None
+
+            @c4k.handler("try.wake")
+            def try_wake(p):
+                try:
+                    c4k.background_wake()
+                    return "ok"
+                except c4k.HostError as e:
+                    return "denied " + str(e.code)
+
+            c4k.serve()
+            """);
+        var contributes = contributesBackground
+            ? """{ "background": { "interval": "5m" }, "commands": [{ "id": "x", "title": "X" }] }"""
+            : """{ "commands": [{ "id": "x", "title": "X" }] }""";
+        File.WriteAllText(Path.Combine(folder, "plugin.json"), $$"""
+            { "id": "{{id}}", "name": "Bg", "version": "1.0.0", "author": "a", "description": "d",
+              "runtime": { "type": "python", "entry": "main.py" }, "permissions": {{permissions}}, "contributes": {{contributes}} }
+            """);
+        return folder;
+    }
+
+    [Fact]
+    public async Task Tick_parses_more_true_empty_object_and_null()
+    {
+        var plugin = StartFrom(WriteBackgroundPlugin("test.bgtick", """["background"]""", true));
+        _started.Add(plugin);
+
+        Assert.True(await plugin.TickAsync(TestToken));
+        Assert.False(await plugin.TickAsync(TestToken));
+        Assert.False(await plugin.TickAsync(TestToken));
+    }
+
+    [Fact]
+    public async Task Wake_raises_event_with_permission_and_is_denied_without()
+    {
+        var allowed = StartFrom(WriteBackgroundPlugin("test.bgwake", """["background"]""", true));
+        var denied = StartFrom(WriteBackgroundPlugin("test.bgdeny", """[]""", false));
+        _started.Add(allowed);
+        _started.Add(denied);
+        var woken = new List<string>();
+        allowed.WakeRequested += woken.Add;
+        denied.WakeRequested += woken.Add;
+
+        Assert.Equal("ok", (await allowed.CallAsync("try.wake", null, TestToken)).GetString());
+        Assert.Equal(["test.bgwake"], woken);
+        Assert.StartsWith("denied", (await denied.CallAsync("try.wake", null, TestToken)).GetString(), StringComparison.Ordinal);
+        Assert.Equal(["test.bgwake"], woken);
+        Assert.Contains(_audit.Recent("test.bgdeny"), e => e.Operation == "background.wake" && e.Outcome == AuditOutcome.Denied);
+    }
+
+    [Fact]
+    public void Background_selection_needs_contribution_and_permission()
+    {
+        var both = StartFrom(WriteBackgroundPlugin("test.sel1", """["background"]""", true));
+        var noPermission = StartFrom(WriteBackgroundPlugin("test.sel2", """[]""", false));
+        _started.Add(both);
+        _started.Add(noPermission);
+        // Contribution without permission cannot pass the manifest check, so build that case from a manifest copy.
+        var contributesOnly = new ExternalPlugin(
+            new DiscoveredPlugin(both.Folder, both.Manifest with { Permissions = [] }, []),
+            _runtimes.First(r => r.Type == "python"),
+            HostFor(both.Manifest with { Permissions = [] }), _audit, _storage);
+        _started.Add(contributesOnly);
+
+        var selected = BackgroundTickLoop.Select([both, noPermission, contributesOnly]).Select(p => p.Manifest.Id);
+
+        Assert.Equal(["test.sel1"], selected);
+    }
+
     private ExternalPlugin Start(string example) => StartFrom(Path.Combine(Examples, example));
 
     private ExternalPlugin StartFrom(string folder, IMailBackend? mail = null)
