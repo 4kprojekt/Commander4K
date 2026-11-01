@@ -387,11 +387,14 @@ public static class Ds
         return dock;
     }
 
-    /// <summary>Search field: 6 px corners, a ⌕ glyph inside on the left, the text box keeps its own focus ring.</summary>
-    public static Grid SearchField(SkinBrushes b, TextBox box, double height = 34)
+    /// <summary>
+    /// Search field: 6 px corners, a glyph inside on the left (⌕, or <c>&gt;_</c> for the command palette), optionally a
+    /// control on the right (a <see cref="Kbd"/> naming the shortcut); the text box keeps its own focus ring.
+    /// </summary>
+    public static Grid SearchField(SkinBrushes b, TextBox box, double height = 34, string glyph = "⌕", Control? trailing = null)
     {
         box.Height = height;
-        box.Padding = new Thickness(34, 0, 10, 0);
+        box.Padding = new Thickness(34, 0, trailing is null ? 10 : 110, 0);
         box.VerticalContentAlignment = VerticalAlignment.Center;
         box.CornerRadius = new CornerRadius(b.IsModern ? 6 : 0);
         box.Background = b.IsModern ? b.HeaderBackground : b.PanelBackground;
@@ -399,16 +402,71 @@ public static class Ds
         grid.Children.Add(box);
         grid.Children.Add(new TextBlock
         {
-            Text = "⌕",
-            FontSize = 17,
+            Text = glyph,
+            FontSize = glyph.Length > 1 ? 13 : 17,
+            FontFamily = glyph.Length > 1 ? b.MonospaceFamily : b.FontFamily,
             Foreground = b.MutedForeground,
             IsHitTestVisible = false,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(11, 0, 0, 1),
         });
+        if (trailing is not null)
+        {
+            trailing.IsHitTestVisible = false;
+            trailing.HorizontalAlignment = HorizontalAlignment.Right;
+            trailing.VerticalAlignment = VerticalAlignment.Center;
+            trailing.Margin = new Thickness(0, 0, 10, 0);
+            grid.Children.Add(trailing);
+        }
+
         return grid;
     }
+
+    /// <summary>
+    /// An empty state in a panel (an empty folder, nothing to show): a centred card (surface2, 8 px corners) with a
+    /// 14/600 title, muted text and one primary action.
+    /// </summary>
+    public static Border EmptyState(SkinBrushes b, string title, string message, string actionText, Action action)
+    {
+        var button = Button(b, actionText, action, ButtonKind.Primary);
+        button.HorizontalAlignment = HorizontalAlignment.Left;
+        button.Margin = new Thickness(0, 8, 0, 0);
+        return new Border
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MaxWidth = 420,
+            Margin = new Thickness(24),
+            Padding = new Thickness(20, 18),
+            Background = b.IsModern ? b.Surface2 : b.PanelBackground,
+            BorderBrush = b.PanelBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(b.IsModern ? 8 : 0),
+            Child = new StackPanel
+            {
+                Spacing = 6,
+                Children =
+                {
+                    new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeight.SemiBold, Foreground = b.FileForeground },
+                    new TextBlock { Text = message, FontSize = 12, Foreground = b.MutedForeground, TextWrapping = TextWrapping.Wrap },
+                    button,
+                },
+            },
+        };
+    }
+
+    /// <summary>A key cap (design ".kbd"): 11 px text in a 1 px rounded frame, for shortcuts in hints and fields.</summary>
+    public static Border Kbd(SkinBrushes b, string keys) => new()
+    {
+        BorderBrush = b.PanelBorder,
+        BorderThickness = new Thickness(1),
+        Background = b.PanelBackground,
+        CornerRadius = new CornerRadius(b.IsModern ? 4 : 0),
+        Padding = new Thickness(6, 1),
+        VerticalAlignment = VerticalAlignment.Center,
+        Child = new TextBlock { Text = keys, FontSize = 11, Foreground = b.HeaderForeground },
+    };
 
     /// <summary>
     /// Segmented control for 2–3 short choices: a 2 px padded track (6 px corners) whose selected segment is filled with

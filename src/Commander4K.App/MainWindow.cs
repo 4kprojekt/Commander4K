@@ -1783,13 +1783,14 @@ public sealed class MainWindow : Window
         foreach (var command in host.ListCommands().OrderBy(c => c.Description, StringComparer.CurrentCulture))
         {
             var keys = string.Join(", ", host.KeyBindings.Where(b => string.Equals(b.Value, command.Id, StringComparison.OrdinalIgnoreCase)).Select(b => b.Key));
-            items.Add(new PickerItem(command.Description, keys.Length > 0 ? keys : null, "cmd:" + command.Id, command.Id));
+            items.Add(new PickerItem(command.Description, keys.Length > 0 ? keys : null, "cmd:" + command.Id, command.Id, Group: Loc.T("Polecenia")));
         }
 
-        items.AddRange(host.Skins.Skins.Select(s => new PickerItem(Loc.T("Skórka: {0}", s.DisplayName), null, "skin:" + s.Id, "motyw kolory theme")));
-        items.AddRange(host.SettingsCatalog.Select(s => new PickerItem($"Ustawienia: {s.Title}", s.Category, "set:" + s.Title, string.Join(' ', s.Keywords ?? []))));
+        items.AddRange(host.Skins.Skins.Select(s => new PickerItem(s.DisplayName, Loc.T("Skórka"), "skin:" + s.Id, "skórka motyw kolory theme skin", Group: Loc.T("Skórki"))));
+        items.AddRange(host.SettingsCatalog.Select(s => new PickerItem(s.Title, s.Category, "set:" + s.Title, "ustawienia " + string.Join(' ', s.Keywords ?? []), Group: Loc.T("Ustawienia"))));
 
-        var choice = await new PickerDialog(_skins!.Current, Loc.T("Paleta komend (Ctrl+Shift+P)"), items, Loc.T("Wpisz, czego szukasz — komendy, skórki, ustawienia:")).ShowAsync(this);
+        var choice = await new PickerDialog(
+            _skins!.Current, Loc.T("Paleta komend"), items, Loc.T("Wpisz, czego szukasz — komendy, skórki, ustawienia"), "Ctrl+Shift+P", showHeader: false).ShowAsync(this);
         switch (choice?.Value.Split(':', 2))
         {
             case ["cmd", var id]:

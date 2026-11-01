@@ -118,32 +118,10 @@ public abstract class DialogWindow<TResult> : Window
         var body = new StackPanel().Margin(Ds.BodyPadding).Spacing(Brushes.IsModern ? 6 : 0)
             .Children(footer is null ? children : children[..^1]);
         var dock = new DockPanel();
-        if (Brushes.IsModern)
+        if (CreateHeaderBand() is { } headerBand)
         {
-            var header = Ds.DialogHeader(Brushes, Title ?? string.Empty, HeaderGlyph, HeaderGlyphBrush);
-            var close = Ds.Button(Brushes, "✕", () => Close(default(TResult)), ButtonKind.Ghost);
-            close.Width = 28;
-            close.Height = 28;
-            close.Padding = new Thickness(0);
-            close.IsTabStop = false;
-            ToolTip.SetTip(close, Loc.T("Zamknij (Esc)"));
-            var bar = new DockPanel { Background = HeaderBackground ?? Avalonia.Media.Brushes.Transparent };
-            DockPanel.SetDock(close, Dock.Right);
-            close.Margin = new Thickness(0, 0, 8, 0);
-            close.VerticalAlignment = VerticalAlignment.Center;
-            bar.Children.Add(close);
-            header.BorderThickness = new Thickness(0);
-            bar.Children.Add(header);
-            var band = new Border { BorderBrush = Brushes.PanelBorder, BorderThickness = new Thickness(0, 0, 0, 1), Child = bar };
-            band.PointerPressed += (_, e) =>
-            {
-                if (e.GetCurrentPoint(band).Properties.IsLeftButtonPressed)
-                {
-                    BeginMoveDrag(e);
-                }
-            };
-            DockPanel.SetDock(band, Dock.Top);
-            dock.Children.Add(band);
+            DockPanel.SetDock(headerBand, Dock.Top);
+            dock.Children.Add(headerBand);
         }
 
         if (footer is not null)
@@ -156,11 +134,53 @@ public abstract class DialogWindow<TResult> : Window
 
         dock.Children.Add(body);
 
+        SetFramedContent(dock);
+    }
+
+    /// <summary>
+    /// The 44 px header band with the title, the optional glyph, ✕ and drag-to-move — modern skins only (retro skins
+    /// keep the system title bar, so this returns <c>null</c>).
+    /// </summary>
+    protected Control? CreateHeaderBand()
+    {
+        if (!Brushes.IsModern)
+        {
+            return null;
+        }
+
+        var header = Ds.DialogHeader(Brushes, Title ?? string.Empty, HeaderGlyph, HeaderGlyphBrush);
+        var close = Ds.Button(Brushes, "✕", () => Close(default(TResult)), ButtonKind.Ghost);
+        close.Width = 28;
+        close.Height = 28;
+        close.Padding = new Thickness(0);
+        close.IsTabStop = false;
+        ToolTip.SetTip(close, Loc.T("Zamknij (Esc)"));
+        var bar = new DockPanel { Background = HeaderBackground ?? Avalonia.Media.Brushes.Transparent };
+        DockPanel.SetDock(close, Dock.Right);
+        close.Margin = new Thickness(0, 0, 8, 0);
+        close.VerticalAlignment = VerticalAlignment.Center;
+        bar.Children.Add(close);
+        header.BorderThickness = new Thickness(0);
+        bar.Children.Add(header);
+        var band = new Border { BorderBrush = Brushes.PanelBorder, BorderThickness = new Thickness(0, 0, 0, 1), Child = bar };
+        band.PointerPressed += (_, e) =>
+        {
+            if (e.GetCurrentPoint(band).Properties.IsLeftButtonPressed)
+            {
+                BeginMoveDrag(e);
+            }
+        };
+        return band;
+    }
+
+    /// <summary>Sets the window content inside the design's 1 px frame (modern skins).</summary>
+    protected void SetFramedContent(Control content)
+    {
         // Without the system title bar Windows draws no visible edge: the design system's 1 px panelBorder frame
         // keeps the dialog from floating over what is behind it.
         Content = Brushes.IsModern
-            ? new Border { BorderBrush = Brushes.PanelBorder, BorderThickness = new Thickness(1), Child = dock }
-            : dock;
+            ? new Border { BorderBrush = Brushes.PanelBorder, BorderThickness = new Thickness(1), Child = content }
+            : content;
     }
 }
 
@@ -400,46 +420,116 @@ public sealed class HostKeyDialog : DialogWindow<bool>
 }
 
 /// <param name="Keywords">Extra searchable text that is not displayed (command ids, synonyms).</param>
-public sealed record PickerItem(string Label, string? Detail, string Value, string? Keywords = null, bool IsSeparator = false);
+/// <param name="Group">Section the item is listed under (design: "POLECENIA", "USTAWIENIA"); consecutive items share it.</param>
+public sealed record PickerItem(string Label, string? Detail, string Value, string? Keywords = null, bool IsSeparator = false, string? Group = null);
 
-/// <summary>Filterable list (drive menu, frecency jump list, skin list).</summary>
+/// <summary>
+/// Filterable list in the design's "Paleta komend" layout (drive menu, frecency jump list, panel modes, the command
+/// palette): a search field, group labels, 30 px rows with the matched text in bold accent and the shortcut or detail
+/// muted on the right, the cursor row filled with <c>cursorBackground</c>, and a hint bar with "N z M" instead of
+/// OK/Cancel buttons. ↑↓/PgUp/PgDn/Home/End move, Enter or a click picks, Esc cancels.
+/// </summary>
 public sealed class PickerDialog : DialogWindow<PickerItem?>
 {
-    private readonly IReadOnlyList<PickerItem> _items;
-    private readonly ListBox _list;
-    private readonly TextBox _filter;
+    /// <summary>Details longer than this go under the label instead of to the right of it.</summary>
+    private const int InlineDetailLength = 34;
 
-    public PickerDialog(SkinBrushes brushes, string title, IReadOnlyList<PickerItem> items, string? hint = null) : base(title, brushes, 560)
+    private readonly IReadOnlyList<PickerItem> _items;
+    private readonly int _total;
+    private readonly TextBox _filter;
+    private readonly StackPanel _rows = new();
+    private readonly ScrollViewer _scroll;
+    private readonly TextBlock _count;
+    private readonly List<Row> _visible = [];
+    private int _selected = -1;
+
+    /// <param name="hint">Shown as the field's placeholder (and, in a titled picker, as a line above it).</param>
+    /// <param name="shortcut">Key cap in the search field (the palette's "Ctrl+Shift+P").</param>
+    /// <param name="showHeader">False for the command palette, which in the design is only the field and the list.</param>
+    public PickerDialog(SkinBrushes brushes, string title, IReadOnlyList<PickerItem> items, string? hint = null, string? shortcut = null, bool showHeader = true)
+        : base(title, brushes, 560)
     {
         _items = items;
-        _filter = new TextBox().PlaceholderText(Loc.T("Filtruj…"));
+        _total = items.Count(i => !i.IsSeparator);
+        _filter = new TextBox { PlaceholderText = showHeader || hint is null ? Loc.T("Filtruj…") : hint, FontSize = 14 };
         _filter.TextChanged += (_, _) => ApplyFilter();
-        _list = new ListBox().MaxHeight(420).Background(Brushes.PanelBackground).BorderThickness(new Thickness(0));
-        _list.DoubleTapped += (_, _) => Accept();
-        var listCard = new Border
+        _scroll = new ScrollViewer
         {
-            Margin = new Thickness(0, 8, 0, 0),
-            Background = Brushes.PanelBackground,
-            BorderBrush = Brushes.PanelBorder,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(Brushes.IsModern ? 6 : 0),
-            ClipToBounds = true,
-            Child = _list,
+            Content = _rows,
+            MaxHeight = 420,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
         };
-        SetBody(
-            hint is null ? new Panel() : Label(hint),
-            Ds.SearchField(Brushes, _filter),
-            listCard,
-            ButtonRow((Loc.T("Anuluj"), () => Complete(null), false), ("OK", Accept, true)));
+        _count = new TextBlock { FontSize = 11, Foreground = Brushes.MutedForeground, VerticalAlignment = VerticalAlignment.Center };
+
+        var search = Ds.SearchField(Brushes, _filter, 36, showHeader ? "⌕" : ">_", shortcut is null ? null : Ds.Kbd(Brushes, shortcut));
+        var top = new StackPanel { Margin = new Thickness(10, 10, 10, 6), Spacing = 8 };
+        if (showHeader && hint is not null)
+        {
+            top.Children.Add(Ds.Muted(Brushes, hint).Margin(2, 0, 0, 0));
+        }
+
+        top.Children.Add(search);
+
+        var hints = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14 };
+        hints.Children.Add(HintPair("↑↓", Loc.T("wybór")));
+        hints.Children.Add(HintPair("Enter", Loc.T("wybierz")));
+        hints.Children.Add(HintPair("Esc", Loc.T("zamknij")));
+        var hintBar = new DockPanel();
+        DockPanel.SetDock(_count, Dock.Right);
+        hintBar.Children.Add(_count);
+        hintBar.Children.Add(hints);
+        var hintBand = new Border
+        {
+            BorderBrush = Brushes.PanelBorder,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(16, 9),
+            Margin = new Thickness(0, 6, 0, 0),
+            Child = hintBar,
+        };
+
+        var dock = new DockPanel();
+        if (showHeader && CreateHeaderBand() is { } header)
+        {
+            DockPanel.SetDock(header, Dock.Top);
+            dock.Children.Add(header);
+        }
+
+        DockPanel.SetDock(top, Dock.Top);
+        dock.Children.Add(top);
+        DockPanel.SetDock(hintBand, Dock.Bottom);
+        dock.Children.Add(hintBand);
+        dock.Children.Add(_scroll);
+        SetFramedContent(dock);
+
         ApplyFilter();
         Opened += (_, _) => _filter.Focus();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
-        if (e.Key is Key.Down or Key.Up && _filter.IsFocused && _list.ItemCount > 0)
+        var step = e.Key switch
         {
-            _list.SelectedIndex = NextSelectableIndex(_list.SelectedIndex, e.Key == Key.Down ? 1 : -1);
+            Key.Down => 1,
+            Key.Up => -1,
+            Key.PageDown => 10,
+            Key.PageUp => -10,
+            _ => 0,
+        };
+        if (step != 0 || (e.Key is Key.Home or Key.End && e.KeyModifiers.HasFlag(KeyModifiers.Control)))
+        {
+            Select(e.Key switch
+            {
+                Key.Home => 0,
+                Key.End => _visible.Count - 1,
+                _ => Math.Clamp(_selected + step, 0, _visible.Count - 1),
+            });
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            Accept();
             e.Handled = true;
             return;
         }
@@ -447,82 +537,233 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
         base.OnKeyDown(e);
     }
 
+    private StackPanel HintPair(string keys, string text)
+    {
+        var pair = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
+        pair.Children.Add(Ds.Kbd(Brushes, keys));
+        pair.Children.Add(new TextBlock { Text = text, FontSize = 11, Foreground = Brushes.MutedForeground, VerticalAlignment = VerticalAlignment.Center });
+        return pair;
+    }
+
     private void ApplyFilter()
     {
-        // Word-based, case- and accent-insensitive: "skor norton" finds "Skórka: Norton Commander".
-        var candidates = _items.Where(item => !item.IsSeparator).ToArray();
-        var matches = Core.Configuration.SettingsCatalog.Search(
-            candidates, _filter.Text, i => i.Label, i => [i.Detail ?? string.Empty, i.Keywords ?? string.Empty]);
-        var matched = matches.Select(item => item.Value).ToHashSet(StringComparer.Ordinal);
-        var sourceItems = _items.ToArray();
-        var separatorIndex = Array.FindIndex(sourceItems, item => item.IsSeparator);
-        var visible = new List<PickerItem>();
-        var beforeSeparator = false;
-        var afterSeparator = false;
-        for (var i = 0; i < sourceItems.Length; i++)
+        // Word-based, case- and accent-insensitive: "skor norton" finds "Skórka: Norton Commander". Ranked within
+        // each group; groups (and the parts a separator divides) keep their order.
+        var query = _filter.Text ?? string.Empty;
+        var words = Core.Configuration.SettingsCatalog.Normalize(query).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var sections = new List<(string? Group, bool AfterSeparator, List<PickerItem> Items)>();
+        foreach (var item in _items)
         {
-            var item = sourceItems[i];
             if (item.IsSeparator)
             {
-                separatorIndex = i;
-                continue;
+                sections.Add((null, true, []));
             }
-
-            if (!matched.Contains(item.Value))
+            else if (sections.Count == 0 || (item.Group is not null && sections[^1].Group != item.Group))
             {
-                continue;
-            }
-
-            visible.Add(item);
-            if (separatorIndex < 0 || i < separatorIndex)
-            {
-                beforeSeparator = true;
+                sections.Add((item.Group, false, [item]));
             }
             else
             {
-                afterSeparator = true;
+                sections[^1].Items.Add(item);
             }
         }
 
-        if (separatorIndex >= 0 && beforeSeparator && afterSeparator)
+        _rows.Children.Clear();
+        _visible.Clear();
+        var anyBefore = false;
+        foreach (var (group, afterSeparator, sectionItems) in sections)
         {
-            var split = visible.FindIndex(item => Array.FindIndex(sourceItems, source => source.Value == item.Value) > separatorIndex);
-            if (split >= 0)
+            var matches = Core.Configuration.SettingsCatalog.Search(
+                sectionItems, query, i => i.Label, i => [i.Detail ?? string.Empty, i.Keywords ?? string.Empty]);
+            if (matches.Count == 0)
             {
-                visible.Insert(split, sourceItems[separatorIndex]);
+                continue;
             }
+
+            if (group is not null)
+            {
+                _rows.Children.Add(new TextBlock
+                {
+                    Text = group.ToUpper(Loc.Culture),
+                    FontSize = 11,
+                    FontWeight = FontWeight.SemiBold,
+                    LetterSpacing = 0.66,
+                    Foreground = Brushes.MutedForeground,
+                    Margin = new Thickness(16, anyBefore ? 8 : 2, 16, 4),
+                });
+            }
+            else if (afterSeparator && anyBefore)
+            {
+                _rows.Children.Add(new Border { Height = 1, Background = Brushes.PanelBorder, Margin = new Thickness(16, 5) });
+            }
+
+            foreach (var item in matches)
+            {
+                var row = CreateRow(item, words);
+                _visible.Add(row);
+                _rows.Children.Add(row.Border);
+            }
+
+            anyBefore = true;
         }
 
-        _list.ItemsSource = visible.Select(i => new ListBoxItem
+        _count.Text = Loc.T("{0} z {1}", _visible.Count, _total);
+        _selected = -1;
+        Select(_visible.Count > 0 ? 0 : -1);
+    }
+
+    private Row CreateRow(PickerItem item, string[] words)
+    {
+        var label = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+        var highlights = new List<Avalonia.Controls.Documents.Run>();
+        foreach (var (text, matched) in Highlight(item.Label, words))
         {
-            Tag = i,
-            IsHitTestVisible = !i.IsSeparator,
-            Height = i.IsSeparator ? 9 : double.NaN,
-            Content = i.IsSeparator ? new Separator().Margin(4, 3) : new StackPanel().Children(
-                new TextBlock().Text(i.Label).FontWeight(FontWeight.SemiBold),
-                new TextBlock().Text(i.Detail ?? string.Empty).FontSize(11).Foreground(Brushes.MutedForeground).IsVisible(i.Detail is not null)),
-        }).ToList();
-        _list.SelectedIndex = visible.FindIndex(item => !item.IsSeparator);
+            var run = new Avalonia.Controls.Documents.Run(text);
+            if (matched)
+            {
+                run.FontWeight = FontWeight.Bold;
+                highlights.Add(run);
+            }
+
+            label.Inlines!.Add(run);
+        }
+
+        var inline = item.Detail is { Length: > 0 and <= InlineDetailLength };
+        var detail = item.Detail is { Length: > 0 }
+            ? new TextBlock
+            {
+                Text = item.Detail,
+                FontSize = 11,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = inline ? new Thickness(12, 0, 0, 0) : new Thickness(0, 1, 0, 0),
+            }
+            : null;
+
+        Control content;
+        if (detail is null)
+        {
+            content = label;
+        }
+        else if (inline)
+        {
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            Grid.SetColumn(detail, 1);
+            grid.Children.Add(label);
+            grid.Children.Add(detail);
+            content = grid;
+        }
+        else
+        {
+            content = new StackPanel { Children = { label, detail } };
+        }
+
+        var border = new Border
+        {
+            MinHeight = 30,
+            Margin = new Thickness(6, 0),
+            Padding = new Thickness(10, detail is not null && !inline ? 5 : 0),
+            CornerRadius = new CornerRadius(Brushes.IsModern ? 4 : 0),
+            Background = Avalonia.Media.Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Child = content,
+        };
+        var row = new Row(item, border, label, detail, highlights);
+        border.PointerEntered += (_, _) => Paint(row, hover: true);
+        border.PointerExited += (_, _) => Paint(row, hover: false);
+        border.PointerReleased += (_, e) =>
+        {
+            if (e.InitialPressMouseButton == MouseButton.Left)
+            {
+                Complete(item);
+            }
+        };
+        Paint(row, hover: false);
+        return row;
+    }
+
+    private void Select(int index)
+    {
+        var previous = _selected;
+        _selected = index;
+        if (previous >= 0 && previous < _visible.Count)
+        {
+            Paint(_visible[previous], hover: false);
+        }
+
+        if (index >= 0 && index < _visible.Count)
+        {
+            Paint(_visible[index], hover: false);
+            _visible[index].Border.BringIntoView();
+        }
+    }
+
+    private void Paint(Row row, bool hover)
+    {
+        var selected = _selected >= 0 && _selected < _visible.Count && ReferenceEquals(_visible[_selected], row);
+        row.Border.Background = selected ? Brushes.CursorBackground
+            : hover ? Brushes.HoverBackground
+            : Avalonia.Media.Brushes.Transparent;
+        row.Label.Foreground = selected ? Brushes.CursorForeground : Brushes.FileForeground;
+        foreach (var run in row.Highlights)
+        {
+            run.Foreground = selected ? Brushes.CursorForeground : Brushes.Accent;
+        }
+
+        if (row.Detail is not null)
+        {
+            row.Detail.Foreground = selected ? Brushes.CursorForeground : Brushes.MutedForeground;
+        }
     }
 
     private void Accept()
     {
-        if ((_list.SelectedItem as ListBoxItem)?.Tag is PickerItem { IsSeparator: false } item)
+        if (_selected >= 0 && _selected < _visible.Count)
         {
-            Complete(item);
+            Complete(_visible[_selected].Item);
         }
     }
 
-    private int NextSelectableIndex(int current, int direction)
+    /// <summary>Splits <paramref name="text"/> into runs, marking where a query word occurs (case- and accent-insensitive).</summary>
+    internal static IEnumerable<(string Text, bool Matched)> Highlight(string text, IReadOnlyList<string> words)
     {
-        var index = current;
-        do
+        if (words.Count == 0 || text.Length == 0)
         {
-            index += direction;
+            return [(text, false)];
         }
-        while (index >= 0 && index < _list.ItemCount
-            && (_list.Items[index] as ListBoxItem)?.Tag is PickerItem { IsSeparator: true });
 
-        return Math.Clamp(index, 0, Math.Max(0, _list.ItemCount - 1));
+        // One folded character per source character, so indexes line up with the original text.
+        var folded = new char[text.Length];
+        for (var i = 0; i < text.Length; i++)
+        {
+            var one = Core.Configuration.SettingsCatalog.Normalize(text[i].ToString());
+            folded[i] = one.Length == 1 ? one[0] : char.ToLowerInvariant(text[i]);
+        }
+
+        var haystack = new string(folded);
+        var marked = new bool[text.Length];
+        foreach (var word in words)
+        {
+            var at = haystack.IndexOf(word, StringComparison.Ordinal);
+            if (at >= 0)
+            {
+                Array.Fill(marked, true, at, word.Length);
+            }
+        }
+
+        var runs = new List<(string, bool)>();
+        var start = 0;
+        for (var i = 1; i <= text.Length; i++)
+        {
+            if (i == text.Length || marked[i] != marked[start])
+            {
+                runs.Add((text[start..i], marked[start]));
+                start = i;
+            }
+        }
+
+        return runs;
     }
+
+    private sealed record Row(PickerItem Item, Border Border, TextBlock Label, TextBlock? Detail, List<Avalonia.Controls.Documents.Run> Highlights);
 }

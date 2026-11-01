@@ -49,9 +49,8 @@ public sealed class FilePanelView : ViewBase
     private ToggleSwitch _modeSwitch = null!;
     private TextBlock _previewModeLabel = null!;
     private Border _statusBorder = null!;
-    private Border _emptyFolderSetup = null!;
-    private TextBlock _emptyFolderMessage = null!;
-    private Button _emptyFolderConfigure = null!;
+    private Decorator _emptyFolderSetup = null!;
+    private SkinBrushes? _emptyFolderSkin;
     private Panel _content = null!;
     private TextBlock _status = null!;
     private TextBlock _statusMarked = null!;
@@ -434,17 +433,7 @@ public sealed class FilePanelView : ViewBase
                                 .OnClick(click => LocationMenuRequested?.Invoke(this)))),
                     new Panel().Ref(out _content).Row(2).Children(
                         Canvas,
-                        new Border().Ref(out _emptyFolderSetup).IsVisible(false)
-                            .HorizontalAlignment(HorizontalAlignment.Center).VerticalAlignment(VerticalAlignment.Center)
-                            .MaxWidth(480).Margin(24).Padding(24)
-                            .Background(_skins.Current.PanelBackground).BorderBrush(_skins.Current.PanelBorder)
-                            .BorderThickness(1).CornerRadius(new CornerRadius(_skins.Current.IsModern ? 8 : 0))
-                            .Child(new StackPanel().Spacing(14).Children(
-                                new TextBlock().Ref(out _emptyFolderMessage).TextWrapping(TextWrapping.Wrap)
-                                    .TextAlignment(TextAlignment.Center).HorizontalAlignment(HorizontalAlignment.Stretch),
-                                new Button().Ref(out _emptyFolderConfigure).Content(Loc.T("Skonfiguruj jako specjalny folder"))
-                                    .HorizontalAlignment(HorizontalAlignment.Center).Padding(16, 8)
-                                    .OnClick(_ => ConfigureEmptyFolderRequested?.Invoke(ActiveTab.Path))))),
+                        new Decorator().Ref(out _emptyFolderSetup).IsVisible(false)),
                     new Border()
                         .Ref(out _statusBorder)
                         .Row(3)
@@ -678,13 +667,20 @@ public sealed class FilePanelView : ViewBase
         var empty = !tab.IsLoading && tab.Error is null && tab.Entries.All(entry =>
             entry.Kind is VfsEntryKind.ParentLink or VfsEntryKind.Action);
         _emptyFolderSetup.IsVisible = isDiskOrShare && empty && Mode is null && !_pluginTabIds.ContainsKey(tab);
-        _emptyFolderMessage.Text = Loc.T("Ten folder jest pusty. Wybierz, co ma pokazywać — ustawienia zostaną zapisane w pliku c4k.dir.");
-        var brushes = _skins.Current;
-        _emptyFolderSetup.Background = brushes.PanelBackground;
-        _emptyFolderSetup.BorderBrush = brushes.PanelBorder;
-        Ds.Style(_emptyFolderConfigure, brushes, ButtonKind.Primary);
-        _emptyFolderMessage.Foreground = brushes.MutedForeground;
+        if (_emptyFolderSetup.IsVisible && _emptyFolderSkin != _skins.Current)
+        {
+            _emptyFolderSkin = _skins.Current;
+            _emptyFolderSetup.Child = EmptyFolderCard(_skins.Current, () => ConfigureEmptyFolderRequested?.Invoke(ActiveTab.Path));
+        }
     }
+
+    /// <summary>The empty-folder card (also shown by the quick view): what the folder should show, saved in c4k.dir.</summary>
+    internal static Border EmptyFolderCard(SkinBrushes brushes, Action configure) => Ds.EmptyState(
+        brushes,
+        Loc.T("Pusty folder"),
+        Loc.T("Ten folder jest pusty. Wybierz, co ma pokazywać — ustawienia zostaną zapisane w pliku c4k.dir."),
+        Loc.T("Skonfiguruj jako specjalny folder…"),
+        configure);
 
     private void UpdateStatus()
     {

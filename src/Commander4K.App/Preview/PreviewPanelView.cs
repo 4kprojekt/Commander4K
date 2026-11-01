@@ -1681,38 +1681,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             && ConfigureFolderView is { } configure)
         {
             SetStatus(Loc.T("Gotowe · {0}", folder.Path));
-            var message = new TextBlock
-            {
-                Text = Loc.T("Ten folder jest pusty. Wybierz, co ma pokazywać — ustawienia zostaną zapisane w pliku c4k.dir."),
-                Foreground = _brushes.MutedForeground,
-                TextWrapping = TextWrapping.Wrap,
-                TextAlignment = TextAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-            };
-            var button = new Button
-            {
-                Content = Loc.T("Skonfiguruj jako specjalny folder"),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Padding = new Thickness(16, 8),
-                Background = _brushes.Accent,
-                Foreground = _brushes.AccentForeground,
-            };
-            button.Click += async (_, _) => await configure(emptyFolder.Path);
-            return new Grid
-            {
-                Children =
-                {
-                    new StackPanel
-                    {
-                        Spacing = 16,
-                        MaxWidth = 440,
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Margin = new Thickness(24),
-                        Children = { message, button },
-                    },
-                },
-            };
+            return Panels.FilePanelView.EmptyFolderCard(_brushes, () => _ = configure(emptyFolder.Path));
         }
 
         var list = new StackPanel { Spacing = 1, Margin = new Thickness(12, 4) };
