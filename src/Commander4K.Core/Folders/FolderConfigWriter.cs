@@ -9,6 +9,46 @@ public static class FolderConfigWriter
 {
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
+    /// <summary>A new <c>c4k.dir</c> with one action (<c>cm_FolderView</c>, an accepted folder suggestion).</summary>
+    /// <param name="where"><c>both</c>, <c>preview</c> or <c>enter</c>.</param>
+    public static string CreateForAction(JsonNode? action, string where)
+    {
+        var root = new JsonObject { ["$schema"] = FolderConfig.SchemaUrl };
+        if (where is "both" or "preview")
+        {
+            root["preview"] = action?.DeepClone();
+        }
+
+        if (where is "both" or "enter")
+        {
+            root["enter"] = action?.DeepClone();
+        }
+
+        return root.ToJsonString(Indented) + "\n";
+    }
+
+    /// <summary>The <c>c4k.dir</c> action for a suggested view: a view name, or <c>{ plugin, preview?, options? }</c>.</summary>
+    public static JsonNode ActionFor(PluginSdk.FolderSuggestionView view)
+    {
+        if (view.Plugin is null)
+        {
+            return JsonValue.Create(view.View ?? FolderViewIds.Files);
+        }
+
+        var action = new JsonObject { ["plugin"] = view.Plugin };
+        if (view.Preview is not null)
+        {
+            action["preview"] = view.Preview;
+        }
+
+        if (view.OptionsJson is not null)
+        {
+            action["options"] = JsonNode.Parse(view.OptionsJson);
+        }
+
+        return action;
+    }
+
     /// <summary>Comments are dropped when the file is written again, so the wizard warns about them first.</summary>
     public static bool HasComments(string json)
     {

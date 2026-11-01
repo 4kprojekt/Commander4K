@@ -1062,17 +1062,6 @@ public sealed class MainWindow : Window
             where = when;
         }
 
-        var root = new System.Text.Json.Nodes.JsonObject { ["$schema"] = FolderConfig.SchemaUrl };
-        if (where is "both" or "preview")
-        {
-            root["preview"] = action?.DeepClone();
-        }
-
-        if (where is "both" or "enter")
-        {
-            root["enter"] = action?.DeepClone();
-        }
-
         if (File.Exists(file) && !await new ConfirmDialog(brushes, Loc.T("Zastąpić c4k.dir?"), Loc.T("{0} już istnieje.", file), Loc.T("Zastąp")).ShowAsync(this))
         {
             return;
@@ -1080,7 +1069,7 @@ public sealed class MainWindow : Window
 
         try
         {
-            await File.WriteAllTextAsync(file, root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }) + "\n");
+            await File.WriteAllTextAsync(file, FolderConfigWriter.CreateForAction(action, where));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

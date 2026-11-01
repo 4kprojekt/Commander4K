@@ -64,4 +64,37 @@ public sealed class FolderConfigWriterTests
         Assert.True(FolderConfigWriter.HasComments("""{ /* a */ "preview": "gallery" }"""));
         Assert.False(FolderConfigWriter.HasComments("""{ "url": "https://example.com/a//b" }"""));
     }
+
+    [Fact]
+    public void CreateForAction_both_writes_preview_and_enter()
+    {
+        var text = FolderConfigWriter.CreateForAction(FolderConfigWriter.ActionFor(new PluginSdk.FolderSuggestionView(View: FolderViewIds.Gallery)), "both");
+        var config = FolderConfig.Parse(@"C:\Photos", text);
+
+        Assert.Null(config.Error);
+        Assert.Equal(FolderViewIds.Gallery, config.Enter!.View);
+        Assert.Equal(FolderViewIds.Gallery, config.Preview!.View);
+        Assert.Contains(FolderConfig.SchemaUrl, text, StringComparison.Ordinal);
+        Assert.EndsWith("\n", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CreateForAction_enter_only_leaves_preview_out()
+    {
+        var config = FolderConfig.Parse(@"C:\Photos", FolderConfigWriter.CreateForAction(JsonValue.Create("notes"), "enter"));
+
+        Assert.Equal(FolderViewIds.Notes, config.Enter!.View);
+        Assert.Null(config.Preview);
+    }
+
+    [Fact]
+    public void ActionFor_plugin_view_round_trips_options()
+    {
+        var view = new PluginSdk.FolderSuggestionView(Plugin: "examples.folder-stats", Preview: "tables", OptionsJson: """{ "limit": 5 }""");
+        var config = FolderConfig.Parse(@"C:\Data", FolderConfigWriter.CreateForAction(FolderConfigWriter.ActionFor(view), "both"));
+
+        Assert.Equal("examples.folder-stats", config.Enter!.Plugin);
+        Assert.Equal("tables", config.Enter.Preview);
+        Assert.Equal(5, JsonNode.Parse(config.Enter.Options!)!["limit"]!.GetValue<int>());
+    }
 }
