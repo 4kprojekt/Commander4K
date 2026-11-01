@@ -30,10 +30,12 @@ namespace Commander4K.App.Preview;
 public sealed class PreviewPanelView : Grid, IPanelModeView
 {
     private const int MaxFolderRows = 300;
+    private static readonly TimeSpan PreviewProgressInterval = TimeSpan.FromMilliseconds(250);
 
     private readonly AppHost _app;
     private readonly FilePanelView _source;
     private readonly Action<string, bool> _notify;
+    private readonly object _renderGate = new();
     private PanelTab? _watchedTab;
     private CancellationTokenSource? _debounce;
     private bool _renderScheduled;
@@ -48,7 +50,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private string? _loadedKey;
     private CancellationTokenSource? _loading;
     private PreviewContent? _shown;
-    private PreviewContent? _pendingRender;
+    private (CancellationTokenSource Owner, PreviewContent Content)? _pendingRender;
     private VfsEntry? _entry;
     private IPreviewPlugin? _plugin;
     private bool _editing;
@@ -450,15 +452,50 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         await LoadAsync(target);
     }
 
-    /// <summary>Folder sizes may report many times a second; render at most every 150 ms.</summary>
+    /// <summary>Progress is coalesced so rebuilding Avalonia controls happens at most four times per second.</summary>
     private async Task RenderSoonAsync()
     {
-        await Task.Delay(150);
-        _renderScheduled = false;
-        if (_pendingRender is { } pending)
+        await Task.Delay(PreviewProgressInterval);
+        (CancellationTokenSource Owner, PreviewContent Content)? pending;
+        lock (_renderGate)
+        {
+            pending = _pendingRender;
+            _pendingRender = null;
+            _renderScheduled = false;
+        }
+
+        if (pending is { } update && _loading == update.Owner && !update.Owner.IsCancellationRequested)
+        {
+            Show(update.Content);
+        }
+    }
+
+    private void QueuePreviewProgress(CancellationTokenSource owner, PreviewContent content)
+    {
+        lock (_renderGate)
+        {
+            if (_loading != owner || owner.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _pendingRender = (owner, content);
+            if (_renderScheduled)
+            {
+                return;
+            }
+
+            _renderScheduled = true;
+        }
+
+        Dispatcher.UIThread.Post(() => _ = RenderSoonAsync());
+    }
+
+    private void ClearPendingPreviewProgress()
+    {
+        lock (_renderGate)
         {
             _pendingRender = null;
-            Show(pending);
         }
     }
 
@@ -484,7 +521,12 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
 
         var cts = new CancellationTokenSource();
-        _loading = cts;
+        lock (_renderGate)
+        {
+            _loading = cts;
+            _pendingRender = null;
+        }
+
         _title.Text = target.Name;
 
         // A folder may say how it wants to be shown (c4k.dir); the file is read only for folders on the way here.
@@ -541,18 +583,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
         SetStatus($"{plugin.DisplayName}: wczytywanie…", busy: true);
         var host = _app.HostFor(plugin.Manifest);
-        var progress = new Progress<PreviewContent>(partial =>
-        {
-            if (_loading == cts)
-            {
-                _pendingRender = partial;
-                if (!_renderScheduled)
-                {
-                    _renderScheduled = true;
-                    _ = RenderSoonAsync();
-                }
-            }
-        });
+        var progress = new CallbackProgress<PreviewContent>(partial => QueuePreviewProgress(cts, partial));
         try
         {
             // External previews hear whether this view stays on the entry (Enter) or follows the cursor (Ctrl+Q).
@@ -566,7 +597,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
             if (_loading == cts)
             {
-                _pendingRender = null;
+                ClearPendingPreviewProgress();
                 // "Edit right away" applies once per loaded file; F4 still switches back to the formatted view.
                 _editing = Inner(result) is MarkdownPreview { CanEdit: true } && _app.Settings.MarkdownEditByDefault;
                 Show(result);
@@ -579,6 +610,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             if (_loading == cts)
             {
+                ClearPendingPreviewProgress();
                 Show(new MessagePreview($"⚠ {ex.Message}"));
             }
         }
@@ -1620,6 +1652,11 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
 
     private static ScrollViewer Scroll(Control content) => new() { Content = content, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+
+    private sealed class CallbackProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
+    }
 
     /// <summary>Status line text; <paramref name="busy"/> shows the wave dots in front of it.</summary>
     private void SetStatus(string? text, bool busy = false)

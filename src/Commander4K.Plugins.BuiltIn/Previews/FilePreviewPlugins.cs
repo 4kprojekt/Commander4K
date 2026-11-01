@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
@@ -157,14 +158,36 @@ public sealed class FolderPreviewPlugin : IPreviewCardPlugin, IFolderSuggestingP
             .ToArray();
         var gate = new Lock();
         long folderFiles = 0, folderFolders = 0;
+        var directFiles = items.Count(i => !i.IsDirectory);
+        var directFolders = items.Length - directFiles;
+        long knownBytes = items.Sum(i => i.Size ?? 0);
+        long lastProgressAt = 0;
+        var progressIntervalTicks = Stopwatch.Frequency / 2;
 
         FolderPreview Snapshot(bool complete)
         {
             lock (gate)
             {
-                var files = items.Count(i => !i.IsDirectory) + folderFiles;
-                var folders = items.Count(i => i.IsDirectory) + folderFolders;
-                return new FolderPreview(entry.Path, [.. items], items.Sum(i => i.Size ?? 0), files, folders, complete);
+                return new FolderPreview(entry.Path, [.. items], knownBytes, directFiles + folderFiles, directFolders + folderFolders, complete);
+            }
+        }
+
+        void ReportProgress()
+        {
+            var now = Stopwatch.GetTimestamp();
+            while (true)
+            {
+                var previous = Volatile.Read(ref lastProgressAt);
+                if (now - previous < progressIntervalTicks)
+                {
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(ref lastProgressAt, now, previous) == previous)
+                {
+                    progress?.Report(Snapshot(false));
+                    return;
+                }
             }
         }
 
@@ -191,9 +214,10 @@ public sealed class FolderPreviewPlugin : IPreviewCardPlugin, IFolderSuggestingP
                 items[index] = items[index] with { Size = size.Bytes };
                 folderFiles += size.Files;
                 folderFolders += size.Folders;
+                knownBytes += size.Bytes;
             }
 
-            progress?.Report(Snapshot(false));
+            ReportProgress();
         }).ConfigureAwait(false);
 
         return Snapshot(true);
