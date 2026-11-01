@@ -41,7 +41,26 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private bool _renderScheduled;
     private readonly Border _header;
     private readonly TextBlock _title;
-    private readonly Button _editButton;
+    /// <summary>The view switch of an editable file (design: Podgląd · Edycja + podgląd · Tekst · Hex).</summary>
+    private readonly ContentControl _viewSwitch = new();
+
+    /// <summary>Line, column and word count while editing.</summary>
+    private readonly TextBlock _caretInfo = new();
+
+    /// <summary>What a markdown or text file shows when it is not being edited.</summary>
+    private SourceView _sourceView;
+
+    private enum SourceView
+    {
+        /// <summary>Markdown formatted; a text file as (coloured) text.</summary>
+        Rendered,
+
+        /// <summary>The markdown source as text.</summary>
+        Text,
+
+        /// <summary>The file's bytes.</summary>
+        Hex,
+    }
     private readonly Button _saveButton;
     private readonly ContentControl _content = new();
     private readonly TextBlock _status;
@@ -126,18 +145,23 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _notify = notify;
 
         _title = new TextBlock().FontWeight(FontWeight.SemiBold).VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
-        _editButton = new Button().Content(Loc.T("Edytuj (F4)")).Padding(8, 2).FontSize(12).IsVisible(false).OnClick(_ => ToggleEdit());
-        _saveButton = new Button().Content(Loc.T("Zapisz (Ctrl+S)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).IsVisible(false).OnClick(async _ => await SaveAsync());
+        _saveButton = new Button().Content(Loc.T("Zapisz (Ctrl+S)")).Padding(10, 0).Height(26).FontSize(12).Margin(8, 0, 0, 0).IsVisible(false).OnClick(async _ => await SaveAsync());
+        _caretInfo.VerticalAlignment = VerticalAlignment.Center;
+        _caretInfo.Margin = new Thickness(10, 0, 0, 0);
+        _caretInfo.IsVisible = false;
         // A folder's own view always offers the way back (←, Alt+←, Backspace) and the way to its files (Esc).
         _backButton = new Button().Content("←").Padding(8, 2).FontSize(12).Margin(0, 0, 6, 0).IsVisible(pinned is not null).OnClick(async _ => await BackAsync());
         ToolTip.SetTip(_backButton, Loc.T("Wstecz (Alt+←, Backspace)"));
-        _header = new Border().Padding(8, 4).Child(new Grid().Cols("Auto,*,Auto,Auto,Auto").Children(
+        _viewSwitch.VerticalAlignment = VerticalAlignment.Center;
+        _viewSwitch.Margin = new Thickness(8, 0, 0, 0);
+        _header = new Border().Padding(8, 4).Child(new Grid().Cols("Auto,*,Auto,Auto,Auto,Auto").Children(
             _backButton,
             _title.Col(1).IsVisible(pinned is null),
             _trail.Col(1).IsVisible(pinned is not null),
-            _editButton.Col(2),
-            _saveButton.Col(3),
-            FilesButton = new Button().Col(4).Content(pinned is null && _pinnedFile is null ? Loc.T("Zamknij (Esc)") : Loc.T("📄 Pliki (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
+            _viewSwitch.Col(2),
+            _caretInfo.Col(3),
+            _saveButton.Col(4),
+            FilesButton = new Button().Col(5).Content(pinned is null && _pinnedFile is null ? Loc.T("Zamknij (Esc)") : Loc.T("📄 Pliki (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
         _status = new TextBlock().VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
         _statusBar = new Border().Row(2).Child(new Grid().Cols("Auto,*").Children(_busy.VerticalAlignment(VerticalAlignment.Center), _status.Col(1)));
 
@@ -311,12 +335,18 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _title.Foreground = brushes.HeaderForeground;
         _title.FontFamily = brushes.FontFamily;
         _title.FontSize = brushes.FontSize;
-        foreach (var button in new[] { _backButton, _editButton, _saveButton, FilesButton })
+        foreach (var button in new[] { _backButton, FilesButton })
         {
             Ds.Style(button, brushes, ButtonKind.Ghost);
             button.FontSize = Math.Max(12, brushes.FontSize - 1);
             button.VerticalAlignment = VerticalAlignment.Center;
         }
+
+        Ds.Style(_saveButton, brushes, ButtonKind.Primary);
+        _saveButton.FontSize = Math.Max(12, brushes.FontSize - 1);
+        _saveButton.VerticalAlignment = VerticalAlignment.Center;
+        _caretInfo.Foreground = brushes.MutedForeground;
+        _caretInfo.FontSize = 12;
 
         _statusBar.Background = brushes.StatusBackground;
         _statusBar.BorderBrush = brushes.PanelBorder;
@@ -565,6 +595,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _form = null;
         _options = null;
         _editing = false;
+        _sourceView = SourceView.Rendered;
         if (_entry?.Path != entry?.Path)
         {
             _thumbnails.Clear(); // Pictures of the previous folder's tiles.
@@ -773,10 +804,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _editor = null;
         _livePreview = null;
         DisableActions();
-        var editable = CanEdit;
-        _editButton.IsVisible = editable;
-        _editButton.Content = _editing ? Loc.T("Podgląd (F4)") : Loc.T("Edytuj (F4)");
+        UpdateViewSwitch();
         _saveButton.IsVisible = _editing;
+        _caretInfo.IsVisible = _editing;
         SetStatus(_plugin is null ? string.Empty : $"{_plugin.DisplayName} · {_entry?.Path}");
         if (content is not WebPreview)
         {
@@ -819,7 +849,10 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         ActionsPreview actions => ActionsView(actions),
         FormPreview form => FormView(form),
         MarkdownPreview markdown when _editing => MarkdownEditor(markdown.Markdown),
+        MarkdownPreview markdown when _sourceView == SourceView.Text => TextView(new TextPreview(markdown.Markdown, false, FileName: _entry?.Name)),
+        MarkdownPreview markdown when _sourceView == SourceView.Hex => HexOf(markdown.Markdown),
         MarkdownPreview markdown => Scroll(MarkdownRenderer.Render(markdown.Markdown, _brushes)),
+        TextPreview text when !_editing && _sourceView == SourceView.Hex => HexOf(text.Text),
         TextPreview text => TextView(text),
         ImagePreview image => ImageView(image),
         HexPreview hex => Monospace(TextHexViewerPlugin.FormatHex(hex.Data.Span), Loc.T("Hex · pokazano {0:N0} z {1:N0} B", hex.Data.Length, hex.TotalLength)),
@@ -1165,6 +1198,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             {
                 _loading?.Cancel(); // a reload still running must not replace what the action returned
                 _editing = false;
+                _sourceView = SourceView.Rendered;
                 (_plugin, _options) = (receiver.Plugin, receiver.Options);
                 Show(ViewOnlyWhereReadOnly(receiver.Entry, result));
             }
@@ -1302,9 +1336,15 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     }
 
 
-    private void ToggleEdit()
+    private void ToggleEdit() => SetView(!_editing, _sourceView);
+
+    /// <summary>
+    /// The view switch: editing (side by side for Markdown) or one of the read views. Edited text is kept when leaving
+    /// the editor, and is saved only with Ctrl+S.
+    /// </summary>
+    private void SetView(bool editing, SourceView view)
     {
-        if (!CanEdit)
+        if (!CanEdit || (editing == _editing && view == _sourceView))
         {
             return;
         }
@@ -1320,9 +1360,71 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             });
         }
 
-        _editing = !_editing;
+        _editing = editing;
+        _sourceView = view;
         Show(_shown!);
         _editor?.Focus();
+    }
+
+    /// <summary>The segments for the file on screen; hidden for content that cannot be edited.</summary>
+    private void UpdateViewSwitch()
+    {
+        var inner = _shown is null ? null : Inner(_shown);
+        if (!CanEdit || inner is not (MarkdownPreview or TextPreview))
+        {
+            _viewSwitch.Content = null;
+            _viewSwitch.IsVisible = false;
+            return;
+        }
+
+        (string Label, bool Editing, SourceView View)[] segments = inner is MarkdownPreview
+            ?
+            [
+                (Loc.T("Podgląd"), false, SourceView.Rendered),
+                (Loc.T("Edycja + podgląd"), true, SourceView.Rendered),
+                (Loc.T("Tekst"), false, SourceView.Text),
+                ("Hex", false, SourceView.Hex),
+            ]
+            :
+            [
+                (Loc.T("Tekst"), false, SourceView.Rendered),
+                (Loc.T("Edycja"), true, SourceView.Rendered),
+                ("Hex", false, SourceView.Hex),
+            ];
+        var selected = Array.FindIndex(segments, x => x.Editing == _editing && (x.Editing || x.View == _sourceView));
+        var control = Ds.Segmented(_brushes, [.. segments.Select(x => x.Label)], Math.Max(0, selected),
+            index => Dispatcher.UIThread.Post(() => SetView(segments[index].Editing, segments[index].View)), onToolbar: true);
+        ToolTip.SetTip(control, Loc.T("F4 przełącza edycję"));
+        _viewSwitch.Content = control;
+        _viewSwitch.IsVisible = true;
+    }
+
+    /// <summary>The bytes of a text as hex (UTF-8, at most 256 KB).</summary>
+    private Control HexOf(string text)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        var shown = bytes.AsSpan(0, Math.Min(bytes.Length, 256 * 1024));
+        return Monospace(TextHexViewerPlugin.FormatHex(shown), Loc.T("Hex · pokazano {0:N0} z {1:N0} B", shown.Length, bytes.Length));
+    }
+
+    /// <summary>"Wiersz 14, kol. 23 · 412 słów" for the editor on screen.</summary>
+    private void UpdateCaretInfo(TextBox editor)
+    {
+        var text = editor.Text ?? string.Empty;
+        var caret = Math.Clamp(editor.CaretIndex, 0, text.Length);
+        var line = 1;
+        var lineStart = 0;
+        for (var i = 0; i < caret; i++)
+        {
+            if (text[i] == '\n')
+            {
+                line++;
+                lineStart = i + 1;
+            }
+        }
+
+        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        _caretInfo.Text = Loc.T("Wiersz {0}, kol. {1}", line, caret - lineStart + 1) + " · " + Loc.P(words, "{0} słowo|{0} słowa|{0} słów");
     }
 
     private async Task SaveAsync()
@@ -1455,7 +1557,16 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             _dirty = !string.Equals(editor.Text ?? string.Empty, _savedText, StringComparison.Ordinal);
             _escapeArmed = false;
             _saveButton.Content = _dirty ? Loc.T("● Zapisz (Ctrl+S)") : Loc.T("Zapisz (Ctrl+S)");
+            UpdateCaretInfo(editor);
         };
+        editor.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBox.CaretIndexProperty)
+            {
+                UpdateCaretInfo(editor);
+            }
+        };
+        UpdateCaretInfo(editor);
         editor.KeyDown += (_, e) =>
         {
             if (e.Key == Key.S && e.KeyModifiers.HasFlag(KeyModifiers.Control))

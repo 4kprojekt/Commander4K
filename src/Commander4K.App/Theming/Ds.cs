@@ -414,7 +414,9 @@ public static class Ds
     /// Segmented control for 2–3 short choices: a 2 px padded track (6 px corners) whose selected segment is filled with
     /// the cursor colour, as in the design's "Gęstość" and "Gdy plik już istnieje".
     /// </summary>
-    public static Border Segmented(SkinBrushes b, IReadOnlyList<string> labels, int selected, Action<int> onSelect)
+    /// <param name="onToolbar">On a header/tool bar (design: quick view): the track takes the bar's colour and the
+    /// selected segment is the panel colour with a 1 px ring, instead of the cursor fill used in forms.</param>
+    public static Border Segmented(SkinBrushes b, IReadOnlyList<string> labels, int selected, Action<int> onSelect, bool onToolbar = false)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
         var buttons = new List<Button>();
@@ -423,9 +425,11 @@ public static class Ds
             for (var i = 0; i < buttons.Count; i++)
             {
                 var on = i == index;
-                buttons[i].Background = on ? b.CursorBackground : Brushes.Transparent;
-                buttons[i].Foreground = on ? b.CursorForeground : b.WindowForeground;
+                buttons[i].Background = !on ? Brushes.Transparent : onToolbar ? b.PanelBackground : b.CursorBackground;
+                buttons[i].Foreground = !on ? (onToolbar ? b.HeaderForeground : b.WindowForeground) : onToolbar ? b.FileForeground : b.CursorForeground;
                 buttons[i].FontWeight = on ? FontWeight.SemiBold : FontWeight.Normal;
+                buttons[i].BorderThickness = new Thickness(on && onToolbar ? 1 : 0);
+                buttons[i].BorderBrush = b.PanelBorder;
             }
         }
 
@@ -435,7 +439,7 @@ public static class Ds
             var button = new Button
             {
                 Content = labels[i],
-                Height = 24,
+                Height = onToolbar ? 22 : 24,
                 Padding = new Thickness(12, 0),
                 FontSize = 12,
                 BorderThickness = new Thickness(0),
@@ -458,7 +462,7 @@ public static class Ds
             BorderBrush = b.PanelBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(b.IsModern ? CardRadius : 0),
-            Background = b.Surface2,
+            Background = onToolbar ? b.HeaderBackground : b.Surface2,
             HorizontalAlignment = HorizontalAlignment.Right,
             Child = row,
         };

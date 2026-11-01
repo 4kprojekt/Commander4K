@@ -365,7 +365,6 @@
   "Wstecz (Alt+←, Backspace)": "Back (Alt+←, Backspace)",
   "📄 Pliki (Esc)": "📄 Files (Esc)",
   "Zapisz (Ctrl+S)": "Save (Ctrl+S)",
-  "Edytuj (F4)": "Edit (F4)",
   "Niezapisane zmiany: Ctrl+S zapisuje, ponowne Esc je odrzuca.": "Unsaved changes: Ctrl+S saves, Esc again discards them.",
   "Brak elementu pod kursorem.": "Nothing under the cursor.",
   "Brak podglądu dla „{0}”.": "No quick view for “{0}”.",
@@ -379,7 +378,6 @@
   "Strony podglądu pokazują tylko wtyczki zewnętrzne.": "Only external plugins can show preview pages.",
   "_// Commander4K.App/Preview/WebPreviewView.cs": "",
   "Ten podgląd potrzebuje WebView2 (Microsoft Edge WebView2 Runtime).": "This preview needs WebView2 (Microsoft Edge WebView2 Runtime).",
-  "Podgląd (F4)": "Preview (F4)",
   "Zapisano {0}.": "Saved {0}.",
   "Pokazano początek pliku (2 MB).": "Showing the beginning of the file (2 MB).",
   "● Zapisz (Ctrl+S)": "● Save (Ctrl+S)",
@@ -1317,5 +1315,11 @@
   "Esc czyści wyszukiwanie, drugie Esc pokazuje pliki folderu config · Tab przechodzi między kontrolkami": "Esc clears the search, a second Esc shows the files of the config folder · Tab moves between controls",
   "Kolory, krój pisma i ramki całej aplikacji. Kliknięcie skórki od razu ją włącza.": "Colours, font and borders of the whole app. Clicking a skin switches to it at once.",
   "Pokaż pliki": "Show files",
-  "Wybierz skórkę": "Choose a skin"
+  "Wybierz skórkę": "Choose a skin",
+  "_// Commander4K.App/Preview/PreviewPanelView.cs (view switch)": "",
+  "{0} słowo|{0} słowa|{0} słów": "{0} word|{0} words",
+  "Edycja + podgląd": "Edit + preview",
+  "F4 przełącza edycję": "F4 switches editing",
+  "Tekst": "Text",
+  "Wiersz {0}, kol. {1}": "Line {0}, col. {1}"
 }
