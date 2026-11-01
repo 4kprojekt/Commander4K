@@ -192,6 +192,7 @@ public sealed class MainWindow : Window
     {
         _host = host;
         FolderOpener.OpenInPanel = path => _ = _active.NavigateAsync(path);
+        _ = EnsureAppFolderConfigsAsync(); // plugins/, config/ and config/skins/ name their views in c4k.dir
         _skins = new SkinManager(host, host.Skins.Get(host.Settings.Skin));
         BuildShell();
         _started.TrySetResult();
@@ -443,43 +444,49 @@ public sealed class MainWindow : Window
 
     private void OpenSettings(string? query = null) => _ = OpenFolderViewAsync(SettingsViewKey, query);
 
-    private const string SettingsViewKey = "builtin:settings";
-    private const string SkinsViewKey = "builtin:skins";
-    private const string PluginsViewKey = "builtin:plugins";
+    private const string SettingsViewKey = FolderViewIds.Settings;
+    private const string SkinsViewKey = FolderViewIds.Skins;
+    private const string PluginsViewKey = FolderViewIds.Plugins;
 
     /// <summary>
-    /// The app's own views belong to folders: the plugin manager to <c>plugins/</c>, settings to <c>config/</c>,
-    /// skins to <c>config/skins/</c>. Each opens as a tab on its folder, so the Pliki/Podgląd switch shows the files.
+    /// The app's own views belong to folders, through an ordinary <c>c4k.dir</c> in each: the plugin manager in
+    /// <c>plugins/</c>, settings in <c>config/</c>, skins in <c>config/skins/</c> (<c>"view": "plugins" | "settings" | "skins"</c>).
+    /// The files are written when missing and never overwritten, so the user can change or delete them.
     /// </summary>
-    private (string Key, string Folder)? BuiltInFolderView(string path)
+    private async Task EnsureAppFolderConfigsAsync()
     {
-        var host = _host!;
-        foreach (var (key, folder) in new[]
+        foreach (var view in FolderViewIds.AppViews)
         {
-            (PluginsViewKey, Path.Combine(host.DataDirectory, "plugins")),
-            (SkinsViewKey, host.Config.SkinsDirectory),
-            (SettingsViewKey, host.Config.ConfigDirectory),
-        })
-        {
-            if (string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)), Path.TrimEndingDirectorySeparator(path), StringComparison.OrdinalIgnoreCase))
+            var folder = FolderOfView(view);
+            await Task.Run(() =>
             {
-                return (key, folder);
-            }
+                try
+                {
+                    Directory.CreateDirectory(folder);
+                    var file = Path.Combine(folder, FolderConfig.FileName);
+                    if (!File.Exists(file))
+                    {
+                        File.WriteAllText(file, FolderConfigWriter.CreateForAction(System.Text.Json.Nodes.JsonValue.Create(view), "both"));
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // A read-only install: the commands still open the views as tabs.
+                }
+            });
         }
-
-        return null;
     }
 
-    private string FolderOfView(string key) => key switch
+    private string FolderOfView(string view) => view switch
     {
         PluginsViewKey => Path.Combine(_host!.DataDirectory, "plugins"),
         SkinsViewKey => _host!.Config.SkinsDirectory,
         _ => _host!.Config.ConfigDirectory,
     };
 
-    private IPanelModeView CreateFolderView(string key, string? query = null)
+    private IPanelModeView CreateFolderView(string view, string? query = null)
     {
-        switch (key)
+        switch (view.ToLowerInvariant())
         {
             case PluginsViewKey:
                 var plugin = _host!.FindPanel(PluginManagerPanel.PluginId)!;
@@ -513,7 +520,7 @@ public sealed class MainWindow : Window
         }
 
         var folder = FolderOfView(key);
-        await Task.Run(() => Directory.CreateDirectory(folder));
+        await EnsureAppFolderConfigsAsync();
         var target = ModeTarget().Target;
         target.AddFolderViewTab(folder, key, CreateFolderView(key, query));
         SetActive(target);
@@ -842,6 +849,7 @@ public sealed class MainWindow : Window
     private PreviewPanelView CreatePreview(FilePanelView source, PreviewPanelView.PinnedFolder? pinned = null, VfsEntry? pinnedFile = null) =>
         new(_host!, source, _skins!.Current, Notify, pinned, pinnedFile)
         {
+            CreateAppView = view => CreateFolderView(view),
             ShowUnknownPreviewOptions = entry => ShowUnknownPreviewPromptsAsync(source, entry),
             InstallCatalogPreview = InstallFromCatalogAsync,
             OpenPluginCatalog = () =>
@@ -865,15 +873,6 @@ public sealed class MainWindow : Window
     /// </summary>
     private async Task EnterFolderAsync(FilePanelView panel, VfsEntry folder)
     {
-        if (VfsPath.GetScheme(folder.Path) == VfsPath.FileScheme && BuiltInFolderView(folder.Path) is { } builtIn)
-        {
-            // plugins/, config/ and config/skins/ are shown by the app's own views; Pliki/Podgląd shows their files.
-            await panel.NavigateAsync(folder.Path);
-            panel.ShowMode(CreateFolderView(builtIn.Key), folderView: true);
-            SetActive(panel);
-            return;
-        }
-
         FolderConfig? config = null;
         if (VfsPath.GetScheme(folder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
         {
@@ -1336,6 +1335,13 @@ public sealed class MainWindow : Window
 
                 _ = panel.NavigateAsync(folder.Path);
                 await OpenPanelInAsync(panelId, folder.Path, panel, action.Options, folderView: true);
+                return;
+
+            case FolderActionKind.View when action.Plugin is null && FolderViewIds.IsAppView(action.View):
+                // "settings", "skins", "plugins": the app's own page as the folder's view; Pliki/Podgląd shows its files.
+                await panel.NavigateAsync(folder.Path);
+                panel.ShowMode(CreateFolderView(action.View!), folderView: true);
+                SetActive(panel);
                 return;
 
             case FolderActionKind.View:

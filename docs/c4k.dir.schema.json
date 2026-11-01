@@ -13,7 +13,7 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "view": { "enum": ["files", "gallery", "dashboard", "notes", "markdown", "api"] },
+    "view": { "enum": ["files", "gallery", "dashboard", "notes", "markdown", "api", "settings", "skins", "plugins"], "description": "settings, skins and plugins are the app's own pages (settings, skins, plugin manager); the app writes them into config/, config/skins/ and the plugins folder." },
     "action": {
       "description": "A built-in view name, a plugin id (e.g. official.steam-library), or an object with one target.",
       "oneOf": [

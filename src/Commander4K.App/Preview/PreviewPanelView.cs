@@ -737,6 +737,12 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
                 Loc.T("Ten podgląd z c4k.dir otwiera się po wejściu do folderu (Enter)."))));
         }
 
+        if (action.Plugin is null && FolderViewIds.IsAppView(action.View))
+        {
+            var view = action.View!.ToLowerInvariant();
+            return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(new AppFolderViewPreview(view)));
+        }
+
         if (action.Plugin is null && action.View is FolderViewIds.Api && action.Api is { } request)
         {
             var api = _app.ApiCards;
@@ -772,6 +778,12 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private void Show(PreviewContent content)
     {
+        if (_appView is { } previousApp && content is not AppFolderViewPreview)
+        {
+            _appView = null;
+            _ = previousApp.DisposeModeAsync(); // a plugin manager session ends with its view
+        }
+
         // The plugin renamed the entry (a message marked read) or switched to another file (a draft): follow it.
         while (content is MovedPreview moved)
         {
@@ -841,8 +853,25 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _content.Content = view;
     }
 
+    /// <summary>Creates the app's own view (settings, skins, plugin manager) for a <c>c4k.dir</c> that names it.</summary>
+    public Func<string, IPanelModeView?>? CreateAppView { get; init; }
+
+    private IPanelModeView? _appView;
+
+    private Control? AppView(AppFolderViewPreview preview)
+    {
+        if (_appView is { } old)
+        {
+            _ = old.DisposeModeAsync(); // drawn again (a skin change): the new view replaces it
+        }
+
+        _appView = CreateAppView?.Invoke(preview.View);
+        return _appView?.View ?? new TextBlock { Text = preview.View, Margin = new Thickness(16), Foreground = _brushes.MutedForeground };
+    }
+
     private Control? Render(PreviewContent content) => content switch
     {
+        AppFolderViewPreview app => AppView(app),
         BrowserPagePreview browser => BrowserView(browser),
         SftpConnectionPreview sftp => SftpConnectionView(sftp),
         WebPreview web => WebView(web),
@@ -1909,3 +1938,6 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _busy.IsVisible = busy;
     }
 }
+
+/// <summary>A folder whose <c>c4k.dir</c> names one of the app's own views (<see cref="FolderViewIds.AppViews"/>).</summary>
+public sealed record AppFolderViewPreview(string View) : PreviewContent;

@@ -29,7 +29,21 @@ public static class FolderViewIds
     /// <summary>Card only: status, CPU, memory and disks of an SSH server (the tile's <c>open</c> is an <c>sftp://</c> path).</summary>
     public const string Ssh = "ssh";
 
-    public static readonly IReadOnlyList<string> All = [Files, Gallery, Dashboard, Notes, Markdown, Api];
+    /// <summary>The app's settings page (the view of <c>config/</c>).</summary>
+    public const string Settings = "settings";
+
+    /// <summary>The skins page (the view of <c>config/skins/</c>).</summary>
+    public const string Skins = "skins";
+
+    /// <summary>The plugin manager (the view of the plugins folder).</summary>
+    public const string Plugins = "plugins";
+
+    /// <summary>Views drawn by the app itself rather than by a preview plugin.</summary>
+    public static readonly IReadOnlyList<string> AppViews = [Settings, Skins, Plugins];
+
+    public static bool IsAppView(string? view) => view is not null && AppViews.Contains(view, StringComparer.OrdinalIgnoreCase);
+
+    public static readonly IReadOnlyList<string> All = [Files, Gallery, Dashboard, Notes, Markdown, Api, Settings, Skins, Plugins];
 }
 
 /// <summary>Footprint of a tile on the dashboard grid, in columns × rows.</summary>

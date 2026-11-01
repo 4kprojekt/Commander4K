@@ -8,6 +8,17 @@ namespace Commander4K.Core.Tests;
 public sealed class FolderConfigTests
 {
     [Fact]
+    public void App_views_are_views_not_plugin_ids()
+    {
+        var config = FolderConfig.Parse(@"C:\App\config", """{ "preview": "settings", "enter": { "view": "plugins" } }""");
+
+        Assert.Equal(FolderViewIds.Settings, config.Preview!.View);
+        Assert.Null(config.Preview.Plugin);
+        Assert.True(FolderViewIds.IsAppView(config.Enter!.View));
+        Assert.False(FolderViewIds.IsAppView(FolderViewIds.Gallery));
+    }
+
+    [Fact]
     public void Names_are_views_or_plugins()
     {
         var config = FolderConfig.Parse(@"C:\Photos", """
