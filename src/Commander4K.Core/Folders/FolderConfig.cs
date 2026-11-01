@@ -171,6 +171,12 @@ public sealed record FolderTile(string Title, string? Subtitle, string? Icon, st
 
     public TileSize Size { get; init; }
 
+    /// <summary>A section heading across the whole row (title + optional subtitle), not a tile; groups the tiles after it.</summary>
+    public bool Heading { get; init; }
+
+    /// <summary>The footprint used for layout: a heading always takes one whole row.</summary>
+    public TileSize LayoutSize => Heading ? TileSize.Full : Size;
+
     /// <summary>The request of an <see cref="FolderViewIds.Api"/> card.</summary>
     public ApiRequest? Api { get; init; }
 
@@ -459,7 +465,14 @@ public sealed record FolderConfig
             String(tile, "image"),
             String(tile, "open"),
             String(tile, "url"),
-            tile.TryGetProperty("run", out var run) ? ParseRun(run) : null);
+            tile.TryGetProperty("run", out var run) ? ParseRun(run) : null)
+        {
+            Heading = tile.TryGetProperty("heading", out var heading) && heading.ValueKind == JsonValueKind.True,
+        };
+        if (parsed.Heading)
+        {
+            return parsed;
+        }
 
         // Card fields are checked per tile: one mistyped tile shows its error and the rest of the dashboard still works.
         try

@@ -366,6 +366,9 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
 
     public string DisplayName => preview.Title;
 
+    /// <summary>The manifest's <c>contributes.previews[]</c> entry (extensions, card support…).</summary>
+    public PreviewContribution Contribution => preview;
+
     public PluginManifest Manifest => plugin.Manifest;
 
     public int Priority => preview.Priority;

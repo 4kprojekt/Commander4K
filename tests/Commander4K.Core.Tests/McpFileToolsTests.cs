@@ -207,7 +207,7 @@ public sealed class McpFileToolsTests
         Assert.True(Tool("delete").Definition.AlwaysAsk);
     }
 
-    private sealed class MemFs : IVfsProviderPlugin
+    internal sealed class MemFs : IVfsProviderPlugin
     {
         public Dictionary<string, byte[]> Files { get; } = [];
 

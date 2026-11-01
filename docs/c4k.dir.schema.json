@@ -73,6 +73,7 @@
         },
         "refresh": { "type": "string", "pattern": "^[0-9]+[smh]$", "description": "Read the card again every 10s, 5m, 1h… while the dashboard is visible (at least 2 s)." },
         "options": { "type": "object", "description": "Passed to the card's preview." },
+        "heading": { "type": "boolean", "description": "A section heading across the whole row (title + subtitle), grouping the tiles after it; other fields except icon are ignored." },
         "size": { "enum": ["small", "wide", "tall", "large", "huge", "full"], "description": "Footprint on the dashboard grid (columns × rows): small 1×1, wide 2×1, tall 1×2, large 2×2, huge 3×2, full = the whole row." },
         "api": { "$ref": "#/$defs/api" }
       },

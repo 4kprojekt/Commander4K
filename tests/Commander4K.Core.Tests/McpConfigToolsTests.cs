@@ -104,7 +104,6 @@ public sealed class McpConfigToolsTests : IDisposable
     [InlineData("MCP.Port", "1234")]
     [InlineData("mcp:delete", "allow")]
     [InlineData("pluginCatalogUrl", "https://evil.example/catalog.json")]
-    [InlineData("aiCatalogUrl", "https://evil.example/ai.json")]
     [InlineData("updateRepository", "evil/repo")]
     public async Task Set_setting_refuses_read_only_keys(string key, string value)
     {

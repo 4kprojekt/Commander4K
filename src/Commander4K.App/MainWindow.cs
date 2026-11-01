@@ -531,7 +531,16 @@ public sealed class MainWindow : Window
             id => _host.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, id, StringComparison.OrdinalIgnoreCase))),
         .. McpAppTools.Create(this, _host, AiContext, allowedRoots, protectedRoots),
         .. McpConfigTools.Create(McpConfigContext()),
+        .. McpDashboardTools.Create(_host.Router, McpCardPreviews),
         .. McpSkinTools.Create(this, _host, () => _skins!),
+    ];
+
+    /// <summary>The installed previews that draw dashboard cards, as the MCP dashboard tools list them.</summary>
+    private IReadOnlyList<McpCardPreview> McpCardPreviews() =>
+    [
+        .. _host!.PreviewPlugins.OfType<Core.Plugins.ExternalPreviewPlugin>().Where(p => p.Contribution.Card)
+            .Select(p => new McpCardPreview(p.Id, p.DisplayName, p.Manifest.Description,
+                [.. p.Contribution.Extensions.Select(e => e == "/" ? "folders" : e)])),
     ];
 
     /// <summary>What the configuration tools change: the same settings, key bindings and skins as the settings window.</summary>

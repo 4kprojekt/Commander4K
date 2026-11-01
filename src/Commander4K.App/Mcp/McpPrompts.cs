@@ -58,6 +58,36 @@ public static class McpPrompts
                     "Say how sure you are, and what else you would need to check.\n\n" + sample;
             }),
         new McpPrompt(
+            "build_dashboard",
+            "Design and save a clean, professional dashboard (c4k.dir) for a folder: KPIs, charts, server status, notes and links.",
+            [
+                new McpPromptArgument("folder", "The folder that gets the dashboard.", true),
+                new McpPromptArgument("goal", "What the dashboard should answer or show (optional; otherwise infer it from the folder).", false),
+            ],
+            (args, _) =>
+            {
+                var folder = McpPathPolicy.Normalize(args["folder"]);
+                if (McpToolDispatcher.Refusal(folder, allowedRoots(), protectedRoots()) is { } refusal)
+                {
+                    return Task.FromResult(refusal);
+                }
+
+                var goal = args.TryGetValue("goal", out var g) && !string.IsNullOrWhiteSpace(g) ? g.Trim() : null;
+                return Task.FromResult(
+                    $"Build a Commander4K dashboard for the folder {folder}." +
+                    (goal is null ? " Work out from its contents what it is for." : $" Goal: {goal}") + "\n\n" +
+                    "Steps:\n" +
+                    "1. Call dashboard_guide and follow its design rules.\n" +
+                    "2. Call get_dashboard for the folder (keep any keys of an existing c4k.dir you are not asked to change), and list_directory to see what is there " +
+                    "(subfolders for folder cards and sub-dashboards, docs for markdown/note cards, pictures for gallery, configs for plugin cards).\n" +
+                    "3. Plan the sections (heading tiles), the KPI row, the main chart or list and the details; ask the user for API URLs, servers " +
+                    "or secrets you cannot find, and never invent endpoints.\n" +
+                    "4. Run check_dashboard until there are no errors and the 3- and 4-column pictures have no empty cells.\n" +
+                    "5. save_dashboard, then navigate to the folder and set the other panel to preview (set_panel_mode) so the user sees it. " +
+                    "Tell the user which cards wait for their trust (\"Zezwól\") and which plugins the tiles offer to install.\n" +
+                    "Titles and texts in Polish unless the user writes in another language.");
+            }),
+        new McpPrompt(
             "translate_ui",
             "Translate the Commander4K user interface into a language (or complete an existing translation).",
             [

@@ -152,7 +152,11 @@ public sealed class DashboardView : ScrollViewer
             var (_, rows) = TileSizes.Span(slot.Tile.Size);
             var minHeight = UnitHeight * rows + TileGap * (rows - 1);
             Control tile;
-            if (_cards.TryGetValue(slot.Index, out var card))
+            if (slot.Tile.Heading)
+            {
+                tile = SectionHeading(slot.Tile);
+            }
+            else if (_cards.TryGetValue(slot.Index, out var card))
             {
                 tile = card.Render(minHeight);
             }
@@ -195,17 +199,19 @@ public sealed class DashboardView : ScrollViewer
         }
 
         _columns = columns;
-        var placements = TileGridLayout.Place([.. _dashboard.Slots.Select(s => s.Tile.Size)], columns);
+        var placements = TileGridLayout.Place([.. _dashboard.Slots.Select(s => s.Tile.LayoutSize)], columns);
         _grid.ColumnDefinitions.Clear();
         for (var i = 0; i < columns; i++)
         {
             _grid.ColumnDefinitions.Add(new Avalonia.Controls.ColumnDefinition(1, GridUnitType.Star));
         }
 
+        // Rows holding only a section heading stay as low as their text.
+        var headingRows = placements.Where((p, i) => _dashboard.Slots[i].Tile.Heading).Select(p => p.Row).ToHashSet();
         _grid.RowDefinitions.Clear();
-        for (var i = TileGridLayout.RowCount(placements); i > 0; i--)
+        for (var row = 0; row < TileGridLayout.RowCount(placements); row++)
         {
-            _grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto) { MinHeight = UnitHeight });
+            _grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto) { MinHeight = headingRows.Contains(row) ? 0 : UnitHeight });
         }
 
         for (var i = 0; i < _tiles.Count; i++)
@@ -216,6 +222,26 @@ public sealed class DashboardView : ScrollViewer
             Grid.SetColumnSpan(_tiles[i], place.ColumnSpan);
             Grid.SetRowSpan(_tiles[i], place.RowSpan);
         }
+    }
+
+    /// <summary>A section heading over the tiles after it: accent capitals, an optional muted line, a rule below.</summary>
+    private Control SectionHeading(FolderTile tile)
+    {
+        var text = new StackPanel { Spacing = 2, Margin = new Thickness(2, 10, 0, 6) };
+        var heading = Ds.SectionHeading(_brushes, tile.Icon is { Length: > 0 } icon ? icon + "  " + tile.Title : tile.Title);
+        heading.FontSize = Math.Max(11, _brushes.FontSize - 1);
+        text.Children.Add(heading);
+        if (tile.Subtitle is { Length: > 0 } subtitle)
+        {
+            text.Children.Add(Ds.Muted(_brushes, subtitle));
+        }
+
+        return new Border
+        {
+            BorderBrush = _brushes.PanelBorder,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = text,
+        };
     }
 
     /// <summary>The tile with its edit buttons over its top-right corner, shown while the pointer is on the tile.</summary>
@@ -231,7 +257,11 @@ public sealed class DashboardView : ScrollViewer
             IsVisible = false,
         };
         var next = TileSizes.Next(slot.Tile.Size);
-        commands.Children.Add(EditButton("⤢", Loc.T("Rozmiar kafelka: {0} → {1}", SizeName(slot.Tile.Size), SizeName(next)), true, slot.Index, DashboardTileEdit.Resize));
+        if (!slot.Tile.Heading)
+        {
+            commands.Children.Add(EditButton("⤢", Loc.T("Rozmiar kafelka: {0} → {1}", SizeName(slot.Tile.Size), SizeName(next)), true, slot.Index, DashboardTileEdit.Resize));
+        }
+
         commands.Children.Add(EditButton("↑", Loc.T("Przesuń kafelek w górę"), slot.Index > 0, slot.Index, DashboardTileEdit.MoveUp));
         commands.Children.Add(EditButton("↓", Loc.T("Przesuń kafelek w dół"), slot.Index < _dashboard.Slots.Count - 1, slot.Index, DashboardTileEdit.MoveDown));
         commands.Children.Add(EditButton("×", Loc.T("Usuń kafelek"), true, slot.Index, DashboardTileEdit.Remove));
@@ -513,7 +543,21 @@ public sealed class DashboardView : ScrollViewer
                 body.Children.Add(new TextBlock { Text = subtitle, FontSize = brushes.FontSize - 1, Foreground = brushes.MutedForeground, TextWrapping = TextWrapping.Wrap, MaxLines = 2 * Rows + 1 });
             }
 
-            if (card is not null)
+            if (card is { Items: [CardValue kpi] })
+            {
+                // One value is a KPI: the number large, its label under it.
+                body.Children.Add(new TextBlock
+                {
+                    Text = kpi.Value,
+                    FontSize = brushes.FontSize * (Rows > 1 ? 3.6 : 2.4),
+                    FontWeight = FontWeight.SemiBold,
+                    Foreground = StatusBrush(kpi.Status, brushes) ?? brushes.FileForeground,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Margin = new Thickness(0, 4, 0, 0),
+                });
+                body.Children.Add(new TextBlock { Text = kpi.Label, FontSize = Math.Max(11, brushes.FontSize - 1), Foreground = brushes.MutedForeground, TextTrimming = TextTrimming.CharacterEllipsis });
+            }
+            else if (card is not null)
             {
                 for (var i = 0; i < card.Items.Count; i++)
                 {
