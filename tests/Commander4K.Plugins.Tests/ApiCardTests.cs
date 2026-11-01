@@ -114,6 +114,22 @@ public sealed class ApiCardTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Values_that_are_not_finite_numbers_stay_off_the_chart()
+    {
+        _respond = _ => Json("""{ "a": "NaN", "b": "Infinity", "c": 1e400, "d": 7 }""");
+        var (api, host) = Create();
+
+        var card = await api.LoadCardAsync(Request("""
+            [ { "path": "a", "as": "chart" }, { "path": "b", "as": "chart" }, { "path": "c", "as": "chart" }, { "path": "d", "as": "chart" } ]
+            """), host, null, TestToken);
+
+        Assert.NotEqual(CardStatus.Error, card.Status);
+        var series = Assert.Single(card.Items.OfType<CardChart>()).Chart.Series;
+        Assert.Equal("d", Assert.Single(series).Name);
+        Assert.All(series.SelectMany(s => s.Points), p => Assert.True(double.IsFinite(p.Y)));
+    }
+
+    [Fact]
     public async Task Missing_path_shows_dash()
     {
         _respond = _ => Json("""{ "a": { "b": 1 } }""");

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Commander4K.Core.Localization;
 using Commander4K.Core.Plugins;
@@ -20,7 +21,26 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
     private const string AuditId = "builtin.remote";
 
     private readonly ConcurrentDictionary<string, SshClient> _clients = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, long[]> _ticks = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>One connection attempt per server at a time, so two cards cannot open (and leak) two sessions.</summary>
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _connecting = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Dashboards showing each server; its session closes when the last one lets go.</summary>
+    private readonly ConcurrentDictionary<string, int> _holders = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The CPU counters behind each card returned, so a card measures against its own previous reading.</summary>
+    private readonly ConditionalWeakTable<PreviewCard, long[]> _readings = new();
+
+    /// <summary>A dashboard starts showing this server: its session stays open until the matching <see cref="ReleaseAsync"/>.</summary>
+    public void Retain(string sftpPath)
+    {
+        if (TryKey(sftpPath) is { } key)
+        {
+            _holders.AddOrUpdate(key, 1, (_, count) => count + 1);
+        }
+    }
+
+    internal int Holders(string sftpPath) => TryKey(sftpPath) is { } key && _holders.TryGetValue(key, out var count) ? count : 0;
 
     /// <param name="optionsJson"><c>{ "user": "…", "keyFile": "~/.ssh/id_ed25519" }</c> from the tile.</param>
     /// <param name="resolvePath">Resolves a relative <c>keyFile</c> against the tile's folder; without it only <c>~</c> is expanded.</param>
@@ -51,7 +71,7 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             command.CommandTimeout = TimeSpan.FromSeconds(10);
             await command.ExecuteAsync(cancellationToken).ConfigureAwait(false);
             audit.Record(AuditId, "ssh.monitor", endpoint.Host);
-            return Describe(key, SshStatsParser.Parse(command.Result), previous, actions);
+            return Describe(SshStatsParser.Parse(command.Result), previous, actions);
         }
         catch (SshAuthenticationException)
         {
@@ -67,15 +87,31 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
         }
     }
 
-    /// <summary>The dashboard showing this server went away: its session closes.</summary>
+    /// <summary>A dashboard showing this server went away: the session closes once no other dashboard holds it.</summary>
     public async ValueTask ReleaseAsync(string sftpPath)
+    {
+        if (TryKey(sftpPath) is not { } key)
+        {
+            return;
+        }
+
+        var left = _holders.AddOrUpdate(key, 0, (_, count) => Math.Max(0, count - 1));
+        if (left == 0)
+        {
+            _holders.TryRemove(new KeyValuePair<string, int>(key, 0));
+            await DropAsync(key).ConfigureAwait(false);
+        }
+    }
+
+    private static string? TryKey(string sftpPath)
     {
         try
         {
-            await DropAsync(RemoteEndpoint.Parse(sftpPath).SessionKey).ConfigureAwait(false);
+            return RemoteEndpoint.Parse(sftpPath).SessionKey;
         }
         catch (FormatException)
         {
+            return null;
         }
     }
 
@@ -94,23 +130,38 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             return existing;
         }
 
-        await DropAsync(key).ConfigureAwait(false);
-        var info = new ConnectionInfo(endpoint.Host, endpoint.Port, login.UserName, [.. SftpSession.AuthenticationMethods(login)]) { Timeout = TimeSpan.FromSeconds(10) };
-        var client = new SshClient(info) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
-        client.HostKeyReceived += (_, e) => e.CanTrust = remote.HostKeyValidator(endpoint.Host, endpoint.Port, e.FingerPrintSHA256);
+        var gate = _connecting.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            client.Dispose();
-            throw;
-        }
+            // Another card may have connected while this one waited.
+            if (_clients.TryGetValue(key, out existing) && existing.IsConnected)
+            {
+                return existing;
+            }
 
-        audit.Record(AuditId, "ssh.connect", $"{login.UserName}@{endpoint.Host}:{endpoint.Port.ToString(CultureInfo.InvariantCulture)}");
-        _clients[key] = client;
-        return client;
+            await DropAsync(key).ConfigureAwait(false);
+            var info = new ConnectionInfo(endpoint.Host, endpoint.Port, login.UserName, [.. SftpSession.AuthenticationMethods(login)]) { Timeout = TimeSpan.FromSeconds(10) };
+            var client = new SshClient(info) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+            client.HostKeyReceived += (_, e) => e.CanTrust = remote.HostKeyValidator(endpoint.Host, endpoint.Port, e.FingerPrintSHA256);
+            try
+            {
+                await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                client.Dispose();
+                throw;
+            }
+
+            audit.Record(AuditId, "ssh.connect", $"{login.UserName}@{endpoint.Host}:{endpoint.Port.ToString(CultureInfo.InvariantCulture)}");
+            _clients[key] = client;
+            return client;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     private Task DropAsync(string key)
@@ -161,7 +212,8 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
         return new RemoteLogin(user ?? Environment.UserName, PrivateKeyFile: keyFile);
     }
 
-    private PreviewCard Describe(string key, SshStats stats, PreviewCard? previous, CardAction[] actions)
+    /// <param name="previous">This card's last result: CPU use is the difference from the counters read for it.</param>
+    internal PreviewCard Describe(SshStats stats, PreviewCard? previous, CardAction[] actions)
     {
         var items = new List<CardItem> { new CardValue(Loc.T("Status"), Loc.T("połączony"), CardStatus.Ok) };
         if (!stats.IsLinux)
@@ -170,11 +222,9 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             return Card(CardStatus.Ok, null, items, actions);
         }
 
-        var cpu = stats.CpuTicks is { } now && _ticks.TryGetValue(key, out var before) ? SshStatsParser.CpuPercent(before, now) : null;
-        if (stats.CpuTicks is { } ticks)
-        {
-            _ticks[key] = ticks;
-        }
+        var cpu = stats.CpuTicks is { } now && previous is not null && _readings.TryGetValue(previous, out var before)
+            ? SshStatsParser.CpuPercent(before, now)
+            : null;
 
         if (cpu is { } percent)
         {
@@ -207,7 +257,13 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
         }
 
         var worst = items.OfType<CardProgress>().Any(p => p.Fraction >= 0.9) || cpu >= 90 ? CardStatus.Warning : CardStatus.Ok;
-        return Card(worst, null, items, actions);
+        var card = Card(worst, null, items, actions);
+        if (stats.CpuTicks is { } ticks)
+        {
+            _readings.AddOrUpdate(card, ticks);
+        }
+
+        return card;
     }
 
     private static string Gb(long kilobytes) => (kilobytes / 1024.0 / 1024).ToString("0.0", CultureInfo.CurrentCulture) + " GB";

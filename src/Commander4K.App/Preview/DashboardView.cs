@@ -147,6 +147,11 @@ public sealed class DashboardView : ScrollViewer
         foreach (var slot in _dashboard.Slots.Where(s => s.Tile.Card is not null))
         {
             var tile = slot.Tile;
+            if (string.Equals(tile.Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase) && _targets.TryGetValue(slot.Index, out var server))
+            {
+                _app.SshMonitor.Retain(server); // released in StopAsync; another dashboard on the same server keeps the session
+            }
+
             CardSource? source = null; // one read at a time per card (the loop guarantees it), so no lock is needed
             loop.Add(slot.Index, async (previous, ct) =>
             {

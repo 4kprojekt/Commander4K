@@ -214,12 +214,17 @@ public sealed class ApiCards(SecretStore secrets)
         }
     }
 
-    private static double? Number(JsonElement value) => value.ValueKind switch
+    /// <summary>A finite number, or null: "NaN", "Infinity" and values beyond double's range never reach a chart.</summary>
+    private static double? Number(JsonElement value)
     {
-        JsonValueKind.Number => value.GetDouble(),
-        JsonValueKind.String when double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
-        _ => null,
-    };
+        double? number = value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetDouble(out var d) => d,
+            JsonValueKind.String when double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => null,
+        };
+        return number is { } n && double.IsFinite(n) ? n : null;
+    }
 
     private static string LastSegment(string path)
     {

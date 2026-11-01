@@ -345,7 +345,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
                 { "kind": "value", "label": "A", "value": "1", "status": "error" },
                 { "kind": "progress", "label": "Dysk", "fraction": 0.5, "text": "50 %" },
                 { "kind": "text", "text": "hello" },
-                { "kind": "chart", "chart": { "kind": "bar", "unit": "req", "series": [ { "name": "GET", "points": [ { "x": 0, "y": 3, "label": "GET" } ] } ] } },
+                { "kind": "chart", "chart": { "kind": "bar", "unit": "req", "series": [ { "name": "GET", "points": [ { "x": 0, "y": 3, "label": "GET" }, { "x": 1, "y": 1e400 } ] } ] } },
                 { "kind": "unknown" }
               ], "actions": [ { "label": "Otwórz", "target": "https://example.com" } ] }
             """);
@@ -359,7 +359,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Equal("hello", Assert.IsType<CardText>(card.Items[2]).Text);
         var chart = Assert.IsType<CardChart>(card.Items[3]).Chart;
         Assert.Equal(ChartKind.Bar, chart.Kind);
-        Assert.Equal(3, chart.Series[0].Points[0].Y);
+        Assert.Equal(3, Assert.Single(chart.Series[0].Points).Y); // 1e400 is infinite and dropped
         Assert.Equal(4, card.Items.Count);
         Assert.Equal("https://example.com", Assert.Single(card.Actions).Target);
     }
