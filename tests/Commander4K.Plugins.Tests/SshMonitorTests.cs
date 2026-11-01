@@ -81,6 +81,41 @@ public sealed class SshMonitorTests
         Assert.Contains(card.Actions, a => a.Target == Commander4K.PluginSdk.CardActions.Refresh);
     }
 
+    private static SshStats Reading(params long[] ticks) =>
+        SshStatsParser.Parse($"@@uname\nLinux\n@@loadavg\n0.10 0.20 0.30 1/1 1\n@@stat\ncpu  {string.Join(' ', ticks)}\n");
+
+    [Fact]
+    public async Task Cpu_is_measured_against_the_same_cards_previous_reading()
+    {
+        await using var audit = new Commander4K.Core.Plugins.AuditLog(null);
+        await using var monitor = new SshMonitor(new RemoteTransferVfsPlugin(), audit);
+        long[] t0 = [100, 0, 100, 800, 0], t1 = [500, 0, 400, 900, 0], t2 = [600, 0, 200, 1000, 0];
+
+        var first = monitor.Describe(Reading(t0), null, []);
+        monitor.Describe(Reading(t1), null, []); // another dashboard's card for the same server
+        var second = monitor.Describe(Reading(t2), first, []);
+
+        Assert.DoesNotContain(first.Items.OfType<Commander4K.PluginSdk.CardValue>(), v => v.Label == "CPU");
+        var expected = SshStatsParser.CpuPercent(t0, t2)!.Value;
+        Assert.Equal($"{expected:0} %", second.Items.OfType<Commander4K.PluginSdk.CardValue>().Single(v => v.Label == "CPU").Value);
+    }
+
+    [Fact]
+    public async Task Release_keeps_the_session_while_another_dashboard_holds_it()
+    {
+        await using var audit = new Commander4K.Core.Plugins.AuditLog(null);
+        await using var monitor = new SshMonitor(new RemoteTransferVfsPlugin(), audit);
+        const string Path = "sftp://kamil@vps/";
+
+        monitor.Retain(Path);
+        monitor.Retain(Path);
+        await monitor.ReleaseAsync(Path);
+        Assert.Equal(1, monitor.Holders(Path));
+
+        await monitor.ReleaseAsync(Path);
+        Assert.Equal(0, monitor.Holders(Path));
+    }
+
     [Fact]
     public void Cpu_percent_from_two_samples()
     {

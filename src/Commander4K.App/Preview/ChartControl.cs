@@ -36,7 +36,12 @@ public sealed class ChartControl(SkinBrushes brushes) : Control
             return;
         }
 
-        var points = chart.Series.SelectMany(s => s.Points).ToList();
+        var points = chart.Series.SelectMany(s => s.Points).Where(p => double.IsFinite(p.X) && double.IsFinite(p.Y)).ToList();
+        if (points.Count == 0)
+        {
+            return;
+        }
+
         var min = chart.Min ?? Math.Min(0, points.Min(p => p.Y));
         var max = chart.Max ?? points.Max(p => p.Y);
         if (max <= min)

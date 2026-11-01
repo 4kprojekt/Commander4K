@@ -72,6 +72,12 @@ public sealed record ChartData(ChartKind Kind, IReadOnlyList<ChartSeries> Series
     /// <summary>Adds a point to the series named <paramref name="series"/> (created when missing), keeping the last <see cref="MaxPoints"/>.</summary>
     public ChartData Append(string series, ChartPoint point)
     {
+        // NaN or infinity (an API answering "NaN", a reading that overflowed) would break the drawing: skipped.
+        if (!double.IsFinite(point.X) || !double.IsFinite(point.Y))
+        {
+            return this;
+        }
+
         var all = Series.ToList();
         var index = all.FindIndex(s => s.Name == series);
         if (index < 0)

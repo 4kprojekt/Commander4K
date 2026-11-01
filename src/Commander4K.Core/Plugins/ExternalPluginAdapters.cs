@@ -582,7 +582,7 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
         var series = chart.TryGetProperty("series", out var s) && s.ValueKind == JsonValueKind.Array
             ? s.EnumerateArray().Select(one => new ChartSeries(CardString(one, "name") ?? string.Empty,
                 one.TryGetProperty("points", out var p) && p.ValueKind == JsonValueKind.Array
-                    ? [.. p.EnumerateArray().Select(point => new ChartPoint(Number(point, "x") ?? 0, Number(point, "y") ?? 0, CardString(point, "label"))).TakeLast(ChartData.MaxPoints)]
+                    ? [.. p.EnumerateArray().Select(point => new ChartPoint(Number(point, "x") ?? 0, Number(point, "y") ?? 0, CardString(point, "label"))).Where(point => double.IsFinite(point.X) && double.IsFinite(point.Y)).TakeLast(ChartData.MaxPoints)]
                     : [])).ToList()
             : [];
         return new ChartData(string.Equals(CardString(chart, "kind"), "bar", StringComparison.OrdinalIgnoreCase) ? ChartKind.Bar : ChartKind.Line,

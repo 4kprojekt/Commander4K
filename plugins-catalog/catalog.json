@@ -543,11 +543,11 @@
         },
         {
           "path": "deps.py",
-          "sha256": "60acc6de09101330f35cbb0816b135df0f7de1624c762322ae3ed8a4a9f83b14"
+          "sha256": "29e3380fb6078a6211621ef3c95876e97a79ee99ceeb26dd9ea77c528ecf6911"
         },
         {
           "path": "main.py",
-          "sha256": "58f48686c110c8469337e48fe6589e65525c13f4617e6c828f1b0d9e50392bd7"
+          "sha256": "bb4175831aec8c928753fee540c59da397461575b0d06442da307afbc221b938"
         },
         {
           "path": "pe.py",
