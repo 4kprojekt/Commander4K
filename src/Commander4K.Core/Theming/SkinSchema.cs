@@ -13,18 +13,12 @@ public static class SkinSchema
     private const string ColorPattern = "^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$";
     private const string ColorDescription = "Colour as #RRGGBB or #AARRGGBB (hex).";
 
-    /// <summary>Documentation schema for editors and for pasting into a chat with Claude.</summary>
-    public static JsonNode Create() => Export(strictForApi: false);
-
-    /// <summary>
-    /// Variant for Claude API structured outputs: every object closed (<c>additionalProperties: false</c>) with all
-    /// properties required, and no <c>pattern</c> (unsupported there); colours are validated when parsing instead.
-    /// </summary>
-    public static JsonNode CreateForStructuredOutput() => Export(strictForApi: true);
+    /// <summary>Documentation schema for editors and for pasting into a chat with an assistant.</summary>
+    public static JsonNode Create() => Export();
 
     public static string CreateJson() => Create().ToJsonString(new JsonSerializerOptions { WriteIndented = true });
 
-    private static JsonNode Export(bool strictForApi)
+    private static JsonNode Export()
     {
         var options = new JsonSchemaExporterOptions
         {
@@ -39,19 +33,7 @@ public static class SkinSchema
 
                 if (context.TypeInfo.Type == typeof(RgbColor) || context.TypeInfo.Type == typeof(RgbColor?))
                 {
-                    var color = new JsonObject { ["type"] = "string", ["description"] = ColorDescription };
-                    if (!strictForApi)
-                    {
-                        color["pattern"] = ColorPattern;
-                    }
-
-                    return color;
-                }
-
-                if (strictForApi && node is JsonObject obj && obj["properties"] is JsonObject properties)
-                {
-                    obj["additionalProperties"] = false;
-                    obj["required"] = new JsonArray([.. properties.Select(p => (JsonNode)JsonValue.Create(p.Key))]);
+                    return new JsonObject { ["type"] = "string", ["description"] = ColorDescription, ["pattern"] = ColorPattern };
                 }
 
                 return node;
@@ -59,7 +41,7 @@ public static class SkinSchema
         };
 
         var schema = ConfigJsonContext.Default.Skin.GetJsonSchemaAsNode(options);
-        if (!strictForApi && schema is JsonObject root)
+        if (schema is JsonObject root)
         {
             root["$schema"] = "https://json-schema.org/draft/2020-12/schema";
             root["title"] = "Commander4K skin";

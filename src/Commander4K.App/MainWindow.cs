@@ -722,26 +722,9 @@ public sealed class MainWindow : Window
         return OpenBrowser(null).SearchAsync(query, resolved);
     }
 
-    private AiChatWindow? _aiChat;
-    private AiProvidersWindow? _aiProviders;
     private McpHost? _mcp;
     private McpConnectWindow? _mcpConnect;
     private Button _mcpBadge = null!;
-
-    /// <summary>One chat window; it knows the active folder so questions can refer to "here".</summary>
-    private void OpenAiChat()
-    {
-        if (_aiChat is { } open)
-        {
-            open.Activate();
-            return;
-        }
-
-        _aiChat = new AiChatWindow(AiContext, _skins!.Current, OpenAiProviders, OpenPluginManagerAsync);
-        FollowSkin(_aiChat, _aiChat.ApplySkin);
-        _aiChat.Closed += (_, _) => _aiChat = null;
-        _aiChat.Show(this);
-    }
 
     /// <param name="pinned">A folder's own view (c4k.dir "enter") shown in <paramref name="source"/> itself.</param>
     /// <param name="pinnedFile">A file opened with Enter by a preview that asks for it, shown in <paramref name="source"/> itself.</param>
@@ -810,7 +793,7 @@ public sealed class MainWindow : Window
 
         var brushes = _skins!.Current;
         var url = (await new InputDialog(brushes, Loc.T("Dodaj kartę API"), Loc.T("Adres API (GET):"), "https://").ShowAsync(this))?.Trim();
-        if (!Core.Ai.AiInstallInfo.IsWebUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        if (!Core.Web.WebUrl.IsWebUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
             return;
         }
@@ -1048,7 +1031,7 @@ public sealed class MainWindow : Window
                 break;
             case "url":
                 var url = await new InputDialog(brushes, Loc.T("Strona WWW"), Loc.T("Adres strony:"), "https://").ShowAsync(this);
-                if (!Core.Ai.AiInstallInfo.IsWebUrl(url))
+                if (!Core.Web.WebUrl.IsWebUrl(url))
                 {
                     return;
                 }
@@ -1195,7 +1178,7 @@ public sealed class MainWindow : Window
                 return;
 
             case FolderActionKind.Url when action.Url is { } url:
-                if (!Core.Ai.AiInstallInfo.IsWebUrl(url))
+                if (!Core.Web.WebUrl.IsWebUrl(url))
                 {
                     Notify(Loc.T("{0}: „url” musi być adresem http(s).", config.FilePath), isError: true);
                     break;
@@ -1343,7 +1326,7 @@ public sealed class MainWindow : Window
             {
                 await AskSecretAsync(target[Plugins.BuiltIn.Dashboard.ApiCards.SecretActionPrefix.Length..], folder);
             }
-            else if (Core.Ai.AiInstallInfo.IsWebUrl(target))
+            else if (Core.Web.WebUrl.IsWebUrl(target))
             {
                 OpenBrowser(target);
             }
@@ -1554,20 +1537,6 @@ public sealed class MainWindow : Window
     private AiAppContext? _aiContext;
 
     private Task OpenPluginManagerAsync() => ExecuteAsync(CommandIds.PanelPrefix + PluginManagerPanel.PluginId);
-
-    private void OpenAiProviders()
-    {
-        if (_aiProviders is { } open)
-        {
-            open.Activate();
-            return;
-        }
-
-        _aiProviders = new AiProvidersWindow(_host!, _skins!.Current);
-        FollowSkin(_aiProviders, _aiProviders.ApplySkin);
-        _aiProviders.Closed += (_, _) => _aiProviders = null;
-        _aiProviders.Show(this);
-    }
 
     /// <summary>
     /// Repaints a non-modal window whenever the skin or density changes, for as long as it is open. Posted, so a
@@ -2744,7 +2713,7 @@ public sealed class MainWindow : Window
         var tiles = entries.Select(entry =>
         {
             var tile = new System.Text.Json.Nodes.JsonObject { ["title"] = entry.Name };
-            tile[Core.Ai.AiInstallInfo.IsWebUrl(entry.Path) ? "url" : "open"] = entry.Path;
+            tile[Core.Web.WebUrl.IsWebUrl(entry.Path) ? "url" : "open"] = entry.Path;
             if (ManifestPreviewCardId(entry) is { } previewCardId)
             {
                 tile["card"] = previewCardId;
@@ -2887,7 +2856,7 @@ public sealed class MainWindow : Window
 
     private bool CanCreateDashboardTile(VfsEntry entry) =>
         entry.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action)
-        && (Core.Ai.AiInstallInfo.IsWebUrl(entry.Path)
+        && (Core.Web.WebUrl.IsWebUrl(entry.Path)
             || entry.Kind is not VfsEntryKind.Service && _host!.Router.TryResolve(entry.Path, out _));
 
     private async Task<string?> ReadFolderConfigTextAsync(string file, CancellationToken cancellationToken)

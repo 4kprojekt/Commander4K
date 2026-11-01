@@ -46,7 +46,6 @@
     <PackageReference Include="Avalonia.Desktop" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
     <PackageReference Include="Avalonia.Markup.Declarative" />
-    <PackageReference Include="Anthropic" />
     <PackageReference Include="Markdig" />
     <!-- Only Microsoft.Web.WebView2.Core is used (hosted in a NativeControlHost). -->
     <PackageReference Include="Microsoft.Web.WebView2" />

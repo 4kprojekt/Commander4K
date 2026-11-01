@@ -20,7 +20,6 @@
   </ItemGroup>
   <!-- Fallback AI provider list; the live copy is read from the repository (AppSettings.AiCatalogUrl). -->
   <ItemGroup>
-    <EmbeddedResource Include="Ai\ai-providers.json" LogicalName="ai-providers.json" />
   </ItemGroup>
   <!-- Fallback official plugin catalog; the live copy is read from the repository (AppSettings.PluginCatalogUrl). -->
   <ItemGroup>

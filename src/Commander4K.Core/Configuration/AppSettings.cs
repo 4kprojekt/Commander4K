@@ -128,11 +128,6 @@ public sealed class AppSettings
     /// <summary>AI assistant asked by "find a solution" actions (plugin manager, preview).</summary>
     public string AssistantEngine { get; set; } = Web.SearchEngines.DefaultAssistant;
 
-    /// <summary>Where the live AI provider list (<c>ai-providers.json</c>) is downloaded from at start-up.</summary>
-    public string AiCatalogUrl { get; set; } = DefaultAiCatalogUrl;
-
-    public const string DefaultAiCatalogUrl = "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/src/Commander4K.Core/Ai/ai-providers.json";
-
     public bool CheckForUpdates { get; set; } = true;
 
     public bool IncludePrereleases { get; set; }

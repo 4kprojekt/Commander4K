@@ -46,7 +46,6 @@ public static class SettingsCatalog
     public static string Updates => Loc.T("Aktualizacje");
     public static string Browser => Loc.T("Przeglądarka");
     public static string Language => Loc.T("Język");
-    public static string Ai => Loc.T("Sztuczna inteligencja");
     public static string Mcp => Loc.T("MCP (AI z zewnątrz)");
 
     public static IReadOnlyList<SettingDescriptor> Create(Func<IReadOnlyList<SettingChoice>> skinChoices, Func<IReadOnlyList<SettingChoice>>? languageChoices = null) =>
@@ -120,10 +119,6 @@ public static class SettingsCatalog
         new("assistantEngine", Browser, Loc.T("Asystent AI do szukania rozwiązań"), Loc.T("Kogo pyta „Szukaj rozwiązania” (menedżer wtyczek) i wyszukiwania asystenta z wtyczek. Zaloguj się raz w przeglądarce — sesja zostaje zapamiętana."),
             SettingKind.Choice, s => s.AssistantEngine, (s, v) => s.AssistantEngine = (string)v!, ["ai", "chatgpt", "gemini", "claude", "perplexity", "asystent", "pomoc"])
         { Choices = () => [.. Web.SearchEngines.All.OrderBy(e => !e.IsAssistant).Select(e => new SettingChoice(e.Id, e.IsAssistant ? e.Name : e.Name + Loc.T(" (wyszukiwarka)")))] },
-
-        new("aiCatalogUrl", Ai, Loc.T("Lista dostawców AI (adres)"), Loc.T("Plik ai-providers.json pobierany przy starcie z repozytorium projektu, więc nowe darmowe modele pojawiają się bez aktualizacji programu. Własne wpisy: config/ai/providers.json."),
-            SettingKind.Text, s => s.AiCatalogUrl, (s, v) => s.AiCatalogUrl = NullIfEmpty(v) ?? AppSettings.DefaultAiCatalogUrl,
-            ["ai", "dostawcy", "lista", "repozytorium", "modele", "providers"]),
 
         new("mcp.enabled", Mcp, Loc.T("Serwer MCP dla Claude Code"), Loc.T("Udostępnia aplikację przez Model Context Protocol na lokalnym porcie (tylko 127.0.0.1, z tokenem), żeby Claude Code mógł przeglądać pliki, pisać wtyczki i sterować panelami. Dostęp ogranicza lista folderów poniżej, a każde narzędzie ma własny tryb: zezwalaj, pytaj albo zablokuj."),
             SettingKind.Toggle, s => s.Mcp.Enabled, (s, v) => s.Mcp.Enabled = (bool)v!, McpKeywords),

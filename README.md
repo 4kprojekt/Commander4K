@@ -24,14 +24,6 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
 - **Connections:** SFTP/SSH with a password or a private key (passphrase optional). A discovered SFTP host shows the same "Skonfiguruj" flow on `Enter` and in quick view; after setup, the first connection asks you to verify its SSH host key before trusting it. Your `~/.ssh` keys are tried automatically, as `ssh` does. Also FTP and Windows shares. "Testuj" checks a connection before saving it. Passwords and passphrases are stored DPAPI-encrypted in `config/settings.json`.
 - **Panel modes (`F2`):** either panel can show files, a quick preview, the built-in browser or any plugin panel.
 - **Built-in browser (`Ctrl+Alt+W`):** a web panel based on Microsoft Edge WebView2. The address bar also searches (Google, Bing, DuckDuckGo).
-- **AI chat with free providers:** the "ask AI about this file" and "create a preview plugin" buttons in the preview open a chat; its "Dostawcy" button signs in to several free API tiers. Questions go to them in turn; when one hits its rate limit or quota, or rejects its key, the next one answers. Without a signed-in provider the question goes to Claude Code (copied to the clipboard).
-  - Providers: OpenRouter (one-click browser sign-in, no key to copy), Groq, Cerebras, Google AI Studio, Mistral, NVIDIA NIM, Hugging Face and Cohere, plus local models through Ollama or LM Studio (no account, no limits, nothing leaves the PC; the window detects them, shows install steps and can install them with winget). Keys can also come from environment variables (`OPENROUTER_API_KEY`, `GROQ_API_KEY`…).
-  - The provider list ([`ai-providers.json`](src/Commander4K.Core/Ai/ai-providers.json)) is downloaded from this repository at start-up, so endpoints and free models can be updated without a new release. Add your own in `config/ai/providers.json`.
-  - The AI knows where you are: it gets both panels' paths, the cursor, the marked files and the installed plugins. It can look into folders, and it reads a file only after you allow it.
-  - **Plugins written by AI:** "Napisz wtyczkę z AI" gives the model the [plugin guide](docs/plugins.md) and installs the plugin from its answer. The plugin stays disabled until you approve its permissions.
-  - **Claude Code:** with the MCP server connected, Claude Code can read the app state and write and install plugins itself (see [Claude Code and MCP](#claude-code-and-mcp)); otherwise the question or plugin request is copied for you to paste there.
-  - Keys are stored in `config/ai/credentials.json`, encrypted for the current Windows user (DPAPI). After moving a portable copy to another account or PC, sign in again.
-  - The plugin manager's "Szukaj rozwiązania" sends a plugin's problem to that assistant, and plugins can open pages or searches here too.
 - **Claude Code over MCP:** Commander4K runs a local MCP server (127.0.0.1 only, with a token). Open "Połącz Claude Code" (command palette, or the MCP badge in the status bar), switch it on, add the folders the AI may use and run the `claude mcp add …` command it shows. Claude Code can then browse those folders, drive the panels, and write, check, install and try plugins. Every tool can be set to allow, ask or block. Risky calls (reading and writing files, running commands, installing or enabling a plugin) open a confirmation in the app. The app's own plugin, `config/` and `data/` folders cannot be read or written through MCP, and every call is logged. Details: [plugin guide](docs/plugins.md#writing-plugins-with-claude-code-over-mcp).
 - **Quick view (`Ctrl+Q`):** previews the entry under the cursor in the opposite panel:
   - HTTP/HTTPS entries use the same built-in Browser plugin as `Enter`, including its address bar and navigation controls;
@@ -264,7 +256,7 @@ Skins are JSON files in `config/skins/`. The schema is written to `config/skins/
 
 1. **Export and edit:** press `Ctrl+Shift+K` (skin picker), choose "Eksportuj do edycji", edit the JSON, then click "Przeładuj".
 2. **Claude.ai or Claude Design:** "Kopiuj prompt dla Claude" copies a ready prompt with the schema and an example. Describe your idea, save the JSON you get into `config/skins/`, then reload.
-3. **In the app:** "Generuj z AI…" describes a skin in words and Claude designs it, with a live preview and contrast check before you save. This option needs an Anthropic API key in `ANTHROPIC_API_KEY`, and each generation is billed by the API.
+3. **In the app:** "✨ Stwórz nową z AI…" turns your description into a prompt for any assistant (copied to the clipboard); paste its answer back for a live preview and contrast check before you save.
 
 ## Build from source
 

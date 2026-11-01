@@ -47,13 +47,12 @@ public static partial class McpConfigTools
 
     /// <summary>
     /// Settings MCP never changes: the MCP server itself (enabled, port, allowed folders, per-tool modes) and the URLs
-    /// plugins, AI providers and updates are downloaded from. Otherwise "yes for this session" on set_setting would let
+    /// plugins and updates are downloaded from. Otherwise "yes for this session" on set_setting would let
     /// the model grant itself folders or switch delete to "allow".
     /// </summary>
     public static bool IsReadOnly(string key) =>
         key.StartsWith("mcp", StringComparison.OrdinalIgnoreCase)
         || key.Equals("pluginCatalogUrl", StringComparison.OrdinalIgnoreCase)
-        || key.Equals("aiCatalogUrl", StringComparison.OrdinalIgnoreCase)
         || key.Equals("updateRepository", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>A language code usable as a file name: <c>de</c>, <c>pt-BR</c>; not <c>pl</c> (the source language).</summary>

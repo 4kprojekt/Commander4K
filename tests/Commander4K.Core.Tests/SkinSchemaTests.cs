@@ -7,25 +7,6 @@ namespace Commander4K.Core.Tests;
 public sealed class SkinSchemaTests
 {
     [Fact]
-    public void Structured_output_schema_closes_every_object_and_avoids_unsupported_keywords()
-    {
-        var schema = SkinSchema.CreateForStructuredOutput();
-
-        var objects = Walk(schema).OfType<JsonObject>().Where(o => o["properties"] is JsonObject).ToList();
-        Assert.NotEmpty(objects);
-        foreach (var obj in objects)
-        {
-            Assert.False(obj["additionalProperties"]!.GetValue<bool>());
-            var properties = ((JsonObject)obj["properties"]!).Select(p => p.Key).Order();
-            Assert.Equal(properties, obj["required"]!.AsArray().Select(r => r!.GetValue<string>()).Order());
-        }
-
-        var json = schema.ToJsonString();
-        Assert.DoesNotContain("\"pattern\"", json, StringComparison.Ordinal);
-        Assert.DoesNotContain("\"minimum\"", json, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void Documentation_schema_validates_colours_and_border_names()
     {
         var json = SkinSchema.CreateJson();

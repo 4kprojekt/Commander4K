@@ -1,4 +1,3 @@
-using Commander4K.Core.Ai;
 using Commander4K.Core.Plugins;
 using Commander4K.Core.Web;
 
@@ -138,21 +137,6 @@ public sealed class PluginAuthoringTests : IDisposable
         Assert.Contains("CONTEXT", prompt, StringComparison.Ordinal);
         Assert.Contains("File: <relative path>", prompt, StringComparison.Ordinal);
         Assert.EndsWith("list big files\n</user-wish>", prompt.ReplaceLineEndings("\n").TrimEnd(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Tool_conversation_is_flattened_for_models_without_tools()
-    {
-        var call = new AiToolCall("c1", "get_context", "{}");
-        var flat = AiMessage.WithoutTools([
-            AiMessage.User("where am I?"),
-            AiMessage.Assistant(string.Empty) with { ToolCalls = [call] },
-            AiMessage.Tool(call, "Path: C:\\Repos"),
-        ]);
-
-        Assert.All(flat, m => Assert.Empty(m.ToolCalls));
-        Assert.Equal(["user", "assistant", "user"], flat.Select(m => m.Role));
-        Assert.Contains("[result of get_context]", flat[2].Content, StringComparison.Ordinal);
     }
 
     [Fact]

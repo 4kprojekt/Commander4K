@@ -14,7 +14,6 @@
     <PackageVersion Include="SharpCompress" Version="1.0.0" />
     <!-- Same version Avalonia.Skia 12.1.4 ships; gallery thumbnails are decoded and encoded with it. -->
     <PackageVersion Include="SkiaSharp" Version="3.119.4" />
-    <PackageVersion Include="Anthropic" Version="13.3.0" />
     <PackageVersion Include="System.Management" Version="10.0.14" />
     <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.14" />
     <PackageVersion Include="Markdig" Version="1.5.1" />

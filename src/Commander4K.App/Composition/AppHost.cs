@@ -1,4 +1,3 @@
-using Commander4K.Core.Ai;
 using Commander4K.Core.Configuration;
 using Commander4K.Core.Execution;
 using Commander4K.Core.Folders;
@@ -95,12 +94,9 @@ public sealed class AppHost : IAsyncDisposable
         DirectorySizes = new DirectorySizeCalculator(Router);
         SearchProviders = [Registry, FileSearch];
         Updates = new UpdateService(Http);
-        AiCatalog = new AiCatalogService(Http, Path.Combine(dataDirectory, "data", "ai-providers.json"), Path.Combine(config.ConfigDirectory, "ai", "providers.json"));
         PluginCatalog = new PluginCatalogService(Http, Path.Combine(dataDirectory, "data", "plugin-catalog.json"));
         FolderTrust = new FolderTrustStore(Path.Combine(config.ConfigDirectory, "trusted-folders.json"));
         Secrets = new Core.Security.SecretStore(Path.Combine(config.ConfigDirectory, "secrets.json"));
-        AiCredentials = new AiCredentialStore(Path.Combine(config.ConfigDirectory, "ai", "credentials.json"));
-        Ai = new AiRouter(AiCatalog, AiCredentials, new OpenAiCompatibleClient(Http), AiLogin.GitHubCliToken);
         _baseSettings = Core.Configuration.SettingsCatalog.Create(
             () => [.. Skins.Skins.Select(s => new SettingChoice(s.Id, s.DisplayName))],
             () => [new(Loc.Auto, Loc.T("Automatycznie")), .. Loc.AvailableLanguages(config.ConfigDirectory).Select(code => new SettingChoice(code, LanguageName(code)))]);
@@ -290,11 +286,6 @@ public sealed class AppHost : IAsyncDisposable
 
     public UpdateService Updates { get; }
 
-    /// <summary>AI providers: the live list, signed-in keys (<c>config/ai</c>) and the rotating router that asks them.</summary>
-    public AiCatalogService AiCatalog { get; }
-
-    public AiCredentialStore AiCredentials { get; }
-
     /// <summary>Official plugins from the repository (<c>plugins-catalog/catalog.json</c>), installable from the plugin manager and from <c>c4k.dir</c>.</summary>
     public PluginCatalogService PluginCatalog { get; }
 
@@ -324,8 +315,6 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>Card sources for a dashboard, over the preview plugins loaded right now.</summary>
     public Plugins.BuiltIn.Dashboard.CardResolver CreateCardResolver() =>
         new(PreviewPlugins, HostFor, ReadFolderConfigAsync, id => PluginCatalog.Find(id) is not null, ApiCards, SshMonitor);
-
-    public AiRouter Ai { get; }
 
     private readonly IReadOnlyList<SettingDescriptor> _baseSettings;
 
@@ -419,11 +408,8 @@ public sealed class AppHost : IAsyncDisposable
                     new ExternalToolsService(toolsTask.Result),
                     indexTask.Result);
                 host.KeyBindings = new Dictionary<string, string>(keymapTask.Result.Bindings, StringComparer.OrdinalIgnoreCase);
-                host.AiCatalog.Load();
                 host.PluginCatalog.Load();
                 _ = Task.Run(() => host.PluginCatalog.RefreshAsync(host.Settings.PluginCatalogUrl), CancellationToken.None);
-                _ = host.Ai.States(); // Reads credentials and asks the GitHub CLI here, never later on the UI thread.
-                _ = Task.Run(() => host.AiCatalog.RefreshAsync(host.Settings.AiCatalogUrl), CancellationToken.None); // Live list; the cached one serves meanwhile.
                 await host.PowerShell.ReloadAsync(cancellationToken).ConfigureAwait(false);
                 await host.LoadFolderSuggestionsAsync(cancellationToken).ConfigureAwait(false);
                 host.Runtimes = await RuntimeCatalog.DetectAsync(cancellationToken).ConfigureAwait(false);

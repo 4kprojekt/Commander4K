@@ -251,8 +251,8 @@ public sealed class SettingsWindow : ToolWindow
                     var open = new Button().Width(34).Height(30).Content("↗")
                         .OnClick(async _ => await OpenCatalogUrlAsync(text.Text));
                     ToolTip.SetTip(open, Loc.T("Otwórz w przeglądarce systemowej"));
-                    open.IsEnabled = Core.Ai.AiInstallInfo.IsWebUrl(text.Text);
-                    text.TextChanged += (_, _) => open.IsEnabled = Core.Ai.AiInstallInfo.IsWebUrl(text.Text);
+                    open.IsEnabled = Core.Web.WebUrl.IsWebUrl(text.Text);
+                    text.TextChanged += (_, _) => open.IsEnabled = Core.Web.WebUrl.IsWebUrl(text.Text);
                     return new Grid().Cols("*,Auto").Children(text, open.Col(1).Margin(6, 0, 0, 0));
                 }
 
@@ -262,7 +262,7 @@ public sealed class SettingsWindow : ToolWindow
 
     private async Task OpenCatalogUrlAsync(string? url)
     {
-        if (!Core.Ai.AiInstallInfo.IsWebUrl(url))
+        if (!Core.Web.WebUrl.IsWebUrl(url))
         {
             return;
         }
