@@ -204,11 +204,11 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `net.request` | `{ url, method?, headers?, body?, contentType?, bodyFile?, multipart?: { field, path, fileName? } }` (http/https, response max 5 MB) | `{ status, headers, body }` (any status) | `net`; `bodyFile`/`multipart` also need `fs.read` or a [read grant](#receiving-and-providing-files) for that path |
 | `job.progress` | `{ jobId, done, total, bytes?, text? }` — a **notification** (no `id`, no answer) | — | — |
 | `mail.folders` | `{ account }` | `[{ serverName, localName, separator, special, uidValidity, count, unread }]` | `mail` |
-| `mail.sync` | `{ account, folder, uidValidity, lastUid, modSeq, since?, knownUids? }` | `{ uidValidity, uidValidityChanged, modSeq, new: [{ uid, date, from, subject, flags, size, fileName }], flagChanges: [{ uid, flags }], removed: [uid] }` | `mail` |
+| `mail.sync` | `{ account, folder, uidValidity, lastUid, modSeq, since?, knownUids?, limit? }` (`limit` = at most that many new messages, the lowest uids first) | `{ uidValidity, uidValidityChanged, modSeq, new: [{ uid, date, from, subject, flags, size, fileName }], flagChanges: [{ uid, flags }], removed: [uid], hasMore }` (`hasMore`: more new messages remain beyond `limit`) | `mail` |
 | `mail.fetch` | `{ account, folder, uid, path }` (downloads the message to `path`) | `{ bytes }` | `mail` + `fs.write` |
 | `mail.setFlags` | `{ account, folder, uids, add?, remove? }` | `null` | `mail` |
 | `mail.move` | `{ account, folder, uids, target }` | `null` | `mail` |
-| `mail.delete` | `{ account, folder, uids }` (to Trash; inside Trash the messages are expunged) | `null` | `mail` |
+| `mail.delete` | `{ account, folder, uids }` (to Trash; inside Trash the messages are expunged; an account without a Trash folder fails instead of expunging) | `null` | `mail` |
 | `mail.append` | `{ account, folder, path, flags? }` (uploads a message file) | `{ uid }` (`null` when the server does not report it) | `mail` + `fs.read` |
 | `mail.parse` | `{ path }` | `{ from, to, cc, subject, date, messageId, references, bodyText, attachments: [{ index, fileName, contentType, size }] }` | `mail` + `fs.read` |
 | `mail.saveAttachment` | `{ path, index, target }` | `null` | `mail` + `fs.read` + `fs.write` |
@@ -226,6 +226,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 - `-32001`: permission denied. The message names the missing permission.
 - `-32010`: mail login needed, with `data: { authRequired: true, realm }`.
 - `-32011`: the mail server's certificate is not trusted yet, with `data: { host, fingerprint }`.
+- `-32012`: `mail.send` got no confirmation (timeout, lost connection), so the message may or may not have been sent, with `data: { outcomeUnknown: true }`. Do not simply send it again.
 - `-32601`: unknown method.
 - `-32602`: invalid parameters.
 
@@ -357,7 +358,7 @@ Every helper maps to one protocol method above:
 | `net.request` | `http_request(url, method="GET", headers=None, body=None, content_type=None, body_file=None, multipart=None)` | `httpRequest(url, { method, headers, body, contentType, bodyFile, multipart })` | `Invoke-C4KHttpRequest $Url [$Method] [$Headers] [$Body] [$ContentType] [-BodyFile] [-MultipartField -MultipartPath [-MultipartFileName]]` |
 | `job.progress` | `report_progress(job_id, done, total, bytes=0, text=None)` | `reportProgress(jobId, done, total, { bytes, text })` | `Send-C4KProgress -JobId -Done -Total [-Bytes] [-Text]` |
 | `mail.folders` | `mail_folders(account)` | `mailFolders(account)` | `Get-C4KMailFolders $Account` |
-| `mail.sync` | `mail_sync(account, folder, uid_validity, last_uid, mod_seq, since, known_uids)` | `mailSync(account, folder, { uidValidity, lastUid, modSeq, since, knownUids })` | `Sync-C4KMail $Account $Folder [$UidValidity] [$LastUid] [$ModSeq] [$Since] [$KnownUids]` |
+| `mail.sync` | `mail_sync(account, folder, uid_validity, last_uid, mod_seq, since, known_uids, limit)` | `mailSync(account, folder, { uidValidity, lastUid, modSeq, since, knownUids, limit })` | `Sync-C4KMail $Account $Folder [$UidValidity] [$LastUid] [$ModSeq] [$Since] [$KnownUids] [$Limit]` |
 | `mail.fetch` | `mail_fetch(account, folder, uid, path)` → bytes written | `mailFetch(account, folder, uid, path)` | `Save-C4KMail $Account $Folder $Uid $Path` |
 | `mail.setFlags` | `mail_set_flags(account, folder, uids, add, remove)` | `mailSetFlags(account, folder, uids, add, remove)` | `Set-C4KMailFlags $Account $Folder $Uids [$Add] [$Remove]` |
 | `mail.move` | `mail_move(account, folder, uids, target)` | `mailMove(account, folder, uids, target)` | `Move-C4KMail $Account $Folder $Uids $Target` |

@@ -49,6 +49,9 @@ function Get-MailAccountView([string] $Path, $Options) {
     $md.Add('')
     if ($null -eq $state) {
         $md.Add('Nie można odczytać `.mail\state.json`: synchronizacja tego konta jest wstrzymana.')
+        $md.Add('')
+        $md.Add('Pobrane wiadomości zostają na dysku. „Zacznij synchronizację od nowa” zmienia nazwę uszkodzonego pliku na `state.json.broken-<czas>` i zaczyna od nowego stanu; wiadomości już pobrane są rozpoznawane po numerze `[uid N]`, więc nie zostaną pobrane drugi raz.')
+        $actions += @{ label = 'Zacznij synchronizację od nowa'; target = (Get-C4KActionTarget 'resetState' @{ account = $Path }) }
         return @{ kind = 'markdown'; content = ($md -join "`n"); actions = $actions }
     }
     if ($null -eq $config) {
@@ -80,7 +83,7 @@ function Get-MailAccountCard([string] $Path, $Options) {
     $actions = [System.Collections.Generic.List[hashtable]]::new()
     $status = 'ok'
     if ($null -eq $state) {
-        return @{ title = (Get-MailLeaf $Path); status = 'error'; items = @(@{ kind = 'text'; text = 'nie można odczytać .mail\state.json' }); actions = @() }
+        return @{ title = (Get-MailLeaf $Path); status = 'error'; items = @(@{ kind = 'text'; text = 'nie można odczytać .mail\state.json' }); actions = @(@{ label = 'Zacznij synchronizację od nowa'; target = (Get-C4KActionTarget 'resetState' @{ account = $Path }) }) }
     }
     $inbox = $null
     $others = 0
@@ -131,12 +134,50 @@ $script:MailSchemaUrl = 'https://raw.githubusercontent.com/4kprojekt/Commander4K
 
 function Test-MailLocalDiskPath([string] $Path) { $Path -match '^([A-Za-z]:[\\/]|\\\\[^\\])' }
 
+# JSON text -> ordered dictionaries, lists, strings, numbers, booleans. Unlike ConvertFrom-Json it never turns a string
+# that looks like a date ("2026-01-01") into a DateTime, and it keeps the key order. Comments and trailing commas are
+# accepted (the host reads c4k.dir that way too).
+function ConvertFrom-MailJsonValue([System.Text.Json.JsonElement] $Element) {
+    switch ($Element.ValueKind) {
+        'Object' {
+            $map = [ordered]@{}
+            foreach ($property in $Element.EnumerateObject()) { $map[$property.Name] = ConvertFrom-MailJsonValue $property.Value }
+            return $map
+        }
+        'Array' {
+            $list = [System.Collections.Generic.List[object]]::new()
+            foreach ($item in $Element.EnumerateArray()) { $list.Add((ConvertFrom-MailJsonValue $item)) }
+            return , $list.ToArray()
+        }
+        'String' { return $Element.GetString() }
+        'Number' {
+            $long = [long] 0
+            if ($Element.TryGetInt64([ref] $long)) { return $long }
+            $decimal = [decimal] 0
+            if ([decimal]::TryParse($Element.GetRawText(), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref] $decimal)) { return $decimal }
+            return $Element.GetDouble()
+        }
+        'True' { return $true }
+        'False' { return $false }
+        default { return $null }
+    }
+}
+
+function ConvertFrom-MailJsonText([string] $Text) {
+    $options = [System.Text.Json.JsonDocumentOptions]::new()
+    $options.CommentHandling = [System.Text.Json.JsonCommentHandling]::Skip
+    $options.AllowTrailingCommas = $true
+    $document = [System.Text.Json.JsonDocument]::Parse($Text, $options)
+    try { ConvertFrom-MailJsonValue $document.RootElement }
+    finally { $document.Dispose() }
+}
+
 # The text of the dashboard c4k.dir with the account's tile added, like FolderConfigWriter.AppendTile: the other keys
-# and tiles stay as they were, in the same order. $Existing is $null for a new file.
+# and tiles stay as they were, in the same order, and string values are not reinterpreted. $Existing is $null for a new file.
 function Add-MailDashboardTile($Existing, $Tile) {
     if ($null -eq $Existing) { $root = [ordered]@{ '$schema' = $script:MailSchemaUrl } }
     else {
-        $root = try { $Existing | ConvertFrom-Json -AsHashtable } catch { $null }
+        $root = try { ConvertFrom-MailJsonText $Existing } catch { $null }
         if ($root -isnot [System.Collections.IDictionary]) { throw 'Nie można odczytać c4k.dir w tym folderze (to nie jest poprawny JSON), więc go nie zmieniam.' }
     }
     $isDashboardObject = { param($a) $a -is [System.Collections.IDictionary] -and $a['view'] -eq 'dashboard' }
@@ -400,6 +441,7 @@ function Invoke-MailMove($Ctx, [string] $Path, [string] $Kind) {
     $name = Get-MailLeaf $Path
     if ($Kind -eq 'delete' -and $Ctx.special -ne 'trash' -and -not (Get-MailSpecialFolder $Ctx 'trash')) { throw 'To konto nie ma folderu Kosz: usunięcie byłoby trwałe, więc nic nie zrobiono.' }
     if ($Kind -eq 'delete' -and $Ctx.special -eq 'trash') {
+        if (-not (Confirm-C4K 'Usuń na stałe' 'Wiadomość zostanie usunięta z Kosza na serwerze i z dysku na stałe. Tej operacji nie można cofnąć. Kontynuować?')) { return $null }
         Remove-C4KMail $Ctx.account $Ctx.server @($Ctx.uid)
         Remove-C4KItem $Path
         [void] $Ctx.state.folders[$Ctx.server].known.Remove([long] $Ctx.uid)
@@ -506,6 +548,10 @@ Register-C4KHandler 'preview.action' {
     }
     $path = if ($p.args -and $p.args['account']) { [string] $p.args['account'] } else { [string] $p.entry.path }
     if ($p.action -eq 'check') { Invoke-MailCheck $path $p.options }
+    elseif ($p.action -eq 'resetState') {
+        try { Reset-MailState $path; Request-MailCheck $path }
+        catch { throw (Get-MailErrorText $_) }
+    }
     elseif ($p.action -eq 'new') {
         try { return New-MailBlankDraft $path $p.options }
         catch { throw (Get-MailErrorText $_) }

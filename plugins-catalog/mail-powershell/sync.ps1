@@ -151,20 +151,41 @@ function New-MailState {
 
 function Get-MailStatePath([string] $Folder) { Join-MailPath (Join-MailPath $Folder '.mail') 'state.json' }
 
-# The account's state. A missing state.json is a new account; one that exists but cannot be read or parsed gives
-# $null: the caller skips the account and never writes over the file (it holds known UIDs, drafts and authRequired).
+# Save-MailState writes this file first and moves it over state.json, so a crash never leaves a truncated state.json.
+function Get-MailStateTempPath([string] $Folder) { (Get-MailStatePath $Folder) + '.tmp' }
+
+# The parsed content of a state file: $null when the file is missing; throws when it cannot be read or parsed.
+function Read-MailStateFile([string] $Path) {
+    $item = Get-C4KItem $Path
+    if ($null -eq $item) { return $null }
+    if ([long] $item.size -gt $script:MailMaxStateBytes) { throw "larger than $($script:MailMaxStateBytes) bytes" }
+    $stored = (Get-C4KText $Path $script:MailMaxStateBytes) | ConvertFrom-Json -AsHashtable
+    if ($stored -isnot [hashtable]) { throw 'not a JSON object' }
+    $stored
+}
+
+# The account's state. No state.json (and no usable state.json.tmp) is a new account. A state.json that exists but
+# cannot be read or parsed is replaced by state.json.tmp when that one parses (a write that stopped half way);
+# otherwise the result is $null: the caller skips the account and never writes over the file (it holds known UIDs,
+# drafts and authRequired). The account view offers "Zacznij synchronizację od nowa" (Reset-MailState) for that case.
 function Read-MailState([string] $Folder) {
     $path = Get-MailStatePath $Folder
-    try {
-        $item = Get-C4KItem $path
-        if ($null -eq $item) { return New-MailState }
-        if ([long] $item.size -gt $script:MailMaxStateBytes) { throw "larger than $($script:MailMaxStateBytes) bytes" }
-        $stored = (Get-C4KText $path $script:MailMaxStateBytes) | ConvertFrom-Json -AsHashtable
-        if ($stored -isnot [hashtable]) { throw 'not a JSON object' }
+    $stored = $null
+    try { $stored = Read-MailStateFile $path; $readable = $true }
+    catch { $readable = $false; Write-C4KLog "mail state $path cannot be read: $_" }
+    if ($readable -and $null -eq $stored) {
+        # Missing: a new account, unless a write stopped before the move.
+        try { $stored = Read-MailStateFile (Get-MailStateTempPath $Folder) }
+        catch { Write-C4KLog "mail state temp file of $Folder ignored: $_" }
+        if ($null -eq $stored) { return New-MailState }
     }
-    catch {
-        Write-C4KLog "mail state $path cannot be read, account skipped: $_"
-        return $null
+    elseif (-not $readable) {
+        try { $stored = Read-MailStateFile (Get-MailStateTempPath $Folder) }
+        catch { Write-C4KLog "mail state temp file of $Folder cannot be read either: $_" }
+        if ($null -eq $stored) {
+            Write-C4KLog "mail state $path cannot be read, account skipped"
+            return $null
+        }
     }
 
     $state = New-MailState
@@ -203,7 +224,20 @@ function Read-MailState([string] $Folder) {
 }
 
 function Save-MailState([string] $Folder, [hashtable] $State) {
-    Set-C4KText (Get-MailStatePath $Folder) ($State | ConvertTo-Json -Depth 10 -Compress)
+    $temp = Get-MailStateTempPath $Folder
+    Set-C4KText $temp ($State | ConvertTo-Json -Depth 10 -Compress)
+    Move-C4KItem $temp (Get-MailStatePath $Folder) -Force
+}
+
+# "Zacznij synchronizację od nowa": the unreadable state.json (and a bad state.json.tmp) is renamed to
+# state.json.broken-<time>, never deleted. The next sync starts with a new state and adopts the files already in the
+# folders by their "[uid N]"; only the record of drafts already uploaded is lost.
+function Reset-MailState([string] $Folder) {
+    $stamp = (Get-MailNow).ToString('yyyyMMddHHmmss', [Globalization.CultureInfo]::InvariantCulture)
+    foreach ($path in (Get-MailStatePath $Folder), (Get-MailStateTempPath $Folder)) {
+        if ($null -ne (Get-C4KItem $path)) { Move-C4KItem $path "$path.broken-$stamp" }
+    }
+    [void] $script:MailCheckRequested.Remove($Folder)
 }
 
 function Get-MailLock([string] $Folder) {
@@ -383,7 +417,8 @@ function Resolve-MailDuplicate([string] $Dir, [long] $Uid, [bool] $Seen, [hashta
 function Push-MailDrafts([string] $Dir, [hashtable] $Account, [string] $Server, [hashtable] $Entry, [hashtable] $State) {
     $names = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($file in @(Get-C4KChildItem $Dir)) {
-        if ($file.kind -ne 'file' -or $file.name -notmatch '\.eml$' -or $file.name -match $script:MailUidPattern) { continue }
+        # Not drafts: downloaded messages ("[uid N]") and the files kept after a UIDVALIDITY change ("[stary]").
+        if ($file.kind -ne 'file' -or $file.name -notmatch '\.eml$' -or $file.name -match '\[uid \d+\]' -or $file.name -match '\[stary\]\.eml$') { continue }
         [void] $names.Add($file.name)
         $old = $State.drafts[$file.name]
         $modified = Format-MailInstant $file.modified
@@ -408,7 +443,9 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
 
     $local = Get-MailLocalFiles $dir
     $files = $local.files
-    $sync = Sync-C4KMail -Account $Account -Folder $server -UidValidity $entry.uidValidity -LastUid $entry.lastUid -ModSeq $entry.modSeq -Since $Since -KnownUids $known.ToArray()
+    # Envelopes are fetched only for what this tick can still download (lowest uids first).
+    $limit = [Math]::Max(1, [Math]::Min($script:MailMaxFetches, $script:MailMaxFetches - $Budget.fetches))
+    $sync = Sync-C4KMail -Account $Account -Folder $server -UidValidity $entry.uidValidity -LastUid $entry.lastUid -ModSeq $entry.modSeq -Since $Since -KnownUids $known.ToArray() -Limit $limit
 
     if ($sync.uidValidityChanged) {
         # The server renumbered the folder: keep the old files under "[stary]" and start again.
@@ -473,6 +510,9 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
         if ($uid -gt $entry.lastUid) { $entry.lastUid = $uid }
         if ($isUnread -and -not $entry.backfill) { $out.newUnread++ }
     }
+
+    # The server has more new messages beyond the limit: the next tick goes on from lastUid.
+    if ($sync.hasMore) { $out.more = $true; $out.remaining = [Math]::Max($out.remaining, 1) }
 
     # A known message whose file is gone locally is downloaded again (sync never deletes on the server for it).
     if ($missing.Count -gt 0 -and -not $out.more) {

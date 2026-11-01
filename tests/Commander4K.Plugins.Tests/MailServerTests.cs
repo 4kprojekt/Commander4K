@@ -178,6 +178,68 @@ public sealed class MailServerTests : IDisposable
         Assert.Contains(nameof(NotSupportedException), warning);
     }
 
+    [Fact]
+    public async Task Sync_limit_takes_the_lowest_new_uids_and_reports_more()
+    {
+        var (service, account, smtp, user, password) = await OpenAsync();
+        await using var _s = service;
+        var since = DateTimeOffset.Now.AddDays(-1);
+        var baseline = await service.SyncAsync("t", account, new MailSyncRequest("INBOX", 0, 0, 0, since, []), Token);
+        var lastUid = baseline.New.Select(h => h.Uid).DefaultIfEmpty(0u).Max();
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        await SendRawAsync(smtp, user, password, Enumerable.Range(1, 5).Select(i => $"{tag} m{i}"));
+        await WaitForAsync(() => service.SyncAsync("t", account, new MailSyncRequest("INBOX", 0, lastUid, 0, since, []), Token), r => r.New.Count >= 5);
+
+        var first = await service.SyncAsync("t", account, new MailSyncRequest("INBOX", 0, lastUid, 0, since, [], Limit: 2), Token);
+
+        Assert.Equal(2, first.New.Count);
+        Assert.True(first.HasMore);
+        var all = (await service.SyncAsync("t", account, new MailSyncRequest("INBOX", 0, lastUid, 0, since, []), Token)).New.Select(h => h.Uid).Order().ToList();
+        Assert.False((await service.SyncAsync("t", account, new MailSyncRequest("INBOX", 0, lastUid, 0, since, []), Token)).HasMore);
+        Assert.Equal(all.Take(2), first.New.Select(h => h.Uid));
+        var rest = await service.SyncAsync("t", account, new MailSyncRequest("INBOX", 0, first.New.Max(h => h.Uid), 0, since, [], Limit: 3), Token);
+        Assert.Equal(3, rest.New.Count);
+        Assert.False(rest.HasMore);
+    }
+
+    [Fact]
+    public async Task Delete_without_a_trash_folder_throws_instead_of_expunging()
+    {
+        var (service, account, smtp, user, password) = await OpenAsync();
+        await using var _s = service;
+        var folders = await service.FoldersAsync("t", account, Token);
+        Assert.SkipWhen(folders.Any(f => f.Special == MailSpecialFolder.Trash), "the server has a Trash folder");
+        var since = DateTimeOffset.Now.AddDays(-1);
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        await SendRawAsync(smtp, user, password, [$"{tag} keep"]);
+        var found = await WaitForAsync(() => service.SyncAsync("t", account, new MailSyncRequest("INBOX", 0, 0, 0, since, []), Token), r => r.New.Any(h => h.Subject == $"{tag} keep"));
+        var uid = found.New.Single(h => h.Subject == $"{tag} keep").Uid;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.DeleteAsync("t", account, "INBOX", [uid], Token));
+
+        var after = await service.SyncAsync("t", account, new MailSyncRequest("INBOX", 0, 0, 0, since, []), Token);
+        Assert.Contains(after.New, h => h.Uid == uid);
+    }
+
+    private async Task<(MailService Service, MailAccount Account, Uri Smtp, string User, string Password)> OpenAsync()
+    {
+        var imapUrl = Environment.GetEnvironmentVariable("C4K_TEST_IMAP");
+        var smtpUrl = Environment.GetEnvironmentVariable("C4K_TEST_SMTP");
+        Assert.SkipWhen(string.IsNullOrEmpty(imapUrl) || string.IsNullOrEmpty(smtpUrl), "C4K_TEST_IMAP / C4K_TEST_SMTP are not set");
+        var imap = new Uri(imapUrl!);
+        var smtp = new Uri(smtpUrl!);
+        var login = imap.UserInfo.Split(':', 2);
+        var user = Uri.UnescapeDataString(login[0]);
+        var password = Uri.UnescapeDataString(login[1]);
+        var implicitTls = new HashSet<int>();
+        if (imap.Scheme == "imaps") implicitTls.Add(imap.Port);
+        if (smtp.Scheme == "smtps") implicitTls.Add(smtp.Port);
+        var credentials = new MailCredentials(new SecretStore(Path.Combine(_dir, "secrets.json")), (_, _) => Task.FromResult<string?>(password));
+        var certificates = new MailCertificateStore(Path.Combine(_dir, "mail_certificates.json"), (_, _) => Task.FromResult(true));
+        var service = new MailService(credentials, certificates, options: new MailServiceOptions { UseCondStore = false, ImplicitTlsPorts = implicitTls });
+        return (service, new MailAccount($"{imap.Host}:{imap.Port}", $"{smtp.Host}:{smtp.Port}", user), smtp, user, password);
+    }
+
     private static async Task SendRawAsync(Uri smtp, string user, string password, IEnumerable<string> subjects)
     {
         using var client = new SmtpClient { ServerCertificateValidationCallback = (_, _, _, _) => true };

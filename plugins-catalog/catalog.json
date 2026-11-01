@@ -25,7 +25,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "af2eeacb020403b2950a670748f25d31405e0e80c81796a3e076eb18a8e473d3"
+          "sha256": "a83759d15e86c5db9074287b4eff91b19aa6062a9540b065630618d5d365adae"
         },
         {
           "path": "main.ps1",
@@ -60,7 +60,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "af2eeacb020403b2950a670748f25d31405e0e80c81796a3e076eb18a8e473d3"
+          "sha256": "a83759d15e86c5db9074287b4eff91b19aa6062a9540b065630618d5d365adae"
         },
         {
           "path": "main.ps1",
@@ -95,7 +95,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "af2eeacb020403b2950a670748f25d31405e0e80c81796a3e076eb18a8e473d3"
+          "sha256": "a83759d15e86c5db9074287b4eff91b19aa6062a9540b065630618d5d365adae"
         },
         {
           "path": "main.ps1",
@@ -130,7 +130,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "0ac79b5ce92eb292a0a8f3ab9bae0f5ee9fe5ce7cfe16b4a6db506ad2d22e558"
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
           "path": "main.py",
@@ -163,7 +163,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "af2eeacb020403b2950a670748f25d31405e0e80c81796a3e076eb18a8e473d3"
+          "sha256": "a83759d15e86c5db9074287b4eff91b19aa6062a9540b065630618d5d365adae"
         },
         {
           "path": "main.ps1",
@@ -195,7 +195,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "0ac79b5ce92eb292a0a8f3ab9bae0f5ee9fe5ce7cfe16b4a6db506ad2d22e558"
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
           "path": "main.py",
@@ -228,7 +228,7 @@
       "files": [
         {
           "path": "c4k.js",
-          "sha256": "dc46419f47913c6ba08288378eeec4c5537f05c4ea3d6a0d368c3000dc812d31"
+          "sha256": "827049dc34c1045af17c4cef06de3e99e22012b715c9f37e7d987a68e998a291"
         },
         {
           "path": "main.js",
@@ -264,7 +264,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "0ac79b5ce92eb292a0a8f3ab9bae0f5ee9fe5ce7cfe16b4a6db506ad2d22e558"
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
           "path": "main.py",
@@ -302,7 +302,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "0ac79b5ce92eb292a0a8f3ab9bae0f5ee9fe5ce7cfe16b4a6db506ad2d22e558"
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
           "path": "main.py",
@@ -344,7 +344,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "0ac79b5ce92eb292a0a8f3ab9bae0f5ee9fe5ce7cfe16b4a6db506ad2d22e558"
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
           "path": "main.py",
@@ -379,15 +379,15 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "af2eeacb020403b2950a670748f25d31405e0e80c81796a3e076eb18a8e473d3"
+          "sha256": "a83759d15e86c5db9074287b4eff91b19aa6062a9540b065630618d5d365adae"
         },
         {
           "path": "compose.ps1",
-          "sha256": "a2de22e20600855ee00f7f2ede898a30e50a8fe5de8a8f7d65df0f63c0c988f7"
+          "sha256": "6c03e30cf25bf6fa562e09db1960e9679d2b9b19fa1f44fa27a7389c00a55405"
         },
         {
           "path": "main.ps1",
-          "sha256": "97421afcb75eaecb4c390e48eeedcb105f275750c8c66ca3473c93c9f92a37ec"
+          "sha256": "2c9727eb4af42f88db87c2f5116924685797bc18db23c45a1bf70e5669be39fd"
         },
         {
           "path": "plugin.json",
@@ -395,7 +395,7 @@
         },
         {
           "path": "sync.ps1",
-          "sha256": "aa2fd258bab0685b7b81085b7ecc1da39d0266b6f6e55f3ecceaac444c609d9d"
+          "sha256": "70328e06fb01e85903c1e7ad350ea98c5dcfa4645ae247938fbf7b1fd981f02b"
         }
       ]
     },
@@ -423,7 +423,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "0ac79b5ce92eb292a0a8f3ab9bae0f5ee9fe5ce7cfe16b4a6db506ad2d22e558"
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
           "path": "main.py",
@@ -461,7 +461,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "0ac79b5ce92eb292a0a8f3ab9bae0f5ee9fe5ce7cfe16b4a6db506ad2d22e558"
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
           "path": "main.py",
@@ -503,7 +503,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "0ac79b5ce92eb292a0a8f3ab9bae0f5ee9fe5ce7cfe16b4a6db506ad2d22e558"
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
           "path": "main.py",
@@ -539,7 +539,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "0ac79b5ce92eb292a0a8f3ab9bae0f5ee9fe5ce7cfe16b4a6db506ad2d22e558"
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
           "path": "deps.py",

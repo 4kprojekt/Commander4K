@@ -25,7 +25,8 @@ _next_id = 0
 
 class HostError(Exception):
     """The app refused or failed a call. code -32001: a permission missing from plugin.json; -32010: mail login
-    needed (data = {"authRequired": True, "realm": ...}); -32011: untrusted mail certificate (data = {"host", "fingerprint"})."""
+    needed (data = {"authRequired": True, "realm": ...}); -32011: untrusted mail certificate (data = {"host", "fingerprint"});
+    -32012: a sent mail may or may not have gone out (timeout, lost connection; data = {"outcomeUnknown": True})."""
 
     def __init__(self, code, message, data=None):
         super().__init__(message)
@@ -124,8 +125,8 @@ def report_progress(job_id, done, total, bytes=0, text=None):                   
 # password and certificates: interactive=False never shows a dialog and raises HostError -32010/-32011 instead.
 # Flags are "seen", "flagged", "answered", "draft". Message files are .eml paths (any location the app can open).
 def mail_folders(account):           return call("mail.folders", account=account)             # -> [{serverName, localName, separator, special, uidValidity, count, unread}]
-def mail_sync(account, folder, uid_validity=0, last_uid=0, mod_seq=0, since=None, known_uids=()):  # -> {uidValidity, uidValidityChanged, modSeq, new, flagChanges, removed}
-    return call("mail.sync", account=account, folder=folder, uidValidity=uid_validity, lastUid=last_uid, modSeq=mod_seq, since=since, knownUids=list(known_uids))
+def mail_sync(account, folder, uid_validity=0, last_uid=0, mod_seq=0, since=None, known_uids=(), limit=None):  # -> {uidValidity, uidValidityChanged, modSeq, new, flagChanges, removed, hasMore}; limit = at most that many new messages (lowest uids first)
+    return call("mail.sync", account=account, folder=folder, uidValidity=uid_validity, lastUid=last_uid, modSeq=mod_seq, since=since, knownUids=list(known_uids), limit=limit)
 def mail_fetch(account, folder, uid, path): return call("mail.fetch", account=account, folder=folder, uid=uid, path=path)["bytes"]  # fs.write -> bytes written
 def mail_set_flags(account, folder, uids, add=(), remove=()): call("mail.setFlags", account=account, folder=folder, uids=list(uids), add=list(add), remove=list(remove))
 def mail_move(account, folder, uids, target): call("mail.move", account=account, folder=folder, uids=list(uids), target=target)

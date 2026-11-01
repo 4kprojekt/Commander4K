@@ -323,6 +323,9 @@ function Invoke-MailDraftAction([string] $DraftPath, [string] $Action, $ActionAr
             return Get-MailDraftForm $DraftPath $fields $null $false
         }
         'discard' {
+            if (-not (Confirm-C4K 'Odrzuć szkic' 'Szkic zostanie usunięty z dysku i z serwera (folder Szkice). Tej operacji nie można cofnąć. Odrzucić?')) {
+                return Get-MailDraftForm $DraftPath $fields $null $false
+            }
             $link = Get-MailReplyLink $DraftPath
             Remove-MailDraft $DraftPath $ctx
             return Get-MailAfterDraft $link 'Szkic odrzucony.'
@@ -377,7 +380,12 @@ function Invoke-MailSend([string] $DraftPath, $Ctx, $Draft, $Fields, [string[]] 
     # Whatever the form holds goes out, and the file keeps it if sending fails.
     Write-MailDraftFile $DraftPath $Ctx $Fields $Draft $Refs
     try { [void] (Send-C4KMail $Ctx.account $DraftPath) }
-    catch { return & $fail ('Nie wysłano: ' + (Get-MailErrorText $_)) }
+    catch {
+        $code = if ($_.Exception.Data.Contains('Code')) { [int] $_.Exception.Data['Code'] } else { 0 }
+        # -32012: the server never confirmed (timeout, lost connection): the message may be on its way. The draft stays.
+        if ($code -eq -32012) { return & $fail 'Nie wiadomo, czy wiadomość została wysłana — sprawdź folder Wysłane przed ponowną próbą.' }
+        return & $fail ('Nie wysłano: ' + (Get-MailErrorText $_))
+    }
 
     # Sent. From here nothing may make the user send it again, so every step is best effort.
     $link = Get-MailReplyLink $DraftPath

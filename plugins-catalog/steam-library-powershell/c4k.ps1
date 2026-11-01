@@ -36,7 +36,7 @@ function Read-C4KMessage {
 }
 
 # Request to the app; blocks until it answers. Throws on refusal: the exception's Data['Code'] is the error code
-# (-32001 = missing permission, -32010 = mail login needed, -32011 = untrusted mail certificate) and Data['ErrorData']
+# (-32001 = missing permission, -32010 = mail login needed, -32011 = untrusted mail certificate, -32012 = a sent mail may or may not have gone out) and Data['ErrorData']
 # the structured detail (realm, host, fingerprint) or $null.
 function Invoke-C4K([string] $Method, [hashtable] $Params = @{}) {
     $script:C4KNextId++
@@ -115,8 +115,8 @@ function Send-C4KProgress([string] $JobId, [int] $Done, [int] $Total, [long] $By
 # password and certificates: interactive = $false never shows a dialog and throws (Data['Code'] -32010/-32011) instead.
 # Flags are 'seen', 'flagged', 'answered', 'draft'. Message files are .eml paths (any location the app can open).
 function Get-C4KMailFolders([hashtable] $Account) { Invoke-C4K 'mail.folders' @{ account = $Account } }               # -> serverName, localName, separator, special, uidValidity, count, unread
-function Sync-C4KMail([hashtable] $Account, [string] $Folder, [long] $UidValidity = 0, [long] $LastUid = 0, [long] $ModSeq = 0, [string] $Since, [long[]] $KnownUids = @()) {  # -> uidValidity, uidValidityChanged, modSeq, new, flagChanges, removed
-    Invoke-C4K 'mail.sync' @{ account = $Account; folder = $Folder; uidValidity = $UidValidity; lastUid = $LastUid; modSeq = $ModSeq; since = $(if ($Since) { $Since } else { $null }); knownUids = @($KnownUids) }
+function Sync-C4KMail([hashtable] $Account, [string] $Folder, [long] $UidValidity = 0, [long] $LastUid = 0, [long] $ModSeq = 0, [string] $Since, [long[]] $KnownUids = @(), [int] $Limit = 0) {  # -> uidValidity, uidValidityChanged, modSeq, new, flagChanges, removed, hasMore; Limit > 0 = at most that many new messages (lowest uids first)
+    Invoke-C4K 'mail.sync' @{ account = $Account; folder = $Folder; uidValidity = $UidValidity; lastUid = $LastUid; modSeq = $ModSeq; since = $(if ($Since) { $Since } else { $null }); knownUids = @($KnownUids); limit = $(if ($Limit -gt 0) { $Limit } else { $null }) }
 }
 function Save-C4KMail([hashtable] $Account, [string] $Folder, [long] $Uid, [string] $Path) { (Invoke-C4K 'mail.fetch' @{ account = $Account; folder = $Folder; uid = $Uid; path = $Path }).bytes }  # fs.write -> bytes written
 function Set-C4KMailFlags([hashtable] $Account, [string] $Folder, [long[]] $Uids, [string[]] $Add = @(), [string[]] $Remove = @()) { [void](Invoke-C4K 'mail.setFlags' @{ account = $Account; folder = $Folder; uids = @($Uids); add = @($Add); remove = @($Remove) }) }

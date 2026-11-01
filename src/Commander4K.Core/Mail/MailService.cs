@@ -129,7 +129,15 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
 
             // New: within Since, above LastUid.
             var inRange = await folder.SearchAsync(MailKit.Search.SearchQuery.DeliveredAfter(request.Since.Date), op.Token).ConfigureAwait(false);
-            var fresh = inRange.Where(u => u.Id > lastUid && !known.Contains(u.Id)).ToList();
+            var fresh = inRange.Where(u => u.Id > lastUid && !known.Contains(u.Id)).OrderBy(u => u.Id).ToList();
+            var hasMore = false;
+            if (request.Limit is { } limit && fresh.Count > Math.Max(limit, 0))
+            {
+                // The lowest UIDs first, so the caller's LastUid only ever moves forward.
+                hasMore = true;
+                fresh.RemoveRange(Math.Max(limit, 0), fresh.Count - Math.Max(limit, 0));
+            }
+
             var headers = new List<MailHeader>(fresh.Count);
             if (fresh.Count > 0)
             {
@@ -171,7 +179,7 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
                 }
             }
 
-            return new MailSyncResult(validity, changed, folder.HighestModSeq, headers, flagChanges, removed);
+            return new MailSyncResult(validity, changed, folder.HighestModSeq, headers, flagChanges, removed, hasMore);
         }, ct);
 
     public Task<long> FetchAsync(string pluginId, MailAccount account, string folder, uint uid, Stream destination, CancellationToken ct) =>
@@ -241,13 +249,19 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
             var trash = (await ListAsync(client, op.Token).ConfigureAwait(false)).FirstOrDefault(x => x.Special == MailSpecialFolder.Trash).Folder;
             var f = await OpenAsync(client, folder, FolderAccess.ReadWrite, op.Token).ConfigureAwait(false);
             var ids = Ids(uids);
-            if (trash is not null && !string.Equals(trash.FullName, f.FullName, StringComparison.Ordinal))
+            var inTrash = trash is not null && string.Equals(trash.FullName, f.FullName, StringComparison.Ordinal);
+            if (trash is not null && !inTrash)
             {
                 await f.MoveToAsync(ids, trash, op.Token).ConfigureAwait(false);
                 return true;
             }
 
-            // In Trash (or without one): expunge. Without UIDPLUS, EXPUNGE also removes other messages already marked \Deleted.
+            if (!inTrash)
+            {
+                throw new InvalidOperationException($"The account has no Trash folder, so deleting from {folder} would be permanent; nothing was done.");
+            }
+
+            // Inside Trash: expunge. Without UIDPLUS, EXPUNGE also removes other messages already marked \Deleted.
             await f.StoreAsync(ids, new StoreFlagsRequest(StoreAction.Add, MessageFlags.Deleted) { Silent = true }, op.Token).ConfigureAwait(false);
             if ((client.Capabilities & ImapCapabilities.UidPlus) != 0)
             {
@@ -300,11 +314,20 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
         try
         {
             await AuthenticateAsync(smtp, pluginId, account, password, isSmtp: true, ct).ConfigureAwait(false);
-            await TimedAsync(async op =>
+            try
             {
-                op.AllowFor(size);
-                return await smtp.SendAsync(parsed, op.Token).ConfigureAwait(false);
-            }, ct).ConfigureAwait(false);
+                await TimedAsync(async op =>
+                {
+                    op.AllowFor(size);
+                    return await smtp.SendAsync(parsed, op.Token).ConfigureAwait(false);
+                }, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is TimeoutException or IOException or SocketException or ServiceNotConnectedException)
+            {
+                // The connection broke while the message was on its way: the server may have accepted it. A refusal
+                // (SmtpCommandException) is not in this list, so it still reads as "not sent".
+                throw new MailSendOutcomeUnknownException(ex);
+            }
         }
         finally
         {
