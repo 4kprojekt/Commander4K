@@ -27,6 +27,14 @@ public sealed class FilePanelView : ViewBase
     private readonly List<PanelTab> _tabs = [];
     private readonly Dictionary<PanelTab, string> _pluginTabIds = [];
     private readonly Dictionary<PanelTab, IPanelModeView> _pluginTabModes = [];
+
+    /// <summary>Tabs whose view belongs to their folder (plugin manager, settings, skins): Pliki/Podgląd switches between them.</summary>
+    private readonly HashSet<PanelTab> _folderViewTabs = [];
+
+    /// <summary>The mode on screen is the view of the panel's folder (a c4k.dir panel, a built-in folder view).</summary>
+    private bool _modeIsFolderView;
+
+    private readonly HashSet<IPanelModeView> _wiredModes = [];
     private int _activeIndex;
     private bool _isActive;
     private string? _tabsKey;
@@ -107,20 +115,63 @@ public sealed class FilePanelView : ViewBase
     }
 
     /// <summary>Replaces the file list with a mode until <see cref="CloseMode"/> (Esc / Backspace).</summary>
-    public void ShowMode(IPanelModeView view)
+    /// <param name="folderView">The view belongs to the folder the panel is in: the Pliki/Podgląd switch then shows
+    /// the folder's files (and closes the view) instead of switching to the quick preview.</param>
+    public void ShowMode(IPanelModeView view, bool folderView = false)
     {
         ShowSuggestion(null);
         CloseMode();
+        _modeIsFolderView = folderView;
         AttachMode(view);
         UpdateModeButtons();
     }
+
+    /// <summary>A new tab on <paramref name="path"/> showing <paramref name="view"/>, the folder's own view.</summary>
+    /// <param name="key">Identifies the view, so opening it again selects this tab (<see cref="SelectFolderViewTab"/>).</param>
+    public void AddFolderViewTab(string path, string key, IPanelModeView view)
+    {
+        var tab = CreateTab(path);
+        _pluginTabIds.Add(tab, key);
+        _folderViewTabs.Add(tab);
+        _pluginTabModes[tab] = view;
+        SelectTab(_tabs.Count - 1);
+        _ = tab.NavigateAsync(path);
+    }
+
+    /// <summary>Selects the tab showing the folder view <paramref name="key"/> and returns its view; <c>null</c> when there is none.</summary>
+    public IPanelModeView? SelectFolderViewTab(string key)
+    {
+        for (var i = 0; i < _tabs.Count; i++)
+        {
+            if (_folderViewTabs.Contains(_tabs[i]) && _pluginTabIds.GetValueOrDefault(_tabs[i]) == key && _pluginTabModes.TryGetValue(_tabs[i], out var view))
+            {
+                SelectTab(i);
+                if (Mode != view)
+                {
+                    ActivatePluginTabMode(_tabs[i], view);
+                }
+
+                return view;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The view on screen belongs to the folder: the switch toggles between it and the files.</summary>
+    private bool IsFolderView =>
+        Mode is not null && (_modeIsFolderView || (_folderViewTabs.Contains(ActiveTab) && _pluginTabModes.GetValueOrDefault(ActiveTab) == Mode));
 
     private void AttachMode(IPanelModeView view)
     {
         Mode = view;
         view.IsActivePanel = _isActive;
-        view.Activated += () => Activated?.Invoke(this);
-        view.CloseRequested += CloseMode;
+        if (_wiredModes.Add(view))
+        {
+            view.Activated += () => Activated?.Invoke(this);
+            view.CloseRequested += () => OnModeCloseRequested(view);
+        }
+
         _content.Children.Add(view.View);
         Canvas.IsVisible = false;
         _statusBorder.IsVisible = false;
@@ -139,6 +190,23 @@ public sealed class FilePanelView : ViewBase
         }
     }
 
+    /// <summary>Esc or a close button in a mode: a folder tab's view gives way to the files, any other mode closes.</summary>
+    private void OnModeCloseRequested(IPanelModeView view)
+    {
+        if (Mode != view)
+        {
+            return;
+        }
+
+        if (_folderViewTabs.Contains(ActiveTab) && _pluginTabModes.GetValueOrDefault(ActiveTab) == view)
+        {
+            DetachPluginTabMode();
+            return;
+        }
+
+        CloseMode();
+    }
+
     public void CloseMode()
     {
         if (Mode is not { } view)
@@ -146,6 +214,8 @@ public sealed class FilePanelView : ViewBase
             return;
         }
 
+        _wiredModes.Remove(view);
+        _modeIsFolderView = false;
         Mode = null;
         _content.Children.Remove(view.View);
         var pluginTab = _pluginTabModes.FirstOrDefault(pair => pair.Value == view).Key;
@@ -153,6 +223,7 @@ public sealed class FilePanelView : ViewBase
         {
             _pluginTabModes.Remove(pluginTab);
             _pluginTabIds.Remove(pluginTab);
+            _folderViewTabs.Remove(pluginTab);
             RebuildTabs();
         }
 
@@ -194,6 +265,7 @@ public sealed class FilePanelView : ViewBase
         }
 
         ShowSuggestion(null);
+        mode.ApplySkin(_skins.Current); // the skin may have changed while another tab was on screen
         AttachMode(mode);
     }
 
@@ -291,10 +363,34 @@ public sealed class FilePanelView : ViewBase
         _pathBox.GotFocus += (_, _) => Activated?.Invoke(this);
         _modeSwitch.IsCheckedChanged += (_, _) =>
         {
-            if (!_updatingModeSwitch)
+            if (_updatingModeSwitch)
             {
-                ModeRequested?.Invoke(new(this, Preview: _modeSwitch.IsChecked == true));
+                return;
             }
+
+            var on = _modeSwitch.IsChecked == true;
+            if (_folderViewTabs.Contains(ActiveTab) && _pluginTabModes.TryGetValue(ActiveTab, out var tabView))
+            {
+                // A folder tab: Pliki = the folder's files, Podgląd = its view (plugin manager, settings, skins).
+                if (on)
+                {
+                    ActivatePluginTabMode(ActiveTab, tabView);
+                }
+                else
+                {
+                    DetachPluginTabMode();
+                }
+
+                return;
+            }
+
+            if (!on && IsFolderView)
+            {
+                CloseMode();
+                return;
+            }
+
+            ModeRequested?.Invoke(new(this, Preview: on));
         };
         ApplySkin(_skins.Current);
         RebuildTabs();
@@ -441,6 +537,8 @@ public sealed class FilePanelView : ViewBase
         }
 
         _pluginTabIds.Remove(tab);
+        _folderViewTabs.Remove(tab);
+        _wiredModes.RemoveWhere(m => !_pluginTabModes.ContainsValue(m) && m != Mode);
         tab.Detach();
         tab.Changed -= OnAnyTabChanged;
         _tabs.RemoveAt(_activeIndex);
@@ -615,7 +713,9 @@ public sealed class FilePanelView : ViewBase
     }
 
     private string TabTitle(PanelTab tab) =>
-        _pluginTabIds.TryGetValue(tab, out var pluginId) ? _host.FindPanel(pluginId)?.Title ?? tab.Title : tab.Title;
+        _folderViewTabs.Contains(tab) && _pluginTabModes.TryGetValue(tab, out var view) ? view.Title
+        : _pluginTabIds.TryGetValue(tab, out var pluginId) ? _host.FindPanel(pluginId)?.Title ?? tab.Title
+        : tab.Title;
 
     private string TabsKey() => _activeIndex + "|" + _skins.Current.Skin.Id + "|" + string.Join('\n', _tabs.Select(TabTitle));
 
@@ -826,7 +926,11 @@ public sealed class FilePanelView : ViewBase
         }
 
         var brushes = _skins.Current;
-        var showingPreview = Mode is PreviewPanelView;
+        var showingPreview = Mode is PreviewPanelView || IsFolderView;
+
+        // A mode that is not a folder's view (a plugin panel opened on its own, the browser) has no files to switch to.
+        var switchable = Mode is null || showingPreview || _folderViewTabs.Contains(ActiveTab);
+        _modeSwitch.IsVisible = _filesModeLabel.IsVisible = _previewModeLabel.IsVisible = switchable;
         _updatingModeSwitch = true;
         _modeSwitch.IsChecked = showingPreview;
         _updatingModeSwitch = false;

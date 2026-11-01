@@ -71,7 +71,7 @@ public sealed class SkinAiPromptDialog : DialogWindow<Skin?>
 
     private async Task PrepareAsync()
     {
-        await SkinPickerDialog.CopyToClipboardAsync(this, SkinPrompt.ForJsonOnly(_description.Text));
+        await DesktopShell.CopyToClipboardAsync(this, SkinPrompt.ForJsonOnly(_description.Text));
         _step2.IsVisible = true;
         SetStatus(Loc.T("Czekam na odpowiedź…"), Brushes.MutedForeground);
         _answer.Focus();

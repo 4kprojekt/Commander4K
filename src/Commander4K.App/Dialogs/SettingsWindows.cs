@@ -22,9 +22,10 @@ namespace Commander4K.App.Dialogs;
 
 /// <summary>
 /// One searchable page for everything configurable: settings, key bindings and the raw JSON files. Changes are
-/// saved immediately; JSON stays the source of truth, so hand edits keep working.
+/// saved immediately; JSON stays the source of truth, so hand edits keep working. It is the view of the
+/// <c>config/</c> folder and opens as a panel tab there; the Pliki/Podgląd switch shows the files themselves.
 /// </summary>
-public sealed class SettingsWindow : ToolWindow
+public sealed class SettingsView : FolderModeView
 {
     private static string KeysCategory => Loc.T("Skróty klawiszowe");
     private static string FilesCategory => Loc.T("Pliki konfiguracyjne");
@@ -38,21 +39,31 @@ public sealed class SettingsWindow : ToolWindow
     private StackPanel _nav = null!;
     private TextBlock _keyStatus = null!;
 
-    public SettingsWindow(AppHost host, SkinBrushes brushes, Action<string> onChanged,     Func<Task> checkForUpdates, Action<string> openInPanel, string? query = null)
-        : base(Loc.T("Ustawienia — Commander4K"), brushes, 1000, 700, 640)
+    public SettingsView(AppHost host, SkinBrushes brushes, Action<string> onChanged, Func<Task> checkForUpdates, Action<string> openInPanel, string? query = null)
+        : base(brushes)
     {
         _host = host;
         _onChanged = onChanged;
-            _openInPanel = openInPanel;
+        _openInPanel = openInPanel;
         _checkForUpdates = checkForUpdates;
         _initialQuery = query;
         Build();
+        AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(FocusSearch, DispatcherPriority.Loaded);
+    }
 
-        Opened += (_, _) =>
-        {
-            _search.Focus();
-            _search.CaretIndex = _search.Text?.Length ?? 0;
-        };
+    public override string Title => Loc.T("Ustawienia");
+
+    /// <summary>Shows the settings matching <paramref name="query"/> (an already open tab reused for a new search).</summary>
+    public void Search(string? query)
+    {
+        _search.Text = query ?? string.Empty;
+        FocusSearch();
+    }
+
+    private void FocusSearch()
+    {
+        _search.Focus();
+        _search.CaretIndex = _search.Text?.Length ?? 0;
     }
 
     private readonly string? _initialQuery;
@@ -84,11 +95,17 @@ public sealed class SettingsWindow : ToolWindow
                 version,
                 new ScrollViewer().Content(_nav)));
         var footer = Ds.Footer(brushes,
-            new TextBlock().Text(Loc.T("Esc czyści wyszukiwanie, drugie Esc zamyka · Tab przechodzi między kontrolkami")).FontSize(12)
+            new TextBlock().Text(Loc.T("Esc czyści wyszukiwanie, drugie Esc pokazuje pliki folderu config · Tab przechodzi między kontrolkami")).FontSize(12)
                 .Foreground(brushes.MutedForeground).TextTrimming(TextTrimming.CharacterEllipsis),
             Ds.Button(brushes, Loc.T("Sprawdź aktualizacje"), () => _ = _checkForUpdates()),
-            Ds.Button(brushes, Loc.T("O programie"), () => _ = new AboutDialog(brushes).ShowAsync(this)),
-            Ds.Button(brushes, Loc.T("Zamknij"), Close, ButtonKind.Primary));
+            Ds.Button(brushes, Loc.T("O programie"), () =>
+            {
+                if (OwnerWindow is { } owner)
+                {
+                    _ = new AboutDialog(brushes).ShowAsync(owner);
+                }
+            }),
+            Ds.Button(brushes, Loc.T("Pokaż pliki"), RequestClose, ButtonKind.Primary));
         DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(footer, Dock.Bottom);
         DockPanel.SetDock(nav, Dock.Left);
@@ -99,22 +116,29 @@ public sealed class SettingsWindow : ToolWindow
         return content;
     }
 
-    protected override void OnKeyDown(KeyEventArgs e)
+    public override bool HandleKey(KeyEventArgs e)
     {
-        base.OnKeyDown(e);
-        if (e.Key == Key.Escape)
+        if (e.Key != Key.Escape)
         {
-            if (!string.IsNullOrEmpty(_search.Text))
-            {
-                _search.Text = string.Empty;
-            }
-            else
-            {
-                Close();
-            }
-
-            e.Handled = true;
+            return false;
         }
+
+        if (!string.IsNullOrEmpty(_search.Text))
+        {
+            _search.Text = string.Empty;
+        }
+        else
+        {
+            RequestClose();
+        }
+
+        return true;
+    }
+
+    public override void AppendText(string text)
+    {
+        _search.Text += text;
+        FocusSearch();
     }
 
     private void Rebuild()
@@ -145,10 +169,10 @@ public sealed class SettingsWindow : ToolWindow
         if (SettingsCatalog.Search([FilesCategory], query, s => s, _ => ["json", "folder", "konfiguracja", "keymap", "tools", Loc.T("narzędzia"), Loc.T("skórki"), "plik"]).Count > 0)
         {
             Section(FilesCategory, [new Border().Padding(16, 12).Child(new WrapPanel().Children(
-                FileButton(Loc.T("📂 Folder konfiguracji"), () => SkinPickerDialog.OpenFolder(_host.Config.ConfigDirectory)),
+                FileButton(Loc.T("📂 Folder konfiguracji"), () => DesktopShell.OpenFolder(_host.Config.ConfigDirectory)),
                 FileButton("⌨ keymap.json", () => _ = _host.Tools.EditAsync(_host.Config.KeymapPath)),
                 FileButton(Loc.T("🛠 tools.json (edytor, diff, terminal)"), () => _ = _host.Tools.EditAsync(_host.Config.ToolsPath)),
-                FileButton(Loc.T("🎨 Folder skórek"), () => SkinPickerDialog.OpenFolder(_host.Config.SkinsDirectory))))]);
+                FileButton(Loc.T("🎨 Folder skórek"), () => DesktopShell.OpenFolder(_host.Config.SkinsDirectory))))]);
         }
 
         if (_content.Children.Count == 0)
@@ -339,7 +363,12 @@ public sealed class SettingsWindow : ToolWindow
             return;
         }
 
-        var target = await new LinkOpenDialog(Brushes, url!).ShowAsync(this);
+        if (OwnerWindow is not { } owner)
+        {
+            return;
+        }
+
+        var target = await new LinkOpenDialog(Brushes, url!).ShowAsync(owner);
         if (target == LinkOpenTarget.SystemBrowser)
         {
             AboutDialog.OpenUrl(url!);

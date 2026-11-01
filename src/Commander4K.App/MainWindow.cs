@@ -441,12 +441,82 @@ public sealed class MainWindow : Window
         }
     }
 
-    private void OpenSettings(string? query = null)
+    private void OpenSettings(string? query = null) => _ = OpenFolderViewAsync(SettingsViewKey, query);
+
+    private const string SettingsViewKey = "builtin:settings";
+    private const string SkinsViewKey = "builtin:skins";
+    private const string PluginsViewKey = "builtin:plugins";
+
+    /// <summary>
+    /// The app's own views belong to folders: the plugin manager to <c>plugins/</c>, settings to <c>config/</c>,
+    /// skins to <c>config/skins/</c>. Each opens as a tab on its folder, so the Pliki/Podgląd switch shows the files.
+    /// </summary>
+    private (string Key, string Folder)? BuiltInFolderView(string path)
     {
-        var window = new SettingsWindow(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, url => OpenBrowser(url, _active), query);
-        FollowSkin(window, window.ApplySkin);
-        window.Closed += (_, _) => RebuildMenu(); // Key bindings shown in the menu may have changed.
-        window.Show(this);
+        var host = _host!;
+        foreach (var (key, folder) in new[]
+        {
+            (PluginsViewKey, Path.Combine(host.DataDirectory, "plugins")),
+            (SkinsViewKey, host.Config.SkinsDirectory),
+            (SettingsViewKey, host.Config.ConfigDirectory),
+        })
+        {
+            if (string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)), Path.TrimEndingDirectorySeparator(path), StringComparison.OrdinalIgnoreCase))
+            {
+                return (key, folder);
+            }
+        }
+
+        return null;
+    }
+
+    private string FolderOfView(string key) => key switch
+    {
+        PluginsViewKey => Path.Combine(_host!.DataDirectory, "plugins"),
+        SkinsViewKey => _host!.Config.SkinsDirectory,
+        _ => _host!.Config.ConfigDirectory,
+    };
+
+    private IPanelModeView CreateFolderView(string key, string? query = null)
+    {
+        switch (key)
+        {
+            case PluginsViewKey:
+                var plugin = _host!.FindPanel(PluginManagerPanel.PluginId)!;
+                var request = new PanelRequest(null, null);
+                return new PluginPanelView(plugin, plugin.CreateSession(request, _host.HostFor(plugin.Manifest)), request, _skins!.Current,
+                    new PluginPanelServices((title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this), ShowTextWindowAsync, Notify));
+            case SkinsViewKey:
+                return new SkinsView(_host!, _skins!);
+            default:
+                var settings = new SettingsView(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, url => OpenBrowser(url, _active), query);
+                settings.DetachedFromVisualTree += (_, _) => RebuildMenu(); // key bindings shown in the menu may have changed
+                return settings;
+        }
+    }
+
+    /// <summary>Opens (or selects) the tab of a built-in folder view in the panel that modes open in.</summary>
+    private async Task OpenFolderViewAsync(string key, string? query = null)
+    {
+        foreach (var panel in new[] { _left, _right })
+        {
+            if (panel.SelectFolderViewTab(key) is { } open)
+            {
+                if (open is SettingsView settings && query is not null)
+                {
+                    settings.Search(query);
+                }
+
+                SetActive(panel);
+                return;
+            }
+        }
+
+        var folder = FolderOfView(key);
+        await Task.Run(() => Directory.CreateDirectory(folder));
+        var target = ModeTarget().Target;
+        target.AddFolderViewTab(folder, key, CreateFolderView(key, query));
+        SetActive(target);
     }
 
     private void OnSettingChanged(string key)
@@ -795,6 +865,15 @@ public sealed class MainWindow : Window
     /// </summary>
     private async Task EnterFolderAsync(FilePanelView panel, VfsEntry folder)
     {
+        if (VfsPath.GetScheme(folder.Path) == VfsPath.FileScheme && BuiltInFolderView(folder.Path) is { } builtIn)
+        {
+            // plugins/, config/ and config/skins/ are shown by the app's own views; Pliki/Podgląd shows their files.
+            await panel.NavigateAsync(folder.Path);
+            panel.ShowMode(CreateFolderView(builtIn.Key), folderView: true);
+            SetActive(panel);
+            return;
+        }
+
         FolderConfig? config = null;
         if (VfsPath.GetScheme(folder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
         {
@@ -1237,7 +1316,7 @@ public sealed class MainWindow : Window
                 }
 
                 _ = panel.NavigateAsync(folder.Path);
-                await OpenPanelInAsync(panelId, folder.Path, panel, action.Options);
+                await OpenPanelInAsync(panelId, folder.Path, panel, action.Options, folderView: true);
                 return;
 
             case FolderActionKind.View:
@@ -1576,7 +1655,7 @@ public sealed class MainWindow : Window
 
     private AiAppContext? _aiContext;
 
-    private Task OpenPluginManagerAsync() => ExecuteAsync(CommandIds.PanelPrefix + PluginManagerPanel.PluginId);
+    private Task OpenPluginManagerAsync() => OpenFolderViewAsync(PluginsViewKey);
 
     /// <summary>
     /// Repaints a non-modal window whenever the skin or density changes, for as long as it is open. Posted, so a
@@ -2193,7 +2272,7 @@ public sealed class MainWindow : Window
          .Register(CommandIds.OpenTerminal, Loc.T("Terminal w bieżącym katalogu"), OpenTerminalAsync)
          .Register(CommandIds.OpenInVsCode, Loc.T("Otwórz w VS Code (bieżący folder i zaznaczone pliki)"), OpenInVsCodeAsync)
          .Register(CommandIds.CancelCurrentOperation, Loc.T("Przerwij"), CancelCurrent)
-         .Register(CommandIds.SelectSkin, Loc.T("Wybór skórki"), _ => new ValueTask(new SkinPickerDialog(_host, _skins!).ShowAsync(this)))
+         .Register(CommandIds.SelectSkin, Loc.T("Wybór skórki"), _ => new ValueTask(OpenFolderViewAsync(SkinsViewKey)))
          .Register(CommandIds.NextSkin, Loc.T("Następna skórka"), NextSkin)
          .Register(CommandIds.EditSkin, Loc.T("Edytor skórki (JSON)"), _ => new ValueTask(new SkinEditorDialog(_host, _skins!).ShowAsync(this)))
          .Register(CommandIds.ToggleHidden, Loc.T("Pokaż / ukryj pliki ukryte"), ToggleHiddenAsync)
@@ -3436,9 +3515,15 @@ public sealed class MainWindow : Window
 
     /// <param name="target">Panel to show the plugin in; <c>null</c> = the usual mode target (see <see cref="ModeTarget"/>).</param>
     /// <param name="options">JSON from a folder's c4k.dir, passed to the plugin with the request.</param>
-    private Task OpenPanelInAsync(string pluginId, string? argument, FilePanelView? target, string? options = null)
+    /// <param name="folderView">The panel belongs to the folder the target panel is in (a c4k.dir panel).</param>
+    private Task OpenPanelInAsync(string pluginId, string? argument, FilePanelView? target, string? options = null, bool folderView = false)
     {
         var host = _host!;
+        if (string.Equals(pluginId, PluginManagerPanel.PluginId, StringComparison.OrdinalIgnoreCase) && !folderView)
+        {
+            return OpenFolderViewAsync(PluginsViewKey); // the plugin manager is the view of the plugins folder
+        }
+
         if (host.FindPanel(pluginId) is not { } plugin)
         {
             Notify(Loc.T("Nie znaleziono panelu „{0}”.", pluginId), isError: true);
@@ -3466,7 +3551,7 @@ public sealed class MainWindow : Window
             (title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this),
             ShowTextWindowAsync,
             Notify);
-        target.ShowMode(new PluginPanelView(plugin, plugin.CreateSession(request, host.HostFor(plugin.Manifest)), request, _skins!.Current, services));
+        target.ShowMode(new PluginPanelView(plugin, plugin.CreateSession(request, host.HostFor(plugin.Manifest)), request, _skins!.Current, services), folderView);
         SetActive(target);
         return Task.CompletedTask;
     }

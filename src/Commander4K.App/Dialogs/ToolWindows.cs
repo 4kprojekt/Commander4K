@@ -115,7 +115,7 @@ public sealed class TextWindow : Window
         Content = new Grid().Rows("*,Auto").Children(
             new ScrollViewer().Row(0).HorizontalScrollBarVisibility(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto).Content(box),
             Ds.Footer(brushes, null,
-                Ds.Button(brushes, Loc.T("Kopiuj"), () => _ = SkinPickerDialog.CopyToClipboardAsync(this, text)),
+                Ds.Button(brushes, Loc.T("Kopiuj"), () => _ = DesktopShell.CopyToClipboardAsync(this, text)),
                 Ds.Button(brushes, Loc.T("Zamknij"), Close, ButtonKind.Primary)).Row(1));
     }
 

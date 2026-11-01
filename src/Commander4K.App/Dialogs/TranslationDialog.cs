@@ -42,7 +42,7 @@ public sealed class TranslationDialog : DialogWindow<bool>
                 Action(Loc.T("📋 Kopiuj prompt dla AI"), CopyPromptAsync),
                 Action(Loc.T("📂 Folder tłumaczeń"), () =>
                 {
-                    SkinPickerDialog.OpenFolder(Folder);
+                    DesktopShell.OpenFolder(Folder);
                     return Task.CompletedTask;
                 }),
                 Action(Loc.T("✔ Sprawdź pliki"), () =>
@@ -67,7 +67,7 @@ public sealed class TranslationDialog : DialogWindow<bool>
             return;
         }
 
-        await SkinPickerDialog.CopyToClipboardAsync(this, TranslationKit.PromptFor(Code, AppHost.LanguageName(Code)));
+        await DesktopShell.CopyToClipboardAsync(this, TranslationKit.PromptFor(Code, AppHost.LanguageName(Code)));
         Directory.CreateDirectory(Folder);
         _report.Text = Loc.T("Skopiowano prompt ({0}). Odpowiedź AI zapisz jako {1}.", AppHost.LanguageName(Code), Path.Combine(Folder, Code + ".json"));
     }

@@ -15,100 +15,101 @@ using Commander4K.Core.Theming;
 
 namespace Commander4K.App.Dialogs;
 
-/// <summary>Skin list with live preview; Cancel restores the skin that was active before.</summary>
-public sealed class SkinPickerDialog : DialogWindow<bool>
+/// <summary>
+/// The skins: the view of <c>config/skins/</c>, opened as a panel tab on that folder (the Pliki/Podgląd switch shows
+/// the JSON files). Clicking a skin applies it at once and saves the choice; the contrast check of the skin on screen
+/// is shown under the list.
+/// </summary>
+public sealed class SkinsView : Panels.FolderModeView
 {
     private readonly AppHost _host;
     private readonly SkinManager _skins;
-    private readonly Skin _original;
-    private readonly ListBox _list;
-    private readonly TextBlock _warnings;
-    private readonly Border _warningCard;
-    private readonly TextBlock _errors;
-    private readonly Border _errorCard;
-    private readonly TextBlock _info;
 
-    public SkinPickerDialog(AppHost host, SkinManager skins) : base(Loc.T("Skórki"), skins.Current, 640)
+    public SkinsView(AppHost host, SkinManager skins) : base(skins.Current)
     {
         _host = host;
         _skins = skins;
-        _original = skins.Current.Skin;
-        _list = new ListBox().Height(280);
-        _list.SelectionChanged += (_, _) => PreviewSelected();
-        _warnings = new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12);
-        _warningCard = new Border().IsVisible(false).Padding(10, 7).BorderThickness(1)
-            .Child(_warnings);
-        _errors = new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12);
-        _errorCard = new Border().IsVisible(false).Padding(10, 8).BorderThickness(1)
-            .Child(new StackPanel().Spacing(4).Children(
-                new TextBlock().Text(Loc.T("Nie wczytano skórek:")).FontWeight(FontWeight.SemiBold),
-                new ScrollViewer().MaxHeight(88).Content(_errors)));
-        _info = new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12).Opacity(0.75).Margin(0, 6, 0, 0)
-            .Text(Loc.T("Własne skórki: pliki JSON w folderze {0} (schemat: {1}).", host.Config.SkinsDirectory, SkinSchema.FileName));
-
-        SetBody(
-            Label(Loc.T("Wybierz skórkę — podgląd działa na żywo:")),
-            _list,
-            _warningCard,
-            _errorCard,
-            new Border().Background(skins.Current.Surface2).CornerRadius(new CornerRadius(skins.Current.ControlRadius))
-                .Padding(10, 8).Child(new WrapPanel().Children(
-                    Action(Loc.T("✨ Stwórz nową z AI…"), CreateWithAiAsync),
-                    Action(Loc.T("✏ Edytuj…"), EditAsync),
-                    Action(Loc.T("📂 Otwórz folder skórek"), () => FolderOpener.OpenAsync(this, Brushes, host.Config.SkinsDirectory)),
-                    Action(Loc.T("🔄 Przeładuj"), ReloadAsync))),
-            _info,
-            ButtonRow(("OK", Accept, true), (Loc.T("Anuluj"), Cancel, false)));
-        _skins.Changed += ApplySkin;
-        Closed += (_, _) => _skins.Changed -= ApplySkin;
-        ApplySkin(skins.Current);
-        Fill(_original.Id);
+        Build();
     }
 
-    protected override void OnKeyDown(KeyEventArgs e)
+    public override string Title => Loc.T("Skórki");
+
+    public override bool HandleKey(KeyEventArgs e)
     {
-        if (e.Key == Key.Escape)
+        if (e.Key != Key.Escape)
         {
-            Cancel();
-            e.Handled = true;
-            return;
+            return false;
         }
 
-        base.OnKeyDown(e);
+        RequestClose();
+        return true;
     }
 
-    private Skin? Selected => (_list.SelectedItem as ListBoxItem)?.Tag as Skin;
-
-    private Button Action(string text, Func<Task> onClick) =>
-        Ds.Button(Brushes, text, async () => await onClick()).Margin(0, 0, 6, 6);
-
-    private void Fill(string selectId)
+    protected override Control BuildLayout()
     {
+        var b = Brushes;
+        var current = _skins.Current.Skin;
         var builtIn = BuiltInSkins.All.Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var items = _host.Skins.Skins.Select(skin => new ListBoxItem
+        var cards = new WrapPanel { ItemSpacing = 10, LineSpacing = 10 };
+        foreach (var skin in _host.Skins.Skins)
         {
-            Tag = skin,
-            Content = SkinCard(skin, builtIn.Contains(skin.Id)),
-        }).ToList();
-        _list.ItemsSource = items;
-        _list.SelectedItem = items.FirstOrDefault(i => string.Equals(((Skin)i.Tag!).Id, selectId, StringComparison.OrdinalIgnoreCase)) ?? items.FirstOrDefault();
+            var chosen = string.Equals(skin.Id, current.Id, StringComparison.OrdinalIgnoreCase);
+            var card = new Button
+            {
+                Padding = new Thickness(0),
+                Background = Avalonia.Media.Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Content = SkinCard(skin, builtIn.Contains(skin.Id), chosen, b),
+            };
+            ToolTip.SetTip(card, skin.Id);
+            card.Click += (_, _) =>
+            {
+                if (!chosen)
+                {
+                    _skins.Apply(skin); // repaints the app, this view included
+                }
+            };
+            cards.Children.Add(card);
+        }
 
-        _errors.Text = string.Join(Environment.NewLine, _host.Skins.Errors.Select(e => Loc.T("{0}: {1}", Path.GetFileName(e.Path), e.Error)));
-        _errorCard.IsVisible = _host.Skins.Errors.Count > 0;
+        var body = new StackPanel { Spacing = 14, Margin = Ds.WindowBodyPadding };
+        body.Children.Add(Ds.SectionHeading(b, Loc.T("Wybierz skórkę")));
+        body.Children.Add(cards);
+
+        var warnings = SkinValidator.Validate(current);
+        body.Children.Add(Ds.Notice(b, warnings.Count == 0
+            ? Loc.T("✓ {0}: kontrast i czytelność w porządku.", current.DisplayName)
+            : "⚠ " + string.Join("\n⚠ ", warnings), warnings.Count == 0 ? NoticeKind.Info : NoticeKind.Warning));
+        if (_host.Skins.Errors.Count > 0)
+        {
+            body.Children.Add(Ds.Notice(b, Loc.T("Nie wczytano skórek:") + "\n" +
+                string.Join("\n", _host.Skins.Errors.Select(e => Loc.T("{0}: {1}", Path.GetFileName(e.Path), e.Error))), NoticeKind.Error));
+        }
+
+        body.Children.Add(Ds.Muted(b, Loc.T("Własne skórki: pliki JSON w folderze {0} (schemat: {1}).", _host.Config.SkinsDirectory, SkinSchema.FileName)));
+
+        var footer = Ds.Footer(b, null,
+            Ds.Button(b, Loc.T("✨ Stwórz nową z AI…"), async () => await CreateWithAiAsync()),
+            Ds.Button(b, Loc.T("✏ Edytuj…"), async () => await EditAsync(current, asDraft: false)),
+            Ds.Button(b, Loc.T("🔄 Przeładuj"), async () => await _host.ReloadSkinsAsync().ContinueWith(_ => Avalonia.Threading.Dispatcher.UIThread.Post(Build))),
+            Ds.Button(b, Loc.T("Pokaż pliki"), RequestClose, ButtonKind.Primary));
+        return Ds.Frame(Ds.WindowHeader(b, Loc.T("Skórki"), Loc.T("Kolory, krój pisma i ramki całej aplikacji. Kliknięcie skórki od razu ją włącza.")), footer, Scroll(body));
     }
 
-    private static Border SkinCard(Skin skin, bool builtIn)
+    /// <summary>A skin painted in its own colours: swatches, name, font; the active one with an accent ring.</summary>
+    private static Border SkinCard(Skin skin, bool builtIn, bool chosen, SkinBrushes current)
     {
-        var p = skin.Palette;
         var brushes = new SkinBrushes(skin);
-        return new Border().Background(brushes.PanelBackground).BorderBrush(brushes.PanelBorder).BorderThickness(new Thickness(1))
-            .CornerRadius(new CornerRadius(brushes.ControlRadius)).Padding(9, 6)
+        return new Border().Width(220).Background(brushes.PanelBackground)
+            .BorderBrush(chosen ? current.Accent : brushes.PanelBorder).BorderThickness(new Thickness(chosen ? 2 : 1))
+            .CornerRadius(new CornerRadius(Math.Max(brushes.ControlRadius, current.IsModern ? Ds.CardRadius : 0))).Padding(10, 8)
             .Child(new StackPanel().Orientation(Orientation.Horizontal).Spacing(10).Children(
                 Swatch(skin),
                 new StackPanel().Spacing(2).VerticalAlignment(VerticalAlignment.Center).Children(
-                    new TextBlock().Text(skin.DisplayName).Foreground(brushes.WindowForeground).FontWeight(FontWeight.SemiBold),
+                    new TextBlock().Text(skin.DisplayName).Foreground(brushes.WindowForeground).FontWeight(FontWeight.SemiBold)
+                        .TextTrimming(TextTrimming.CharacterEllipsis).MaxWidth(130),
                     new TextBlock().Text(builtIn ? skin.Typography.FontFamily : Loc.T("(własna)"))
-                        .Foreground(brushes.MutedForeground).FontSize(11))));
+                        .Foreground(brushes.MutedForeground).FontSize(11).TextTrimming(TextTrimming.CharacterEllipsis).MaxWidth(130))));
     }
 
     /// <summary>Four colour chips: panel, directory, cursor, selection.</summary>
@@ -118,80 +119,42 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
         var border = new SolidColorBrush(SkinBrushes.ToColor(p.PanelBorder));
         return new StackPanel().Orientation(Orientation.Horizontal).Spacing(2).Children(
             [.. new[] { p.PanelBackground, p.DirectoryForeground, p.CursorBackground, p.SelectedForeground }
-                .Select(c => (Control)new Border().Width(16).Height(16).CornerRadius(new CornerRadius(2))
+                .Select(c => (Control)new Border().Width(12).Height(24).CornerRadius(new CornerRadius(2))
                     .Background(new SolidColorBrush(SkinBrushes.ToColor(c))).BorderBrush(border).BorderThickness(new Thickness(1)))]);
-    }
-
-    private void PreviewSelected()
-    {
-        if (Selected is not { } skin)
-        {
-            return;
-        }
-
-        _skins.Preview(skin);
-        var warnings = SkinValidator.Validate(skin);
-        _warnings.Text = warnings.Count == 0 ? Loc.T("✓ Kontrast i czytelność w porządku.") : "⚠ " + string.Join("\n⚠ ", warnings);
-        _warningCard.IsVisible = true;
-        _warningCard.Background = warnings.Count == 0 ? _skins.Current.HighlightBackground : _skins.Current.WarningBackground;
-        _warningCard.BorderBrush = warnings.Count == 0 ? _skins.Current.Success : _skins.Current.Warning;
-        _warnings.Foreground = warnings.Count == 0 ? _skins.Current.Success : _skins.Current.Warning;
-    }
-
-    private void ApplySkin(SkinBrushes brushes)
-    {
-        Ds.ApplySurface(this, brushes, WindowSurface.Raised);
-        _warningCard.CornerRadius = new CornerRadius(brushes.ControlRadius);
-        _errorCard.CornerRadius = new CornerRadius(brushes.ControlRadius);
-        _errorCard.Background = brushes.WarningBackground;
-        _errorCard.BorderBrush = brushes.Warning;
-        _errors.Foreground = brushes.Warning;
-    }
-
-    private void Accept()
-    {
-        if (Selected is { } skin)
-        {
-            _skins.Apply(skin);
-        }
-
-        Complete(true);
-    }
-
-    private void Cancel()
-    {
-        _skins.Preview(_original);
-        Complete(false);
     }
 
     private async Task CreateWithAiAsync()
     {
-        var draft = await new SkinAiPromptDialog(_skins).ShowAsync(this);
+        if (OwnerWindow is not { } owner)
+        {
+            return;
+        }
+
+        var draft = await new SkinAiPromptDialog(_skins).ShowAsync(owner);
         if (draft is null)
         {
-            _skins.Preview(Selected ?? _original);
+            _skins.Preview(_skins.Current.Skin);
             return;
         }
 
         await EditAsync(draft, asDraft: true);
     }
 
-    private Task EditAsync() => EditAsync(Selected, asDraft: false);
-
     private async Task EditAsync(Skin? skin, bool asDraft)
     {
-        var saved = await new SkinEditorDialog(_host, _skins, skin, asDraft).ShowAsync(this);
-        Fill(saved?.Id ?? Selected?.Id ?? _original.Id);
-        PreviewSelected();
-    }
+        if (OwnerWindow is not { } owner)
+        {
+            return;
+        }
 
-    private async Task ReloadAsync()
-    {
-        var selected = Selected?.Id;
-        await _host.ReloadSkinsAsync();
-        Fill(selected ?? _original.Id);
+        await new SkinEditorDialog(_host, _skins, skin, asDraft).ShowAsync(owner);
+        Build();
     }
+}
 
+/// <summary>Clipboard and Explorer helpers shared by the dialogs.</summary>
+internal static class DesktopShell
+{
     internal static async Task CopyToClipboardAsync(Window window, string text)
     {
         if (window.Clipboard is { } clipboard)
