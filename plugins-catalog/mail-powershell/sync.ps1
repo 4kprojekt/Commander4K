@@ -13,6 +13,9 @@
 
 $script:MailMaxFetches = 50
 $script:MailMaxSeconds = 15
+# "Sprawdź teraz" answers a preview.action, which the app gives 60 s. One mail operation may take 30 s, so the work
+# itself stops after 10 s; the rest goes on in the background ticks.
+$script:MailCheckSeconds = 10
 $script:MailLockMinutes = 10
 $script:MailMaxStateBytes = 16777216
 $script:MailUnread = [string][char]0x25CF + ' '
@@ -233,7 +236,7 @@ function Set-MailFlagged([hashtable] $State, [string] $Server, [long] $Uid, [boo
 
 # ---- budget ----
 
-function New-MailBudget { @{ fetches = 0; deadline = (Get-MailNow).AddSeconds($script:MailMaxSeconds) } }
+function New-MailBudget([int] $Seconds = $script:MailMaxSeconds) { @{ fetches = 0; deadline = (Get-MailNow).AddSeconds($Seconds) } }
 
 function Test-MailBudgetSpent([hashtable] $Budget) { $Budget.fetches -ge $script:MailMaxFetches -or (Get-MailNow) -ge $Budget.deadline }
 
@@ -626,6 +629,6 @@ function Invoke-MailCheck([string] $Path, $Options) {
     if ($null -eq $state) { return }
     $state.authRequired = $false
     [void] $script:MailCheckRequested.Remove($Path)
-    $r = Invoke-MailAccountSafely $Path $config $state (New-MailBudget) $true
+    $r = Invoke-MailAccountSafely $Path $config $state (New-MailBudget $script:MailCheckSeconds) $true
     if ($r.more) { Request-MailCheck $Path }
 }

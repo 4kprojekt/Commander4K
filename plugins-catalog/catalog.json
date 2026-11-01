@@ -387,15 +387,15 @@
         },
         {
           "path": "main.ps1",
-          "sha256": "7a87ae01323c661e01441ef0256f902a9f9c82a4a11ce4ada5b1a8475646ab1a"
+          "sha256": "97421afcb75eaecb4c390e48eeedcb105f275750c8c66ca3473c93c9f92a37ec"
         },
         {
           "path": "plugin.json",
-          "sha256": "97a2c15c67021bc43c9cc86a5e97436e04a11f83fa20bce64e361e108124315f"
+          "sha256": "f496ce50307d5556d26c9f2f1298ddf1cc96d03f2c460390eeb001e3b3e17b7f"
         },
         {
           "path": "sync.ps1",
-          "sha256": "2220ab7667020b5c6cd563233e41e1a95906bccbb29aa2ea75d7d07f97a62dea"
+          "sha256": "aa2fd258bab0685b7b81085b7ecc1da39d0266b6f6e55f3ecceaac444c609d9d"
         }
       ]
     },

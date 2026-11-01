@@ -96,6 +96,201 @@ public sealed class MailPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Card_reads_files_only()
+    {
+        var backend = new FakeMailServer();
+        backend.Inbox.Add();
+        backend.Inbox.Add();
+        backend.Inbox.Add(MailFlags.Seen);
+        backend.Inbox.Add();
+        var trash = backend.AddFolder("Trash", "Kosz", MailSpecialFolder.Trash, 1);
+        trash.Add();
+        var projects = backend.AddFolder("Projekty", "Projekty", MailSpecialFolder.None, 1);
+        projects.Add();
+        projects.Add(MailFlags.Seen);
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var inbox = InboxFolder(account);
+        var unread = Directory.GetFiles(inbox, "*.eml").Count(f => Path.GetFileName(f).StartsWith(Unread, StringComparison.Ordinal));
+        Assert.Equal(3, unread);
+        backend.Calls = 0;
+
+        var card = await AccountPreview(plugin).LoadCardAsync(new PreviewCardRequest(Entry(account), null, null), Host(plugin), Token);
+
+        Assert.Equal(0, backend.Calls);
+        Assert.Equal(CardStatus.Ok, card.Status);
+        Assert.Equal(new CardValue("Nieprzeczytane", unread.ToString()), card.Items[0]);
+        Assert.Contains(new CardValue("Projekty", "1"), card.Items);
+        Assert.DoesNotContain(card.Items, i => i is CardValue { Label: "Kosz" });
+        var text = Assert.Single(card.Items.OfType<CardText>());
+        Assert.Matches(@"^sprawdzono \d\d:\d\d$", text.Text);
+        Assert.Equal("Otwórz", card.Actions[0].Label);
+        Assert.Equal(inbox, card.Actions[0].Target);
+        Assert.Equal("Sprawdź teraz", card.Actions[1].Label);
+        Assert.Equal("c4k:plugin/check", card.Actions[1].Target.Split('?')[0]);
+    }
+
+    [Fact]
+    public async Task Card_shows_auth_required_as_warning()
+    {
+        var backend = new FakeMailServer { ThrowAuth = true };
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await plugin.TickAsync(Token);
+        backend.Calls = 0;
+
+        var card = await AccountPreview(plugin).LoadCardAsync(new PreviewCardRequest(Entry(account), null, null), Host(plugin), Token);
+
+        Assert.Equal(CardStatus.Warning, card.Status);
+        Assert.Contains(card.Items.OfType<CardText>(), t => t.Text == "wymaga logowania");
+        Assert.Equal(0, backend.Calls);
+        Assert.Contains(card.Actions, a => a.Label == "Sprawdź teraz");
+    }
+
+    [Fact]
+    public async Task Card_shows_error_and_lock_held_elsewhere()
+    {
+        var backend = new FakeMailServer();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var state = ReadState(account);
+        state["error"] = "serwer nie odpowiada";
+        File.WriteAllText(Path.Combine(account, ".mail", "state.json"), state.ToJsonString());
+
+        var failed = await AccountPreview(plugin).LoadCardAsync(new PreviewCardRequest(Entry(account), null, null), Host(plugin), Token);
+
+        Assert.Equal(CardStatus.Error, failed.Status);
+        Assert.Contains(failed.Items.OfType<CardText>(), t => t.Text.Contains("serwer nie odpowiada", StringComparison.Ordinal));
+
+        WriteLock(account, "BIURKO", DateTimeOffset.UtcNow.AddMinutes(-1));
+        var locked = await AccountPreview(plugin).LoadCardAsync(new PreviewCardRequest(Entry(account), null, null), Host(plugin), Token);
+
+        Assert.Equal(CardStatus.Warning, locked.Status);
+        Assert.Contains(locked.Items.OfType<CardText>(), t => t.Text == "synchronizuje BIURKO");
+    }
+
+    [Fact]
+    public async Task Check_is_bounded_and_continues_in_the_background()
+    {
+        var backend = new FakeMailServer();
+        for (var i = 0; i < 120; i++)
+        {
+            backend.Inbox.Add();
+        }
+
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+
+        await CheckAsync(plugin, account);
+
+        Assert.InRange(backend.Fetches, 1, 50);
+        Assert.NotNull(ReadState(account)["progress"]);
+        Assert.True(await plugin.TickAsync(Token));
+    }
+
+    [Fact]
+    public async Task Add_account_writes_both_c4k_dir_files()
+    {
+        var backend = new FakeMailServer();
+        var plugin = Start(backend);
+        var poczta = Path.Combine(_dir, "Poczta");
+        Directory.CreateDirectory(poczta);
+        File.WriteAllText(Path.Combine(poczta, "c4k.dir"),
+            "// pulpit\n{ \"enter\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Dokumenty\", \"open\": \"Dokumenty\" } ] }, \"preview\": \"dashboard\", \"note\": 42 }");
+        _ui.Active = poczta;
+        _ui.Prompts.Enqueue("anna@example.org");
+        _ui.Prompts.Enqueue("imap.example.org:993");
+        _ui.Prompts.Enqueue("smtp.example.org:465");
+        _ui.Prompts.Enqueue("Anna Nowak");
+        _ui.Prompts.Enqueue("Firma");
+
+        await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
+
+        // Suggestions: IMAP and SMTP from the address domain, the folder name from the domain.
+        Assert.Equal("imap.example.org:993", _ui.PromptInitials[1]);
+        Assert.Equal("smtp.example.org:465", _ui.PromptInitials[2]);
+        Assert.Equal("example.org", _ui.PromptInitials[4]);
+        var accountDir = Path.Combine(poczta, "Firma");
+        var accountText = File.ReadAllText(Path.Combine(accountDir, "c4k.dir"));
+        Assert.DoesNotContain("password", accountText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("haslo", accountText, StringComparison.OrdinalIgnoreCase);
+        var account = JsonNode.Parse(accountText)!;
+        foreach (var key in new[] { "preview", "enter" })
+        {
+            Assert.Equal(PluginId, account[key]!["plugin"]!.GetValue<string>());
+            var options = account[key]!["options"]!;
+            Assert.Equal("imap.example.org:993", options["imap"]!.GetValue<string>());
+            Assert.Equal("smtp.example.org:465", options["smtp"]!.GetValue<string>());
+            Assert.Equal("anna@example.org", options["user"]!.GetValue<string>());
+            Assert.Equal("Anna Nowak", options["name"]!.GetValue<string>());
+            Assert.Equal("5m", options["refresh"]!.GetValue<string>());
+        }
+
+        var dashboard = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "c4k.dir")))!;
+        Assert.Equal(42, dashboard["note"]!.GetValue<int>());
+        var tiles = dashboard["enter"]!["tiles"]!.AsArray();
+        Assert.Equal(2, tiles.Count);
+        Assert.Equal("Dokumenty", tiles[0]!["title"]!.GetValue<string>());
+        Assert.Equal("Firma", tiles[1]!["title"]!.GetValue<string>());
+        Assert.Equal("Firma", tiles[1]!["open"]!.GetValue<string>());
+        Assert.Equal("official.mail/account", tiles[1]!["card"]!.GetValue<string>());
+        Assert.Equal("30s", tiles[1]!["refresh"]!.GetValue<string>());
+        Assert.Contains(accountDir, _storage.Get(PluginId, "accounts")!.AsArray().Select(x => x!.GetValue<string>()));
+        Assert.True(backend.LastAccount!.Interactive);
+    }
+
+    [Fact]
+    public async Task Add_account_creates_a_new_dashboard_and_refuses_remote_paths()
+    {
+        var backend = new FakeMailServer();
+        var plugin = Start(backend);
+        var poczta = Path.Combine(_dir, "Nowa");
+        Directory.CreateDirectory(poczta);
+        _ui.Active = poczta;
+        foreach (var answer in new[] { "jan@example.org", "imap.example.org:993", "", "", "Jan" })
+        {
+            _ui.Prompts.Enqueue(answer);
+        }
+
+        await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
+
+        var dashboard = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "c4k.dir")))!;
+        Assert.Equal("dashboard", dashboard["preview"]!.GetValue<string>());
+        Assert.Equal("Jan", dashboard["enter"]!["tiles"]![0]!["title"]!.GetValue<string>());
+        Assert.Null(JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "Jan", "c4k.dir")))!["preview"]!["options"]!["smtp"]);
+
+        _ui.Active = "sftp://host/dir";
+        var before = backend.Calls;
+        await Assert.ThrowsAnyAsync<Exception>(() => new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token));
+        Assert.Equal(before, backend.Calls);
+    }
+
+    [Fact]
+    public async Task Add_account_with_a_wrong_login_writes_nothing()
+    {
+        var backend = new FakeMailServer { ThrowAuth = true };
+        var plugin = Start(backend);
+        var poczta = Path.Combine(_dir, "Zle");
+        Directory.CreateDirectory(poczta);
+        _ui.Active = poczta;
+        foreach (var answer in new[] { "jan@example.org", "imap.example.org:993", "", "", "Jan" })
+        {
+            _ui.Prompts.Enqueue(answer);
+        }
+
+        await Assert.ThrowsAnyAsync<Exception>(() => new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token));
+
+        Assert.Empty(Directory.GetFileSystemEntries(poczta));
+        Assert.Null(_storage.Get(PluginId, "accounts"));
+    }
+
+    [Fact]
     public async Task Lock_held_by_other_machine_skips_sync()
     {
         var backend = new FakeMailServer();
@@ -1365,7 +1560,15 @@ public sealed class MailPluginTests : IAsyncLifetime
 
         public Task<bool> ConfirmAsync(string title, string message) => Task.FromResult(true);
 
-        public Task<string?> PromptAsync(string title, string message, string initial) => Task.FromResult<string?>(null);
+        public Queue<string?> Prompts { get; } = new();
+
+        public List<string> PromptInitials { get; } = [];
+
+        public Task<string?> PromptAsync(string title, string message, string initial)
+        {
+            PromptInitials.Add(initial);
+            return Task.FromResult(Prompts.Count > 0 ? Prompts.Dequeue() : null);
+        }
 
         public Task EditFileAsync(string path) => Task.CompletedTask;
 

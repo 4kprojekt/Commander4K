@@ -6,38 +6,73 @@
 . "$PSScriptRoot/sync.ps1"
 . "$PSScriptRoot/compose.ps1"
 
-# Plain text about the account, read from state.json and the files only (no server connection).
-function Get-MailAccountStatus([string] $Path, $Options) {
-    $config = Get-MailAccountConfig $Path $Options
-    $state = Read-MailState $Path
-    $lines = [System.Collections.Generic.List[string]]::new()
-    $lines.Add('Konto: ' + (Get-MailLeaf $Path))
-    if ($null -eq $state) {
-        $lines.Add('Nie można odczytać .mail\state.json: synchronizacja tego konta jest wstrzymana.')
-        return $lines -join "`n"
-    }
-    if ($null -eq $config) {
-        $lines.Add('Brak konfiguracji: dodaj imap i user w opcjach c4k.dir.')
-        return $lines -join "`n"
-    }
-    $lines.Add('Użytkownik: ' + $config['user'] + ' (' + $config['imap'] + ')')
-    $last = Get-MailInstant $state.lastCheck
-    $lines.Add('Ostatnie sprawdzenie: ' + $(if ($last) { $last.ToLocalTime().ToString('yyyy-MM-dd HH:mm') } else { 'jeszcze nie' }))
-    if ($state.authRequired) { $lines.Add('Stan: wymaga logowania') }
-    elseif ($state.error) { $lines.Add('Błąd: ' + $state.error) }
-    if ($state.progress) { $lines.Add('Pobieram: ' + $state.progress.done + ' / ' + $state.progress.total) }
-    foreach ($server in @($state.folders.Keys | Sort-Object)) {
-        $local = $state.folders[$server].local
+# ---- the account folder: view, card, new message ----
+
+# Unread and total counts per local folder, counted from the files (a "● " prefix = unread); no server call. A folder
+# that cannot be listed has $null counts.
+function Get-MailFolderCounts([string] $Path, $State) {
+    $rows = [System.Collections.Generic.List[hashtable]]::new()
+    $order = @($State.folders.Keys | Sort-Object { if ($State.folders[$_].special -eq 'inbox') { 0 } else { 1 } }, { [string] $State.folders[$_].local })
+    foreach ($server in $order) {
+        $entry = $State.folders[$server]
+        $row = @{ local = [string] $entry.local; special = [string] $entry.special; total = $null; unread = $null }
         try {
-            $files = (Get-MailLocalFiles (Join-MailPath $Path $local)).files
-            $unread = @($files.Values | Where-Object { $_.StartsWith($script:MailUnread) }).Count
-            $lines.Add("  $local`: $($files.Count) (nieprzeczytane: $unread)")
+            $files = (Get-MailLocalFiles (Join-MailPath $Path $entry.local)).files
+            $row.total = $files.Count
+            $row.unread = @($files.Values | Where-Object { $_.StartsWith($script:MailUnread) }).Count
         }
-        catch { $lines.Add("  $local`: nie można odczytać folderu") }
+        catch { Write-C4KLog "mail folder $($entry.local) of $Path not listed: $($_.Exception.Message)" }
+        $rows.Add($row)
     }
-    $lines -join "`n"
+    , $rows.ToArray()
 }
 
+# Why the account is not being synced right now ('synchronizuje <komputer>' / 'wymaga logowania' / error / $null).
+function Get-MailAccountProblem([string] $Path, $Config, $State) {
+    if (Test-MailLockedElsewhere $Path) { return @{ level = 'warning'; text = 'synchronizuje ' + [string] (Get-MailLock $Path)['machine'] } }
+    if ($null -eq $Config) { return @{ level = 'warning'; text = 'brak konfiguracji konta' } }
+    if ($State.authRequired) { return @{ level = 'warning'; text = 'wymaga logowania' } }
+    if ($State.error) { return @{ level = 'error'; text = 'błąd: ' + $State.error } }
+    $null
+}
+
+# The account folder opened with Enter: folders with counts, last check, problems, progress and two buttons.
+function Get-MailAccountView([string] $Path, $Options) {
+    $config = Get-MailAccountConfig $Path $Options
+    $state = Read-MailState $Path
+    $md = [System.Collections.Generic.List[string]]::new()
+    $actions = @(
+        @{ label = 'Sprawdź teraz'; target = (Get-C4KActionTarget 'check' @{ account = $Path }); shortcut = 'F5' }
+        @{ label = 'Nowa wiadomość'; target = (Get-C4KActionTarget 'new' @{ account = $Path }); shortcut = 'N' }
+    )
+    $md.Add('# ' + (ConvertTo-MailMarkdownLine (Get-MailLeaf $Path)))
+    $md.Add('')
+    if ($null -eq $state) {
+        $md.Add('Nie można odczytać `.mail\state.json`: synchronizacja tego konta jest wstrzymana.')
+        return @{ kind = 'markdown'; content = ($md -join "`n"); actions = $actions }
+    }
+    if ($null -eq $config) {
+        $md.Add('Brak konfiguracji: dodaj `imap` i `user` w opcjach `c4k.dir`.')
+        return @{ kind = 'markdown'; content = ($md -join "`n"); actions = $actions }
+    }
+    $md.Add('**Użytkownik:** ' + (ConvertTo-MailMarkdownLine ([string] $config['user'])) + ' (' + (ConvertTo-MailMarkdownLine ([string] $config['imap'])) + ')  ')
+    $last = Get-MailInstant $state.lastSuccess
+    $md.Add('**Ostatnia udana synchronizacja:** ' + $(if ($last) { $last.ToLocalTime().ToString('yyyy-MM-dd HH:mm') } else { 'jeszcze nie' }))
+    $problem = Get-MailAccountProblem $Path $config $state
+    if ($problem) { $md.Add(''); $md.Add('**Stan:** ' + (ConvertTo-MailMarkdownLine $problem.text)) }
+    if ($state.progress -and $state.progress.total -gt 0) { $md.Add(''); $md.Add("**Pobieranie:** $($state.progress.done) / $($state.progress.total)") }
+    $md.Add('')
+    $md.Add('| Folder | Wiadomości | Nieprzeczytane |')
+    $md.Add('|---|---:|---:|')
+    foreach ($row in (Get-MailFolderCounts $Path $state)) {
+        $total = if ($null -eq $row.total) { '?' } else { [string] $row.total }
+        $unread = if ($null -eq $row.unread) { '?' } else { [string] $row.unread }
+        $md.Add('| ' + (ConvertTo-MailMarkdownLine $row.local) + " | $total | $unread |")
+    }
+    @{ kind = 'markdown'; content = ($md -join "`n"); actions = $actions }
+}
+
+# The dashboard card: files and state.json only, never a mail.* call.
 function Get-MailAccountCard([string] $Path, $Options) {
     $config = Get-MailAccountConfig $Path $Options
     $state = Read-MailState $Path
@@ -48,28 +83,143 @@ function Get-MailAccountCard([string] $Path, $Options) {
         return @{ title = (Get-MailLeaf $Path); status = 'error'; items = @(@{ kind = 'text'; text = 'nie można odczytać .mail\state.json' }); actions = @() }
     }
     $inbox = $null
-    foreach ($server in $state.folders.Keys) {
-        if ($state.folders[$server].special -eq 'inbox') { $inbox = Join-MailPath $Path $state.folders[$server].local }
-    }
-    if ($inbox) {
-        try {
-            $files = (Get-MailLocalFiles $inbox).files
-            $unread = @($files.Values | Where-Object { $_.StartsWith($script:MailUnread) }).Count
-            $items.Add(@{ kind = 'value'; label = 'Nieprzeczytane'; value = [string] $unread })
+    $others = 0
+    foreach ($row in (Get-MailFolderCounts $Path $state)) {
+        if ($row.special -eq 'inbox') {
+            $inbox = Join-MailPath $Path $row.local
+            if ($null -eq $row.unread) { $status = 'warning' }
+            else { $items.Add(@{ kind = 'value'; label = 'Nieprzeczytane'; value = [string] $row.unread }) }
         }
-        catch { $status = 'warning' }
-        $actions.Add(@{ label = 'Otwórz'; target = $inbox })
     }
+    foreach ($row in (Get-MailFolderCounts $Path $state)) {
+        if ($row.special -in 'inbox', 'trash', 'junk' -or -not $row.unread -or $others -ge 6) { continue }
+        $items.Add(@{ kind = 'value'; label = $row.local; value = [string] $row.unread })
+        $others++
+    }
+    $problem = Get-MailAccountProblem $Path $config $state
     $last = Get-MailInstant $state.lastCheck
-    if ($null -eq $config) { $status = 'warning'; $items.Add(@{ kind = 'text'; text = 'brak konfiguracji konta' }) }
-    elseif ($state.authRequired) { $status = 'error'; $items.Add(@{ kind = 'text'; text = 'wymaga logowania' }) }
-    elseif ($state.error) { $status = 'error'; $items.Add(@{ kind = 'text'; text = 'błąd: ' + $state.error }) }
-    if ($last) { $items.Add(@{ kind = 'value'; label = 'Sprawdzono'; value = $last.ToLocalTime().ToString('HH:mm') }) }
+    if ($problem) { $status = $problem.level; $items.Add(@{ kind = 'text'; text = $problem.text }) }
+    elseif ($last) { $items.Add(@{ kind = 'text'; text = 'sprawdzono ' + $last.ToLocalTime().ToString('HH:mm') }) }
+    else { $items.Add(@{ kind = 'text'; text = 'jeszcze nie sprawdzono' }) }
     if ($state.progress -and $state.progress.total -gt 0) {
         $items.Add(@{ kind = 'progress'; label = 'Pobieranie'; fraction = [Math]::Min(1.0, [double] $state.progress.done / [double] $state.progress.total); text = "$($state.progress.done) / $($state.progress.total)" })
     }
+    if ($inbox) { $actions.Add(@{ label = 'Otwórz'; target = $inbox }) }
     $actions.Add(@{ label = 'Sprawdź teraz'; target = (Get-C4KActionTarget 'check' @{ account = $Path }) })
     @{ title = (Get-MailLeaf $Path); status = $status; items = $items.ToArray(); actions = $actions.ToArray() }
+}
+
+# "Nowa wiadomość" on an account: an empty draft in Szkice and its form.
+function New-MailBlankDraft([string] $Path, $Options) {
+    $config = Get-MailAccountConfig $Path $Options
+    if ($null -eq $config) { throw 'Brak konfiguracji konta (imap i user w c4k.dir).' }
+    $ctx = @{ root = $Path; options = $config; state = (Read-MailState $Path) }
+    $dir = Get-MailDraftsDir $ctx
+    $draftPath = Join-MailPath $dir (Get-MailFreeName $dir (Get-MailDraftName ''))
+    $draft = @{
+        to = @(); cc = @(); bcc = @(); subject = ''; body = ''; inReplyTo = $null; references = @(); attachments = @()
+        from = @{ name = $null; address = (Get-MailFromAddress $config) }
+    }
+    Write-C4KMailDraft $draftPath $draft
+    Get-MailDraftForm $draftPath $null $null $false
+}
+
+# ---- "Dodaj konto pocztowe" ----
+
+$script:MailHostPattern = '^[^\s:/\\@]+(:\d{1,5})?$'
+$script:MailSchemaUrl = 'https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.dir.schema.json'
+
+function Test-MailLocalDiskPath([string] $Path) { $Path -match '^([A-Za-z]:[\\/]|\\\\[^\\])' }
+
+# The text of the dashboard c4k.dir with the account's tile added, like FolderConfigWriter.AppendTile: the other keys
+# and tiles stay as they were, in the same order. $Existing is $null for a new file.
+function Add-MailDashboardTile($Existing, $Tile) {
+    if ($null -eq $Existing) { $root = [ordered]@{ '$schema' = $script:MailSchemaUrl } }
+    else {
+        $root = try { $Existing | ConvertFrom-Json -AsHashtable } catch { $null }
+        if ($root -isnot [System.Collections.IDictionary]) { throw 'Nie można odczytać c4k.dir w tym folderze (to nie jest poprawny JSON), więc go nie zmieniam.' }
+    }
+    $isDashboardObject = { param($a) $a -is [System.Collections.IDictionary] -and $a['view'] -eq 'dashboard' }
+    $target = $null
+    if (& $isDashboardObject $root['enter']) { $target = $root['enter'] }
+    elseif (& $isDashboardObject $root['preview']) { $target = $root['preview'] }
+    if ($target) {
+        $target['tiles'] = @(@($target['tiles']) | Where-Object { $null -ne $_ }) + @($Tile)
+    }
+    elseif ($null -eq $root['enter'] -and ($null -eq $root['preview'] -or $root['preview'] -eq 'dashboard')) {
+        $root['enter'] = [ordered]@{ view = 'dashboard'; tiles = @($Tile) }
+        $root['preview'] = 'dashboard'
+    }
+    else {
+        if (-not (Confirm-C4K 'Dodaj konto pocztowe' 'W tym folderze c4k.dir pokazuje coś innego niż pulpit. Zamienić podgląd na pulpit z kartą konta (dotychczasowy podgląd przejdzie pod Enter, jeśli jest wolny)?')) {
+            throw 'Anulowano: c4k.dir w tym folderze nie został zmieniony.'
+        }
+        $old = $root['preview']
+        $root.Remove('preview')
+        $root['preview'] = [ordered]@{ view = 'dashboard'; tiles = @($Tile) }
+        if ($null -eq $root['enter'] -and $null -ne $old) { $root['enter'] = $old }
+    }
+    ($root | ConvertTo-Json -Depth 20) + "`n"
+}
+
+function Add-MailAccount([string] $Active) {
+    if (-not $Active -or -not (Test-MailLocalDiskPath $Active)) {
+        throw 'Konto pocztowe można dodać tylko w folderze na dysku lub udziale sieciowym (nie w archiwum, na SFTP ani w widoku Ten komputer).'
+    }
+    $title = 'Dodaj konto pocztowe'
+    $address = Read-C4KInput $title 'Adres e-mail (to także nazwa użytkownika):' ''
+    if ($null -eq $address) { return @{ message = 'Anulowano.' } }
+    $address = $address.Trim()
+    if ($address -notmatch $script:MailAddressPattern) { throw 'To nie wygląda na adres e-mail.' }
+    $domain = $address.Substring($address.IndexOf('@') + 1)
+    $imap = Read-C4KInput $title 'Serwer IMAP (host:port):' "imap.${domain}:993"
+    if ($null -eq $imap) { return @{ message = 'Anulowano.' } }
+    $imap = $imap.Trim()
+    if ($imap -notmatch $script:MailHostPattern) { throw 'Serwer IMAP ma mieć postać host albo host:port.' }
+    $smtp = Read-C4KInput $title 'Serwer SMTP (host:port; puste = bez wysyłania):' "smtp.${domain}:465"
+    if ($null -eq $smtp) { return @{ message = 'Anulowano.' } }
+    $smtp = $smtp.Trim()
+    if ($smtp -and $smtp -notmatch $script:MailHostPattern) { throw 'Serwer SMTP ma mieć postać host albo host:port.' }
+    $display = Read-C4KInput $title 'Imię i nazwisko nadawcy (opcjonalnie):' ''
+    if ($null -eq $display) { return @{ message = 'Anulowano.' } }
+    $folderName = Read-C4KInput $title 'Nazwa folderu konta:' $domain
+    if ($null -eq $folderName) { return @{ message = 'Anulowano.' } }
+    $folderName = (($folderName -replace '[\\/:*?"<>|\x00-\x1f]', '_').Trim()).TrimEnd('.', ' ')
+    if (-not $folderName -or $folderName -match '^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$') { throw 'Podaj poprawną nazwę folderu.' }
+
+    $accountPath = Join-MailPath $Active $folderName
+    if ($null -ne (Get-C4KItem $accountPath)) { throw "Folder $folderName już istnieje." }
+    $dashboardPath = Join-MailPath $Active 'c4k.dir'
+
+    # The login is checked first (the app asks for the password and keeps it); nothing is written when it fails.
+    $account = @{ imap = $imap; smtp = $(if ($smtp) { $smtp } else { $null }); user = $address; interactive = $true }
+    [void] (Get-C4KMailFolders $account)
+
+    $options = [ordered]@{ imap = $imap }
+    if ($smtp) { $options['smtp'] = $smtp }
+    $options['user'] = $address
+    if ($display.Trim()) { $options['name'] = $display.Trim() }
+    $options['refresh'] = '5m'
+    $options['since'] = '3m'
+    $action = { [ordered]@{ plugin = 'official.mail'; options = $options } }
+    $accountConfig = [ordered]@{ '$schema' = $script:MailSchemaUrl; preview = (& $action); enter = (& $action) }
+
+    $tile = [ordered]@{ title = $folderName; open = $folderName; card = 'official.mail/account'; refresh = '30s' }
+    $existing = $null
+    if ($null -ne (Get-C4KItem $dashboardPath)) {
+        $existing = Get-C4KText $dashboardPath
+        if ($existing -match '(?m)^\s*//|/\*') {
+            if (-not (Confirm-C4K $title 'c4k.dir w tym folderze ma komentarze; po dodaniu karty konta zostaną usunięte. Kontynuować?')) { throw 'Anulowano: c4k.dir w tym folderze nie został zmieniony.' }
+        }
+    }
+    $dashboard = Add-MailDashboardTile $existing $tile
+
+    New-C4KDirectory $accountPath
+    Set-C4KText (Join-MailPath $accountPath 'c4k.dir') (($accountConfig | ConvertTo-Json -Depth 20) + "`n")
+    Set-C4KText $dashboardPath $dashboard
+    [void] (Register-MailAccount $accountPath)
+    Request-MailCheck $accountPath
+    @{ message = "Dodano konto $folderName. Pierwsza synchronizacja ruszy w tle." }
 }
 
 # ---- reading a message ----
@@ -318,6 +468,13 @@ function Invoke-MailMessageAction([string] $Path, [string] $Action, $ActionArgs,
     throw ('Nieznana akcja: ' + $Action)
 }
 
+Register-C4KHandler 'command.execute' {
+    param($p)
+    if ($p.command -ne 'add-account') { throw "Nieznane polecenie: $($p.command)" }
+    try { Add-MailAccount ([string] $p.context.activePath) }
+    catch { throw (Get-MailErrorText $_) }
+}
+
 Register-C4KHandler 'background.tick' { param($p) Invoke-MailTick }
 
 Register-C4KHandler 'preview.render' {
@@ -326,7 +483,7 @@ Register-C4KHandler 'preview.render' {
         $path = [string] $p.entry.path
         # Opening the account (Enter) or seeing it for the first time asks for a check on the next tick.
         if ((Register-MailAccount $path) -or $p.pinned) { Request-MailCheck $path }
-        return @{ kind = 'text'; content = (Get-MailAccountStatus $path $p.options) }
+        return Get-MailAccountView $path $p.options
     }
     $path = [string] $p.entry.path
     try { Get-MailMessageResult $path ([bool] $p.pinned) $null $path }
@@ -347,9 +504,11 @@ Register-C4KHandler 'preview.action' {
         try { return Invoke-MailMessageAction ([string] $p.entry.path) ([string] $p.action) $p.args $p.values }
         catch { throw (Get-MailErrorText $_) }
     }
-    if ($p.action -eq 'check') {
-        $path = if ($p.args -and $p.args['account']) { [string] $p.args['account'] } else { [string] $p.entry.path }
-        Invoke-MailCheck $path $p.options
+    $path = if ($p.args -and $p.args['account']) { [string] $p.args['account'] } else { [string] $p.entry.path }
+    if ($p.action -eq 'check') { Invoke-MailCheck $path $p.options }
+    elseif ($p.action -eq 'new') {
+        try { return New-MailBlankDraft $path $p.options }
+        catch { throw (Get-MailErrorText $_) }
     }
     $null
 }

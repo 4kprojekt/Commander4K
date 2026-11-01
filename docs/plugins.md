@@ -499,6 +499,28 @@ A dashboard tile with `"card"` is a live card drawn by a preview instead of a pl
 
 The official catalog has preview plugins with cards: `official.json-preview`, `official.openapi-preview` and `official.html-preview`. For your own, see `preview.card` in the protocol table.
 
+### Example: mail ("Poczta")
+
+The official mail plugin (`official.mail`) keeps an account in a folder and shows it as a card on a dashboard. The command *Dodaj konto pocztowe* (menu *Wtyczki ▸ Poczta*) asks for the address and servers, checks the login (the app asks for the password and keeps it; it never reaches a file) and writes both files below. By hand, an account folder `Poczta/firma/c4k.dir` is:
+
+```jsonc
+{
+  "preview": { "plugin": "official.mail", "options": { "imap": "imap.example.com:993", "smtp": "smtp.example.com:465", "user": "ja@example.com", "refresh": "5m", "since": "3m" } },
+  "enter": { "plugin": "official.mail", "options": { "imap": "imap.example.com:993", "smtp": "smtp.example.com:465", "user": "ja@example.com", "refresh": "5m", "since": "3m" } }
+}
+```
+
+and `Poczta/c4k.dir` shows every account as a card with the unread count (the plugin needs the `background` permission and the setting *PluginBackground* for the sync between visits):
+
+```jsonc
+{
+  "enter": { "view": "dashboard", "tiles": [ { "title": "firma", "open": "firma", "card": "official.mail/account", "refresh": "30s" } ] },
+  "preview": "dashboard"
+}
+```
+
+The card reads only the message files and `.mail/state.json`; *Sprawdź teraz* syncs that account at once (at most 10 s, the rest continues in the background).
+
 ## Official plugin catalog
 
 [`plugins-catalog/catalog.json`](../plugins-catalog/catalog.json) lists the plugins that can be installed from the plugin manager (group "Katalog oficjalnych wtyczek", Ctrl+I) and from `c4k.dir`. The app downloads it at start-up from the repository, so new plugins appear without an update. Each entry gives the plugin folder (relative to `baseUrl`) and the SHA-256 of every file. The hash is computed over the UTF-8 text with CR removed. A downloaded file that does not match is refused. An installed plugin starts disabled until the user approves its permissions, like any other.
