@@ -93,19 +93,29 @@ public static class AiPluginInstaller
             return new AiInstallResult(forMcp ? "The user declined the installation." : Loc.T("Anulowano instalację wtyczki."));
         }
 
-        try
+        // The old version's process works in the folder being replaced: stop it first.
+        await context.Host.StopExternalPluginAsync(manifest.Id);
+
+        // Expected failures (a locked folder, no rights) are caught inside the lambda, so they never leave Task.Run
+        // (a debugger would stop on them as user-unhandled).
+        var failure = await Task.Run(() =>
         {
-            await Task.Run(() =>
+            try
             {
                 // New code needs a fresh look even when the permissions did not change: never inherit an earlier consent.
                 context.Host.Approvals.Disable(manifest.Id);
                 PluginAuthoring.Install(draft, overwrite: true);
-            });
-            await context.Host.ReloadExternalPluginsAsync();
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+                return null;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                return ex.Message;
+            }
+        });
+        await context.Host.ReloadExternalPluginsAsync();
+        if (failure is not null)
         {
-            return new AiInstallResult(forMcp ? "The plugin was not installed: " + ex.Message : Loc.T("Wtyczka nie została zainstalowana: {0}", ex.Message));
+            return new AiInstallResult(forMcp ? "The plugin was not installed: " + failure : Loc.T("Wtyczka nie została zainstalowana: {0}", failure));
         }
 
         if (forMcp)

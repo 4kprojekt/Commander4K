@@ -204,6 +204,26 @@ public sealed class AppHost : IAsyncDisposable
         return Approvals.IsApproved(plugin.Manifest) ? null : Loc.T("Wyłączona — wymaga zgody na uprawnienia.");
     }
 
+    /// <summary>
+    /// Stops a running external plugin before its files are replaced: its process works in the plugin's folder, and
+    /// Windows refuses to delete or rename a folder that a process uses. <see cref="ReloadExternalPluginsAsync"/> starts it again.
+    /// </summary>
+    public async Task StopExternalPluginAsync(string id)
+    {
+        var running = ExternalPlugins.Where(p => string.Equals(p.Manifest.Id, id, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (running.Count == 0)
+        {
+            return;
+        }
+
+        await Task.Run(Background.Stop);
+        ExternalPlugins = [.. ExternalPlugins.Except(running)];
+        foreach (var plugin in running)
+        {
+            await plugin.DisposeAsync();
+        }
+    }
+
     /// <summary>Re-scans plugin folders and (re)starts approved plugins; call after enabling or installing one.</summary>
     public async Task ReloadExternalPluginsAsync()
     {

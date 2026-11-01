@@ -213,12 +213,65 @@ public static partial class PluginAuthoring
             WriteFile(Path.Combine(temporary, file.Path), file);
         }
 
-        if (Directory.Exists(draft.TargetFolder))
+        // Windows briefly keeps freshly written files (Defender, the indexer) and a just-stopped plugin's folder
+        // open: renaming then fails with "access denied". Retry, and copy as a last resort.
+        Retry(() =>
         {
-            Directory.Delete(draft.TargetFolder, recursive: true);
+            if (Directory.Exists(draft.TargetFolder))
+            {
+                Directory.Delete(draft.TargetFolder, recursive: true);
+            }
+        });
+        try
+        {
+            Retry(() => Directory.Move(temporary, draft.TargetFolder));
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            CopyTree(temporary, draft.TargetFolder);
+            try
+            {
+                Directory.Delete(temporary, recursive: true);
+            }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+            {
+                // A leftover ".new-…" folder sits in plugins/ too: without its manifest it is never loaded as a second copy.
+                try
+                {
+                    Retry(() => File.Delete(Path.Combine(temporary, ManifestReader.FileName)));
+                }
+                catch (Exception manifest) when (manifest is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+    }
 
-        Directory.Move(temporary, draft.TargetFolder);
+    /// <summary>Up to 8 attempts over about 3 s for file operations that fail only while something else holds the files.</summary>
+    private static void Retry(Action action)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                action();
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 8)
+            {
+                Thread.Sleep(100 * attempt);
+            }
+        }
+    }
+
+    private static void CopyTree(string source, string target)
+    {
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var destination = Path.Combine(target, Path.GetRelativePath(source, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            Retry(() => File.Copy(file, destination, overwrite: true));
+        }
     }
 
     private static void WriteFile(string path, GeneratedFile file)
