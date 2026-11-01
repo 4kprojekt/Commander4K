@@ -410,6 +410,60 @@ public static class Ds
         return grid;
     }
 
+    /// <summary>
+    /// Segmented control for 2–3 short choices: a 2 px padded track (6 px corners) whose selected segment is filled with
+    /// the cursor colour, as in the design's "Gęstość" and "Gdy plik już istnieje".
+    /// </summary>
+    public static Border Segmented(SkinBrushes b, IReadOnlyList<string> labels, int selected, Action<int> onSelect)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+        var buttons = new List<Button>();
+        void Paint(int index)
+        {
+            for (var i = 0; i < buttons.Count; i++)
+            {
+                var on = i == index;
+                buttons[i].Background = on ? b.CursorBackground : Brushes.Transparent;
+                buttons[i].Foreground = on ? b.CursorForeground : b.WindowForeground;
+                buttons[i].FontWeight = on ? FontWeight.SemiBold : FontWeight.Normal;
+            }
+        }
+
+        for (var i = 0; i < labels.Count; i++)
+        {
+            var index = i;
+            var button = new Button
+            {
+                Content = labels[i],
+                Height = 24,
+                Padding = new Thickness(12, 0),
+                FontSize = 12,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(b.ControlRadius),
+                VerticalContentAlignment = VerticalAlignment.Center,
+            };
+            button.Click += (_, _) =>
+            {
+                Paint(index);
+                onSelect(index);
+            };
+            buttons.Add(button);
+            row.Children.Add(button);
+        }
+
+        Paint(selected);
+        return new Border
+        {
+            Padding = new Thickness(2),
+            BorderBrush = b.PanelBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(b.IsModern ? CardRadius : 0),
+            Background = b.Surface2,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Child = row,
+        };
+    }
+
     /// <summary>Flat icon button with a tooltip (<see cref="ButtonKind.Ghost"/>): tool bars, back/forward, close.</summary>
     public static Button ToolButton(SkinBrushes b, object content, string tip, Action click)
     {

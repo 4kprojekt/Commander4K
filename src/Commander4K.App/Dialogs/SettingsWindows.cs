@@ -94,6 +94,7 @@ public sealed class SettingsWindow : ToolWindow
         DockPanel.SetDock(nav, Dock.Left);
         DockPanel.SetDock(_keyStatus, Dock.Top);
         var content = new DockPanel().Children(top, footer, nav, _keyStatus, _scroll = Scroll(_content));
+        _scroll.ScrollChanged += (_, _) => FollowScroll();
         Rebuild();
         return content;
     }
@@ -121,6 +122,8 @@ public sealed class SettingsWindow : ToolWindow
         var query = _search.Text;
         _content.Children.Clear();
         _nav.Children.Clear();
+        _navItems.Clear();
+        _activeNav = null;
 
         foreach (var group in SettingsCatalog.Search(_host.SettingsCatalog, query).GroupBy(s => s.Category))
         {
@@ -183,12 +186,71 @@ public sealed class SettingsWindow : ToolWindow
         section.Children.Add(Ds.Box(Brushes, card, new Thickness(0)).ClipToBounds(true));
         _content.Children.Add(section);
 
-        var navButton = new Button().Height(32).Padding(10, 0).HorizontalAlignment(HorizontalAlignment.Stretch)
-            .HorizontalContentAlignment(HorizontalAlignment.Left).VerticalContentAlignment(VerticalAlignment.Center)
-            .Background(Avalonia.Media.Brushes.Transparent).BorderThickness(new Thickness(0))
-            .Foreground(Brushes.WindowForeground).Content(new TextBlock().Text(title).TextTrimming(TextTrimming.CharacterEllipsis))
-            .OnClick(_ => ScrollToSection(section));
+        // Design: 32 px items; the active one on hoverBackground, semibold, with a 3 px accent bar on its left edge.
+        var bar = new Border().Width(3).Height(16).CornerRadius(new CornerRadius(2)).Background(Brushes.Accent)
+            .HorizontalAlignment(HorizontalAlignment.Left).VerticalAlignment(VerticalAlignment.Center).IsVisible(false);
+        var label = new TextBlock().Text(title).TextTrimming(TextTrimming.CharacterEllipsis).VerticalAlignment(VerticalAlignment.Center).Margin(10, 0, 0, 0);
+        var navButton = new Button().Height(32).Padding(0).HorizontalAlignment(HorizontalAlignment.Stretch)
+            .HorizontalContentAlignment(HorizontalAlignment.Stretch).VerticalContentAlignment(VerticalAlignment.Stretch)
+            .Background(Avalonia.Media.Brushes.Transparent).BorderThickness(new Thickness(0)).CornerRadius(new CornerRadius(Brushes.ControlRadius))
+            .Foreground(Brushes.WindowForeground).Content(new Panel().Children(bar, label));
+        var item = new NavItem(navButton, bar, label, section);
+        navButton.OnClick(_ =>
+        {
+            SetActive(item);
+            ScrollToSection(section);
+        });
+        _navItems.Add(item);
         _nav.Children.Add(navButton);
+        if (_navItems.Count == 1)
+        {
+            SetActive(item);
+        }
+    }
+
+    private sealed record NavItem(Button Button, Border Bar, TextBlock Label, Control Section);
+
+    private readonly List<NavItem> _navItems = [];
+    private NavItem? _activeNav;
+    private bool _scrollingToSection;
+
+    private void SetActive(NavItem item)
+    {
+        if (ReferenceEquals(_activeNav, item))
+        {
+            return;
+        }
+
+        foreach (var nav in _navItems)
+        {
+            var on = ReferenceEquals(nav, item);
+            nav.Button.Background = on ? Brushes.HoverBackground : Avalonia.Media.Brushes.Transparent;
+            nav.Button.Foreground = on ? Brushes.FileForeground : Brushes.WindowForeground;
+            nav.Label.FontWeight = on ? FontWeight.SemiBold : FontWeight.Normal;
+            nav.Bar.IsVisible = on && Brushes.IsModern;
+        }
+
+        _activeNav = item;
+    }
+
+    /// <summary>While scrolling, the section list marks the last section whose heading has reached the top.</summary>
+    private void FollowScroll()
+    {
+        if (_scrollingToSection || _navItems.Count == 0)
+        {
+            return;
+        }
+
+        var active = _navItems[0];
+        foreach (var item in _navItems)
+        {
+            if (item.Section.TranslatePoint(default, _content) is { } origin && origin.Y - 24 <= _scroll.Offset.Y)
+            {
+                active = item;
+            }
+        }
+
+        SetActive(active);
     }
 
     private void ScrollToSection(Control section)
@@ -197,7 +259,9 @@ public sealed class SettingsWindow : ToolWindow
         {
             if (section.TranslatePoint(default, _content) is { } origin)
             {
+                _scrollingToSection = true;
                 _scroll.Offset = new Vector(_scroll.Offset.X, Math.Max(0, origin.Y - 16));
+                Dispatcher.UIThread.Post(() => _scrollingToSection = false, DispatcherPriority.Background);
             }
         }, DispatcherPriority.Loaded);
     }
@@ -224,6 +288,14 @@ public sealed class SettingsWindow : ToolWindow
 
             case SettingKind.Choice:
                 var choices = setting.Choices?.Invoke() ?? [];
+                if (choices.Count is 2 or 3 && choices.All(c => c.Label.Length <= 14))
+                {
+                    // Few short choices: a segmented control, as in the design (Gęstość).
+                    return Ds.Segmented(Brushes, [.. choices.Select(c => c.Label)],
+                        choices.ToList().FindIndex(c => Equals(c.Value, setting.Get(_host.Settings))),
+                        index => Commit(setting, choices[index].Value));
+                }
+
                 var combo = new ComboBox().Width(260).ItemsSource(choices.Select(c => c.Label).ToList());
                 combo.SelectedIndex = choices.ToList().FindIndex(c => Equals(c.Value, setting.Get(_host.Settings)));
                 combo.SelectionChanged += (_, _) =>
