@@ -88,6 +88,57 @@ public sealed class FolderConfigWriterTests
     }
 
     [Fact]
+    public async Task CreateNew_writes_a_new_file()
+    {
+        var folder = Directory.CreateTempSubdirectory("c4k-writer-").FullName;
+        try
+        {
+            var file = Path.Combine(folder, FolderConfig.FileName);
+
+            var (result, error) = await FolderConfigWriter.CreateNewAsync(file, "{}\n", TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            Assert.Equal(FolderConfigWrite.Written, result);
+            Assert.Null(error);
+            Assert.Equal("{}\n", await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateNew_never_overwrites_an_existing_file()
+    {
+        var folder = Directory.CreateTempSubdirectory("c4k-writer-").FullName;
+        try
+        {
+            var file = Path.Combine(folder, FolderConfig.FileName);
+            await File.WriteAllTextAsync(file, "mine", TestContext.Current.CancellationToken);
+
+            var (result, _) = await FolderConfigWriter.CreateNewAsync(file, "{}\n", TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            Assert.Equal(FolderConfigWrite.AlreadyExists, result);
+            Assert.Equal("mine", await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateNew_reports_failure_without_throwing()
+    {
+        var file = Path.Combine(Path.GetTempPath(), "c4k-missing-" + Guid.NewGuid().ToString("N"), FolderConfig.FileName);
+
+        var (result, error) = await FolderConfigWriter.CreateNewAsync(file, "{}\n", TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Equal(FolderConfigWrite.Failed, result);
+        Assert.False(string.IsNullOrEmpty(error));
+    }
+
+    [Fact]
     public void ActionFor_plugin_view_round_trips_options()
     {
         var view = new PluginSdk.FolderSuggestionView(Plugin: "examples.folder-stats", Preview: "tables", OptionsJson: """{ "limit": 5 }""");

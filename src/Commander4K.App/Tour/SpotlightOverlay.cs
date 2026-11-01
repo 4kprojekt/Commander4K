@@ -9,9 +9,9 @@ namespace Commander4K.App.Tour;
 
 /// <summary>
 /// A driver.js-like hint: the window dimmed except a cut-out around <c>target</c>, a focus ring around it, and a bubble
-/// with an arrow and an OK button. A click anywhere closes it; the window closes it on keys (Esc/Enter are swallowed).
+/// with an arrow and an OK button. A click outside the cut-out closes it; the window closes it on keys (Esc/Enter are swallowed).
 /// </summary>
-public sealed class SpotlightOverlay : Control
+public sealed class SpotlightOverlay : Control, Avalonia.Rendering.ICustomHitTest
 {
     private const double Gap = 6;
     private const double ArrowSize = 8;
@@ -84,6 +84,9 @@ public sealed class SpotlightOverlay : Control
         _closed = true;
         Closed?.Invoke(this);
     }
+
+    /// <summary>Clicks inside the cut-out reach the highlighted control itself (it closes the overlay through the window).</summary>
+    public bool HitTest(Point point) => !Hole().Contains(point);
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {

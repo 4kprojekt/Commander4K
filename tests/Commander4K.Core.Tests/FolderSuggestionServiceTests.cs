@@ -179,6 +179,18 @@ public sealed class FolderSuggestionServiceTests : IDisposable
         Assert.Equal(1, _listings);
     }
 
+    [Fact]
+    public async Task Forget_drops_the_cached_answer()
+    {
+        var service = Service([new FakePreview("good", 0.9)], Pictures);
+        await Collect(service, Photos);
+
+        service.Forget(@"C:\PHOTOS");
+        await Collect(service, Photos);
+
+        Assert.Equal(2, _listings);
+    }
+
     [Theory]
     [InlineData("sftp://h/x", VfsEntryKind.Directory)]
     [InlineData(@"zip://C:\a.zip::/x", VfsEntryKind.Directory)]

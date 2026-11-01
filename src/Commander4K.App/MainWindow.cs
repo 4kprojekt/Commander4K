@@ -1078,6 +1078,7 @@ public sealed class MainWindow : Window
             return;
         }
 
+        _host.FolderSuggestions.Forget(folder);
         Notify(Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file));
         await tab.RefreshAsync();
     }
@@ -1714,21 +1715,19 @@ public sealed class MainWindow : Window
         var folder = suggestion.Folder;
         var json = FolderConfigWriter.CreateForAction(FolderConfigWriter.ActionFor(suggestion.Suggestion.View), "both");
         var file = FolderConfig.ChildPath(folder.Path, FolderConfig.FileName);
-        var error = await Task.Run(async () =>
+        var (result, error) = await FolderConfigWriter.CreateNewAsync(file, json, TimeSpan.FromSeconds(5), CancellationToken.None);
+        _host!.FolderSuggestions.Forget(folder.Path);
+        if (result == FolderConfigWrite.AlreadyExists)
         {
-            try
-            {
-                await File.WriteAllTextAsync(file, json);
-                return null;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                return ex.Message;
-            }
-        });
-        Notify(error is null
+            // The listing was cut short or the answer was stale: the folder's own file wins, never overwritten.
+            Notify(Loc.T("Folder ma już własny c4k.dir — otwieram go zamiast propozycji."));
+            await EnterFolderAsync(panel, folder);
+            return;
+        }
+
+        Notify(result == FolderConfigWrite.Written
             ? Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file)
-            : Loc.T("Nie zapisano c4k.dir ({0}) — widok otwarty tylko teraz.", error), isError: error is not null);
+            : Loc.T("Nie zapisano c4k.dir ({0}) — widok otwarty tylko teraz.", error), isError: result == FolderConfigWrite.Failed);
 
         var config = FolderConfig.Parse(folder.Path, json);
         if (config.Enter is { } action)
@@ -1752,9 +1751,11 @@ public sealed class MainWindow : Window
             return;
         }
 
+        var used = false;
         void Used()
         {
             preview.CloseRequested -= Used;
+            used = true; // Recorded once, as used: closing the spotlight now is not a dismissal.
             _tour?.Close();
             _ = Task.Run(memory.RecordTourUsedAsync);
         }
@@ -1778,7 +1779,10 @@ public sealed class MainWindow : Window
                     _tour = null;
                 }
 
-                _ = Task.Run(memory.RecordTourDismissedAsync);
+                if (!used)
+                {
+                    _ = Task.Run(memory.RecordTourDismissedAsync);
+                }
             };
             _tour = tour;
             layer.Children.Add(tour);

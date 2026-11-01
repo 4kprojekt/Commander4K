@@ -4,6 +4,13 @@ using System.Text.Json.Nodes;
 
 namespace Commander4K.Core.Folders;
 
+public enum FolderConfigWrite
+{
+    Written,
+    AlreadyExists,
+    Failed,
+}
+
 /// <summary>Adds dashboard tiles to a <c>c4k.dir</c> text (the "add API card" wizard); the rest of the file is kept.</summary>
 public static class FolderConfigWriter
 {
@@ -25,6 +32,40 @@ public static class FolderConfigWriter
         }
 
         return root.ToJsonString(Indented) + "\n";
+    }
+
+    /// <summary>
+    /// Writes a new <c>c4k.dir</c> but never replaces one (an accepted suggestion must not destroy a hand-written file).
+    /// A hung share is abandoned after <paramref name="timeout"/>; every failure is reported, never thrown.
+    /// </summary>
+    public static async Task<(FolderConfigWrite Result, string? Error)> CreateNewAsync(string file, string json, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await Task.Run(() => WriteNewAsync(file, json), CancellationToken.None).WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        {
+            return (FolderConfigWrite.Failed, ex.Message);
+        }
+    }
+
+    private static async Task<(FolderConfigWrite Result, string? Error)> WriteNewAsync(string file, string json)
+    {
+        try
+        {
+            await using var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, useAsync: true);
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(json)).ConfigureAwait(false);
+            return (FolderConfigWrite.Written, null);
+        }
+        catch (IOException) when (File.Exists(file))
+        {
+            return (FolderConfigWrite.AlreadyExists, null);
+        }
+        catch (Exception ex)
+        {
+            return (FolderConfigWrite.Failed, ex.Message);
+        }
     }
 
     /// <summary>The <c>c4k.dir</c> action for a suggested view: a view name, or <c>{ plugin, preview?, options? }</c>.</summary>
