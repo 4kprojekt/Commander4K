@@ -606,6 +606,44 @@ public sealed class MainWindow : Window
         ToolTip.SetTip(_mcpBadge, mcp.StatusText());
     }
 
+    /// <summary>
+    /// Before a prompt that tells an agent to use Commander4K over MCP leaves the app: when the server is off, asks
+    /// whether to switch it on (the same as the toggle in "Połącz Claude Code"). Returns whether it is running.
+    /// </summary>
+    internal async Task<bool> EnsureMcpRunningAsync(Window owner)
+    {
+        if (_mcp is not { } mcp)
+        {
+            return false;
+        }
+
+        if (_host!.Settings.Mcp.Enabled && mcp.ConnectionDetails.IsRunning)
+        {
+            return true;
+        }
+
+        var enable = await new ConfirmDialog(_skins!.Current, Loc.T("Włączyć serwer MCP?"),
+            Loc.T("Ten prompt każe agentowi AI korzystać z Commander4K przez MCP, a serwer MCP jest wyłączony. Włączyć go teraz? Działa tylko na 127.0.0.1 i wymaga tokenu; foldery dostępne dla AI wybierzesz w oknie „Połącz Claude Code”."),
+            Loc.T("Włącz MCP")).ShowAsync(owner);
+        if (!enable)
+        {
+            return false;
+        }
+
+        _host.Settings.Mcp.Enabled = true;
+        try
+        {
+            await mcp.ApplySettingsAsync();
+            await _host.SaveSettingsAsync();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Notify(Loc.T("Nie udało się zapisać ustawień: {0}", ex.Message), isError: true);
+        }
+
+        return mcp.ConnectionDetails.IsRunning;
+    }
+
     private void OpenMcpConnect()
     {
         if (_mcpConnect is { } open)
@@ -1536,8 +1574,7 @@ public sealed class MainWindow : Window
             .AppendLine("File sample (when the target is a readable file):")
             .AppendLine(sample)
             .ToString();
-        var connection = _mcp?.ConnectionDetails;
-        await new UnknownPreviewPromptsDialog(_skins!.Current, entry, context, connection, OpenMcpConnect).ShowAsync(this);
+        await new UnknownPreviewPromptsDialog(_skins!.Current, entry, context, () => _mcp?.ConnectionDetails, EnsureMcpRunningAsync, OpenMcpConnect).ShowAsync(this);
     }
 
     /// <summary>What the AI chat is told about the app.</summary>

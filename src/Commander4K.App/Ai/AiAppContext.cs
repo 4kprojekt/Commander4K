@@ -138,7 +138,6 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
             : null;
 
     /// <summary>The whole request for writing a plugin: guide, current state, example and the user's wish.</summary>
-    public string PluginPrompt(string wish, bool preview = false) => PluginAuthoring.BuildPrompt(PluginGuide(), Describe(), Example(preview), wish);
 
     /// <summary>
     /// What the assistant needs to know about an unknown file: name, size and the first bytes (hex and, when it looks

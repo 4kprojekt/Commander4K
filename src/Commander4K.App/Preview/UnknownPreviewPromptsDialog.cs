@@ -24,7 +24,9 @@ public sealed class UnknownPreviewPromptsDialog : DialogWindow<bool>
     ];
 
     private readonly string _entryContext;
-    private readonly (string Url, string? Token, bool IsRunning)? _connection;
+    private readonly Func<(string Url, string? Token, bool IsRunning)?> _connection;
+    private readonly Func<Window, Task<bool>> _ensureMcp;
+    private readonly VfsEntry _entry;
     private readonly ComboBox _client;
     private readonly ComboBox _promptType;
     private readonly SelectableTextBlock _prompt;
@@ -36,12 +38,15 @@ public sealed class UnknownPreviewPromptsDialog : DialogWindow<bool>
         SkinBrushes brushes,
         VfsEntry entry,
         string entryContext,
-        (string Url, string? Token, bool IsRunning)? connection,
+        Func<(string Url, string? Token, bool IsRunning)?> connection,
+        Func<Window, Task<bool>> ensureMcp,
         Action openMcpSettings)
         : base(Loc.T("Podgląd: prompt dla AI"), brushes, 760)
     {
         _entryContext = entryContext;
         _connection = connection;
+        _ensureMcp = ensureMcp;
+        _entry = entry;
         _openMcpSettings = openMcpSettings;
         _client = new ComboBox().ItemsSource(Clients).SelectedIndex(0);
         _promptType = new ComboBox().ItemsSource(
@@ -84,7 +89,7 @@ public sealed class UnknownPreviewPromptsDialog : DialogWindow<bool>
     private string BuildMcpPrompt()
     {
         var client = _client.SelectedItem?.ToString() ?? Clients[0];
-        var connection = _connection;
+        var connection = _connection();
         var details = connection is { } current
             ? $"""
               Endpoint: {current.Url}
@@ -138,7 +143,13 @@ public sealed class UnknownPreviewPromptsDialog : DialogWindow<bool>
             return;
         }
 
+        // Both prompts make the agent use Commander4K over MCP: offer to switch the server on first.
+        var mcpRunning = await _ensureMcp(this);
+        RefreshPrompt(_entry); // the connection prompt now carries the live endpoint and token
         await clipboard.SetTextAsync(_prompt.Text ?? string.Empty);
-        _copyStatus.Text = Loc.T("Prompt skopiowany. Przejrzyj go przed wklejeniem do asystenta.");
+        _copyStatus.Text = mcpRunning
+            ? Loc.T("Prompt skopiowany. Przejrzyj go przed wklejeniem do asystenta.")
+            : Loc.T("Prompt skopiowany, ale serwer MCP jest wyłączony — agent nie połączy się z Commander4K, dopóki go nie włączysz.");
+        _copyStatus.Foreground = mcpRunning ? Brushes.MutedForeground : Brushes.Warning;
     }
 }

@@ -371,10 +371,18 @@ public sealed class AboutDialog : DialogWindow<bool>
 {
     public const string RepositoryUrl = "https://github.com/4kprojekt/Commander4K";
 
+    /// <summary>The isometric design tool the start-up animation was drawn in.</summary>
+    public const string IsoGlowUrl = "https://isoglow.dev/";
+
     public AboutDialog(SkinBrushes brushes) : base(Loc.T("O programie"), brushes, 520)
     {
         HeaderGlyph = "▦";
-        FooterLeading = Ds.Button(brushes, Loc.T("Animacja startowa"), () => _ = new SplashWindow(brushes, SplashMode.Demo).ShowDialog(this));
+        var isoGlow = Ds.Button(brushes, "isoglow.dev ↗", () => OpenUrl(IsoGlowUrl), ButtonKind.Ghost);
+        isoGlow.Foreground = brushes.Accent;
+        ToolTip.SetTip(isoGlow, Loc.T("Animacja startowa jest odwzorowaniem projektu wykonanego w ISO-GLOW"));
+        FooterLeading = new StackPanel().Orientation(Orientation.Horizontal).Spacing(4).Children(
+            Ds.Button(brushes, Loc.T("Animacja startowa"), () => _ = new SplashWindow(brushes, SplashMode.Demo).ShowDialog(this)),
+            isoGlow);
         SetBody(
             new TextBlock().Text("Commander4K").FontSize(20).FontWeight(FontWeight.Bold).Foreground(brushes.FileForeground),
             new SelectableTextBlock().FontSize(12).Foreground(brushes.MutedForeground).Text(

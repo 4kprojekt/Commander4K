@@ -43,6 +43,9 @@ public abstract class DialogWindow<TResult> : Window
 
     protected IBrush? HeaderGlyphBrush { get; set; }
 
+    /// <summary>Tints the header band (design system: warningBackground for a warning, errorBackground for danger).</summary>
+    protected IBrush? HeaderBackground { get; set; }
+
     /// <summary>A control on the left of the footer (a secondary action such as "Do kolejki", or a status).</summary>
     protected Control? FooterLeading { get; set; }
 
@@ -124,7 +127,7 @@ public abstract class DialogWindow<TResult> : Window
             close.Padding = new Thickness(0);
             close.IsTabStop = false;
             ToolTip.SetTip(close, Loc.T("Zamknij (Esc)"));
-            var bar = new DockPanel { Background = Avalonia.Media.Brushes.Transparent };
+            var bar = new DockPanel { Background = HeaderBackground ?? Avalonia.Media.Brushes.Transparent };
             DockPanel.SetDock(close, Dock.Right);
             close.Margin = new Thickness(0, 0, 8, 0);
             close.VerticalAlignment = VerticalAlignment.Center;
@@ -152,7 +155,12 @@ public abstract class DialogWindow<TResult> : Window
         }
 
         dock.Children.Add(body);
-        Content = dock;
+
+        // Without the system title bar Windows draws no visible edge: the design system's 1 px panelBorder frame
+        // keeps the dialog from floating over what is behind it.
+        Content = Brushes.IsModern
+            ? new Border { BorderBrush = Brushes.PanelBorder, BorderThickness = new Thickness(1), Child = dock }
+            : dock;
     }
 }
 
@@ -381,10 +389,13 @@ public sealed class HostKeyDialog : DialogWindow<bool>
 
         HeaderGlyph = mismatch ? "⚠" : "🔑";
         HeaderGlyphBrush = mismatch ? brushes.Error : brushes.Warning;
+        HeaderBackground = mismatch ? brushes.ErrorBackground : brushes.WarningBackground;
+
+        // A changed key: Cancel is the one default action and trusting is a plain button (one filled button per dialog).
         SetBody(Message(message), Ds.Box(brushes, print),
             ButtonRow(
-                (Loc.T("Anuluj"), () => Complete(false), mismatch ? ButtonKind.Primary : ButtonKind.Secondary),
-                (mismatch ? Loc.T("Zaufaj nowemu kluczowi") : Loc.T("Zaufaj i połącz"), () => Complete(true), mismatch ? ButtonKind.Danger : ButtonKind.Primary)));
+                (mismatch ? Loc.T("Zaufaj nowemu kluczowi") : Loc.T("Anuluj"), () => Complete(mismatch), ButtonKind.Secondary),
+                (mismatch ? Loc.T("Anuluj") : Loc.T("Zaufaj i połącz"), () => Complete(!mismatch), ButtonKind.Primary)));
     }
 }
 

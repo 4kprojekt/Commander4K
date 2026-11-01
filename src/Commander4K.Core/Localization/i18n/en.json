@@ -1002,8 +1002,6 @@
   "Adres (sftp://użytkownik@host/folder):": "Address (sftp://user@host/folder):",
   "Adres strony:": "Page address:",
   "Pytanie jest w schowku — wklej je na stronie (Ctrl+V).": "The question is on the clipboard — paste it on the page (Ctrl+V).",
-  "Użyj Claude Code": "Use Claude Code",
-  "Wklej to w Claude Code połączonym z Commander4K przez MCP": "Paste this into Claude Code connected to Commander4K through MCP",
   "Co ma pokazywać ten folder? Ustawienia zostaną zapisane w pliku c4k.dir w tym folderze.": "What should this folder show? The settings will be saved in a c4k.dir file in this folder.",
   "Ten folder jest pusty. Wybierz, co ma pokazywać — ustawienia zostaną zapisane w pliku c4k.dir.": "This folder is empty. Choose what it should show — the settings will be saved in a c4k.dir file.",
   "Skonfiguruj jako specjalny folder": "Configure as a special folder",
@@ -1320,5 +1318,11 @@
   "{0} wolne z {1}": "{0} free of {1}",
   "_// Commander4K.App/Preview/DashboardView.cs (tile sizes)": "",
   "Rozmiar kafelka: {0} → {1}": "Tile size: {0} → {1}",
-  "cała szerokość": "full width"
+  "cała szerokość": "full width",
+  "_// Commander4K.App/MainWindow.cs (MCP before copying a prompt)": "",
+  "Włączyć serwer MCP?": "Switch on the MCP server?",
+  "Ten prompt każe agentowi AI korzystać z Commander4K przez MCP, a serwer MCP jest wyłączony. Włączyć go teraz? Działa tylko na 127.0.0.1 i wymaga tokenu; foldery dostępne dla AI wybierzesz w oknie „Połącz Claude Code”.": "This prompt tells the AI agent to use Commander4K over MCP, but the MCP server is off. Switch it on now? It listens on 127.0.0.1 only and needs a token; choose the folders the AI may use in the \"Połącz Claude Code\" window.",
+  "Włącz MCP": "Switch on MCP",
+  "Prompt skopiowany, ale serwer MCP jest wyłączony — agent nie połączy się z Commander4K, dopóki go nie włączysz.": "Prompt copied, but the MCP server is off — the agent cannot connect to Commander4K until you switch it on.",
+  "Animacja startowa jest odwzorowaniem projektu wykonanego w ISO-GLOW": "The start-up animation recreates a design made in ISO-GLOW"
 }
