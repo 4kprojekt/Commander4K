@@ -601,6 +601,45 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Pe_preview_reads_dotnet_assembly_references()
+    {
+        var dll = typeof(ExternalPluginTests).Assembly.Location;  // Commander4K.Plugins.Tests.dll
+        var md = await RenderAsync("pe-info-python", dll, "dll");
+        Assert.Contains("## .NET", md, StringComparison.Ordinal);
+        Assert.Contains(".NETCoreApp,Version=v10.0", md, StringComparison.Ordinal);
+        Assert.Contains("Commander4K.Core", md, StringComparison.Ordinal);
+        Assert.Contains("obok pliku", md, StringComparison.Ordinal);
+        Assert.Contains("Microsoft.NETCore.App", md, StringComparison.Ordinal);  // from the runtimeconfig.json next to the dll
+        var header = md.IndexOf("## Nagłówek", StringComparison.Ordinal);
+        var dotnet = md.IndexOf("## .NET", StringComparison.Ordinal);
+        Assert.True(header >= 0 && header < dotnet && md.IndexOf("## ", header + 3, StringComparison.Ordinal) == dotnet, $"{header} {dotnet}");
+    }
+
+    [Fact]
+    public async Task Pe_preview_shows_embedded_signer()
+    {
+        var coreclr = Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "coreclr.dll");
+        var md = await RenderAsync("pe-info-python", coreclr, "dll");
+        Assert.Contains("## Podpis", md, StringComparison.Ordinal);
+        Assert.Contains("Microsoft Corporation", md, StringComparison.Ordinal);
+        Assert.Contains("nie został zweryfikowany kryptograficznie", md, StringComparison.Ordinal);
+        Assert.DoesNotContain("Dane doklejone", md, StringComparison.Ordinal);  // the certificate table is not an overlay
+        var permissions = md.IndexOf("## Uprawnienia", StringComparison.Ordinal);
+        Assert.Equal(md.IndexOf("## ", permissions + 3, StringComparison.Ordinal), md.IndexOf("## Podpis", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Pe_preview_explains_missing_embedded_signature()
+    {
+        // the locally built apphost is never signed (kernel32.dll is no good here: current Windows builds embed a signature in it)
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var md = await RenderAsync("pe-info-python", exe, "exe");
+        Assert.Contains("## Podpis", md, StringComparison.Ordinal);
+        Assert.Contains("brak osadzonego podpisu", md, StringComparison.Ordinal);
+        Assert.Contains("katalog", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Pe_manifest_text_is_trimmed_and_failures_are_named()
     {
         var output = await RunPluginPythonAsync("pe-info-python",

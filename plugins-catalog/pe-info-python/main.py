@@ -6,9 +6,11 @@ sections of each preview id. Nothing raises out of preview.render.
 import datetime
 
 import c4k
+import clr
 import deps
 import pe
 import resources
+import signature
 
 MAX_SHOWN_FUNCTIONS = 400
 MAX_SHOWN_EXPORTS = 2000
@@ -26,6 +28,9 @@ LEVELS = {"asInvoker": "uprawnienia użytkownika",
 NO_MANIFEST = "brak manifestu — uprawnienia użytkownika, wirtualizacja UAC dla starszych programów"
 NO_LEVEL = "manifest bez requestedExecutionLevel — uprawnienia użytkownika"
 MAX_MODULES = 60
+ASSEMBLY_KINDS = {"local": "✅", "package": "✅", "framework": "ℹ️", "gac": "ℹ️", "missing": "❌"}
+NO_SIGNATURE = "brak osadzonego podpisu — pliki Windows bywają podpisane katalogiem (.cat), którego ta wtyczka nie sprawdza"
+NOT_VERIFIED = "podpis nie został zweryfikowany kryptograficznie — to dane odczytane z pliku, nie potwierdzenie autentyczności"
 DEPENDENCY_KINDS = {"apiset": ("ℹ️", "zestaw API systemu"), "known": ("✅", "znana systemowa (KnownDLLs)"),
                     "local": ("✅", "obok pliku"), "missing": ("❌", "nie znaleziono")}
 
@@ -33,6 +38,13 @@ DEPENDENCY_KINDS = {"apiset": ("ℹ️", "zestaw API systemu"), "known": ("✅",
 def _size(count):
     text = f"{count} B" if count < 1024 else f"{count / 1024:.1f} KB" if count < 1024 * 1024 else f"{count / 1048576:.1f} MB"
     return text.replace(".", ",")
+
+
+def _plural(count, one, few, many):
+    """Polish plural form: 1 → one, 2–4 (but not 12–14) → few, otherwise many."""
+    if count == 1:
+        return one
+    return few if count % 10 in (2, 3, 4) and count % 100 not in (12, 13, 14) else many
 
 
 def _mark(flag):
@@ -170,10 +182,59 @@ def section_dependencies(image, entry, ctx):
         return []
     lines = ["## Zależności", ""] + [_dependency_line(node) for node in nodes]
     if nodes.more_api_sets:
-        lines.append(f"- … i jeszcze {nodes.more_api_sets} zestawów API systemu")
+        word = _plural(nodes.more_api_sets, "zestaw", "zestawy", "zestawów")
+        lines.append(f"- … i jeszcze {nodes.more_api_sets} {word} API systemu")
     if nodes.truncated:
         lines.append(f"- … pominięto dalsze moduły (limit {MAX_MODULES})")
     return lines + [""]
+
+
+def section_dotnet(image, entry, ctx):
+    info = ctx.clr()
+    if info is None:
+        return []
+    rows = [("środowisko", info.runtime or "—")]
+    flags = list(info.flags)
+    if "tylko IL" in flags and "wymaga 32 bitów" not in flags and image.machine == "x86":
+        flags.append("dowolna architektura (AnyCPU)")   # the PE32 header of an IL-only image says nothing about the CPU
+    if flags:
+        rows.append(("flagi", ", ".join(flags)))
+    if info.assembly:
+        name, version, culture = info.assembly
+        rows.append(("zestaw", f"{name} {version}" + (f" ({culture})" if culture else "")))
+    if info.target_framework:
+        rows.append(("platforma docelowa", info.target_framework))
+    shared = clr.frameworks(ctx.runtimeconfig())
+    if shared:
+        rows.append(("framework (runtimeconfig.json)", ", ".join(f"{n} {v}".strip() for n, v in shared)))
+    lines = ["## .NET", "", "| Cecha | Wartość |", "|---|---|"] + [f"| {name} | {_cell(value)} |" for name, value in rows] + [""]
+    if info.warnings:
+        lines += [f"⚠ {_cell(w)}" for w in info.warnings] + [""]
+    references = ctx.assembly_references()
+    if references:
+        lines += [f"Odwołania do zestawów ({len(references)}):", ""]
+        for name, version, token, kind, detail in references:
+            key = f", token {token}" if token else ""
+            lines.append(f"- {ASSEMBLY_KINDS.get(kind, 'ℹ️')} {_cell(name)} {version}{key} — {_cell(detail)}")
+        lines.append("")
+    return lines
+
+
+def section_signature(image, entry, ctx):
+    sig = ctx.signature()
+    lines = ["## Podpis", ""]
+    if not sig.present:
+        return lines + ["- brak osadzonego podpisu Authenticode", ""]
+    if sig.error and not sig.subject:
+        return lines + [f"⚠ nie udało się odczytać podpisu: {_cell(sig.error)}", ""]
+    rows = (("Podpisujący", sig.subject), ("Organizacja", sig.organization), ("Wystawca", sig.issuer),
+            ("Numer seryjny", sig.serial), ("Ważny od", sig.not_before), ("Ważny do", sig.not_after),
+            ("Czas podpisania", sig.signing_time), ("Znacznik czasu", "tak" if sig.timestamped else "nie"))
+    lines += ["| Pole | Wartość |", "|---|---|"] + [f"| {label} | {_cell(value)} |" for label, value in rows if value]
+    lines.append("")
+    if sig.error:
+        lines.append(f"⚠ nie udało się odczytać podpisu: {_cell(sig.error)}")
+    return lines + [f"ℹ️ Uwaga: {NOT_VERIFIED}.", ""]
 
 
 def section_version(image, entry, ctx):
@@ -186,8 +247,10 @@ def section_version(image, entry, ctx):
 
 
 def notes(image, manifest, signature, missing=()):
-    """Facts about the file, never a verdict. `signature` is None until the signature reader exists: then it adds nothing."""
+    """Facts about the file, never a verdict. `signature` may be None (not read): then it adds nothing."""
     result = []
+    if signature is not None and not signature.present:
+        result.append(f"Podpis: {NO_SIGNATURE}.")
     d = image.dll_characteristics
     off = [name for name, flag in (("ASLR", 0x40), ("DEP/NX", 0x100), ("CFG", 0x4000)) if not d & flag]
     if off:
@@ -220,15 +283,15 @@ def notes(image, manifest, signature, missing=()):
 
 def section_notes(image, entry, ctx):
     manifest = ctx.manifest()
-    lines = [f"⚠ {w}" for w in image.warnings] + notes(image, manifest, None, ctx.missing())
+    lines = [f"⚠ {w}" for w in image.warnings] + notes(image, manifest, ctx.signature(), ctx.missing())
     return ["## Uwagi", ""] + [f"- {n}" for n in lines] + [""] if lines else []
 
 
 ORDER = {
-    "exe": [section_permissions, section_dependencies, section_version, section_header, section_security, section_sections,
-            section_imports, section_exports, section_notes],
-    "dll": [section_header, section_exports, section_permissions, section_dependencies, section_version, section_security,
-            section_sections, section_imports, section_notes],
+    "exe": [section_permissions, section_signature, section_dependencies, section_version, section_header, section_dotnet,
+            section_security, section_sections, section_imports, section_exports, section_notes],
+    "dll": [section_header, section_dotnet, section_exports, section_permissions, section_signature, section_dependencies,
+            section_version, section_security, section_sections, section_imports, section_notes],
 }
 
 
@@ -244,6 +307,10 @@ class Context:
         self._dependencies = None
         self._manifest = None
         self._version = None
+        self._clr = None
+        self._signature = None
+        self._references = None
+        self._runtimeconfig = None
         self._done = set()
 
     def _once(self, name, read):
@@ -271,6 +338,52 @@ class Context:
         if value is not None:
             self._version = value
         return self._version or {}
+
+    def clr(self):
+        """The .NET metadata (clr.clr_info, which never raises), read once; None for a native image."""
+        if "clr" not in self._done:
+            self._done.add("clr")
+            self._clr = clr.clr_info(self.reader, self.image)
+        return self._clr
+
+    def signature(self):
+        """The embedded Authenticode signer (signature.signer, which never raises), read once."""
+        if self._signature is None:
+            self._signature = signature.signer(self.reader, self.image)
+        return self._signature
+
+    def _sibling(self, suffix):
+        """(base, path) of `<base><suffix>` next to the file; base is the file name without its extension."""
+        name = deps.base_name(self.path)
+        base = name.rsplit(".", 1)[0] if "." in name else name
+        return base, deps._join(deps.folder_of(self.path), base + suffix)
+
+    def runtimeconfig(self):
+        """<base>.runtimeconfig.json next to the file, or None (the normal case for libraries)."""
+        if "runtimeconfig" not in self._done:
+            self._done.add("runtimeconfig")
+            if self.path is not None and self.clr() is not None:
+                self._runtimeconfig = clr.read_json(self._sibling(".runtimeconfig.json")[1])
+        return self._runtimeconfig
+
+    def assembly_references(self):
+        """(name, version, token, kind, detail) of every AssemblyRef, resolved once (one c4k.stat each)."""
+        if self._references is None:
+            self._references = []
+            info = self.clr()
+            if info is None or not info.references or self.path is None:
+                return self._references
+            base, deps_path = self._sibling(".deps.json")
+            manifest = clr.read_json(deps_path)
+            folder, cache = deps.folder_of(self.path), {}
+            for name, version, token in info.references:
+                try:
+                    kind, detail = clr.resolve_assembly(name, folder, base, self.runtimeconfig(), manifest,
+                                                        info.target_framework, cache)
+                except Exception as error:  # nothing may raise out of preview.render
+                    kind, detail = "missing", f"⚠ {error}"
+                self._references.append((name, version, token, kind, detail))
+        return self._references
 
     def dependencies(self):
         """The dependency tree (deps.tree), built once; a failure is kept in dependencies_error."""
@@ -315,6 +428,9 @@ def render(params):
     ctx = Context(reader, image, entry["path"])
     ctx.manifest()   # resources first: the section entropy reads must not use up the budget before them
     ctx.version()
+    ctx.clr()          # then .NET metadata and the signer, before the dependency walk and the entropy
+    ctx.signature()
+    ctx.assembly_references()
     ctx.dependencies()   # then the dependency walk, which shares this render's budget
     pe.add_entropy(reader, image)
     for build in ORDER.get(kind, ORDER["exe"]):
