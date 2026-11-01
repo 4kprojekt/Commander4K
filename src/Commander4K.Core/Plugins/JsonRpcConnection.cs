@@ -13,6 +13,9 @@ public sealed class JsonRpcException(int code, string message, object? data = nu
     /// <summary>Mail server certificate not trusted yet; <c>data</c> = <c>{ host, fingerprint }</c>.</summary>
     public const int MailCertificateUntrusted = -32011;
 
+    /// <summary>The mail server did not confirm a sent message (timeout, lost connection): it may have been sent. <c>data</c> = <c>{ outcomeUnknown: true }</c>.</summary>
+    public const int MailSendOutcomeUnknown = -32012;
+
     public const int MethodNotFound = -32601;
     public const int InvalidParams = -32602;
     public const int InternalError = -32603;

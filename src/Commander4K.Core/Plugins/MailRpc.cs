@@ -24,6 +24,10 @@ public static class MailRpc
         {
             throw new JsonRpcException(JsonRpcException.MailAuthenticationRequired, ex.Message, new { authRequired = true, realm = ex.Realm });
         }
+        catch (MailSendOutcomeUnknownException ex)
+        {
+            throw new JsonRpcException(JsonRpcException.MailSendOutcomeUnknown, ex.Message, new { outcomeUnknown = true });
+        }
         catch (MailCertificateUntrustedException ex)
         {
             throw new JsonRpcException(JsonRpcException.MailCertificateUntrusted, ex.Message, new { host = ex.Host, fingerprint = ex.Fingerprint });
@@ -54,7 +58,10 @@ public static class MailRpc
                     OptStr(p, "since") is { Length: > 0 } since
                         ? DateTimeOffset.Parse(since, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal)
                         : DateTimeOffset.UtcNow.AddMonths(-3),
-                    Uids(p, "knownUids", required: false));
+                    Uids(p, "knownUids", required: false),
+                    p.ValueKind == JsonValueKind.Object && p.TryGetProperty("limit", out var limit) && limit.ValueKind != JsonValueKind.Null
+                        ? (int)Long(p, "limit", null, 1, 100000)
+                        : null);
                 var sync = await mail.SyncAsync(Account(p), request, ct).ConfigureAwait(false);
                 return new
                 {
@@ -73,6 +80,7 @@ public static class MailRpc
                     }).ToList(),
                     flagChanges = sync.FlagChanges.Select(c => new { uid = c.Uid, flags = FlagNames(c.Flags) }).ToList(),
                     removed = sync.Removed,
+                    hasMore = sync.HasMore,
                 };
             case "mail.fetch":
                 return new { bytes = await mail.FetchAsync(Account(p), Str(p, "folder"), UInt(p, "uid", required: true), Str(p, "path"), ct).ConfigureAwait(false) };

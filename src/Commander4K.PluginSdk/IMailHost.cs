@@ -30,7 +30,7 @@ public enum MailSpecialFolder
 
 public sealed record MailFolderInfo(string ServerName, string LocalName, char Separator, MailSpecialFolder Special, uint UidValidity, int Count, int Unread);
 
-public sealed record MailSyncRequest(string Folder, uint UidValidity, uint LastUid, ulong ModSeq, DateTimeOffset Since, IReadOnlyList<uint> KnownUids);
+public sealed record MailSyncRequest(string Folder, uint UidValidity, uint LastUid, ulong ModSeq, DateTimeOffset Since, IReadOnlyList<uint> KnownUids, int? Limit = null);
 
 public sealed record MailHeader(uint Uid, DateTimeOffset Date, string From, string Subject, MailFlags Flags, long Size, string FileName);
 
@@ -40,7 +40,8 @@ public sealed record MailSyncResult(
     ulong ModSeq,
     IReadOnlyList<MailHeader> New,
     IReadOnlyList<(uint Uid, MailFlags Flags)> FlagChanges,
-    IReadOnlyList<uint> Removed);
+    IReadOnlyList<uint> Removed,
+    bool HasMore = false);
 
 public sealed record MailAddress(string? Name, string Address);
 
@@ -92,7 +93,7 @@ public interface IMailHost
 
     Task MoveAsync(MailAccount account, string folder, IReadOnlyList<uint> uids, string targetFolder, CancellationToken cancellationToken = default);
 
-    /// <summary>Moves to Trash; in Trash the messages are expunged.</summary>
+    /// <summary>Moves to Trash; in Trash the messages are expunged. Outside Trash an account without a Trash folder throws <see cref="InvalidOperationException"/>.</summary>
     Task DeleteAsync(MailAccount account, string folder, IReadOnlyList<uint> uids, CancellationToken cancellationToken = default);
 
     /// <summary>Uploads a message file (also requires fs.read); returns the new UID when the server reports it.</summary>
@@ -120,6 +121,13 @@ public sealed class MailAuthenticationRequiredException(string realm)
 {
     public string Realm { get; } = realm;
 }
+
+/// <summary>
+/// The SMTP step ended without an answer (timeout, lost connection) after the server may already have accepted the
+/// message: it may or may not have been sent.
+/// </summary>
+public sealed class MailSendOutcomeUnknownException(Exception inner)
+    : Exception("The mail server did not confirm the message; it may have been sent.", inner);
 
 /// <summary>The server certificate is not trusted yet.</summary>
 public sealed class MailCertificateUntrustedException(string host, string fingerprint)

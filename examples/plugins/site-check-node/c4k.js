@@ -21,8 +21,8 @@ let nextId = 0;
 class HostError extends Error {
   constructor(code, message, data = null) {
     super(message);
-    this.code = code; // -32001: permission missing from plugin.json; -32010: mail login needed; -32011: untrusted mail certificate
-    this.data = data; // -32010: { authRequired: true, realm }; -32011: { host, fingerprint }
+    this.code = code; // -32001: permission missing from plugin.json; -32010: mail login needed; -32011: untrusted mail certificate; -32012: a sent mail may or may not have gone out
+    this.data = data; // -32010: { authRequired: true, realm }; -32011: { host, fingerprint }; -32012: { outcomeUnknown: true }
   }
 }
 
@@ -124,8 +124,8 @@ module.exports = {
   // and certificates: interactive: false never shows a dialog and rejects with HostError -32010/-32011 instead.
   // Flags are 'seen', 'flagged', 'answered', 'draft'. Message files are .eml paths (any location the app can open).
   mailFolders: account => call('mail.folders', { account }),                     // -> [{serverName, localName, separator, special, uidValidity, count, unread}]
-  mailSync: (account, folder, { uidValidity = 0, lastUid = 0, modSeq = 0, since = null, knownUids = [] } = {}) => // -> {uidValidity, uidValidityChanged, modSeq, new, flagChanges, removed}
-    call('mail.sync', { account, folder, uidValidity, lastUid, modSeq, since, knownUids }),
+  mailSync: (account, folder, { uidValidity = 0, lastUid = 0, modSeq = 0, since = null, knownUids = [], limit = null } = {}) => // -> {uidValidity, uidValidityChanged, modSeq, new, flagChanges, removed, hasMore}; limit = at most that many new messages (lowest uids first)
+    call('mail.sync', { account, folder, uidValidity, lastUid, modSeq, since, knownUids, limit }),
   mailFetch: async (account, folder, uid, path) => (await call('mail.fetch', { account, folder, uid, path })).bytes, // fs.write -> bytes written
   mailSetFlags: (account, folder, uids, add = [], remove = []) => call('mail.setFlags', { account, folder, uids, add, remove }),
   mailMove: (account, folder, uids, target) => call('mail.move', { account, folder, uids, target }),

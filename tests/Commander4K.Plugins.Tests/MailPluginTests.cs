@@ -861,6 +861,246 @@ public sealed class MailPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task First_sync_of_a_large_folder_asks_for_at_most_the_remaining_budget()
+    {
+        var backend = new FakeMailServer();
+        for (var i = 0; i < 130; i++)
+        {
+            backend.Inbox.Add(MailFlags.Seen);
+        }
+
+        var sent = backend.AddFolder("Sent", "Wysłane", MailSpecialFolder.Sent, 3);
+        for (var i = 0; i < 10; i++)
+        {
+            sent.Add(MailFlags.Seen);
+        }
+
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+
+        var inboxFiles = 0;
+        for (var tick = 1; await plugin.TickAsync(Token); tick++)
+        {
+            Assert.True(tick < 10, "the first sync does not finish");
+            var now = Directory.GetFiles(InboxFolder(account), "*.eml").Length;
+            Assert.InRange(now - inboxFiles, 1, 50); // one tick never downloads more than 50
+            inboxFiles = now;
+        }
+
+        Assert.Equal(130, Directory.GetFiles(InboxFolder(account), "*.eml").Length);
+        Assert.Equal(10, Directory.GetFiles(Path.Combine(account, "Wysłane"), "*.eml").Length);
+        Assert.Equal(140, backend.Fetches);
+        Assert.All(backend.SyncRequests, r => Assert.InRange(r.Limit ?? 0, 1, 50));
+        Assert.Equal([50, 50, 50], backend.SyncRequests.Where(r => r.Folder == "INBOX").Select(r => r.Limit).Take(3));
+        // The tick that finished the Inbox (30 left) had 20 of its 50 fetches left for Wysłane.
+        Assert.Equal(20, backend.SyncRequests.Single(r => r.Folder == "Sent").Limit);
+        Assert.Null(ReadState(account)["progress"]);
+    }
+
+    [Fact]
+    public async Task State_is_written_through_a_temp_file_and_recovered_from_it()
+    {
+        var backend = new FakeMailServer();
+        backend.Inbox.Add(MailFlags.Seen);
+        backend.Inbox.Add(MailFlags.Seen);
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var state = Path.Combine(account, ".mail", "state.json");
+        var temp = state + ".tmp";
+        Assert.False(File.Exists(temp)); // moved over state.json
+        Assert.Equal(2, backend.Fetches);
+
+        // A write that stopped before the move: state.json is gone, the finished temp file is left.
+        Age(account);
+        File.Move(state, temp);
+        await TickUntilDoneAsync(plugin);
+        Assert.Equal(2, backend.Fetches); // the state was recovered: nothing downloaded again
+        Assert.True(File.Exists(state));
+        Assert.False(File.Exists(temp));
+
+        // A truncated state.json next to a finished temp file.
+        Age(account);
+        File.Copy(state, temp);
+        File.WriteAllText(state, """{ "folders": { "INBOX": { "local": "Odebr""");
+        await TickUntilDoneAsync(plugin);
+        Assert.Equal(2, backend.Fetches);
+        Assert.Equal(2, ReadState(account)["folders"]!["INBOX"]!["known"]!.AsArray().Count);
+        Assert.False(File.Exists(temp));
+    }
+
+    [Fact]
+    public async Task A_state_that_cannot_be_read_can_be_started_over_and_files_are_adopted()
+    {
+        var backend = new FakeMailServer();
+        backend.Inbox.Add(MailFlags.Seen);
+        backend.Inbox.Add(MailFlags.Seen);
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var state = Path.Combine(account, ".mail", "state.json");
+        const string corrupt = """{ "folders": { "INBOX": { "local": "Odebrane", "known": [1, 2""";
+        File.WriteAllText(state, corrupt);
+        var calls = backend.Calls;
+
+        var view = await AccountPreview(plugin).LoadWithOptionsAsync(Entry(account), Host(plugin), null, pinned: true, Token);
+        var actions = Assert.IsType<ActionsPreview>(view).Actions;
+        Assert.Contains(actions, a => a.Target.StartsWith("c4k:plugin/resetState", StringComparison.Ordinal));
+        await plugin.TickAsync(Token);
+        Assert.Equal(calls, backend.Calls);
+        Assert.Equal(corrupt, File.ReadAllText(state));
+
+        await AccountPreview(plugin).InvokeActionAsync(
+            new PreviewActionRequest(Entry(account), null, "resetState", new Dictionary<string, string> { ["account"] = account }, null), Host(plugin), Token);
+
+        Assert.False(File.Exists(state));
+        var broken = Assert.Single(Directory.GetFiles(Path.Combine(account, ".mail"), "state.json.broken-*"));
+        Assert.Equal(corrupt, File.ReadAllText(broken));
+        await TickUntilDoneAsync(plugin);
+        Assert.Equal(2, backend.Fetches); // the files were adopted by their uid
+        Assert.Equal(2, Directory.GetFiles(InboxFolder(account), "*.eml").Length);
+        Assert.Equal(2, ReadState(account)["folders"]!["INBOX"]!["known"]!.AsArray().Count);
+        Assert.Null(ReadState(account)["error"]);
+    }
+
+    [Fact]
+    public async Task Permanent_delete_inside_trash_needs_confirmation()
+    {
+        var backend = new FakeMailServer();
+        var trash = backend.AddFolder("Trash", "Kosz", MailSpecialFolder.Trash, 4);
+        var uid = trash.Add(MailFlags.Seen);
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var file = Assert.Single(Directory.GetFiles(Path.Combine(account, "Kosz"), "*.eml"));
+
+        _ui.ConfirmAnswer = false;
+        await ActAsync(plugin, file, "delete");
+
+        Assert.Single(_ui.Confirmations);
+        Assert.Contains("na stałe", _ui.Confirmations[0].Message, StringComparison.Ordinal);
+        Assert.True(File.Exists(file));
+        Assert.Empty(backend.Deleted);
+        Assert.True(trash.Messages.ContainsKey(uid));
+
+        _ui.ConfirmAnswer = true;
+        await ActAsync(plugin, file, "delete");
+
+        Assert.Equal(2, _ui.Confirmations.Count);
+        Assert.False(File.Exists(file));
+        Assert.Equal([uid], backend.Deleted);
+    }
+
+    [Fact]
+    public async Task Discarding_a_draft_needs_confirmation()
+    {
+        var backend = new FakeMailServer();
+        var serverDrafts = backend.AddFolder("Drafts", "Szkice", MailSpecialFolder.Drafts, 7);
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var draft = Path.Combine(account, "Szkice", "Nowa.eml");
+        File.WriteAllText(draft, "To: jan@example.org\r\nSubject: draft\r\n\r\nv1");
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+        var uploaded = Assert.Single(backend.Appended);
+
+        _ui.ConfirmAnswer = false;
+        var kept = Assert.IsType<FormPreview>(Inner(await ActAsync(plugin, draft, "discard")));
+
+        Assert.Single(_ui.Confirmations);
+        Assert.Equal("jan@example.org", Field(kept, "to"));
+        Assert.True(File.Exists(draft));
+        Assert.Empty(backend.Deleted);
+        Assert.True(serverDrafts.Messages.ContainsKey(uploaded));
+
+        _ui.ConfirmAnswer = true;
+        await ActAsync(plugin, draft, "discard");
+
+        Assert.False(File.Exists(draft));
+        Assert.Equal([uploaded], backend.Deleted);
+    }
+
+    [Fact]
+    public async Task An_unconfirmed_send_says_it_may_have_gone_out_and_keeps_the_draft()
+    {
+        var backend = new FakeMailServer();
+        backend.AddFolder("Drafts", "Szkice", MailSpecialFolder.Drafts, 7);
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org", smtp: "smtp.example.org:465");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var draft = Path.Combine(account, "Szkice", "Nowa.eml");
+        File.WriteAllText(draft, "To: jan@example.org\r\nSubject: draft\r\n\r\nv1");
+
+        backend.SendFailure = new MailSendOutcomeUnknownException(new TimeoutException());
+        var unknown = Assert.IsType<FormPreview>(Inner(await ActAsync(plugin, draft, "send")));
+
+        Assert.True(unknown.MessageIsError);
+        Assert.Equal("Nie wiadomo, czy wiadomość została wysłana — sprawdź folder Wysłane przed ponowną próbą.", unknown.Message);
+        Assert.True(File.Exists(draft));
+
+        backend.SendFailure = new InvalidOperationException("odmowa");
+        var refused = Assert.IsType<FormPreview>(Inner(await ActAsync(plugin, draft, "send")));
+
+        Assert.StartsWith("Nie wysłano: ", refused.Message, StringComparison.Ordinal);
+        Assert.True(File.Exists(draft));
+    }
+
+    [Fact]
+    public async Task Old_and_downloaded_files_in_drafts_are_not_uploaded()
+    {
+        var backend = new FakeMailServer();
+        var serverDrafts = backend.AddFolder("Drafts", "Szkice", MailSpecialFolder.Drafts, 7);
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var dir = Path.Combine(account, "Szkice");
+        File.WriteAllText(Path.Combine(dir, "2026-10-01 1200 Jan - Stary [uid 3] [stary].eml"), "Subject: old\r\n\r\nold");
+        File.WriteAllText(Path.Combine(dir, "2026-10-01 1200 Jan - Kopia [uid 4] (2).eml"), "Subject: copy\r\n\r\ncopy");
+        File.WriteAllText(Path.Combine(dir, "Nowa.eml"), "Subject: draft\r\n\r\nv1");
+
+        Age(account);
+        await TickUntilDoneAsync(plugin);
+
+        Assert.Single(backend.Appended);
+        Assert.Single(serverDrafts.Messages);
+        Assert.Equal(["Nowa.eml"], ReadState(account)["drafts"]!.AsObject().Select(p => p.Key));
+    }
+
+    [Fact]
+    public async Task Add_account_keeps_date_like_strings_and_key_order_in_the_dashboard()
+    {
+        var backend = new FakeMailServer();
+        var plugin = Start(backend);
+        var poczta = Path.Combine(_dir, "Daty");
+        Directory.CreateDirectory(poczta);
+        File.WriteAllText(Path.Combine(poczta, "c4k.dir"),
+            "{ \"zeta\": \"2026-01-01T10:00:00Z\", \"enter\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"2026-01-01\", \"open\": \"x\" } ] }, \"preview\": \"dashboard\", \"alpha\": 1.50 }");
+        _ui.Active = poczta;
+        foreach (var answer in new[] { "anna@example.org", "imap.example.org:993", "", "", "Firma" })
+        {
+            _ui.Prompts.Enqueue(answer);
+        }
+
+        await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
+
+        var dashboard = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "c4k.dir")))!.AsObject();
+        Assert.Equal(["zeta", "enter", "preview", "alpha"], dashboard.Select(p => p.Key));
+        Assert.Equal("2026-01-01T10:00:00Z", dashboard["zeta"]!.GetValue<string>());
+        Assert.Equal(1.50m, dashboard["alpha"]!.GetValue<decimal>());
+        var tiles = dashboard["enter"]!["tiles"]!.AsArray();
+        Assert.Equal("2026-01-01", tiles[0]!["title"]!.GetValue<string>());
+        Assert.Equal("Firma", tiles[1]!["title"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task Html_message_renders_without_remote_content()
     {
         var server = await MailboxAsync();
@@ -1438,6 +1678,10 @@ public sealed class MailPluginTests : IAsyncLifetime
 
         public bool ThrowAuth { get; set; }
 
+        public Exception? SendFailure { get; set; }
+
+        public List<(string Folder, int? Limit)> SyncRequests { get; } = [];
+
         public MailAccount? LastAccount { get; private set; }
 
         public static string FileName(uint uid) => $"2026-10-31 1200 Jan - Temat {uid} [uid {uid}].eml";
@@ -1470,6 +1714,7 @@ public sealed class MailPluginTests : IAsyncLifetime
         public Task<MailSyncResult> SyncAsync(string pluginId, MailAccount account, MailSyncRequest request, CancellationToken ct)
         {
             Count(account);
+            SyncRequests.Add((request.Folder, request.Limit));
             var folder = Find(request.Folder);
             var changed = request.UidValidity != 0 && request.UidValidity != folder.Validity;
             var lastUid = changed ? 0 : request.LastUid;
@@ -1477,9 +1722,15 @@ public sealed class MailPluginTests : IAsyncLifetime
             var fresh = folder.Messages.Where(m => m.Key > lastUid && !known.Contains(m.Key))
                 .Select(m => new MailHeader(m.Key, DateTimeOffset.UtcNow, "Jan <jan@example.org>", $"Temat {m.Key}", m.Value, 10, FileName(m.Key)))
                 .ToList();
+            var hasMore = request.Limit is { } limit && fresh.Count > limit;
+            if (hasMore)
+            {
+                fresh = fresh.Take(request.Limit!.Value).ToList();
+            }
+
             var removed = known.Where(u => !folder.Messages.ContainsKey(u)).Order().ToList();
             var flags = known.Where(folder.Messages.ContainsKey).Order().Select(u => (u, folder.Messages[u])).ToList();
-            return Task.FromResult(new MailSyncResult(folder.Validity, changed, 0, fresh, flags, removed));
+            return Task.FromResult(new MailSyncResult(folder.Validity, changed, 0, fresh, flags, removed, hasMore));
         }
 
         public async Task<long> FetchAsync(string pluginId, MailAccount account, string folder, uint uid, Stream destination, CancellationToken ct)
@@ -1526,7 +1777,7 @@ public sealed class MailPluginTests : IAsyncLifetime
         public Task<string> SendAsync(string pluginId, MailAccount account, Stream message, CancellationToken ct)
         {
             Count(account);
-            return Task.FromResult("<x@test>");
+            return SendFailure is { } failure ? Task.FromException<string>(failure) : Task.FromResult("<x@test>");
         }
     }
 
@@ -1558,7 +1809,15 @@ public sealed class MailPluginTests : IAsyncLifetime
 
         public Task ShowTextAsync(string title, string text) => Task.CompletedTask;
 
-        public Task<bool> ConfirmAsync(string title, string message) => Task.FromResult(true);
+        public bool ConfirmAnswer { get; set; } = true;
+
+        public List<(string Title, string Message)> Confirmations { get; } = [];
+
+        public Task<bool> ConfirmAsync(string title, string message)
+        {
+            Confirmations.Add((title, message));
+            return Task.FromResult(ConfirmAnswer);
+        }
 
         public Queue<string?> Prompts { get; } = new();
 
