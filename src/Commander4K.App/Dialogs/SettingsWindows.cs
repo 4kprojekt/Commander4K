@@ -480,7 +480,7 @@ public sealed class AboutDialog : DialogWindow<bool>
         HeaderGlyph = "▦";
         var isoGlow = Ds.Button(brushes, "isoglow.dev ↗", () => OpenUrl(IsoGlowUrl), ButtonKind.Ghost);
         isoGlow.Foreground = brushes.Accent;
-        ToolTip.SetTip(isoGlow, Loc.T("Animacja startowa jest odwzorowaniem projektu wykonanego w ISO-GLOW"));
+        ToolTip.SetTip(isoGlow, Loc.T("Animacja startowa z wykorzystaniem ISO-GLOW"));
         FooterLeading = new StackPanel().Orientation(Orientation.Horizontal).Spacing(4).Children(
             Ds.Button(brushes, Loc.T("Animacja startowa"), () => _ = new SplashWindow(brushes, SplashMode.Demo).ShowDialog(this)),
             isoGlow);

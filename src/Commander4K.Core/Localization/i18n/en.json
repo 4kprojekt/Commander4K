@@ -1280,7 +1280,7 @@
   "Ten prompt każe agentowi AI korzystać z Commander4K przez MCP, a serwer MCP jest wyłączony. Włączyć go teraz? Działa tylko na 127.0.0.1 i wymaga tokenu; foldery dostępne dla AI wybierzesz w oknie „Połącz Claude Code”.": "This prompt tells the AI agent to use Commander4K over MCP, but the MCP server is off. Switch it on now? It listens on 127.0.0.1 only and needs a token; choose the folders the AI may use in the \"Połącz Claude Code\" window.",
   "Włącz MCP": "Switch on MCP",
   "Prompt skopiowany, ale serwer MCP jest wyłączony — agent nie połączy się z Commander4K, dopóki go nie włączysz.": "Prompt copied, but the MCP server is off — the agent cannot connect to Commander4K until you switch it on.",
-  "Animacja startowa jest odwzorowaniem projektu wykonanego w ISO-GLOW": "The start-up animation recreates a design made in ISO-GLOW",
+  "Animacja startowa z wykorzystaniem ISO-GLOW": "Start-up animation made with ISO-GLOW",
   "_// Commander4K.App/Dialogs (folder views: settings, skins)": "",
   "✓ {0}: kontrast i czytelność w porządku.": "✓ {0}: contrast and legibility are fine.",
   "Esc czyści wyszukiwanie, drugie Esc pokazuje pliki folderu config · Tab przechodzi między kontrolkami": "Esc clears the search, a second Esc shows the files of the config folder · Tab moves between controls",
