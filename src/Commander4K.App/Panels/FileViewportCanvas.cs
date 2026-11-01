@@ -42,7 +42,7 @@ public sealed class FileViewportCanvas : Control
     {
         ClipToBounds = true;
         Focusable = false;
-        // Animates the wave dots (loading bar, folders being sized); runs only while something is busy.
+        // Animates the wave dots (loading bar, folder sizing, and row operations); runs only while something is busy.
         _spinner = new DispatcherTimer(WaveDots.FrameInterval, DispatcherPriority.Render, (_, _) => InvalidateVisual());
     }
 
@@ -430,7 +430,7 @@ public sealed class FileViewportCanvas : Control
 
     private void UpdateSpinner()
     {
-        if (_tab is { IsLoading: true } || _tab?.SizesInProgress.Count > 0)
+        if (_tab is { IsLoading: true } || _tab?.SizesInProgress.Count > 0 || _tab?.BusyEntries.Count > 0)
         {
             _spinner.Start();
         }
@@ -688,7 +688,14 @@ public sealed class FileViewportCanvas : Control
         }
 
         var typeface = entry.IsContainer ? b.BoldTypeface : b.Typeface;
-        DrawText(context, b, name, foreground, x, y, layout.NameRight - x - 6, typeface);
+        var busy = tab.BusyEntries.Contains(entry.Path);
+        var dotSize = DotSize(b);
+        var nameWidth = layout.NameRight - x - 6 - (busy ? WaveDots.WidthFor(dotSize) + 8 : 0);
+        var nameDrawn = DrawText(context, b, name, foreground, x, y, nameWidth, typeface);
+        if (busy)
+        {
+            WaveDots.Draw(context, foreground, x + nameDrawn + 4, y + (b.RowHeight / 2), dotSize);
+        }
         foreach (var extra in layout.Extras)
         {
             if (tab.ColumnData.Get(extra.Column, entry) is { Text.Length: > 0 } value)
@@ -756,7 +763,14 @@ public sealed class FileViewportCanvas : Control
 
         var name = b.Skin.Chrome.UppercaseNames ? entry.Name.ToUpperInvariant() : entry.Name;
         var bold = entry.IsContainer || isMarked;
-        DrawText(context, b, name, foreground, x, y, layout.NameRight - x, bold ? b.BoldTypeface : b.Typeface);
+        var busy = tab.BusyEntries.Contains(entry.Path);
+        var dotSize = DotSize(b);
+        var nameWidth = layout.NameRight - x - (busy ? WaveDots.WidthFor(dotSize) + 8 : 0);
+        var nameDrawn = DrawText(context, b, name, foreground, x, y, nameWidth, bold ? b.BoldTypeface : b.Typeface);
+        if (busy)
+        {
+            WaveDots.Draw(context, foreground, x + nameDrawn + 4, y + (b.RowHeight / 2), dotSize);
+        }
         foreach (var extra in layout.Extras)
         {
             if (tab.ColumnData.Get(extra.Column, entry) is not { Text.Length: > 0 } value)
@@ -900,6 +914,13 @@ public sealed class FileViewportCanvas : Control
     {
         var size = Math.Round(rowHeight * 0.55);
         var top = y + ((rowHeight - size) / 2);
+        var icon = FileIcons.For(entry);
+        if (icon is FileIcons.Kind.Lan or FileIcons.Kind.Internet or FileIcons.Kind.Router or FileIcons.Kind.Nas or FileIcons.Kind.Web)
+        {
+            FileIcons.Draw(context, icon, brush, x, top, size);
+            return;
+        }
+
         var pen = new Pen(brush, 1);
         if (entry.IsContainer)
         {

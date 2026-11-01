@@ -49,7 +49,7 @@ public sealed class LocalFileSystemPlugin : IVfsProviderPlugin, IVfsChangeNotifi
             if (NetworkEntries is { } network)
             {
                 // Share kind: first in the network group (shares sort before hosts), with the network icon.
-                yield return new VfsEntry(Loc.T("Sieć"), "net://", VfsEntryKind.Share, Description: Loc.T("Wszystkie hosty w sieci LAN, udziały SMB, SFTP/FTP"));
+                yield return new VfsEntry(Loc.T("Sieć"), "net://", VfsEntryKind.Share, Description: Loc.T("Hosty LAN i zapisane połączenia Remote: SMB, SFTP/FTP"));
                 await foreach (var entry in network(cancellationToken).ConfigureAwait(false))
                 {
                     yield return entry;

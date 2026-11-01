@@ -527,7 +527,8 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
                 .Take(MaxFormFields)
                 .Select(f => new FormField(CardString(f, "id")!, CardString(f, "label") ?? string.Empty,
                     f.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? string.Empty : string.Empty,
-                    f.TryGetProperty("multiline", out var m) && m.ValueKind == JsonValueKind.True))]
+                    f.TryGetProperty("multiline", out var m) && m.ValueKind == JsonValueKind.True,
+                    f.TryGetProperty("password", out var password) && password.ValueKind == JsonValueKind.True))]
             : new List<FormField>();
         var files = result.TryGetProperty("files", out var attached) && attached.ValueKind == JsonValueKind.Array
             ? [.. attached.EnumerateArray()
@@ -888,4 +889,3 @@ public sealed class PluginApprovalStore(string path)
         return _approvals;
     }
 }
-

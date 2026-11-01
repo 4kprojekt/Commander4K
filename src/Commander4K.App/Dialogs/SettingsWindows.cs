@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Commander4K.App.Composition;
 using Commander4K.App.Panels;
+using Commander4K.App.Preview;
 using Commander4K.App.Splash;
 using Commander4K.App.Theming;
 using Commander4K.Core.Configuration;
@@ -406,7 +407,7 @@ public sealed class UpdateDialog : DialogWindow<bool>
             new TextBlock().Text($"{update.Name}{(update.IsPrerelease ? Loc.T("  (wersja testowa)") : "")}").FontSize(18).FontWeight(FontWeight.SemiBold),
             Label($"Zainstalowana: {AppVersion.Display} → nowa: {update.Version}"),
             new ScrollViewer().MaxHeight(260).Margin(0, 6, 0, 0).Content(
-                new SelectableTextBlock().Text(string.IsNullOrWhiteSpace(update.Notes) ? Loc.T("(brak opisu zmian)") : update.Notes).TextWrapping(TextWrapping.Wrap)),
+                MarkdownRenderer.Render(string.IsNullOrWhiteSpace(update.Notes) ? Loc.T("(brak opisu zmian)") : update.Notes, brushes)),
             _progress,
             _status,
             new StackPanel().Orientation(Orientation.Horizontal).HorizontalAlignment(HorizontalAlignment.Right).Spacing(8).Margin(0, 14, 0, 0).Children(

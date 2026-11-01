@@ -130,6 +130,79 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Mikrotik_preview_matches_routeros_service_and_masks_password()
+    {
+        var plugin = StartFrom(Path.Combine(RepositoryRoot(), "plugins-catalog", "mikrotik-routeros-python"));
+        _started.Add(plugin);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews!.Single());
+        var entry = new VfsEntry("MikroTik API", "service://192.168.0.1:8728", VfsEntryKind.Service);
+
+        Assert.True(preview.CanPreview(entry));
+        Assert.False(preview.CanPreview(entry with { Name = "HTTP :80" }));
+        var form = Assert.IsType<FormPreview>(await preview.LoadAsync(entry, HostFor(plugin), null, TestToken));
+        Assert.True(Assert.Single(form.Fields, field => field.Id == "password").Password);
+
+        var result = await preview.InvokeActionAsync(
+            new PreviewActionRequest(entry, null, "connect", new Dictionary<string, string>(),
+                new Dictionary<string, string>
+                {
+                    ["host"] = "192.168.0.1",
+                    ["scheme"] = "http",
+                    ["port"] = "invalid",
+                    ["user"] = "admin",
+                    ["password"] = "not-logged",
+                }),
+            HostFor(plugin),
+            TestToken);
+
+        var error = Assert.IsType<FormPreview>(result);
+        Assert.True(error.MessageIsError);
+        Assert.Contains("Port", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Mikrotik_preview_reads_routeros_rest_through_sdk()
+    {
+        var output = await RunPluginPythonAsync("mikrotik-routeros-python", """
+            import json
+            import main
+
+            calls = []
+            responses = {
+                "/system/identity": [{"name": "hAP-test"}],
+                "/system/resource": [{"version": "7.15.3", "board-name": "hAP ax3", "cpu": "ARM64", "cpu-load": "4"}],
+                "/interface": [{"name": "ether1", "type": "ether", "running": "true"}],
+                "/ip/address": [{"address": "192.168.0.1/24", "interface": "bridge"}],
+                "/ip/route": [{"dst-address": "0.0.0.0/0", "gateway": "192.168.0.254"}],
+                "/ip/service": [{"name": "www", "port": "80"}],
+            }
+
+            def fake_request(url, method="GET", headers=None, **kwargs):
+                path = url.split("/rest", 1)[1]
+                calls.append({"url": url, "method": method, "authorization": headers["Authorization"]})
+                return {"status": 200, "body": json.dumps(responses[path])}
+
+            main.c4k.http_request = fake_request
+            base_url = main._base_url({"host": "192.168.0.1", "scheme": "https", "port": "443"})
+            markdown = main._overview(base_url, "admin", "secret")
+            print(json.dumps({"markdown": markdown, "calls": calls}))
+            """);
+
+        using var result = JsonDocument.Parse(output);
+        var markdown = result.RootElement.GetProperty("markdown").GetString()!;
+        var calls = result.RootElement.GetProperty("calls");
+        Assert.Contains("MikroTik RouterOS · hAP-test", markdown, StringComparison.Ordinal);
+        Assert.Contains("| ether1 | ether | true |", markdown, StringComparison.Ordinal);
+        Assert.Equal(6, calls.GetArrayLength());
+        Assert.All(calls.EnumerateArray(), call =>
+        {
+            Assert.StartsWith("https://192.168.0.1/rest/", call.GetProperty("url").GetString()!, StringComparison.Ordinal);
+            Assert.Equal("GET", call.GetProperty("method").GetString());
+            Assert.Equal("Basic YWRtaW46c2VjcmV0", call.GetProperty("authorization").GetString());
+        });
+    }
+
+    [Fact]
     public async Task Json_preview_formats_and_outlines()
     {
         var (preview, host, entry) = await CatalogPreviewAsync("json-preview-python", "data.json", """{"name":"Kraków","tags":["a","b"],"geo":{"lat":50.06,"lon":19.94}}""");
@@ -1827,6 +1900,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("../../plugins-catalog/steam-library-powershell", "powershell", "c4k.ps1")]
     [InlineData("../../plugins-catalog/json-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/openapi-preview-python", "python", "c4k.py")]
+    [InlineData("../../plugins-catalog/mikrotik-routeros-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/html-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/pe-info-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/archive-info-python", "python", "c4k.py")]

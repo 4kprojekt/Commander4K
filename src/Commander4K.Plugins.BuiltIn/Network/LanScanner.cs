@@ -56,9 +56,13 @@ public sealed class LanScanner
 
     public int MaxDegreeOfParallelism { get; init; } = 128;
 
-    public async IAsyncEnumerable<DiscoveredHost> ScanAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<DiscoveredHost> ScanAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken = default,
+        IReadOnlyList<int>? ports = null)
     {
         var (candidates, neighbours) = GetCandidatesWithNeighbours();
+        var scanPorts = ports ?? Ports;
+        var maxDegree = ports is null ? MaxDegreeOfParallelism : Math.Min(MaxDegreeOfParallelism, 16);
         var found = Channel.CreateUnbounded<DiscoveredHost>(new UnboundedChannelOptions { SingleReader = true });
 
         var sweep = Task.Run(
@@ -68,7 +72,7 @@ public sealed class LanScanner
                 {
                     var options = new ParallelOptions
                     {
-                        MaxDegreeOfParallelism = MaxDegreeOfParallelism,
+                        MaxDegreeOfParallelism = maxDegree,
                         CancellationToken = cancellationToken,
                     };
                     // The body never throws on cancellation (probes return "closed"): an exception leaving this
@@ -76,7 +80,7 @@ public sealed class LanScanner
                     // from "This PC". Parallel.ForEachAsync itself stops on the token and reports it below.
                     await Parallel.ForEachAsync(candidates, options, async (address, ct) =>
                     {
-                        var open = await ProbeHostAsync(address, Ports, neighbours.Contains(address) ? NeighbourConnectTimeout : ConnectTimeout, ct).ConfigureAwait(false);
+                        var open = await ProbePortsAsync(address, scanPorts, neighbours.Contains(address) ? NeighbourConnectTimeout : ConnectTimeout, ct).ConfigureAwait(false);
                         if (open.Count > 0 && !ct.IsCancellationRequested)
                         {
                             var name = await TryReverseLookupAsync(address, ct).ConfigureAwait(false);
@@ -102,9 +106,13 @@ public sealed class LanScanner
 
     /// <summary>Returns the subset of <paramref name="ports"/> accepting TCP connections on <paramref name="address"/>.</summary>
     public Task<IReadOnlyList<int>> ProbeHostAsync(IPAddress address, IReadOnlyList<int> ports, CancellationToken cancellationToken) =>
-        ProbeHostAsync(address, ports, ConnectTimeout, cancellationToken);
+        ProbePortsAsync(address, ports, ConnectTimeout, cancellationToken);
 
-    private static async Task<IReadOnlyList<int>> ProbeHostAsync(IPAddress address, IReadOnlyList<int> ports, TimeSpan timeout, CancellationToken cancellationToken)
+    /// <summary>Probes a known host with a caller-selected timeout per port.</summary>
+    public Task<IReadOnlyList<int>> ProbeHostAsync(IPAddress address, IReadOnlyList<int> ports, TimeSpan timeout, CancellationToken cancellationToken) =>
+        ProbePortsAsync(address, ports, timeout, cancellationToken);
+
+    private static async Task<IReadOnlyList<int>> ProbePortsAsync(IPAddress address, IReadOnlyList<int> ports, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var probes = new Task<bool>[ports.Count];
         for (var i = 0; i < probes.Length; i++)

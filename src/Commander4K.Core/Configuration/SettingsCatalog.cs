@@ -106,8 +106,10 @@ public static class SettingsCatalog
             SettingKind.Text, s => s.PluginCatalogUrl, (s, v) => s.PluginCatalogUrl = NullIfEmpty(v) ?? AppSettings.DefaultPluginCatalogUrl,
             ["wtyczki", "katalog", "pluginy", "repozytorium", "pobierz", "catalog"]),
 
-        new("lanDiscovery", Network, Loc.T("Wykrywaj hosty w sieci LAN"), Loc.T("Przy otwarciu net:// skanuje lokalną podsieć (porty 445, 22, 21) i pokazuje znalezione maszyny."),
+        new("lanDiscovery", Network, Loc.T("Wykrywaj hosty w sieci LAN"), Loc.T("Przy otwarciu sekcji LAN skanuje porty SMB/SSH/FTP oraz odczytuje ogłoszenia DNS-SD mDNS usług HTTP, API, SMB i innych."),
             SettingKind.Toggle, s => s.LanDiscovery, (s, v) => s.LanDiscovery = (bool)v!, ["skan", "lan", "smb", "ssh", "otoczenie"]),
+        new("lanScanPopularPorts", Network, Loc.T("Skan LAN: popularne porty"), Loc.T("Włącza sprawdzanie typowych portów WWW, Winbox, API MikroTik i innych w lokalnych podsieciach IPv4 (maksymalnie /24). Możesz też zmienić tę opcję przy akcji „Skanuj adresy IP”."),
+            SettingKind.Toggle, s => s.LanScanPopularPorts, (s, v) => s.LanScanPopularPorts = (bool)v!, ["lan", "porty", "skan", "mikrotik", "winbox", "uslugi"]),
 
         new("searchEngine", Browser, Loc.T("Wyszukiwarka w przeglądarce"), Loc.T("Co dzieje się z tekstem wpisanym w pasek adresu wewnętrznej przeglądarki (Ctrl+Alt+W), gdy nie jest adresem."),
             SettingKind.Choice, s => s.SearchEngine, (s, v) => s.SearchEngine = (string)v!, ["google", "bing", "duckduckgo", "szukaj", "www", "internet"])
@@ -116,7 +118,7 @@ public static class SettingsCatalog
             SettingKind.Choice, s => s.AssistantEngine, (s, v) => s.AssistantEngine = (string)v!, ["ai", "chatgpt", "gemini", "claude", "perplexity", "asystent", "pomoc"])
         { Choices = () => [.. Web.SearchEngines.All.OrderBy(e => !e.IsAssistant).Select(e => new SettingChoice(e.Id, e.IsAssistant ? e.Name : e.Name + Loc.T(" (wyszukiwarka)")))] },
 
-        new("aiInApp", Ai, Loc.T("Odpowiedzi AI w aplikacji"), Loc.T("„Zapytaj AI” (Ctrl+Alt+A) odpowiada w oknie czatu przez zalogowanych dostawców (OpenRouter, Groq, Cerebras…), przechodząc do następnego, gdy któryś wyczerpie limit. Wyłączone lub bez logowania: otwiera okno Claude Code (pytanie trafia do schowka)."),
+        new("aiInApp", Ai, Loc.T("Odpowiedzi AI w aplikacji"), Loc.T("Pytania o plik i prośby o wtyczkę z podglądu odpowiadają w oknie czatu przez zalogowanych dostawców (OpenRouter, Groq, Cerebras…), przechodząc do następnego, gdy któryś wyczerpie limit. Wyłączone lub bez logowania: otwiera okno Claude Code (pytanie trafia do schowka)."),
             SettingKind.Toggle, s => s.AiInApp, (s, v) => s.AiInApp = (bool)v!, ["ai", "czat", "chat", "openrouter", "groq", "cerebras", "gemini", "mistral", "dostawcy", "darmowe", "rotacja", "limit"]),
         new("aiCatalogUrl", Ai, Loc.T("Lista dostawców AI (adres)"), Loc.T("Plik ai-providers.json pobierany przy starcie z repozytorium projektu, więc nowe darmowe modele pojawiają się bez aktualizacji programu. Własne wpisy: config/ai/providers.json."),
             SettingKind.Text, s => s.AiCatalogUrl, (s, v) => s.AiCatalogUrl = NullIfEmpty(v) ?? AppSettings.DefaultAiCatalogUrl,

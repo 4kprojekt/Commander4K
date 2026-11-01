@@ -52,7 +52,7 @@ public sealed record ActionsPreview(PreviewContent Content, IReadOnlyList<Previe
 /// </summary>
 public sealed record MovedPreview(PreviewContent Content, VfsEntry Entry) : PreviewContent;
 
-public sealed record FormField(string Id, string Label, string Value, bool Multiline = false);
+public sealed record FormField(string Id, string Label, string Value, bool Multiline = false, bool Password = false);
 
 public sealed record FormFile(string Name, string Path, long Size);
 

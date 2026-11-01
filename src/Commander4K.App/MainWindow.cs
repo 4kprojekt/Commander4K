@@ -240,7 +240,18 @@ public sealed class MainWindow : Window
             p.FileActivated += entry => OpenFile(p, entry);
             p.FolderEntering += entry => _ = EnterFolderAsync(p, entry);
             p.ContextMenuRequested += entry => ShowContextMenu(p, entry, fromKeyboard: false);
-            p.AddConnectionRequested += sender => _ = ExecuteAsync(CommandIds.AddConnection);
+            p.ActionRequested += entry =>
+            {
+                SetActive(p);
+                _ = entry.Path switch
+                {
+                    NetworkNeighborhoodVfsPlugin.AddLanHostPath => AddLanHostAsync(),
+                    NetworkNeighborhoodVfsPlugin.ScanLanPath => ConfigureLanScanAsync(),
+                    _ => ExecuteAsync(CommandIds.AddConnection),
+                };
+            };
+            p.NewTabRequested += () => _ = ChooseNewTabAsync(p);
+            p.PluginTabSelected += tab => ShowPluginTab(p, tab);
             p.LocationMenuRequested += sender => _ = ShowDriveMenuAsync(sender).AsTask();
             p.AuthenticationRequired += request => _ = LoginAndRetryAsync(request);
             WatchForSuggestions(p);
@@ -365,11 +376,11 @@ public sealed class MainWindow : Window
         _ = CheckForUpdatesInBackgroundAsync();
     }
 
-    /// <summary>Daily, silent check; a found release is announced in the status area and opened by clicking it.</summary>
+    /// <summary>Silent start-up check; a found release is announced in the status area and opened by clicking it.</summary>
     private async Task CheckForUpdatesInBackgroundAsync()
     {
         var settings = _host!.Settings;
-        if (!settings.CheckForUpdates || settings.LastUpdateCheck > DateTimeOffset.UtcNow.AddHours(-24))
+        if (!settings.CheckForUpdates)
         {
             return;
         }
@@ -615,7 +626,7 @@ public sealed class MainWindow : Window
     {
         var tab = panel.ActiveTab;
         IReadOnlyList<VfsEntry> entries = clicked is { } row && !tab.Marked.Contains(row.Path) ? [row] : tab.MarkedOrCurrent();
-        entries = [.. entries.Where(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action))];
+        entries = [.. entries.Where(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action or VfsEntryKind.Service))];
         if (entries.Count == 0 || panel.Mode is not null)
         {
             return;
@@ -696,22 +707,6 @@ public sealed class MainWindow : Window
             _ => SearchEngines.Get(engine),
         };
         return OpenBrowser(null).SearchAsync(query, resolved);
-    }
-
-    private async Task AskAiAsync()
-    {
-        if (_host!.Settings.AiInApp && _host.Ai.IsConfigured)
-        {
-            OpenAiChat();
-            return;
-        }
-
-        var question = await new InputDialog(_skins!.Current, Loc.T("Zapytaj AI"),
-            Loc.T("Pytanie (trafi do Claude Code):"), string.Empty).ShowAsync(this);
-        if (!string.IsNullOrWhiteSpace(question))
-        {
-            await UseClaudeCodeAsync(question);
-        }
     }
 
     private AiChatWindow? _aiChat;
@@ -1499,24 +1494,6 @@ public sealed class MainWindow : Window
 
     private Task OpenPluginManagerAsync() => ExecuteAsync(CommandIds.PanelPrefix + PluginManagerPanel.PluginId);
 
-    /// <summary>cm_AiWritePlugin: the chat in plugin mode when a provider is signed in, otherwise Claude Code.</summary>
-    private async Task WritePluginWithAiAsync()
-    {
-        if (_host!.Ai.IsConfigured)
-        {
-            OpenAiChat();
-            _aiChat?.StartPlugin();
-            return;
-        }
-
-        var wish = await new InputDialog(_skins!.Current, Loc.T("Napisz wtyczkę z AI"),
-            Loc.T("Co ma robić wtyczka? (prośba trafi do Claude Code)")).ShowAsync(this);
-        if (!string.IsNullOrWhiteSpace(wish))
-        {
-            await UseClaudeCodeAsync(wish + McpPrompts.PluginHint);
-        }
-    }
-
     private void OpenAiProviders()
     {
         if (_aiProviders is { } open)
@@ -2117,7 +2094,7 @@ public sealed class MainWindow : Window
          .Register(CommandIds.AddApiCard, Loc.T("Dodaj kartę API do dashboardu folderu (wybór pól z odpowiedzi)"), AddApiCardAsync)
          .Register(CommandIds.GoToParent, Loc.T("Katalog wyżej"), () => _active.GoToParent())
          .Register(CommandIds.Refresh, Loc.T("Odśwież"), () => _ = _active.ActiveTab.RefreshAsync())
-         .Register(CommandIds.NewTab, Loc.T("Nowa zakładka"), () => _active.AddTab(_active.ActiveTab.Path))
+         .Register(CommandIds.NewTab, Loc.T("Nowa zakładka"), _ => new ValueTask(ChooseNewTabAsync(_active)))
          .Register(CommandIds.CloseTab, Loc.T("Zamknij zakładkę"), () => _active.CloseActiveTab())
          .Register(CommandIds.LeftDriveMenu, Loc.T("Menu dysków (lewy)"), _ => ShowDriveMenuAsync(_left))
          .Register(CommandIds.RightDriveMenu, Loc.T("Menu dysków (prawy)"), _ => ShowDriveMenuAsync(_right))
@@ -2131,9 +2108,6 @@ public sealed class MainWindow : Window
          .Register(CommandIds.QuickView, Loc.T("Szybki podgląd"), TogglePreview)
          .Register(CommandIds.PanelModes, Loc.T("Tryb panelu (pliki, podgląd, panele wtyczek)"), ShowPanelModesAsync)
          .Register(CommandIds.Browser, Loc.T("Przeglądarka (WWW, wyszukiwarki, asystenci AI)"), () => OpenBrowser(null))
-         .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (czat z darmowymi dostawcami lub Claude Code)"), _ => new ValueTask(AskAiAsync()))
-         .Register(CommandIds.AiProviders, Loc.T("Dostawcy AI — logowanie, kolejność, limity"), _ => { OpenAiProviders(); return ValueTask.CompletedTask; })
-         .Register(CommandIds.AiWritePlugin, Loc.T("Napisz wtyczkę z AI (według przewodnika, z instalacją)"), _ => new ValueTask(WritePluginWithAiAsync()))
          .Register(CommandIds.McpConnect, Loc.T("Połącz Claude Code lub innego klienta MCP z Commander4K"), OpenMcpConnect)
          .Register(CommandIds.Edit, Loc.T("Edycja"), EditCurrentAsync)
          .Register(CommandIds.Copy, Loc.T("Kopiuj"), _ => TransferAsync(TransferMode.Copy))
@@ -2228,7 +2202,7 @@ public sealed class MainWindow : Window
 
         int? FindRow(string name)
         {
-            var index = tab.Entries.FindIndex(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action)
+            var index = tab.Entries.FindIndex(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action or VfsEntryKind.Service)
                 && string.Equals(e.Name, name, StringComparison.OrdinalIgnoreCase));
             return index >= 0 ? index : null;
         }
@@ -2391,6 +2365,13 @@ public sealed class MainWindow : Window
     /// <param name="plain">Shift+Enter: skip a preview that claims Enter (<c>"enter": true</c>) and open the file as before.</param>
     private void OpenFile(FilePanelView panel, VfsEntry entry, bool plain = false)
     {
+        if (Uri.TryCreate(entry.Path, UriKind.Absolute, out var url)
+            && url.Scheme is "http" or "https")
+        {
+            OpenBrowser(url.AbsoluteUri, panel);
+            return;
+        }
+
         // A preview that asks for Enter (a mail message…) shows the file pinned over the panel; Esc returns to the files.
         if (!plain && _host!.PreviewPlugins.Where(p => p.CanPreview(entry)).OrderByDescending(p => p.Priority).FirstOrDefault() is Core.Plugins.ExternalPreviewPlugin { OpensOnEnter: true })
         {
@@ -3139,6 +3120,77 @@ public sealed class MainWindow : Window
         return Task.CompletedTask;
     }
 
+    private async Task ChooseNewTabAsync(FilePanelView panel)
+    {
+        SetActive(panel);
+        var items = new List<PickerItem>();
+        await foreach (var drive in _host!.Router.EnumerateAsync(LocalFileSystemPlugin.RootPath, CancellationToken.None))
+        {
+            if (drive.Kind == VfsEntryKind.Drive)
+            {
+                items.Add(new PickerItem(drive.Name, drive.Description, drive.Path));
+            }
+        }
+
+        items.Add(new PickerItem(string.Empty, null, "separator", IsSeparator: true));
+        items.AddRange(_host.PanelPlugins.Select(plugin =>
+            new PickerItem(plugin.Title, plugin.Description, CommandIds.PanelPrefix + plugin.Id, plugin.Manifest.Name)));
+
+        var choice = await new PickerDialog(
+            _skins!.Current,
+            Loc.T("Nowa zakładka"),
+            items,
+            Loc.T("Wybierz dysk albo plugin panelu.")).ShowAsync(this);
+        if (choice is null)
+        {
+            return;
+        }
+
+        if (choice.Value.StartsWith(CommandIds.PanelPrefix, StringComparison.Ordinal))
+        {
+            panel.AddPluginTab(panel.ActiveTab.Path, choice.Value[CommandIds.PanelPrefix.Length..]);
+        }
+        else
+        {
+            panel.AddTab(choice.Value);
+        }
+    }
+
+    private void ShowPluginTab(FilePanelView panel, PanelTab tab)
+    {
+        var pluginId = panel.PluginTabId(tab);
+        if (pluginId is null || _host!.FindPanel(pluginId) is not { } plugin)
+        {
+            Notify(Loc.T("Nie znaleziono panelu pluginu dla tej zakładki."), isError: true);
+            panel.CancelPluginTab(tab);
+            return;
+        }
+
+        var source = panel == _left ? _right : _left;
+        var argument = source.ActiveTab.CurrentEntry is { Kind: VfsEntryKind.File } file ? file.Path
+            : tab.CurrentEntry is { Kind: VfsEntryKind.File } tabFile ? tabFile.Path
+            : null;
+        if (plugin.RequiresArgument && argument is null)
+        {
+            Notify(Loc.T("{0}: ustaw kursor na pliku i spróbuj ponownie.", plugin.Title), isError: true);
+            panel.CancelPluginTab(tab);
+            return;
+        }
+
+        var request = new PanelRequest(argument, null);
+        var services = new PluginPanelServices(
+            (title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this),
+            ShowTextWindowAsync,
+            Notify);
+        panel.SetPluginTabMode(tab, new PluginPanelView(
+            plugin,
+            plugin.CreateSession(request, _host.HostFor(plugin.Manifest)),
+            request,
+            _skins!.Current,
+            services));
+        SetActive(panel);
+    }
+
     /// <summary>The panel a mode goes to: the opposite one, or the active one if it already shows a mode.</summary>
     private (FilePanelView Target, FilePanelView Source) ModeTarget() =>
         _active.Mode is null ? (Other, _active) : (_active, Other);
@@ -3272,8 +3324,7 @@ public sealed class MainWindow : Window
         _menu.Items.Add(Group(Loc.T("Pa_nele"), [Item(CommandIds.LeftDriveMenu), Item(CommandIds.RightDriveMenu), Item(CommandIds.OpenNetwork), Item(CommandIds.OpenRegistry), new Separator(),
             .. host.PanelPlugins.Select(p => Item(CommandIds.PanelPrefix + p.Id, p.Title))]));
         _menu.Items.Add(pluginMenu);
-        _menu.Items.Add(Group(Loc.T("_Konfiguracja"), [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.EditSkin), Item(CommandIds.CommandPalette),
-            new Separator(), Item(CommandIds.AskAi), Item(CommandIds.AiWritePlugin), Item(CommandIds.AiProviders)]));
+        _menu.Items.Add(Group(Loc.T("_Konfiguracja"), [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.CommandPalette)]));
         _menu.Items.Add(Group(Loc.T("Pomo_c"), [Item(CommandIds.Help), Item(CommandIds.CheckForUpdates), Item(CommandIds.About)]));
         if (_skins is not null)
         {
@@ -3343,6 +3394,78 @@ public sealed class MainWindow : Window
         SetActive(target);
         await target.NavigateAsync(connection.Path);
     }
+
+    private async Task AddLanHostAsync()
+    {
+        var host = await new LanHostDialog(_skins!.Current).ShowAsync(this);
+        if (host is null)
+        {
+            return;
+        }
+
+        var hosts = _host!.Settings.LanHosts;
+        var existing = hosts.FindIndex(saved => string.Equals(saved.Host, host.Host, StringComparison.OrdinalIgnoreCase));
+        if (existing >= 0)
+        {
+            host.Services.InsertRange(0, hosts[existing].Services.Where(old =>
+                host.Services.All(service => !SameService(old, service))));
+            hosts[existing] = host;
+        }
+        else
+        {
+            hosts.Add(host);
+        }
+
+        _host.ApplySettings();
+        await _host.SaveSettingsAsync();
+        Notify(host.Services.Count == 0
+            ? Loc.T("Dodano host LAN: {0}.", host.Name)
+            : Loc.T("Dodano usługę do hosta LAN: {0}.", host.Name));
+        await ReloadLanPanelsAsync();
+    }
+
+    private async Task ConfigureLanScanAsync()
+    {
+        var host = _host!;
+        var includePopularPorts = await new LanScanDialog(_skins!.Current, host.Settings.LanScanPopularPorts).ShowAsync(this);
+        if (includePopularPorts is null)
+        {
+            return;
+        }
+
+        host.Settings.LanScanPopularPorts = includePopularPorts.Value;
+        host.ApplySettings();
+        await host.SaveSettingsAsync();
+        await ReloadLanPanelsAsync();
+    }
+
+    private async Task ReloadLanPanelsAsync()
+    {
+        var tabs = new[] { _left, _right }
+            .Where(panel => string.Equals(panel.ActiveTab.Path, NetworkNeighborhoodVfsPlugin.LanPath, StringComparison.OrdinalIgnoreCase))
+            .Select(panel => panel.ActiveTab)
+            .ToArray();
+        foreach (var tab in tabs)
+        {
+            tab.SetBusy(NetworkNeighborhoodVfsPlugin.ScanLanPath, true);
+        }
+
+        try
+        {
+            await Task.WhenAll(tabs.Select(tab =>
+                tab.NavigateAsync(NetworkNeighborhoodVfsPlugin.LanPath, tab.CurrentEntry?.Name)));
+        }
+        finally
+        {
+            foreach (var tab in tabs)
+            {
+                tab.SetBusy(NetworkNeighborhoodVfsPlugin.ScanLanPath, false);
+            }
+        }
+    }
+
+    private static bool SameService(LanHostServiceSetting left, LanHostServiceSetting right) =>
+        left.Port == right.Port && string.Equals(left.Scheme, right.Scheme, StringComparison.OrdinalIgnoreCase);
 
     private void CancelCurrent()
     {

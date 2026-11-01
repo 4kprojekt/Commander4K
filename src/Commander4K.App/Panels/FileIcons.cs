@@ -13,7 +13,7 @@ internal static class FileIcons
 {
     private const double Grid = 16;
 
-    public enum Kind : byte { Up, Folder, File, Executable, Archive, Image, Drive, Network, Add }
+    public enum Kind : byte { Up, Folder, File, Executable, Archive, Image, Drive, Network, Lan, Internet, Router, Nas, Web, Add }
 
     private static readonly Dictionary<Kind, (Geometry Stroke, Geometry? Fill, double FillOpacity)> Shapes = new()
     {
@@ -26,6 +26,12 @@ internal static class FileIcons
         [Kind.Image] = (Group(Rounded(1.75, 2.75, 12.5, 10.5, 1.5), new EllipseGeometry(new Rect(4.25, 5, 2.5, 2.5)), Path("M2 12l3.75-3.5 2.75 2.5 2-1.75 3.5 3")), null, 0),
         [Kind.Drive] = (Group(Rounded(1.75, 4.75, 12.5, 6.5, 1.5)), new EllipseGeometry(new Rect(10.75, 7.25, 1.5, 1.5)), 1),
         [Kind.Network] = (Group(Rounded(2, 2, 12, 4.5, 1), Rounded(2, 9.5, 12, 4.5, 1), Path("M4.5 4.25h1 M4.5 11.75h1")), null, 0),
+        [Kind.Lan] = (Group(new EllipseGeometry(new Rect(1.5, 1.5, 4.5, 4.5)), new EllipseGeometry(new Rect(10, 1.5, 4.5, 4.5)),
+            new EllipseGeometry(new Rect(5.75, 10, 4.5, 4.5)), Path("M5.5 4h5 M4 5.5l3 5 M12 5.5l-3 5")), null, 0),
+        [Kind.Internet] = (Group(new EllipseGeometry(new Rect(1.5, 1.5, 13, 13)), Path("M1.75 8h12.5 M8 1.75c-2 2-2 10.5 0 12.5 M8 1.75c2 2 2 10.5 0 12.5 M3.1 4.5h9.8 M3.1 11.5h9.8")), null, 0),
+        [Kind.Router] = (Group(Rounded(1.5, 6, 13, 7.5, 1.3), Path("M4 5.5V2.5 M12 5.5V2.5 M4.5 9.5h.1 M7.5 9.5h.1 M10.5 9.5h.1 M4 12h8")), null, 0),
+        [Kind.Nas] = (Group(Rounded(2, 1.75, 12, 5, 1), Rounded(2, 9.25, 12, 5, 1), Path("M4.5 4.25h.1 M7.5 4.25h.1 M4.5 11.75h.1 M7.5 11.75h.1")), null, 0),
+        [Kind.Web] = (Group(new EllipseGeometry(new Rect(1.5, 1.5, 13, 13)), Path("M1.75 8h12.5 M8 1.75c-2 2-2 10.5 0 12.5 M8 1.75c2 2 2 10.5 0 12.5")), null, 0),
         [Kind.Add] = (Path("M8 3v10 M3 8h10"), null, 0),
     };
 
@@ -44,19 +50,64 @@ internal static class FileIcons
         ".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".xz", ".bz2", ".zst", ".jar", ".nupkg", ".cab", ".iso",
     };
 
-    public static Kind For(in VfsEntry entry) => entry.Kind switch
+    public static Kind For(in VfsEntry entry)
     {
-        VfsEntryKind.ParentLink => Kind.Up,
-        VfsEntryKind.Drive => Kind.Drive,
-        VfsEntryKind.Host or VfsEntryKind.Share => Kind.Network,
-        VfsEntryKind.Action => Kind.Add,
-        VfsEntryKind.Archive => Kind.Archive,
-        VfsEntryKind.Directory or VfsEntryKind.RegistryKey => Kind.Folder,
-        _ => System.IO.Path.GetExtension(entry.Name) is var extension && ExecutableExtensions.Contains(extension) ? Kind.Executable
-            : ArchiveExtensions.Contains(extension) ? Kind.Archive
-            : ImageExtensions.Contains(extension) ? Kind.Image
-            : Kind.File,
-    };
+        if (entry.Kind != VfsEntryKind.ParentLink
+            && entry.Path.Equals("net://?lan", StringComparison.OrdinalIgnoreCase))
+        {
+            return Kind.Lan;
+        }
+
+        if (entry.Path.Equals("net://?remote", StringComparison.OrdinalIgnoreCase))
+        {
+            return Kind.Internet;
+        }
+
+        if (entry.Path.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || entry.Path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return Kind.Web;
+        }
+
+        if (entry.Kind == VfsEntryKind.Host)
+        {
+            var identity = $"{entry.Name} {entry.Description}";
+            if (ContainsAny(identity, "mikrotik", "winbox", "gateway", "router", "openwrt", "opnsense", "pfsense"))
+            {
+                return Kind.Router;
+            }
+
+            if (ContainsAny(identity, "synology", "qnap", "truenas", "unraid", "nas", "storage"))
+            {
+                return Kind.Nas;
+            }
+
+            if (ContainsAny(identity, "http", "https", "www", "web"))
+            {
+                return Kind.Web;
+            }
+
+            return Kind.Network;
+        }
+
+        return entry.Kind switch
+        {
+            VfsEntryKind.ParentLink => Kind.Up,
+            VfsEntryKind.Drive => Kind.Drive,
+            VfsEntryKind.Share => Kind.Network,
+            VfsEntryKind.Action => Kind.Add,
+            VfsEntryKind.Archive => Kind.Archive,
+            VfsEntryKind.Service => Kind.Network,
+            VfsEntryKind.Directory or VfsEntryKind.RegistryKey => Kind.Folder,
+            _ => System.IO.Path.GetExtension(entry.Name) is var extension && ExecutableExtensions.Contains(extension) ? Kind.Executable
+                : ArchiveExtensions.Contains(extension) ? Kind.Archive
+                : ImageExtensions.Contains(extension) ? Kind.Image
+                : Kind.File,
+        };
+    }
+
+    private static bool ContainsAny(string value, params string[] terms) =>
+        terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
 
     public static bool IsExecutable(string name) => ExecutableExtensions.Contains(System.IO.Path.GetExtension(name));
 

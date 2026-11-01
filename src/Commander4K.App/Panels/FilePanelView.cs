@@ -20,6 +20,8 @@ public sealed class FilePanelView : ViewBase
     private readonly AppHost _host;
     private readonly SkinManager _skins;
     private readonly List<PanelTab> _tabs = [];
+    private readonly Dictionary<PanelTab, string> _pluginTabIds = [];
+    private readonly Dictionary<PanelTab, IPanelModeView> _pluginTabModes = [];
     private int _activeIndex;
     private bool _isActive;
     private string? _tabsKey;
@@ -97,6 +99,11 @@ public sealed class FilePanelView : ViewBase
     {
         ShowSuggestion(null);
         CloseMode();
+        AttachMode(view);
+    }
+
+    private void AttachMode(IPanelModeView view)
+    {
         Mode = view;
         view.IsActivePanel = _isActive;
         view.Activated += () => Activated?.Invoke(this);
@@ -127,6 +134,14 @@ public sealed class FilePanelView : ViewBase
 
         Mode = null;
         _content.Children.Remove(view.View);
+        var pluginTab = _pluginTabModes.FirstOrDefault(pair => pair.Value == view).Key;
+        if (pluginTab is not null)
+        {
+            _pluginTabModes.Remove(pluginTab);
+            _pluginTabIds.Remove(pluginTab);
+            RebuildTabs();
+        }
+
         _ = view.DisposeModeAsync();
         Canvas.IsVisible = true;
         _statusBorder.IsVisible = true;
@@ -134,9 +149,73 @@ public sealed class FilePanelView : ViewBase
         _pathBox.Text = ActiveTab.Path;
     }
 
+    private void DetachPluginTabMode()
+    {
+        if (Mode is null || !_pluginTabModes.Values.Contains(Mode))
+        {
+            return;
+        }
+
+        _content.Children.Remove(Mode.View);
+        Mode = null;
+        Canvas.IsVisible = true;
+        _statusBorder.IsVisible = true;
+        _pathBox.IsReadOnly = false;
+        _pathBox.Text = ActiveTab.Path;
+    }
+
+    private void ActivatePluginTabMode(PanelTab tab, IPanelModeView mode)
+    {
+        if (Mode == mode)
+        {
+            return;
+        }
+
+        DetachPluginTabMode();
+        if (Mode is not null)
+        {
+            CloseMode();
+        }
+
+        ShowSuggestion(null);
+        AttachMode(mode);
+    }
+
     public PanelTab ActiveTab => _tabs[_activeIndex];
 
     public IReadOnlyList<PanelTab> Tabs => _tabs;
+
+    public string? PluginTabId(PanelTab tab) => _pluginTabIds.GetValueOrDefault(tab);
+
+    public void CancelPluginTab(PanelTab tab)
+    {
+        if (!_pluginTabIds.ContainsKey(tab))
+        {
+            return;
+        }
+
+        if (tab == ActiveTab && _tabs.Count > 1)
+        {
+            CloseActiveTab();
+            return;
+        }
+
+        _pluginTabIds.Remove(tab);
+        if (_pluginTabModes.Remove(tab, out var mode))
+        {
+            if (Mode == mode)
+            {
+                CloseMode();
+            }
+            else
+            {
+                _ = mode.DisposeModeAsync();
+            }
+        }
+
+        RebuildTabs();
+        OnTabChanged();
+    }
 
     public bool IsActive
     {
@@ -158,6 +237,10 @@ public sealed class FilePanelView : ViewBase
     /// <summary>Raised when another tab becomes the active one (the quick preview follows it).</summary>
     public event Action? ActiveTabChanged;
 
+    public event Action? NewTabRequested;
+
+    public event Action<PanelTab>? PluginTabSelected;
+
     // Single-parameter events: the declarative source generator mis-generates extensions for multi-parameter ones.
 
     /// <summary>Enter / double-click on a file (as opposed to a container).</summary>
@@ -170,7 +253,7 @@ public sealed class FilePanelView : ViewBase
     public event Action<VfsEntry>? FolderEntering;
 
     /// <summary>Enter on the "+ Add network connection" row.</summary>
-    public event Action<FilePanelView>? AddConnectionRequested;
+    public event Action<VfsEntry>? ActionRequested;
 
     /// <summary>The ▾ button on the path bar: the window shows the location menu (drives, This PC, network, connections).</summary>
     public event Action<FilePanelView>? LocationMenuRequested;
@@ -250,14 +333,43 @@ public sealed class FilePanelView : ViewBase
 
     public void AddTab(string path)
     {
+        var tab = CreateTab(path);
+        SelectTab(_tabs.Count - 1);
+        _ = tab.NavigateAsync(path);
+    }
+
+    public void AddPluginTab(string path, string pluginId)
+    {
+        var tab = CreateTab(path);
+        _pluginTabIds.Add(tab, pluginId);
+        SelectTab(_tabs.Count - 1);
+        _ = tab.NavigateAsync(path);
+    }
+
+    public void SetPluginTabMode(PanelTab tab, IPanelModeView mode)
+    {
+        if (!_pluginTabIds.ContainsKey(tab))
+        {
+            _ = mode.DisposeModeAsync();
+            return;
+        }
+
+        _pluginTabModes[tab] = mode;
+        if (tab == ActiveTab)
+        {
+            ActivatePluginTabMode(tab, mode);
+        }
+    }
+
+    private PanelTab CreateTab(string path)
+    {
         var tab = new PanelTab(_host, path);
         tab.ColumnData.SetColumns(_columns);
         tab.Changed += OnAnyTabChanged;
         tab.SizesUpdated += () => OnSizesUpdated(tab);
         tab.AuthenticationRequired += (t, ex) => AuthenticationRequired?.Invoke(new AuthenticationRequest(t, ex));
         _tabs.Add(tab);
-        SelectTab(_tabs.Count - 1);
-        _ = tab.NavigateAsync(path);
+        return tab;
     }
 
     public void CloseActiveTab()
@@ -268,6 +380,19 @@ public sealed class FilePanelView : ViewBase
         }
 
         var tab = ActiveTab;
+        if (_pluginTabModes.Remove(tab, out var mode))
+        {
+            if (Mode == mode)
+            {
+                CloseMode();
+            }
+            else
+            {
+                _ = mode.DisposeModeAsync();
+            }
+        }
+
+        _pluginTabIds.Remove(tab);
         tab.Detach();
         tab.Changed -= OnAnyTabChanged;
         _tabs.RemoveAt(_activeIndex);
@@ -276,9 +401,22 @@ public sealed class FilePanelView : ViewBase
 
     public void SelectTab(int index)
     {
+        DetachPluginTabMode();
         _activeIndex = Math.Clamp(index, 0, _tabs.Count - 1);
         Canvas.Tab = ActiveTab;
         ActiveTabChanged?.Invoke();
+        if (_pluginTabIds.ContainsKey(ActiveTab))
+        {
+            if (_pluginTabModes.TryGetValue(ActiveTab, out var mode))
+            {
+                ActivatePluginTabMode(ActiveTab, mode);
+            }
+            else
+            {
+                PluginTabSelected?.Invoke(ActiveTab);
+            }
+        }
+
         if (_tabStrip is not null)
         {
             RebuildTabs();
@@ -295,7 +433,9 @@ public sealed class FilePanelView : ViewBase
                 _ = ActiveTab.NavigateAsync(entry.Path, ActiveTab.Title);
                 break;
             case VfsEntryKind.Action:
-                AddConnectionRequested?.Invoke(this);
+                ActionRequested?.Invoke(entry);
+                break;
+            case VfsEntryKind.Service:
                 break;
             case VfsEntryKind.Directory or VfsEntryKind.Drive or VfsEntryKind.Share when FolderEntering is not null:
                 FolderEntering(entry); // The window checks the folder's c4k.dir first.
@@ -398,7 +538,10 @@ public sealed class FilePanelView : ViewBase
         }, TimeSpan.FromMilliseconds(250), DispatcherPriority.Background);
     }
 
-    private string TabsKey() => _activeIndex + "|" + _skins.Current.Skin.Id + "|" + string.Join('\n', _tabs.Select(t => t.Title));
+    private string TabTitle(PanelTab tab) =>
+        _pluginTabIds.TryGetValue(tab, out var pluginId) ? _host.FindPanel(pluginId)?.Title ?? tab.Title : tab.Title;
+
+    private string TabsKey() => _activeIndex + "|" + _skins.Current.Skin.Id + "|" + string.Join('\n', _tabs.Select(TabTitle));
 
     /// <summary>Counts on the left; the marked set (if any) on the right, in the marking colour.</summary>
     private (string Main, string? Marked) StatusText(PanelTab tab)
@@ -480,18 +623,14 @@ public sealed class FilePanelView : ViewBase
             return;
         }
 
-        _tabBorder.IsVisible = _tabs.Count > 1;
-        if (_tabs.Count <= 1)
-        {
-            return;
-        }
+        _tabBorder.IsVisible = true;
 
         for (var i = 0; i < _tabs.Count; i++)
         {
             var index = i;
             var selected = i == _activeIndex;
             _tabStrip.Children.Add(new Button()
-                .Content(_tabs[i].Title)
+                .Content(TabTitle(_tabs[i]))
                 .Padding(10, 2)
                 .Margin(0, 0, 2, 0)
                 .CornerRadius(new CornerRadius(b.Skin.Chrome.CornerRadius, b.Skin.Chrome.CornerRadius, 0, 0))
@@ -501,6 +640,11 @@ public sealed class FilePanelView : ViewBase
                 .FontSize(b.FontSize - 1)
                 .OnClick(_ => SelectTab(index)));
         }
+
+        _tabStrip.Children.Add(new Button().Content("+").Width(24).Height(24).Padding(0).FontSize(14)
+            .HorizontalContentAlignment(HorizontalAlignment.Center).VerticalContentAlignment(VerticalAlignment.Center)
+            .Background(Brushes.Transparent).BorderThickness(new Thickness(0)).Foreground(b.MutedForeground)
+            .OnClick(_ => NewTabRequested?.Invoke()));
     }
 
     /// <summary>Design system: always-visible tab bar; the current tab raised with a close button, the rest muted, "+" adds one.</summary>
@@ -512,7 +656,7 @@ public sealed class FilePanelView : ViewBase
         {
             var index = i;
             var selected = i == _activeIndex;
-            var title = new TextBlock().Text(_tabs[i].Title).FontSize(small).MaxWidth(180).TextTrimming(TextTrimming.CharacterEllipsis)
+            var title = new TextBlock().Text(TabTitle(_tabs[i])).FontSize(small).MaxWidth(180).TextTrimming(TextTrimming.CharacterEllipsis)
                 .FontWeight(selected ? FontWeight.SemiBold : FontWeight.Normal).VerticalAlignment(VerticalAlignment.Center)
                 .Foreground(selected ? b.WindowForeground : b.MutedForeground);
             var content = new StackPanel().Orientation(Orientation.Horizontal).Spacing(6).Children(
@@ -539,7 +683,7 @@ public sealed class FilePanelView : ViewBase
 
         var add = new Button().Content("+").Width(24).Height(24).Padding(0).FontSize(14).HorizontalContentAlignment(HorizontalAlignment.Center)
             .VerticalContentAlignment(VerticalAlignment.Center).Background(Brushes.Transparent).BorderThickness(new Thickness(0))
-            .Foreground(b.MutedForeground).OnClick(_ => AddTab(ActiveTab.Path));
+            .Foreground(b.MutedForeground).OnClick(_ => NewTabRequested?.Invoke());
         ToolTip.SetTip(add, Loc.T("Nowa zakładka (Ctrl+T)"));
         _tabStrip.Children.Add(add);
     }

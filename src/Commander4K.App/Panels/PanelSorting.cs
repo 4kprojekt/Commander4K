@@ -43,6 +43,16 @@ public static class PanelSorting
             result = string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase);
         }
 
+        if (result == 0)
+        {
+            result = string.Compare(a.Path, b.Path, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (result == 0)
+        {
+            result = string.Compare(a.Path, b.Path, StringComparison.Ordinal);
+        }
+
         return order.Descending ? -result : result;
     }
 

@@ -43,7 +43,8 @@ public sealed class PreviewActionParsingTests
               "title": "Nowa wiadomość",
               "fields": [
                 { "id": "to", "label": "Do", "value": "a@b.pl" },
-                { "id": "body", "label": "Treść", "value": "Cześć", "multiline": true }
+                { "id": "body", "label": "Treść", "value": "Cześć", "multiline": true },
+                { "id": "password", "label": "Hasło", "value": "", "password": true }
               ],
               "files": [ { "name": "big.iso", "path": "C:\\tmp\\big.iso", "size": 5000000000 } ],
               "buttons": [ { "label": "Wyślij", "target": "c4k:plugin/send", "shortcut": "Alt+S" } ],
@@ -54,7 +55,12 @@ public sealed class PreviewActionParsingTests
 
         var form = Assert.IsType<FormPreview>(result);
         Assert.Equal("Nowa wiadomość", form.Title);
-        Assert.Equal(new[] { new FormField("to", "Do", "a@b.pl", false), new FormField("body", "Treść", "Cześć", true) }, form.Fields);
+        Assert.Equal(new[]
+        {
+            new FormField("to", "Do", "a@b.pl", false),
+            new FormField("body", "Treść", "Cześć", true),
+            new FormField("password", "Hasło", "", false, true),
+        }, form.Fields);
         Assert.Equal(new[] { new FormFile("big.iso", @"C:\tmp\big.iso", 5_000_000_000L) }, form.Files);
         Assert.Equal(new[] { new PreviewAction("Wyślij", "c4k:plugin/send", "Alt+S") }, form.Buttons);
         Assert.Equal("Brak adresata", form.Message);

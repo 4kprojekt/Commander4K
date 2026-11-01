@@ -823,6 +823,11 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
                 MinHeight = field.Multiline ? 180 : 0,
                 Margin = new Thickness(0, 0, 0, 6),
             };
+            if (field.Password)
+            {
+                box.PasswordChar = '•';
+            }
+
             box.TextChanged += (_, _) => FormEdited(id, box.Text ?? string.Empty);
             Grid.SetRow(box, row);
             Grid.SetColumn(box, 1);

@@ -15,17 +15,16 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
 - **Never freezes.** Disk, network, registry and database work runs off the UI thread. Listings stream in as they arrive, so the first files appear almost immediately, even in folders with hundreds of thousands of entries. `Esc` drops a hung network call at once.
 - **One interface for many places:**
   - local disks;
-  - `net://` network neighbourhood: finds SMB, SSH and FTP hosts on your LAN by itself;
+  - `net://` network neighbourhood separates LAN hosts from saved Remote connections, lists services advertised through mDNS/DNS-SD, and offers an explicit local-IP scan with optional common ports (including MikroTik Winbox/API); custom HTTP/HTTPS services can be attached to a LAN host;
   - SMB shares, with offline cached browsing;
   - `sftp://` and `ftp://` servers;
   - `reg://`, the Windows Registry;
   - archives (ZIP, 7z, TAR with gz/bz2/xz, RAR, GZ), opened with `Enter` like folders, even when they sit on a share or an SFTP server. `Alt+F5` packs to ZIP or TAR, and `Alt+F9` extracts.
-- **This PC (`local://`):** shows drives, the system and user folders (Desktop, Documents, Downloads…, Program Files, AppData, Temp), then the network: saved connections, Windows network locations, and LAN hosts as background discovery finds them. The ▾ button on each panel's path bar switches the panel to any of these, or adds a connection.
+- **This PC (`local://`):** shows drives, the system and user folders (Desktop, Documents, Downloads…, Program Files, AppData, Temp), then the network. `net://` has separate LAN and Remote folders; manually added LAN hosts are checked for common TCP services. The ▾ button on each panel's path bar switches the panel to any of these, or adds a connection.
 - **Connections:** SFTP/SSH with a password or a private key (passphrase optional). Your `~/.ssh` keys are tried automatically, as `ssh` does. Also FTP and Windows shares. "Testuj" checks a connection before saving it. Passwords and passphrases are stored DPAPI-encrypted in `config/settings.json`.
 - **Panel modes (`F2`):** either panel can show files, a quick preview, the built-in browser or any plugin panel.
 - **Built-in browser (`Ctrl+Alt+W`):** a web panel based on Microsoft Edge WebView2. The address bar also searches (Google, Bing, DuckDuckGo).
-  - Without AI providers signed in (see below), `Ctrl+Alt+A` shows the question for Claude Code (copied to the clipboard).
-- **AI chat with free providers (`Ctrl+Alt+A`):** sign in to several free API tiers in "Konfiguracja → Dostawcy AI". Questions go to them in turn; when one hits its rate limit or quota, or rejects its key, the next one answers.
+- **AI chat with free providers:** the "ask AI about this file" and "create a preview plugin" buttons in the preview open a chat; its "Dostawcy" button signs in to several free API tiers. Questions go to them in turn; when one hits its rate limit or quota, or rejects its key, the next one answers. Without a signed-in provider the question goes to Claude Code (copied to the clipboard).
   - Providers: OpenRouter (one-click browser sign-in, no key to copy), Groq, Cerebras, Google AI Studio, Mistral, NVIDIA NIM, Hugging Face and Cohere, plus local models through Ollama or LM Studio (no account, no limits, nothing leaves the PC; the window detects them, shows install steps and can install them with winget). Keys can also come from environment variables (`OPENROUTER_API_KEY`, `GROQ_API_KEY`…).
   - The provider list ([`ai-providers.json`](src/Commander4K.Core/Ai/ai-providers.json)) is downloaded from this repository at start-up, so endpoints and free models can be updated without a new release. Add your own in `config/ai/providers.json`.
   - The AI knows where you are: it gets both panels' paths, the cursor, the marked files and the installed plugins. It can look into folders, and it reads a file only after you allow it.

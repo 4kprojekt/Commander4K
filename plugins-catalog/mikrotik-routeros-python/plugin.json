@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "official.mikrotik-routeros",
+  "name": "MikroTik RouterOS",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Zewnętrzny, tylko do odczytu podgląd RouterOS REST: tożsamość, zasoby, interfejsy, adresy IP, trasy i usługi.",
+  "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+  "permissions": ["net"],
+  "contributes": {
+    "previews": [
+      {
+        "id": "routeros",
+        "title": "MikroTik RouterOS",
+        "extensions": ["MikroTik API", "MikroTik API-SSL"],
+        "priority": 90
+      }
+    ]
+  }
+}

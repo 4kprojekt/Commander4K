@@ -14,7 +14,7 @@ public static class DefaultKeymap
     ];
 
     /// <summary>Commands that no longer exist (the docked palettes); their bindings are dropped from existing keymap.json files.</summary>
-    public static IReadOnlyList<string> RemovedCommands { get; } = ["cm_TogglePalettes", "cm_Palettes", "cm_AddFavorite"];
+    public static IReadOnlyList<string> RemovedCommands { get; } = ["cm_TogglePalettes", "cm_Palettes", "cm_AddFavorite", "cm_AskAi", "cm_AiProviders", "cm_AiWritePlugin"];
 
     public static IReadOnlyDictionary<string, string> Bindings { get; } = new Dictionary<string, string>
     {
@@ -31,7 +31,6 @@ public static class DefaultKeymap
         ["Alt+F5"] = CommandIds.Pack,
         ["Alt+F9"] = CommandIds.Unpack,
         ["Ctrl+Alt+W"] = CommandIds.Browser,
-        ["Ctrl+Alt+A"] = CommandIds.AskAi,
         ["F10"] = CommandIds.Exit,
         ["Ctrl+H"] = CommandIds.ToggleHidden,
         ["Tab"] = CommandIds.SwitchPanel,

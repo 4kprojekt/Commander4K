@@ -612,6 +612,46 @@
           "sha256": "f8d33bf82bd513ffcc6be5250eb3def13212474b6994f666f2306a24af09366e"
         }
       ]
+    },
+    {
+      "id": "official.mikrotik-routeros",
+      "name": "MikroTik RouterOS",
+      "version": "1.0.0",
+      "author": "4Kprojekt",
+      "runtime": "python",
+      "description": {
+        "pl": "Zewnętrzny, tylko do odczytu podgląd RouterOS REST: tożsamość, zasoby, interfejsy, adresy IP, trasy i usługi.",
+        "en": "External read-only RouterOS REST preview: identity, resources, interfaces, IP addresses, routes and services."
+      },
+      "tags": [
+        "mikrotik",
+        "routeros",
+        "router",
+        "rest",
+        "network",
+        "podgląd",
+        "preview"
+      ],
+      "example": "{ \"preview\": { \"plugin\": \"official.mikrotik-routeros\" } }",
+      "path": "plugins-catalog/mikrotik-routeros-python",
+      "files": [
+        {
+          "path": "c4k.py",
+          "sha256": "d7577da033fed18658dc9b4894b4bb71c731aaf1b8600e63225bf3513f49d6c3"
+        },
+        {
+          "path": "main.py",
+          "sha256": "41199b81d9e39a0259a1dc075ca207dd3e0037a3ecf7bd84eae1d969fb4b2792"
+        },
+        {
+          "path": "plugin.json",
+          "sha256": "1674be0b9555f74f274283118ba85349e0e86d982f16d1e88dbeb43ee001a7e1"
+        },
+        {
+          "path": "README.md",
+          "sha256": "d4ea055a5010b72d7bacf1a308794e16d6086e0f8ee85a845a7c88b5e73cfeb3"
+        }
+      ]
     }
   ]
 }

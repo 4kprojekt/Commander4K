@@ -261,7 +261,7 @@ public sealed class HostKeyDialog : DialogWindow<bool>
 }
 
 /// <param name="Keywords">Extra searchable text that is not displayed (command ids, synonyms).</param>
-public sealed record PickerItem(string Label, string? Detail, string Value, string? Keywords = null);
+public sealed record PickerItem(string Label, string? Detail, string Value, string? Keywords = null, bool IsSeparator = false);
 
 /// <summary>Filterable list (drive menu, frecency jump list, skin list).</summary>
 public sealed class PickerDialog : DialogWindow<PickerItem?>
@@ -290,7 +290,7 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
     {
         if (e.Key is Key.Down or Key.Up && _filter.IsFocused && _list.ItemCount > 0)
         {
-            _list.SelectedIndex = Math.Clamp(_list.SelectedIndex + (e.Key == Key.Down ? 1 : -1), 0, _list.ItemCount - 1);
+            _list.SelectedIndex = NextSelectableIndex(_list.SelectedIndex, e.Key == Key.Down ? 1 : -1);
             e.Handled = true;
             return;
         }
@@ -301,23 +301,79 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
     private void ApplyFilter()
     {
         // Word-based, case- and accent-insensitive: "skor norton" finds "Skórka: Norton Commander".
-        var visible = Core.Configuration.SettingsCatalog.Search(
-            _items, _filter.Text, i => i.Label, i => [i.Detail ?? string.Empty, i.Keywords ?? string.Empty]);
+        var candidates = _items.Where(item => !item.IsSeparator).ToArray();
+        var matches = Core.Configuration.SettingsCatalog.Search(
+            candidates, _filter.Text, i => i.Label, i => [i.Detail ?? string.Empty, i.Keywords ?? string.Empty]);
+        var matched = matches.Select(item => item.Value).ToHashSet(StringComparer.Ordinal);
+        var sourceItems = _items.ToArray();
+        var separatorIndex = Array.FindIndex(sourceItems, item => item.IsSeparator);
+        var visible = new List<PickerItem>();
+        var beforeSeparator = false;
+        var afterSeparator = false;
+        for (var i = 0; i < sourceItems.Length; i++)
+        {
+            var item = sourceItems[i];
+            if (item.IsSeparator)
+            {
+                separatorIndex = i;
+                continue;
+            }
+
+            if (!matched.Contains(item.Value))
+            {
+                continue;
+            }
+
+            visible.Add(item);
+            if (separatorIndex < 0 || i < separatorIndex)
+            {
+                beforeSeparator = true;
+            }
+            else
+            {
+                afterSeparator = true;
+            }
+        }
+
+        if (separatorIndex >= 0 && beforeSeparator && afterSeparator)
+        {
+            var split = visible.FindIndex(item => Array.FindIndex(sourceItems, source => source.Value == item.Value) > separatorIndex);
+            if (split >= 0)
+            {
+                visible.Insert(split, sourceItems[separatorIndex]);
+            }
+        }
+
         _list.ItemsSource = visible.Select(i => new ListBoxItem
         {
             Tag = i,
-            Content = new StackPanel().Children(
+            IsHitTestVisible = !i.IsSeparator,
+            Height = i.IsSeparator ? 9 : double.NaN,
+            Content = i.IsSeparator ? new Separator().Margin(4, 3) : new StackPanel().Children(
                 new TextBlock().Text(i.Label).FontWeight(FontWeight.SemiBold),
                 new TextBlock().Text(i.Detail ?? string.Empty).FontSize(11).Opacity(0.7).IsVisible(i.Detail is not null)),
         }).ToList();
-        _list.SelectedIndex = visible.Count > 0 ? 0 : -1;
+        _list.SelectedIndex = visible.FindIndex(item => !item.IsSeparator);
     }
 
     private void Accept()
     {
-        if ((_list.SelectedItem as ListBoxItem)?.Tag is PickerItem item)
+        if ((_list.SelectedItem as ListBoxItem)?.Tag is PickerItem { IsSeparator: false } item)
         {
             Complete(item);
         }
+    }
+
+    private int NextSelectableIndex(int current, int direction)
+    {
+        var index = current;
+        do
+        {
+            index += direction;
+        }
+        while (index >= 0 && index < _list.ItemCount
+            && (_list.Items[index] as ListBoxItem)?.Tag is PickerItem { IsSeparator: true });
+
+        return Math.Clamp(index, 0, Math.Max(0, _list.ItemCount - 1));
     }
 }

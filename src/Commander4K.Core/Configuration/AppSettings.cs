@@ -2,7 +2,7 @@ using Commander4K.Core.Theming;
 
 namespace Commander4K.Core.Configuration;
 
-/// <summary>Favourite server or share shown at the top of <c>net://</c>, "This PC" and the drive menu.</summary>
+/// <summary>Favourite server or share shown in the Remote network group, "This PC" and the drive menu.</summary>
 public sealed class ConnectionSetting
 {
     public string Name { get; set; } = string.Empty;
@@ -20,6 +20,25 @@ public sealed class ConnectionSetting
 
     /// <summary>The password or the key's passphrase, encrypted with DPAPI (<see cref="Security.SecretProtector"/>).</summary>
     public string? Secret { get; set; }
+}
+
+/// <summary>A host explicitly added to the LAN list, whose common service ports are checked on discovery.</summary>
+public sealed class LanHostSetting
+{
+    public string Name { get; set => field = value ?? string.Empty; } = string.Empty;
+
+    public string Host { get; set => field = value ?? string.Empty; } = string.Empty;
+
+    public List<LanHostServiceSetting> Services { get; set => field = value ?? []; } = [];
+}
+
+public sealed class LanHostServiceSetting
+{
+    public string Name { get; set => field = value ?? string.Empty; } = string.Empty;
+
+    public int Port { get; set; }
+
+    public string Scheme { get; set => field = value ?? "http"; } = "http";
 }
 
 /// <summary>Main window state on exit: bounds of the normal (restored) window, plus whether it was maximized.</summary>
@@ -106,7 +125,7 @@ public sealed class AppSettings
     /// <summary><see cref="Web.SearchEngines"/> id used by the browser's address bar.</summary>
     public string SearchEngine { get; set; } = Web.SearchEngines.DefaultSearch;
 
-    /// <summary>AI assistant asked by "find a solution" actions (plugin manager, <c>cm_AskAi</c>).</summary>
+    /// <summary>AI assistant asked by "find a solution" actions (plugin manager, preview).</summary>
     public string AssistantEngine { get; set; } = Web.SearchEngines.DefaultAssistant;
 
     /// <summary>Where the live AI provider list (<c>ai-providers.json</c>) is downloaded from at start-up.</summary>
@@ -130,6 +149,12 @@ public sealed class AppSettings
     public string? SkippedVersion { get; set; }
 
     public List<ConnectionSetting> Connections { get; set; } = [];
+
+    /// <summary>User-added local hosts shown in the LAN network group.</summary>
+    public List<LanHostSetting> LanHosts { get; set; } = [];
+
+    /// <summary>Also probe common TCP service ports during an explicit LAN IP scan.</summary>
+    public bool LanScanPopularPorts { get; set; }
 
     /// <summary>Plugin columns shown in the file lists, as <c>pluginId/columnId</c>, in display order.</summary>
     public List<string> Columns { get; set; } = [];

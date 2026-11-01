@@ -52,7 +52,7 @@ public sealed class ColumnLoader(Func<PluginManifest, IPluginHost> hostFor)
 
         var start = Math.Clamp(firstVisible, 0, entries.Count);
         var work = entries.Skip(start).Concat(entries.Take(start))
-            .Where(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action))
+            .Where(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action or VfsEntryKind.Service))
             .SelectMany(e => columns.Where(c => c.Plugin.Supports(e) && !_values.ContainsKey(Key(c, e))).Select(c => (Entry: e, Column: c)))
             .ToList();
         if (work.Count == 0)

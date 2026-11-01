@@ -433,10 +433,12 @@ public sealed class AppHost : IAsyncDisposable
 
     public Task SaveSettingsAsync() => Config.SaveSettingsAsync(Settings);
 
-    /// <summary>Pushes settings that live inside plugins (saved connections, LAN discovery).</summary>
+    /// <summary>Pushes settings that live inside plugins (saved connections, manual LAN hosts, discovery).</summary>
     public void ApplySettings()
     {
         Network.SavedConnections = [.. Settings.Connections.Select(c => new SavedConnection(c.Name, c.Path))];
+        Network.LanHosts = Settings.LanHosts;
+        Network.ScanPopularPorts = Settings.LanScanPopularPorts;
         Network.LanDiscoveryEnabled = Settings.LanDiscovery;
 
         // Saved SFTP/FTP logins (password or key + passphrase); the secret is decrypted only in memory.

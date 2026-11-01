@@ -46,6 +46,8 @@ public sealed class PanelTab
 
     public HashSet<string> Marked { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public HashSet<string> BusyEntries { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Directory sizes computed with Space, keyed by path.</summary>
     public Dictionary<string, long> DirectorySizes { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -104,6 +106,15 @@ public sealed class PanelTab
         }
     }
 
+    public void SetBusy(string path, bool busy)
+    {
+        var changed = busy ? BusyEntries.Add(path) : BusyEntries.Remove(path);
+        if (changed)
+        {
+            Changed?.Invoke();
+        }
+    }
+
     public void SetSort(SortOrder order)
     {
         Sort = order;
@@ -119,12 +130,12 @@ public sealed class PanelTab
             return [.. Entries.Where(e => Marked.Contains(e.Path))];
         }
 
-        return CurrentEntry is { Kind: not (VfsEntryKind.ParentLink or VfsEntryKind.Action) } current ? [current] : [];
+        return CurrentEntry is { Kind: not (VfsEntryKind.ParentLink or VfsEntryKind.Action or VfsEntryKind.Service) } current ? [current] : [];
     }
 
     public void ToggleMark(VfsEntry entry)
     {
-        if (entry.Kind is VfsEntryKind.ParentLink or VfsEntryKind.Action)
+        if (entry.Kind is VfsEntryKind.ParentLink or VfsEntryKind.Action or VfsEntryKind.Service)
         {
             return;
         }
@@ -267,6 +278,9 @@ public sealed class PanelTab
 
         var previousTop = TopIndex;
         Path = path;
+        var networkPath = VfsPath.StripScheme(path);
+        var sortWhileStreaming = VfsPath.GetScheme(path) == "net"
+            && (networkPath.Length == 0 || string.Equals(networkPath, "?lan", StringComparison.OrdinalIgnoreCase));
         Error = null;
         Status = null;
         IsLoading = true;
@@ -297,7 +311,7 @@ public sealed class PanelTab
                         all.AddRange(batch);
                         if (!preserveState)
                         {
-                            Dispatcher.UIThread.Post(() => AppendStreamed(generation, batch, focusName));
+                            Dispatcher.UIThread.Post(() => AppendStreamed(generation, batch, focusName, sortWhileStreaming));
                         }
                     }
                 },
@@ -357,7 +371,7 @@ public sealed class PanelTab
         }
     }
 
-    private void AppendStreamed(long generation, IReadOnlyList<VfsEntry> batch, string? focusName)
+    private void AppendStreamed(long generation, IReadOnlyList<VfsEntry> batch, string? focusName, bool sortWhileStreaming)
     {
         // Late batches of a superseded or already finalised listing must not duplicate rows.
         if (generation != _generation || !IsLoading)
@@ -365,10 +379,22 @@ public sealed class PanelTab
             return;
         }
 
+        var focusPath = CurrentEntry?.Path;
+        var focusNamePending = focusName is not null && Cursor == 0;
         Entries.AddRange(batch);
-        if (focusName is not null && Cursor == 0)
+        if (sortWhileStreaming)
+        {
+            PanelSorting.Sort(Entries, Sort, DirectorySizes);
+        }
+
+        if (focusNamePending && focusName is not null && Entries.Any(e =>
+                string.Equals(e.Name, focusName, StringComparison.OrdinalIgnoreCase)))
         {
             FocusBy(null, focusName);
+        }
+        else
+        {
+            FocusBy(focusPath, null);
         }
 
         Changed?.Invoke();

@@ -13,6 +13,8 @@ public enum VfsEntryKind : byte
     RegistryKey,
     RegistryValue,
     Archive,
+    /// <summary>A discovered service endpoint that is displayed for information but is not opened as a file.</summary>
+    Service,
 }
 
 [Flags]
