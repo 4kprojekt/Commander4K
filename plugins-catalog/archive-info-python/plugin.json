@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "official.archive-info",
+  "name": "Podgląd archiwów",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Oficjalna wtyczka: zawartość archiwów ZIP, 7z, RAR i TAR, największe pliki, typy plików, README i dane pakietów NuGet, wheel, JAR i VSIX; tylko odczyt, nic nie jest rozpakowywane na dysk.",
+  "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+  "permissions": ["fs.read"],
+  "contributes": {
+    "previews": [
+      {
+        "id": "archive",
+        "title": "Archiwum",
+        "extensions": [".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".tbz2", ".txz", ".jar", ".nupkg", ".vsix", ".whl"],
+        "priority": 55,
+        "card": true
+      }
+    ]
+  }
+}

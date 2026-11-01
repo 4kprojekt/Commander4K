@@ -1,3 +1,5 @@
+using System.Formats.Tar;
+using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Net.Sockets;
@@ -9,6 +11,7 @@ using Commander4K.Core.Plugins;
 using Commander4K.Core.Updates;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
+using Commander4K.Plugins.BuiltIn.Archives;
 using Commander4K.Plugins.BuiltIn.Local;
 
 namespace Commander4K.Plugins.Tests;
@@ -21,12 +24,18 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     private readonly string _folder = Directory.CreateTempSubdirectory("c4k-ext-").FullName;
     private readonly AuditLog _audit = new(null);
     private readonly FakeUi _ui = new();
-    private readonly VfsRouter _router = new(new ResilientAsyncExecutor(), [new LocalFileSystemPlugin()]);
+    private readonly ArchiveVfsPlugin _archives = new();
+    private readonly VfsRouter _router;
     private readonly HttpClient _http = new();
     private readonly PluginStorage _storage;
     private IReadOnlyList<RuntimeInfo> _runtimes = [];
 
-    public ExternalPluginTests() => _storage = new PluginStorage(Path.Combine(_folder, "plugin-data"));
+    public ExternalPluginTests()
+    {
+        _storage = new PluginStorage(Path.Combine(_folder, "plugin-data"));
+        _router = new(new ResilientAsyncExecutor(), [new LocalFileSystemPlugin(), _archives]);
+        _archives.Router = _router; // like AppHost: archives open their container through the router that contains them
+    }
 
     private static CancellationToken TestToken => TestContext.Current.CancellationToken;
 
@@ -627,6 +636,114 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Pe_preview_reads_dotnet_assembly_references()
+    {
+        var dll = typeof(ExternalPluginTests).Assembly.Location;  // Commander4K.Plugins.Tests.dll
+        var md = await RenderAsync("pe-info-python", dll, "dll");
+        Assert.Contains("## .NET", md, StringComparison.Ordinal);
+        Assert.Contains(".NETCoreApp,Version=v10.0", md, StringComparison.Ordinal);
+        Assert.Contains("Commander4K.Core", md, StringComparison.Ordinal);
+        Assert.Contains("obok pliku", md, StringComparison.Ordinal);
+        Assert.Contains("Microsoft.NETCore.App", md, StringComparison.Ordinal);  // from the runtimeconfig.json next to the dll
+        var header = md.IndexOf("## Nagłówek", StringComparison.Ordinal);
+        var dotnet = md.IndexOf("## .NET", StringComparison.Ordinal);
+        Assert.True(header >= 0 && header < dotnet && md.IndexOf("## ", header + 3, StringComparison.Ordinal) == dotnet, $"{header} {dotnet}");
+    }
+
+    [Fact]
+    public async Task Pe_preview_shows_embedded_signer()
+    {
+        var coreclr = Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "coreclr.dll");
+        var md = await RenderAsync("pe-info-python", coreclr, "dll");
+        Assert.Contains("## Podpis", md, StringComparison.Ordinal);
+        Assert.Contains("Microsoft Corporation", md, StringComparison.Ordinal);
+        Assert.Contains("nie został zweryfikowany kryptograficznie", md, StringComparison.Ordinal);
+        Assert.DoesNotContain("Dane doklejone", md, StringComparison.Ordinal);  // the certificate table is not an overlay
+        var permissions = md.IndexOf("## Uprawnienia", StringComparison.Ordinal);
+        Assert.Equal(md.IndexOf("## ", permissions + 3, StringComparison.Ordinal), md.IndexOf("## Podpis", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Pe_preview_explains_missing_embedded_signature()
+    {
+        // the locally built apphost is never signed (kernel32.dll is no good here: current Windows builds embed a signature in it)
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var md = await RenderAsync("pe-info-python", exe, "exe");
+        Assert.Contains("## Podpis", md, StringComparison.Ordinal);
+        Assert.Contains("brak osadzonego podpisu", md, StringComparison.Ordinal);
+        Assert.Contains("katalog", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_signature_refuses_huge_oids_quickly()
+    {
+        // a ContentInfo whose OID is ~1 MB of 0xFF (quadratic to decode before the cap), then one with a > 64-bit arc
+        const string code = """
+
+            import time, types, pe, signature
+            def tlv(tag, body):
+                n = len(body)
+                count = (n.bit_length() + 7) // 8
+                return bytes([tag]) + (bytes([n]) if n < 0x80 else bytes([0x80 | count]) + n.to_bytes(count, 'big')) + body
+            results = []
+            for oid in (b'\xff' * 1000000, b'\xff' * 60 + b'\x01'):
+                blob = tlv(0x30, tlv(0x06, oid) + tlv(0xA0, tlv(0x30, b'')))
+                cert = (8 + len(blob)).to_bytes(4, 'little') + b'\x00\x02\x02\x00' + blob
+                data = b'\0' * 8 + cert
+                reader = pe.RangeReader('C:\\hostile.exe', len(data), fetch=lambda p, o, n, d=data: d[o:o + n])
+                image = types.SimpleNamespace(data_dirs=[(0, 0)] * 4 + [(8, len(cert))] + [(0, 0)] * 11)
+                began = time.perf_counter()
+                found = signature.signer(reader, image)
+                results.append(f'{time.perf_counter() - began < 1}|{found.present}|{"OID" in (found.error or "")}')
+            sys.stdout.write(';'.join(results))
+            """;
+        Assert.Equal("True|True|True;True|True|True", await RunPluginPythonAsync("pe-info-python", code));
+    }
+
+    [Fact]
+    public async Task Pe_signature_keeps_the_signer_when_attributes_are_broken()
+    {
+        // coreclr.dll's signature with the OID of its first unauthenticated attribute (the timestamp) turned into a NULL
+        var coreclr = Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "coreclr.dll");
+        const string code = """
+
+            import pe, signature
+            data = bytearray(open(r'CORECLR', 'rb').read())   # test code only; the plugin reads through c4k
+            reader = pe.RangeReader(r'CORECLR', len(data), fetch=lambda p, o, n: bytes(data[o:o + n]))
+            image = pe.parse(reader, details=False, entropy=False)
+            at, size = image.data_dirs[4]
+            fields = signature._signed_data(signature.read_tlv(bytes(data[at + 8:at + size]), 0), 0)
+            signer = [f for f in fields if f.tag == 0x31][-1].children(3)[0]
+            unauth = [p for p in signer.children(4) if p.tag == 0xA1][0]
+            data[at + 8 + unauth.children(5)[0].children(6)[0].header] = 0x05
+            reader = pe.RangeReader(r'CORECLR', len(data), fetch=lambda p, o, n: bytes(data[o:o + n]))
+            found = signature.signer(reader, image)
+            sys.stdout.write(f'{found.subject}|{found.organization}|{found.not_after is not None}|{found.error is not None}|{found.timestamped}')
+            """;
+        var output = await RunPluginPythonAsync("pe-info-python", code.Replace("CORECLR", coreclr, StringComparison.Ordinal));
+        Assert.Equal(".NET|Microsoft Corporation|True|True|False", output);
+    }
+
+    [Fact]
+    public async Task Pe_plural_and_target_framework_scan()
+    {
+        // the earliest framework string wins, whatever its prefix, and one starting just before a chunk boundary is whole
+        const string code = """
+
+            import types
+            stub = types.ModuleType('c4k'); stub.handler = lambda m: (lambda f: f); stub.serve = lambda: None; stub.HostError = Exception
+            sys.modules['c4k'] = stub
+            import main, pe, clr
+            plural = ','.join(main._plural(n, 'a', 'b', 'c') for n in (1, 2, 5, 12, 22))
+            heap = b'\0' * (clr.SCAN_CHUNK - 3) + b'.NETFramework,Version=v4.7.2,Profile=Client-0123456789-0123456789-0123456789\x01' + b'.NETCoreApp,Version=v8.0\x01'
+            reader = pe.RangeReader('C:\\x.dll', len(heap), fetch=lambda p, o, n: heap[o:o + n])
+            sys.stdout.write(plural + '|' + str(clr._target_framework(reader, (0, len(heap)))))
+            """;
+        Assert.Equal("a,b,c,c,b|.NETFramework,Version=v4.7.2,Profile=Client-0123456789-0123456789-0123456789",
+            await RunPluginPythonAsync("pe-info-python", code));
+    }
+
+    [Fact]
     public async Task Pe_manifest_text_is_trimmed_and_failures_are_named()
     {
         var output = await RunPluginPythonAsync("pe-info-python",
@@ -635,6 +752,122 @@ public sealed class ExternalPluginTests : IAsyncLifetime
             + "broken = resources.parse_manifest('<assembly>'); "
             + "sys.stdout.write(str(m.execution_level) + '|' + str(m.error) + '|' + str(broken.error is not None))");
         Assert.Equal("asInvoker|None|True", output);
+    }
+
+    /// <summary>Writes a zip with these text entries to the test folder.</summary>
+    private string ZipOf(string name, params (string Path, string Text)[] files)
+    {
+        var path = Path.Combine(_folder, name);
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
+        foreach (var (inner, text) in files)
+        {
+            using var writer = new StreamWriter(zip.CreateEntry(inner).Open(), new UTF8Encoding(false));
+            writer.Write(text);
+        }
+
+        return path;
+    }
+
+    [Fact]
+    public async Task Archive_preview_summarises_zip()
+    {
+        var zip = ZipOf("demo.zip", ("readme.md", "# Witaj\nopis"), ("src/a.cs", "class A {}"), ("src/b.cs", "class B {}"), ("faktura.pdf.exe", "MZ"));
+        var md = await RenderAsync("archive-info-python", zip, "archive");
+        Assert.Contains("Pliki: 4", md, StringComparison.Ordinal);
+        Assert.Contains("Foldery: 1", md, StringComparison.Ordinal);
+        Assert.Contains("## README", md, StringComparison.Ordinal);
+        Assert.Contains("# Witaj", md[md.IndexOf("## README", StringComparison.Ordinal)..], StringComparison.Ordinal);
+        Assert.Contains("faktura.pdf.exe", md[md.IndexOf("## Uwagi", StringComparison.Ordinal)..], StringComparison.Ordinal);
+        Assert.Contains(".cs", md[md.IndexOf("## Typy plików", StringComparison.Ordinal)..], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_lists_tar_gz()
+    {
+        var path = Path.Combine(_folder, "data.tar.gz");
+        await using (var file = File.Create(path))
+        await using (var gzip = new GZipStream(file, CompressionLevel.Fastest))
+        await using (var tar = new TarWriter(gzip, TarEntryFormat.Pax))
+        {
+            var entry = new PaxTarEntry(TarEntryType.RegularFile, "x/y.txt") { DataStream = new MemoryStream("hello"u8.ToArray()) };
+            await tar.WriteEntryAsync(entry, TestToken);
+        }
+
+        var md = await RenderAsync("archive-info-python", path, "archive");
+        Assert.Contains("y.txt", md, StringComparison.Ordinal);
+        Assert.DoesNotContain("⚠", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_reads_nuspec_dependencies()
+    {
+        const string nuspec = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+              <metadata>
+                <id>Demo</id>
+                <version>1.0.0</version>
+                <authors>4Kprojekt</authors>
+                <dependencies>
+                  <group targetFramework="net8.0"><dependency id="Newtonsoft.Json" version="13.0.1"/></group>
+                </dependencies>
+              </metadata>
+            </package>
+            """;
+        var nupkg = ZipOf("Demo.1.0.0.nupkg", ("Demo.nuspec", nuspec), ("lib/net8.0/Demo.dll", "MZ"));
+        var md = await RenderAsync("archive-info-python", nupkg, "archive");
+        Assert.Contains("## Pakiet NuGet", md, StringComparison.Ordinal);
+        Assert.Contains("Newtonsoft.Json", md, StringComparison.Ordinal);
+        Assert.Contains("13.0.1", md, StringComparison.Ordinal);
+        Assert.Contains("net8.0", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_reads_wheel_and_jar()
+    {
+        var wheel = ZipOf("demo-1.0-py3-none-any.whl",
+            ("demo/__init__.py", ""),
+            ("demo-1.0.dist-info/METADATA", "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\nRequires-Python: >=3.9\nRequires-Dist: requests>=2\n\nOpis pakietu.\n"));
+        var md = await RenderAsync("archive-info-python", wheel, "archive");
+        Assert.Contains("## Python (wheel)", md, StringComparison.Ordinal);
+        Assert.Contains("requests>=2", md, StringComparison.Ordinal);
+        Assert.Contains(">=3.9", md, StringComparison.Ordinal);
+
+        var jar = ZipOf("app.jar", ("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nMain-Class: pl.demo.App\r\nImplementation-Version: 2.3\r\n"), ("pl/demo/App.class", "x"));
+        md = await RenderAsync("archive-info-python", jar, "archive");
+        Assert.Contains("## Java (JAR)", md, StringComparison.Ordinal);
+        Assert.Contains("pl.demo.App", md, StringComparison.Ordinal);
+        Assert.Contains("2.3", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_skips_xml_with_dtd()
+    {
+        const string nuspec = """<!DOCTYPE package [<!ENTITY x "y">]><package><metadata><id>&x;</id></metadata></package>""";
+        var nupkg = ZipOf("Evil.1.0.0.nupkg", ("Evil.nuspec", nuspec));
+        var md = await RenderAsync("archive-info-python", nupkg, "archive");
+        Assert.Contains("pominięto: DTD w XML", md, StringComparison.Ordinal);
+        Assert.DoesNotContain("Traceback", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_caps_large_listing()
+    {
+        var files = Enumerable.Range(0, 2500).Select(i => ($"d{i:D4}/f.txt", "x")).ToArray();
+        var zip = ZipOf("big.zip", files);
+        var md = await RenderAsync("archive-info-python", zip, "archive");
+        Assert.Contains("lista niepełna", md, StringComparison.Ordinal);
+        Assert.Contains("## Podsumowanie", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_of_broken_zip()
+    {
+        var path = Path.Combine(_folder, "broken.zip");
+        await File.WriteAllBytesAsync(path, [(byte)'P', (byte)'K', 3, 4, .. Enumerable.Repeat((byte)0x5A, 200)], TestToken);
+        var md = await RenderAsync("archive-info-python", path, "archive");
+        Assert.Contains("⚠", md, StringComparison.Ordinal);
+        Assert.DoesNotContain("Traceback", md, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1379,6 +1612,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("../../plugins-catalog/openapi-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/html-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/pe-info-python", "python", "c4k.py")]
+    [InlineData("../../plugins-catalog/archive-info-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/git-repo-powershell", "powershell", "c4k.ps1")]
     [InlineData("../../plugins-catalog/mail-powershell", "powershell", "c4k.ps1")]
     public void Example_sdk_clients_match_plugins_sdk(string example, string language, string file) =>

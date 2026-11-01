@@ -542,12 +542,16 @@
           "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
         },
         {
+          "path": "clr.py",
+          "sha256": "602002fd2253e7949791c8bafc6e0bd79bccbcc52c672e7137c3382d8022a6b4"
+        },
+        {
           "path": "deps.py",
           "sha256": "29e3380fb6078a6211621ef3c95876e97a79ee99ceeb26dd9ea77c528ecf6911"
         },
         {
           "path": "main.py",
-          "sha256": "bb4175831aec8c928753fee540c59da397461575b0d06442da307afbc221b938"
+          "sha256": "4f21c6aec91df54c56907b55db1c8ebbfab33b756d6c7ed09396d57ec6fea1e6"
         },
         {
           "path": "pe.py",
@@ -560,6 +564,52 @@
         {
           "path": "resources.py",
           "sha256": "69311a6fa772781ecaf2e24e4441cf18665add93414bf519d08c08fe444a26b8"
+        },
+        {
+          "path": "signature.py",
+          "sha256": "b60fb1242ff5c5dae6708c4170be3bdac6da25ae7327a14c600e48577291fa11"
+        }
+      ]
+    },
+    {
+      "id": "official.archive-info",
+      "name": "Podgląd archiwów",
+      "version": "1.0.0",
+      "author": "4Kprojekt",
+      "runtime": "python",
+      "description": {
+        "pl": "Zawartość archiwów ZIP, 7z, RAR i TAR: podsumowanie, drzewo, największe pliki, typy plików, README oraz dane pakietów NuGet, wheel, JAR i VSIX; tylko odczyt.",
+        "en": "What is inside ZIP, 7z, RAR and TAR archives: summary, tree, largest files, file types, README and NuGet, wheel, JAR and VSIX package metadata; read-only."
+      },
+      "tags": [
+        "zip",
+        "7z",
+        "rar",
+        "tar",
+        "archiwum",
+        "archive",
+        "nupkg",
+        "jar",
+        "whl"
+      ],
+      "example": "{ \"preview\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Paczka\", \"open\": \"release.zip\", \"card\": true } ] } }",
+      "path": "plugins-catalog/archive-info-python",
+      "files": [
+        {
+          "path": "c4k.py",
+          "sha256": "a59505231758c8caccb84f0d23c13003d059f91e81f5560f208f39b45ccc5991"
+        },
+        {
+          "path": "main.py",
+          "sha256": "151bfbf3cb8fc2327037cfb8f36484f9e46994294a4030684b9d7267638e67b4"
+        },
+        {
+          "path": "packages.py",
+          "sha256": "951342df7617610efdade5ea024ae32ef53373084ee06c203f41ebe87f4495bc"
+        },
+        {
+          "path": "plugin.json",
+          "sha256": "92566695a1b1d23828e912e82b946ab25f27777c95c110e7e1c166ad5e1a8f12"
         }
       ]
     }
