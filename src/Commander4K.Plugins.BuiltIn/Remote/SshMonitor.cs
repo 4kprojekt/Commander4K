@@ -23,7 +23,8 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
     private readonly ConcurrentDictionary<string, long[]> _ticks = new(StringComparer.OrdinalIgnoreCase);
 
     /// <param name="optionsJson"><c>{ "user": "…", "keyFile": "~/.ssh/id_ed25519" }</c> from the tile.</param>
-    public async Task<PreviewCard> LoadCardAsync(string sftpPath, string? optionsJson, PreviewCard? previous, CancellationToken cancellationToken)
+    /// <param name="resolvePath">Resolves a relative <c>keyFile</c> against the tile's folder; without it only <c>~</c> is expanded.</param>
+    public async Task<PreviewCard> LoadCardAsync(string sftpPath, string? optionsJson, PreviewCard? previous, CancellationToken cancellationToken, Func<string, string>? resolvePath = null)
     {
         CardAction[] actions = [new(Loc.T("Otwórz"), sftpPath), new(Loc.T("Odśwież"), CardActions.Refresh)];
         RemoteEndpoint endpoint;
@@ -36,7 +37,7 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             return Card(CardStatus.Error, ex.Message, [], []);
         }
 
-        var login = Login(optionsJson, endpoint) ?? remote.LoginFor(sftpPath);
+        var login = Login(optionsJson, endpoint, resolvePath) ?? remote.LoginFor(sftpPath);
         if (login is null)
         {
             return Card(CardStatus.Error, Loc.T("Wymaga logowania."), [], actions);
@@ -132,7 +133,7 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
         return Task.CompletedTask;
     }
 
-    private static RemoteLogin? Login(string? optionsJson, RemoteEndpoint endpoint)
+    private static RemoteLogin? Login(string? optionsJson, RemoteEndpoint endpoint, Func<string, string>? resolvePath)
     {
         if (optionsJson is null)
         {
@@ -148,7 +149,11 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             return null;
         }
 
-        if (keyFile is not null && keyFile.StartsWith('~'))
+        if (keyFile is not null && resolvePath is not null)
+        {
+            keyFile = resolvePath(keyFile);
+        }
+        else if (keyFile is not null && keyFile.StartsWith('~'))
         {
             keyFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), keyFile.TrimStart('~').TrimStart('/', '\\'));
         }

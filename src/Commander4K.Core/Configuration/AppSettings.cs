@@ -22,27 +22,6 @@ public sealed class ConnectionSetting
     public string? Secret { get; set; }
 }
 
-public sealed class FavoriteSetting
-{
-    public string Name { get; set; } = string.Empty;
-
-    public string Path { get; set; } = string.Empty;
-}
-
-/// <summary>A saved layout: both panels' locations and modes (<c>null</c> = files, <c>preview</c>, <c>panel:&lt;id&gt;</c>).</summary>
-public sealed class ViewSetting
-{
-    public string Name { get; set; } = string.Empty;
-
-    public string? LeftPath { get; set; }
-
-    public string? RightPath { get; set; }
-
-    public string? LeftMode { get; set; }
-
-    public string? RightMode { get; set; }
-}
-
 /// <summary>Main window state on exit: bounds of the normal (restored) window, plus whether it was maximized.</summary>
 public sealed class WindowPlacement
 {
@@ -71,12 +50,15 @@ public sealed class AppSettings
     public WindowPlacement? Window { get; set; }
 
     /// <summary>The saved window placement straight from settings.json (the host loads later); <c>null</c> on first run.</summary>
-    public static WindowPlacement? ReadWindowPlacement(string settingsPath)
+    public static WindowPlacement? ReadWindowPlacement(string settingsPath) => ReadStartupSettings(settingsPath)?.Window;
+
+    /// <summary>settings.json read before any window exists (placement, splash, skin id); <c>null</c> when missing or unreadable.</summary>
+    public static AppSettings? ReadStartupSettings(string settingsPath)
     {
         try
         {
             return File.Exists(settingsPath)
-                ? System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(settingsPath), ConfigJsonContext.Default.AppSettings)?.Window
+                ? System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(settingsPath), ConfigJsonContext.Default.AppSettings)
                 : null;
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
@@ -155,27 +137,14 @@ public sealed class AppSettings
     /// </summary>
     public Dictionary<string, double> ColumnWidths { get; set => field = value ?? new(StringComparer.OrdinalIgnoreCase); } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Docked palettes (quick actions, favourites, views, plugin palettes) are visible; off by default (Ctrl+B).</summary>
-    public bool ShowPalettes { get; set; }
-
-    /// <summary>Palette id → width (side docks) or height (bottom) dragged by the user.</summary>
-    public Dictionary<string, double> PaletteSizes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-
     /// <summary>Right click opens the Windows (Explorer) context menu; off = right click marks, as in Total Commander.</summary>
     public bool ShellContextMenu { get; set; } = true;
 
     /// <summary>Approved plugins with <c>contributes.background</c> are called on a timer, also while their panel is closed.</summary>
     public bool PluginBackground { get; set; } = true;
 
-    public List<FavoriteSetting> Favorites { get; set; } = [];
-
-    /// <summary>Command ids on the quick-actions palette; <c>null</c> = the default set.</summary>
-    public List<string>? QuickActions { get; set; }
-
-    public List<ViewSetting> SavedViews { get; set; } = [];
-
-    /// <summary>Palette id → dock (<c>hidden</c>, <c>bottom</c>, <c>left</c>, <c>right</c>, <c>between</c>); missing = the palette's default.</summary>
-    public Dictionary<string, string> PaletteDocks { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Animated splash screen while the app starts (also under "About").</summary>
+    public bool SplashScreen { get; set; } = true;
 
     /// <summary>Local MCP server for Claude Code: allowed folders, tool modes, port and token.</summary>
     public Mcp.McpSettings Mcp { get; set => field = value ?? new(); } = new();

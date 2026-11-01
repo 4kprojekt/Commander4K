@@ -121,7 +121,7 @@ public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPromp
                 "tools/list" => McpJson.Result(id, ListTools()),
                 "tools/call" => await CallToolAsync(id, parameters, session, ct).ConfigureAwait(false),
                 "prompts/list" => McpJson.Result(id, ListPrompts()),
-                "prompts/get" => await GetPromptAsync(id, parameters, ct).ConfigureAwait(false),
+                "prompts/get" => await GetPromptAsync(id, parameters, session, ct).ConfigureAwait(false),
                 _ => McpJson.Error(id, McpJson.MethodNotFound, $"Method not found: {method}"),
             };
         }
@@ -245,7 +245,7 @@ public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPromp
         return new JsonObject { ["prompts"] = array };
     }
 
-    private async Task<JsonObject> GetPromptAsync(JsonNode id, JsonObject parameters, CancellationToken ct)
+    private async Task<JsonObject> GetPromptAsync(JsonNode id, JsonObject parameters, McpSession session, CancellationToken ct)
     {
         var name = parameters["name"] is JsonValue v && v.TryGetValue<string>(out var n) ? n : null;
         var prompt = prompts().FirstOrDefault(p => p.Name == name);
@@ -275,7 +275,7 @@ public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPromp
         string text;
         try
         {
-            text = await prompt.Render(values, ct).ConfigureAwait(false);
+            text = await prompt.Render(new McpPromptCall(session.ClientName, values), ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is OperationCanceledException or IOException or UnauthorizedAccessException
             or InvalidOperationException or ArgumentException)

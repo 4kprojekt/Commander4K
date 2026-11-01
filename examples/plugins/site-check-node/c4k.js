@@ -93,6 +93,7 @@ module.exports = {
   copyText: text => call('ui.copyText', { text }),                               // clipboard (write only)
   actionTarget: (action, args = {}) => 'c4k:plugin/' + encodeURIComponent(action) + // preview button target "c4k:plugin/<action>?k=v" -> comes back as preview.action
     (Object.keys(args).length ? '?' + Object.entries(args).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&') : ''),
+  webPreview: (page, state = null) => ({ kind: 'web', page, state }),            // result of preview.render: an HTML page from the preview's webRoot
   storageGet: async (key, fallback = null) => (await call('storage.get', { key })) ?? fallback, // the plugin's own settings/data (no permission)
   storageSet: (key, value) => call('storage.set', { key, value }),              // any JSON value; null removes the key
   listDir: path => call('fs.list', { path }),                                  // fs.read -> [entry]
@@ -110,8 +111,13 @@ module.exports = {
   run: (file, args = [], cwd = null, elevated = false) => call('shell.run', { file, args, cwd, elevated }), // shell.run -> {exitCode, output, error}
   systemInfo: () => call('system.info'),                                         // system.info -> {os, machine, user, processors, memoryBytes, drives}
   httpGet: url => call('net.get', { url }),                                      // net -> body text (error on non-2xx)
-  httpRequest: (url, { method = 'GET', headers = {}, body = null, contentType = null } = {}) => // net -> {status, headers, body}
-    call('net.request', { url, method, headers, body, contentType }),
+  // bodyFile: path streams a file as the body; multipart: { field, path, fileName } sends it as a form part. The app
+  // reads the file (fs.read, or the files granted to panel.receive) — it never passes through the plugin.
+  httpRequest: (url, { method = 'GET', headers = {}, body = null, contentType = null, bodyFile = null, multipart = null } = {}) => // net -> {status, headers, body}
+    call('net.request', { url, method, headers, body, contentType, bodyFile, multipart }),
+  // Progress of panel.receive/panel.provide (jobId comes in their params); a notification, nothing to await.
+  reportProgress: (jobId, done, total, { bytes = 0, text = null } = {}) =>
+    send({ jsonrpc: '2.0', method: 'job.progress', params: { jobId, done, total, bytes, text } }),
 
   // ---- mail (permission 'mail'; fetch/compose/attachments also need fs.write, parse/send/append fs.read) ----
   // account = { imap: 'host:993', smtp: 'host:465' | null, user: 'name', interactive: true }. The app owns the password

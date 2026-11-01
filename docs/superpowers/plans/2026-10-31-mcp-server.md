@@ -32,6 +32,7 @@
 - Two tool calls needing confirmation at once, and a `notifications/cancelled` while a dialog is open — expected: dialogs one after another, cancelled call returns "declined", the other still runs (tests in Task 3 with a fake confirmer; manual check in Task 8).
 - Port already taken when enabling — expected: status "port busy" in the connect window and settings, no crash, retry after changing the port (test in Task 2).
 - Missing/wrong token, foreign `Origin`, unknown `Mcp-Session-Id` — expected 401/403/404 and no tool runs (tests in Task 2).
+- Privilege escalation through configuration: `set_setting` on `mcp.enabled`, `mcp.roots`, `mcp:delete`, `pluginCatalogUrl`, `aiCatalogUrl`, `updateRepository` — expected: refused in every mode, also after "yes for this session"; `save_translation`/`save_skin` with ids like `..\..\x`, `C:\x`, `pl` — expected: refused, nothing written (tests in Task 9).
 - `read_file` on a binary or 2 GB file — expected: text truncated at 60 000 chars or base64 of at most 256 KB with a note, read stops early, nothing loaded whole (test in Task 4).
 
 ---
@@ -47,6 +48,7 @@ Core (`src/Commander4K.Core/Mcp/`):
 - `McpToolDispatcher.cs` — policy pipeline, session grants, audit.
 - `McpFileTools.cs` — `list_directory`, `stat`, `read_file`, `write_file`, `make_directory`, `move`, `delete` over `VfsRouter`.
 - `McpSettings.cs` — settings class + token helpers.
+- `McpConfigTools.cs` — `list_settings`, `set_setting`, `list_key_bindings`, `set_key_binding`, translation tools, skin read/check tools (Task 9).
 
 App (`src/Commander4K.App/Mcp/`):
 - `McpAppTools.cs` — context, commands, panels, plugins tools.
@@ -55,8 +57,9 @@ App (`src/Commander4K.App/Mcp/`):
 - `McpConnectWindow.cs` — `cm_McpConnect` window (command line to copy, status, token, roots).
 - `McpHost.cs` — owns server + dispatcher, start/stop on settings, status, revoke grants.
 - `UseClaudeCodeDialog.cs` — fallback when no in-app AI provider (Task 1, extended in Task 8).
+- `McpSkinTools.cs` — `save_skin` with the live-preview confirmation (Task 9).
 
-Tests (`tests/Commander4K.Core.Tests/`): `McpServerTests.cs`, `McpHttpServerTests.cs`, `McpPolicyTests.cs`, `McpFileToolsTests.cs`, `McpPluginToolsTests.cs`.
+Tests (`tests/Commander4K.Core.Tests/`): `McpServerTests.cs`, `McpHttpServerTests.cs`, `McpPolicyTests.cs`, `McpFileToolsTests.cs`, `McpPluginToolsTests.cs`, `McpConfigToolsTests.cs`.
 
 ---
 
@@ -368,8 +371,78 @@ Limits: listing 500 entries then `"… (more entries not shown)"`; listing timeo
 
 ---
 
+### Task 9: Configuration, translations and skins over MCP
+
+Spec section "Konfiguracja aplikacji, tłumaczenia, skórki". The MCP client is the model, so nothing here calls an AI API: the tools hand out the same material the clipboard prompts contain, check the answer and save it.
+
+**Files:**
+- Create: `src/Commander4K.Core/Mcp/McpConfigTools.cs`
+- Create: `src/Commander4K.App/Mcp/McpSkinTools.cs` (`save_skin` and its dialog)
+- Modify: `src/Commander4K.App/Mcp/McpHost.cs` (register both), `src/Commander4K.App/Mcp/McpPrompts.cs` (`translate_ui`, `design_skin`), `src/Commander4K.App/MainWindow.cs` (`OnSettingChanged` → `internal`), `en.json`, `docs/plugins.md` (MCP section: list the new tools), `CLAUDE.md` (MCP bullet: config-writing tools and the read-only settings)
+- Test: `tests/Commander4K.Core.Tests/McpConfigToolsTests.cs`
+
+**Interfaces:**
+- Consumes: `SettingDescriptor`/`SettingsCatalog.Search`, `AppSettings`, `ConfigStore` (`ConfigDirectory`, `SkinsDirectory`), `TranslationKit.PromptFor`/`Check`/`PluralForms`, `Loc.BuiltInFile`/`Loc.Parse`, `SkinPrompt.DesignBrief`, `SkinSchema.Create`, `SkinJson`, `SkinValidator`, `SkinCatalog`, `AppHost.KeyBindings`/`SaveKeyBindingsAsync`/`ReloadSkinsAsync`, `SkinManager.Preview`/`Apply`.
+- Produces: `static IReadOnlyList<McpTool> McpConfigTools.Create(McpConfigContext context)` where
+  ```csharp
+  public sealed record McpConfigContext(
+      Func<IReadOnlyList<SettingDescriptor>> Settings,   // AppHost.SettingsCatalog
+      AppSettings Values,
+      Func<string, Task> SettingChanged,                 // UI: OnSettingChanged(key) + SaveSettingsAsync, via Dispatcher
+      Func<IReadOnlyDictionary<string, string>> KeyBindings,
+      Func<Dictionary<string, string>, Task> SaveKeyBindings,
+      Func<string, string?> CommandDescription,
+      string ConfigDirectory,
+      Func<SkinCatalog> Skins,
+      Func<string> CurrentSkinId);
+  ```
+
+| name | arguments | default | notes |
+|---|---|---|---|
+| `list_settings` | `query?` | Allow | key, category, title, description, kind, value, choices (value=label), `requiresRestart`, `readOnly` |
+| `set_setting` | `key`, `value` | Ask | toggle: `true/false`; choice: must be a choice value; text: as given (descriptor validates, e.g. port). Read-only keys → `isError` |
+| `list_key_bindings` | `filter?` | Allow | `keys → command (description)` |
+| `set_key_binding` | `keys`, `command?` | Ask | unknown command → error; `FormatException` → error with its message; reports the replaced command |
+| `get_translation_kit` | `language`, `name?`, `onlyMissing?`, `offset?`, `limit?` (≤ 500, default 300) | Allow | rules from `PromptFor` with the JSON block cut off, plural form count, `{ "<pl key>": "<en value>" }` page, `next offset: N` |
+| `check_translation` | `language`, `entries` (object) | Allow | `Check` on existing file + entries |
+| `save_translation` | `language`, `entries` (object) | Ask | merge, refuse on issues other than "missing", write `config/i18n/<code>.json` atomically (temp + move), keys sorted like en.json |
+| `get_skin_guide` | — | Allow | brief + schema + current skin JSON |
+| `list_skins` | — | Allow | |
+| `get_skin` | `id` | Allow | |
+| `check_skin` | `json` | Allow | parse error or validator warnings, else "OK" |
+| `save_skin` (App) | `json`, `apply?` (default true) | Ask | `SelfConfirming`: `McpSkinDialog` previews the skin live, shows warnings; Yes → save like `AiSkinDialog.SaveAsync`, reload, apply or restore; No/Esc/cancelled → restore previous skin |
+
+- `McpConfigTools.ReadOnlyKeys(string key)`: `key.StartsWith("mcp", OrdinalIgnoreCase)` (covers `mcp.` and `mcp:`), `pluginCatalogUrl`, `aiCatalogUrl`, `updateRepository` — checked in `set_setting` before anything else, so a session grant does not help. Message: `"'<key>' can only be changed in the Commander4K settings window."`.
+- Ids: language `^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$` and not `pl`; skin `^[a-z0-9][a-z0-9-]{0,63}$`. The file name is built from the id only.
+- `McpCall` needs the object argument `entries`: add `JsonObject? Object(string name)` next to `Optional`. `McpSchema.Object` gets the `"object"` type (no `items`).
+- Translation issues from `TranslationKit.Check` are localized UI text; return them with their key, which is enough for the model to fix the entry.
+
+- [ ] **Step 1: Write failing `McpConfigToolsTests`** (temp config folder, fake `SettingChanged` recording keys):
+  - `List_settings_finds_by_polish_and_english_words` (`"skórka"` and `"skin"` → `skin`).
+  - `Set_setting_changes_value_and_notifies` (`showHidden` = `true` → value set, `SettingChanged("showHidden")` called once).
+  - `Set_setting_rejects_unknown_choice` (`density` = `"huge"` → `isError`, value unchanged).
+  - `Set_setting_refuses_read_only_keys` (`mcp.enabled`, `mcp.roots`, `mcp:delete`, `pluginCatalogUrl`, `aiCatalogUrl`, `updateRepository` → `isError`, nothing changed, no `SettingChanged`).
+  - `Set_key_binding_reports_replaced_command` and `Set_key_binding_rejects_bad_keys`.
+  - `Translation_kit_pages_and_only_missing` (offset/limit, `next offset`; with an existing `de.json` holding 10 keys, `onlyMissing` returns total − 10).
+  - `Save_translation_merges_and_writes` (two calls → one file with both batches).
+  - `Save_translation_refuses_placeholder_mismatch_bad_code_and_pl` (`{0}` dropped; `..\x`, `C:\x`, `pl` → `isError`, no file in the config folder).
+  - `Check_skin_reports_low_contrast` (built-in skin with foreground = background → warning) and `Check_skin_reports_bad_json`.
+- [ ] **Step 2: Run** `dotnet test --solution Commander4K.sln -- --filter-class "*McpConfigToolsTests"` — FAIL.
+- [ ] **Step 3: Implement** `McpConfigTools`, `McpSkinTools` + dialog, registrations, prompts, `en.json`, docs.
+- [ ] **Step 4: Run** full `dotnet test --solution Commander4K.sln` — PASS; `dotnet build Commander4K.sln` clean.
+- [ ] **Step 5: Manual check with Claude Code** (real window):
+  1. "switch to the Norton Commander skin and compact density" → `set_setting` ×2 with confirmation; the look changes at once.
+  2. "design a skin inspired by solarized and save it" → `get_skin_guide`, `check_skin`, `save_skin` dialog previews it live; Nie restores the old skin; Tak saves it into `config/skins/` and it appears in `cm_SelectSkin`.
+  3. "translate the UI into German, start with 100 entries" → `get_translation_kit` + `save_translation`; `config/i18n/de.json` exists; `cm_Translate` check shows only missing keys.
+  4. "bind Ctrl+Alt+N to open the network" → `set_key_binding`; the shortcut works without a restart.
+  5. "add C:\Windows to the MCP allowed folders" → refused with the settings-window message.
+- [ ] **Step 6: Commit** `MCP tools for settings, key bindings, translations and skins`.
+
+---
+
 ## Self-review notes
 
-- Spec part 1 → Task 1; transport/auth/sessions → Task 2; roots, modes, session grants, protected paths, audit → Task 3; file tools → Task 4; `check_plugin`/`get_plugin_log`, binary + folder installs → Task 5; remaining tools → Task 6; settings + prompts → Task 7; connect window, badge, confirmation dialog, docs → Task 8.
+- Spec part 1 → Task 1; transport/auth/sessions → Task 2; roots, modes, session grants, protected paths, audit → Task 3; file tools → Task 4; `check_plugin`/`get_plugin_log`, binary + folder installs → Task 5; remaining tools → Task 6; settings + prompts → Task 7; connect window, badge, confirmation dialog, docs → Task 8; configuration, key bindings, translations, skins (added 2026-10-31) → Task 9.
+- Task 9 is the only code that writes into `config/` on behalf of MCP; it never takes a path, only validated ids, and the settings that widen MCP's own reach are read-only over MCP.
 - Spec parts 3–4 (`kind: "web"`, `pdf-viewer`) are Plan B, written after this plan lands; Task 5's binary/folder support is what Plan B's PDF.js install needs.
 - `install_plugin` and `enable_plugin` confirm through their own permission dialogs (`SelfConfirming`), so the user sees one dialog per action, not two.

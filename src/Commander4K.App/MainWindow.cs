@@ -8,11 +8,12 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Commander4K.App.Ai;
+using Commander4K.App.Mcp;
+using Commander4K.Core.Mcp;
 using Commander4K.App.Browser;
 using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
 using Commander4K.App.Input;
-using Commander4K.App.Palettes;
 using Commander4K.App.Panels;
 using Commander4K.App.PluginPanels;
 using Commander4K.App.Preview;
@@ -40,7 +41,7 @@ namespace Commander4K.App;
 /// Dual-pane shell. The window shows immediately; <see cref="AppHost"/> (config, SQLite, plugins) is created in the
 /// background and the panels are built once it is ready.
 /// </summary>
-public sealed class MainWindow : Window, IShell
+public sealed class MainWindow : Window
 {
     private static readonly (string Key, string Label, string Command)[] FunctionKeys =
     [
@@ -78,16 +79,14 @@ public sealed class MainWindow : Window, IShell
     private Menu _menu = null!;
     private Grid _menuBar = null!;
     private Button _paletteButton = null!;
-    private Grid _leftDock = null!;
-    private Grid _rightDock = null!;
-    private Grid _betweenDock = null!;
-    private StackPanel _bottomDock = null!;
-    private readonly List<PaletteView> _paletteViews = [];
-    private IReadOnlyList<IPalettePlugin> _builtInPalettes = [];
-    private string? _navigationKey;
 
     /// <summary>Saved window state, read by <c>Program</c> before the window exists; <c>null</c> = first run → maximized.</summary>
     public static WindowPlacement? StartupPlacement { get; set; }
+
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once the shell is built (or start-up failed and shows its error); the splash waits for it.</summary>
+    public Task Started => _started.Task;
 
     private PixelPoint? _normalPosition;
     private Size _normalSize = new(1360, 860);
@@ -147,7 +146,9 @@ public sealed class MainWindow : Window, IShell
 
     public MainWindow()
     {
-        Title = $"Commander4K {AppVersion.Display}";
+        Title = ProcessElevation.IsAdministrator
+            ? Loc.T("Commander4K {0} — Administrator", AppVersion.Display)
+            : $"Commander4K {AppVersion.Display}";
         Width = 1360;
         Height = 860;
         MinWidth = 720;
@@ -178,7 +179,11 @@ public sealed class MainWindow : Window, IShell
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         Opened += async (_, _) => await StartAsync();
-        Closing += (_, _) => SaveState();
+        Closing += (_, _) =>
+        {
+            SaveState();
+            StopMcp();
+        };
     }
 
     /// <summary>For tests and screenshots: builds the shell around an existing host without the async start-up.</summary>
@@ -187,7 +192,15 @@ public sealed class MainWindow : Window, IShell
         _host = host;
         _skins = new SkinManager(host, host.Skins.Get(host.Settings.Skin));
         BuildShell();
+        _started.TrySetResult();
+        _mcp = new McpHost(host, this);
+        host.Mcp = _mcp;
+        _mcp.Changed += UpdateMcpBadge;
+        _ = ApplyMcpAsync();
     }
+
+    /// <summary>The MCP server (Claude Code); <c>null</c> before <see cref="Attach"/>.</summary>
+    internal McpHost? Mcp => _mcp;
 
     public FilePanelView LeftPanel => _left;
 
@@ -209,6 +222,7 @@ public sealed class MainWindow : Window, IShell
         catch (Exception ex)
         {
             Content = new SelectableTextBlock().Text(Loc.T("Nie udało się uruchomić Commander4K:\n\n") + ex).Margin(20).TextWrapping(TextWrapping.Wrap);
+            _started.TrySetResult();
         }
     }
 
@@ -259,38 +273,24 @@ public sealed class MainWindow : Window, IShell
         host.PluginsChanged += () => Dispatcher.UIThread.Post(() =>
         {
             RebuildMenu();
-            RegisterPaletteSettings();
-            RebuildPalettes();
+            RegisterColumnSettings();
         });
         _menu = new Menu();
 
-        // The between-panels dock sits inside the right half so the splitter keeps resizing two star columns.
         // Design system: panels are cards 6 px apart on the window background.
-        var rightHalf = new DockPanel().Col(2);
-        _betweenDock = new Grid().Margin(0, 0, 6, 0);
-        DockPanel.SetDock(_betweenDock, Dock.Left);
-        rightHalf.Children.Add(_betweenDock);
-        rightHalf.Children.Add(_right.Margin(0, 0, 6, 0));
         var shell = new Grid()
-            .Rows("*,Auto,Auto,Auto,Auto")
+            .Rows("*,Auto,Auto,Auto")
             .Children(
                 new Grid()
                     .Row(0)
-                    .Cols("Auto,*,Auto")
+                    .Cols("*,6,*")
                     .Children(
-                        new Grid().Ref(out _leftDock).Col(0).Margin(6, 0, 0, 0),
-                        new Grid()
-                            .Col(1)
-                            .Cols("*,6,*")
-                            .Children(
-                                _left.Col(0).Margin(6, 0, 0, 0),
-                                new GridSplitter().Ref(out _splitter).Col(1).ResizeDirection(GridResizeDirection.Columns),
-                                rightHalf),
-                        new Grid().Ref(out _rightDock).Col(2).Margin(0, 0, 6, 0)),
-                new StackPanel().Ref(out _bottomDock).Row(1).Margin(6, 6, 6, 0),
+                        _left.Col(0).Margin(6, 0, 0, 0),
+                        new GridSplitter().Ref(out _splitter).Col(1).ResizeDirection(GridResizeDirection.Columns),
+                        _right.Col(2).Margin(0, 0, 6, 0)),
                 new Border()
                     .Ref(out _jobsBar)
-                    .Row(2)
+                    .Row(1)
                     .IsVisible(false)
                     .Margin(6, 6, 6, 0)
                     .Padding(12, 4)
@@ -298,17 +298,20 @@ public sealed class MainWindow : Window, IShell
                     .Child(new StackPanel().Ref(out _jobsList).Spacing(4).VerticalAlignment(VerticalAlignment.Center)),
                 new Border()
                     .Ref(out _commandBar)
-                    .Row(3)
+                    .Row(2)
                     .Margin(0, 6, 0, 0)
                     .Height(30)
                     .Padding(12, 0)
-                    .Child(new Grid().Cols("Auto,*,Auto").Children(
+                    .Child(new Grid().Cols("Auto,*,Auto,Auto").Children(
                         new TextBlock().Ref(out _prompt).VerticalAlignment(VerticalAlignment.Center),
                         new TextBox().Ref(out _commandLine).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(8, 2)
                             .VerticalContentAlignment(VerticalAlignment.Center),
                         new TextBlock().Ref(out _notification).Col(2).VerticalAlignment(VerticalAlignment.Center).Margin(8, 0)
-                            .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis))),
-                _keyBar.Row(4));
+                            .MaxWidth(520).TextTrimming(TextTrimming.CharacterEllipsis),
+                        new Button().Ref(out _mcpBadge).Col(3).IsVisible(false).Height(22).Padding(8, 0).Margin(4, 0, 0, 0)
+                            .VerticalAlignment(VerticalAlignment.Center).VerticalContentAlignment(VerticalAlignment.Center)
+                            .OnClick(click => OpenMcpConnect()))),
+                _keyBar.Row(3));
 
         // Menu bar with the command-palette search box on the right (design system).
         _paletteButton = new Button()
@@ -331,8 +334,7 @@ public sealed class MainWindow : Window, IShell
 
         RegisterCommands();
         RebuildMenu();
-        _builtInPalettes = [new QuickActionsPalette(this), new FavoritesPalette(this), new ViewsPalette(this), new RecentPalette(this)];
-        RegisterPaletteSettings();
+        RegisterColumnSettings();
         host.Jobs.JobChanged += _ => Dispatcher.UIThread.Post(() => _jobsDirty = true);
         host.Remote.HostKeyValidator = ValidateHostKey;
         host.MailPasswordPrompt = AskMailPasswordAsync;
@@ -343,7 +345,6 @@ public sealed class MainWindow : Window, IShell
         skins.Changed += ApplySkin;
         ApplySkin(skins.Current);
         SetActive(_left);
-        RebuildPalettes();
         ApplyColumns();
 
         _notification.PointerPressed += async (_, _) =>
@@ -441,44 +442,17 @@ public sealed class MainWindow : Window, IShell
                 _ = _left.ActiveTab.RefreshAsync();
                 _ = _right.ActiveTab.RefreshAsync();
                 break;
-            case "showPalettes":
-            case var palette when palette.StartsWith(PaletteSettingPrefix, StringComparison.Ordinal):
-                RebuildPalettes();
-                break;
             case var column when column.StartsWith(ColumnSettingPrefix, StringComparison.Ordinal):
                 ApplyColumns();
+                break;
+            case var mcp when mcp.StartsWith("mcp", StringComparison.Ordinal):
+                // mcp.enabled / mcp.port / mcp.roots and the per-tool modes (mcp:<tool>): new snapshot, restart if needed.
+                _ = ApplyMcpAsync();
                 break;
         }
     }
 
-    private const string PaletteSettingPrefix = "palette:";
-
-    private IEnumerable<IPalettePlugin> AllPalettes => [.. _builtInPalettes, .. _host!.ExternalPalettes];
-
-    private static readonly IReadOnlyList<SettingChoice> DockChoices =
-    [
-        new("bottom", Loc.T("Na dole")), new("left", Loc.T("Po lewej")), new("right", Loc.T("Po prawej")), new("between", Loc.T("Między panelami")), new("hidden", Loc.T("Ukryta")),
-    ];
-
-    private static string DockName(PaletteDock dock) => dock switch
-    {
-        PaletteDock.Left => "left",
-        PaletteDock.Right => "right",
-        PaletteDock.BetweenPanels => "between",
-        PaletteDock.Hidden => "hidden",
-        _ => "bottom",
-    };
-
-    private PaletteDock DockOf(IPalettePlugin palette) =>
-        _host!.Settings.PaletteDocks.TryGetValue(palette.Id, out var name) ? name switch
-        {
-            "bottom" => PaletteDock.Bottom,
-            "left" => PaletteDock.Left,
-            "right" => PaletteDock.Right,
-            "between" => PaletteDock.BetweenPanels,
-            "hidden" => PaletteDock.Hidden,
-            _ => palette.DefaultDock,
-        } : palette.DefaultDock;
+    private const string McpSettingPrefix = "mcp:";
 
     private const string ColumnSettingPrefix = "column:";
 
@@ -496,13 +470,10 @@ public sealed class MainWindow : Window, IShell
         _right.Columns = columns;
     }
 
-    /// <summary>
-    /// Settings created at runtime: one on/off switch per plugin column and one position per palette (built-in and
-    /// from plugins), so they are searchable like the rest.
-    /// </summary>
-    private void RegisterPaletteSettings()
+    /// <summary>Settings created at runtime: one on/off switch per plugin column, so they are searchable like the rest.</summary>
+    private void RegisterColumnSettings()
     {
-        var columnSettings = _host!.ColumnPlugins.SelectMany(p => p.Columns.Select(c => new ActiveColumn(p, c))).Select(column => new SettingDescriptor(
+        _host!.ExtraSettings = [.. _host.ColumnPlugins.SelectMany(p => p.Columns.Select(c => new ActiveColumn(p, c))).Select(column => new SettingDescriptor(
             ColumnSettingPrefix + column.Key,
             SettingsCatalog.Columns,
             Loc.T("Kolumna „{0}”", column.Definition.Header),
@@ -517,78 +488,123 @@ public sealed class MainWindow : Window, IShell
                     s.Columns.Add(column.Key);
                 }
             },
-            ["kolumna", "kolumny", "wdx", column.Definition.Header, column.Plugin.DisplayName]));
-
-        _host.ExtraSettings = [.. columnSettings, .. AllPalettes.Select(p => new SettingDescriptor(
-            PaletteSettingPrefix + p.Id,
-            SettingsCatalog.Palettes,
-            Loc.T("Paleta „{0}”", p.Title),
-            p.Manifest.IsBuiltIn
-                ? Loc.T("Gdzie pokazywać paletę: na dole, po bokach, między panelami albo wcale. {0}", p.Manifest.Description)
-                : Loc.T("Paleta wtyczki {0} ({1}): na dole, po bokach, między panelami albo wcale.", p.Manifest.Name, p.Manifest.Id),
-            SettingKind.Choice,
-            s => s.PaletteDocks.TryGetValue(p.Id, out var dock) ? dock : DockName(p.DefaultDock),
-            (s, v) => s.PaletteDocks[p.Id] = (string)v!,
-            [Loc.T("paleta"), "pasek", Loc.T("położenie"), "dokowanie", "przyciski", p.Title])
-        { Choices = () => DockChoices })];
+            ["kolumna", "kolumny", "wdx", column.Definition.Header, column.Plugin.DisplayName])), .. McpToolSettings()];
     }
 
-    /// <summary>Recreates every palette view in its dock (after a dock change, skin-independent plugin reloads, Ctrl+B).</summary>
-    private void RebuildPalettes()
+    /// <summary>
+    /// Every MCP tool the app offers (file, plugin and window tools). Definitions only; handlers are never called here,
+    /// so this works without a running server.
+    /// </summary>
+    internal IReadOnlyList<McpToolDefinition> McpToolDefinitions() =>
+        [.. McpTools(() => _host!.Settings.Mcp.AllowedRoots, () => McpHost.ProtectedRootsOf(_host!)).Select(t => t.Definition)];
+
+    /// <summary>The tools the MCP server runs (<see cref="McpHost"/>); the settings list the same set.</summary>
+    internal IReadOnlyList<McpTool> McpTools(Func<IReadOnlyList<string>> allowedRoots, Func<IReadOnlyList<string>> protectedRoots) =>
+    [
+        .. McpFileTools.Create(_host!.Router),
+        .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit,
+            id => _host.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, id, StringComparison.OrdinalIgnoreCase))),
+        .. McpAppTools.Create(this, _host, AiContext, allowedRoots, protectedRoots),
+        .. McpConfigTools.Create(McpConfigContext()),
+        .. McpSkinTools.Create(this, _host, () => _skins!),
+    ];
+
+    /// <summary>What the configuration tools change: the same settings, key bindings and skins as the settings window.</summary>
+    private McpConfigContext McpConfigContext() => new(
+        () => _host!.SettingsCatalog,
+        _host!.Settings,
+        action => Dispatcher.UIThread.InvokeAsync(action),
+        async key =>
+        {
+            OnSettingChanged(key);
+            await _host.SaveSettingsAsync();
+        },
+        () => _host.KeyBindings,
+        async bindings =>
+        {
+            await _host.SaveKeyBindingsAsync(bindings);
+            RebuildMenu(); // The menu shows the shortcuts.
+        },
+        id => _host.ListCommands().FirstOrDefault(c => string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase))?.Description,
+        _host.Config.ConfigDirectory,
+        () => _host.Skins,
+        () => _host.Settings.Skin);
+
+    private async Task ApplyMcpAsync()
     {
-        foreach (var view in _paletteViews)
+        try
         {
-            view.Detach();
+            await _mcp!.ApplySettingsAsync();
         }
-
-        _paletteViews.Clear();
-        Panel[] docks = [_leftDock, _rightDock, _betweenDock, _bottomDock];
-        foreach (var dock in docks)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            dock.Children.Clear();
-        }
-
-        if (_host!.Settings.ShowPalettes)
-        {
-            foreach (var palette in AllPalettes)
-            {
-                var position = DockOf(palette);
-                if (position == PaletteDock.Hidden)
-                {
-                    continue;
-                }
-
-                var id = palette.Id;
-                var view = new PaletteView(palette, _host.HostFor(palette.Manifest), position, _skins!.Current, Notify,
-                    _host.Settings.PaletteSizes.TryGetValue(id, out var size) ? size : null,
-                    resized: newSize =>
-                    {
-                        _host.Settings.PaletteSizes[id] = Math.Round(newSize);
-                        _ = _host.SaveSettingsAsync();
-                    },
-                    close: () => _ = HidePaletteAsync(palette));
-                _paletteViews.Add(view);
-                (position switch
-                {
-                    PaletteDock.Left => _leftDock,
-                    PaletteDock.Right => _rightDock,
-                    PaletteDock.BetweenPanels => _betweenDock,
-                    _ => (Panel)_bottomDock,
-                }).Children.Add(view);
-            }
-        }
-
-        // Several palettes in one side dock share its height.
-        foreach (var grid in new[] { _leftDock, _rightDock, _betweenDock })
-        {
-            grid.RowDefinitions.Clear();
-            for (var i = 0; i < grid.Children.Count; i++)
-            {
-                grid.RowDefinitions.Add(new RowDefinition(GridLength.Star));
-                Grid.SetRow(grid.Children[i], i);
-            }
+            Notify(Loc.T("Nie udało się zapisać ustawień MCP: {0}", ex.Message), isError: true);
         }
     }
+
+    /// <summary>Stops the listener on exit so no call starts while the window and the host go away.</summary>
+    private void StopMcp()
+    {
+        if (_mcp is { } mcp)
+        {
+            _ = mcp.DisposeAsync().AsTask();
+        }
+    }
+
+    /// <summary>Status bar: hidden while the server is off, the problem when it could not start, otherwise the clients.</summary>
+    private void UpdateMcpBadge()
+    {
+        if (_mcp is not { } mcp || _skins is null)
+        {
+            return;
+        }
+
+        var b = _skins.Current;
+        _mcpBadge.IsVisible = mcp.Status is not null;
+        _mcpBadge.Content = mcp.Status switch
+        {
+            McpStartResult.PortBusy => Loc.T("MCP: port {0} zajęty", _host!.Settings.Mcp.Port),
+            McpStartResult.Failed => Loc.T("MCP: błąd"),
+            _ when mcp.Sessions > 0 => Loc.T("AI podłączone ({0})", mcp.Sessions),
+            _ => Loc.T("MCP: gotowy"),
+        };
+        _mcpBadge.Foreground = mcp.Status is McpStartResult.Started ? (mcp.Sessions > 0 ? b.Accent : b.StatusForeground) : b.Error;
+        ToolTip.SetTip(_mcpBadge, mcp.StatusText());
+    }
+
+    private void OpenMcpConnect()
+    {
+        if (_mcpConnect is { } open)
+        {
+            open.Activate();
+            return;
+        }
+
+        if (_mcp is null)
+        {
+            return;
+        }
+
+        _mcpConnect = new McpConnectWindow(_host!, _mcp, _skins!.Current, () => _active.ActiveTab.Path);
+        FollowSkin(_mcpConnect, _mcpConnect.ApplySkin);
+        _mcpConnect.Closed += (sender, args) => _mcpConnect = null;
+        _mcpConnect.Show(this);
+    }
+
+    private IEnumerable<SettingDescriptor> McpToolSettings() => McpToolDefinitions().Select(tool => new SettingDescriptor(
+        McpSettingPrefix + tool.Name,
+        SettingsCatalog.Mcp,
+        Loc.T("Narzędzie MCP „{0}”", tool.Name),
+        Loc.T("Co robi AI z Claude Code, gdy użyje tego narzędzia: zezwalaj, pytaj albo zablokuj. {0}", tool.Description),
+        SettingKind.Choice,
+        s => McpToolDispatcher.EffectiveMode(tool, s.Mcp.ToolModes.GetValueOrDefault(tool.Name), s.Mcp.ToolModes.ContainsKey(tool.Name)).ToString().ToLowerInvariant(),
+        (s, v) => s.Mcp.ToolModes[tool.Name] = (string)v!,
+        ["mcp", "claude", "claude code", "ai", tool.Name])
+    {
+        Choices = () => tool.AlwaysAsk
+            ? [new("ask", Loc.T("Pytaj")), new("block", Loc.T("Zablokuj"))]
+            : [new("allow", Loc.T("Zezwalaj")), new("ask", Loc.T("Pytaj")), new("block", Loc.T("Zablokuj"))],
+    });
 
     /// <summary>
     /// Right click / Shift+F10: the Windows Explorer menu for files on disks and shares (marked set if the row is
@@ -645,54 +661,6 @@ public sealed class MainWindow : Window, IShell
         menu.Open(panel.Canvas);
     }
 
-    /// <summary>✕ on a palette: only that one is hidden (its position becomes "hidden"); the settings bring it back.</summary>
-    private async Task HidePaletteAsync(IPalettePlugin palette)
-    {
-        _host!.Settings.PaletteDocks[palette.Id] = "hidden";
-        RebuildPalettes();
-        Notify(Loc.T("Paleta „{0}” ukryta — przywrócisz ją w ustawieniach (F1 → Palety).", palette.Title));
-        await _host.SaveSettingsAsync();
-    }
-
-    private async Task TogglePalettesAsync()
-    {
-        _host!.Settings.ShowPalettes = !_host.Settings.ShowPalettes;
-        RebuildPalettes();
-        await _host.SaveSettingsAsync();
-    }
-
-    private async Task AddFavoriteAsync()
-    {
-        var favorites = (FavoritesPalette)_builtInPalettes.First(p => p is FavoritesPalette);
-        var host = _host!.HostFor(favorites.Manifest);
-        await favorites.InvokeActionAsync("add", null, host, CancellationToken.None);
-        if (DockOf(favorites) == PaletteDock.Hidden || !_host.Settings.ShowPalettes)
-        {
-            Notify(Loc.T("Dodano do ulubionych: {0} (paleta „Ulubione” jest ukryta — Ctrl+B / ustawienia).", host.ActivePath));
-        }
-    }
-
-    AppHost IShell.App => _host!;
-
-    public ViewSetting CaptureView(string name) => new()
-    {
-        Name = name,
-        LeftPath = _left.ActiveTab.Path,
-        RightPath = _right.ActiveTab.Path,
-        LeftMode = ModeId(_left),
-        RightMode = ModeId(_right),
-    };
-
-    private const string BrowserModePrefix = "browser:";
-
-    private static string? ModeId(FilePanelView panel) => panel.Mode switch
-    {
-        PreviewPanelView => "preview",
-        PluginPanelView view => CommandIds.PanelPrefix + view.Plugin.Id,
-        BrowserPanelView browser => BrowserModePrefix + browser.CurrentUrl,
-        _ => null,
-    };
-
     /// <summary>
     /// Shows the browser in the mode target (the opposite panel), reusing one that is already open there;
     /// <paramref name="url"/> <c>null</c> keeps the current page (or the start page for a new browser).
@@ -747,6 +715,9 @@ public sealed class MainWindow : Window, IShell
 
     private AiChatWindow? _aiChat;
     private AiProvidersWindow? _aiProviders;
+    private McpHost? _mcp;
+    private McpConnectWindow? _mcpConnect;
+    private Button _mcpBadge = null!;
 
     /// <summary>One chat window; it knows the active folder so questions can refer to "here".</summary>
     private void OpenAiChat()
@@ -771,6 +742,7 @@ public sealed class MainWindow : Window, IShell
             AskAiAboutFile = AskAiAboutFileAsync,
             CreatePreviewPlugin = CreatePreviewPluginAsync,
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
+            RunShortcut = RunShortcut,
             AskFolderTrust = AskFolderTrustAsync,
         };
 
@@ -1162,7 +1134,7 @@ public sealed class MainWindow : Window, IShell
                 if (VfsPath.GetScheme(target) is "sftp" or "ftp" && (action.KeyFile is not null || action.User is not null))
                 {
                     // The login from c4k.dir is kept for this session only; saved connections remain the place for passwords.
-                    host.Remote.SetLogin(target, new RemoteLogin(action.User ?? Environment.UserName,
+                    host.Remote.SetLogin(target, new RemoteLogin(action.User ?? RemoteTransferVfsPlugin.UserNameOf(target) ?? Environment.UserName,
                         PrivateKeyFile: action.KeyFile is { } key ? config.Resolve(key) : null));
                 }
 
@@ -1498,7 +1470,8 @@ public sealed class MainWindow : Window, IShell
     }
 
     /// <summary>AI outside the app goes through Claude Code: the prompt is copied and shown.</summary>
-    private Task UseClaudeCodeAsync(string prompt) => new Mcp.UseClaudeCodeDialog(_skins!.Current, prompt).ShowAsync(this);
+    private Task UseClaudeCodeAsync(string prompt) =>
+        new Mcp.UseClaudeCodeDialog(_skins!.Current, prompt, _mcp?.StatusText() ?? string.Empty, OpenMcpConnect).ShowAsync(this);
 
     /// <summary>
     /// A preview plugin for the unknown file's type: the wish (editable) plus a sample of the file goes to the chat in
@@ -1525,15 +1498,13 @@ public sealed class MainWindow : Window, IShell
             return;
         }
 
-        await UseClaudeCodeAsync(request + PluginMcpHint);
+        await UseClaudeCodeAsync(request + McpPrompts.PluginHint);
     }
 
     /// <summary>What the AI chat is told about the app.</summary>
-    private AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
+    internal AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
 
     private AiAppContext? _aiContext;
-
-    private const string PluginMcpHint = "\n\nUse the commander4k MCP tools (get_plugin_guide, check_plugin, install_plugin) to write and install it.";
 
     private Task OpenPluginManagerAsync() => ExecuteAsync(CommandIds.PanelPrefix + PluginManagerPanel.PluginId);
 
@@ -1551,7 +1522,7 @@ public sealed class MainWindow : Window, IShell
             Loc.T("Co ma robić wtyczka? (prośba trafi do Claude Code)")).ShowAsync(this);
         if (!string.IsNullOrWhiteSpace(wish))
         {
-            await UseClaudeCodeAsync(wish + PluginMcpHint);
+            await UseClaudeCodeAsync(wish + McpPrompts.PluginHint);
         }
     }
 
@@ -1596,57 +1567,6 @@ public sealed class MainWindow : Window, IShell
                 return false;
         }
     }
-
-    /// <summary>Applies a saved view: modes switch at once, both panels navigate in parallel.</summary>
-    public async Task RestoreViewAsync(ViewSetting view)
-    {
-        _left.CloseMode();
-        _right.CloseMode();
-        var navigations = new List<Task>();
-        if (view.LeftPath is { Length: > 0 } leftPath)
-        {
-            navigations.Add(_left.NavigateAsync(leftPath));
-        }
-
-        if (view.RightPath is { Length: > 0 } rightPath)
-        {
-            navigations.Add(_right.NavigateAsync(rightPath));
-        }
-
-        await ApplyModeAsync(_left, view.LeftMode);
-        await ApplyModeAsync(_right, view.RightMode);
-        SetActive(_left.Mode is null || _right.Mode is not null ? _left : _right);
-        try
-        {
-            await Task.WhenAll(navigations);
-        }
-        catch (Exception ex)
-        {
-            Notify(Loc.T("Widok „{0}”: {1}", view.Name, ex.Message), isError: true);
-        }
-    }
-
-    private async Task ApplyModeAsync(FilePanelView target, string? mode)
-    {
-        var source = target == _left ? _right : _left;
-        switch (mode)
-        {
-            case null:
-                break;
-            case "preview":
-                target.ShowMode(CreatePreview(source));
-                break;
-            case var browser when browser.StartsWith(BrowserModePrefix, StringComparison.Ordinal):
-                OpenBrowser(browser[BrowserModePrefix.Length..] is { Length: > 0 } url ? url : null, target);
-                break;
-            case var panel when panel.StartsWith(CommandIds.PanelPrefix, StringComparison.OrdinalIgnoreCase):
-                await OpenPanelInAsync(panel[CommandIds.PanelPrefix.Length..], null, target);
-                break;
-        }
-    }
-
-    public Task<PickerItem?> PickAsync(string title, IReadOnlyList<PickerItem> items) =>
-        new PickerDialog(_skins!.Current, title, items, Loc.T("Wpisz, aby wyszukać:")).ShowAsync(this);
 
     /// <summary>Ctrl+Shift+P: every command, skin and setting in one searchable list.</summary>
     private async ValueTask ShowCommandPaletteAsync(CommandInvocation _)
@@ -1844,6 +1764,8 @@ public sealed class MainWindow : Window, IShell
         _commandLine.CaretBrush = b.Accent;
         _notification.Foreground = b.StatusForeground;
         _notification.FontSize = Math.Max(11, b.FontSize - 1);
+        _mcpBadge.FontSize = Math.Max(11, b.FontSize - 1);
+        UpdateMcpBadge();
         ApplyMenuSkin(b);
 
         _keyBar.Background = b.WindowBackground;
@@ -1866,13 +1788,11 @@ public sealed class MainWindow : Window, IShell
             label.FontSize = Math.Max(11, b.FontSize - 1);
         }
 
-        foreach (var palette in _paletteViews)
-        {
-            palette.ApplySkin(b);
-        }
-
         _jobsDirty = true;
     }
+
+    /// <summary>Text currently shown in the status bar's notification area (for automation and tests).</summary>
+    public string LastNotification => _notification?.Text ?? string.Empty;
 
     private void Notify(string message, bool isError = false) => Notify(message, isError, null);
 
@@ -1894,19 +1814,6 @@ public sealed class MainWindow : Window, IShell
     private void RefreshJobsBar()
     {
         UpdatePrompt(); // Cheap; follows navigation and tab switches without per-tab subscriptions.
-        if (_left is not null && _active is not null)
-        {
-            var navigation = $"{_left.ActiveTab.Path}|{_right.ActiveTab.Path}|{_active == _left}";
-            if (navigation != _navigationKey)
-            {
-                _navigationKey = navigation;
-                foreach (var palette in _paletteViews.Where(p => p.FollowsNavigation))
-                {
-                    palette.Refresh();
-                }
-            }
-        }
-
         if (!_jobsDirty || _host is null)
         {
             return;
@@ -2008,9 +1915,7 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.AskAi, Loc.T("Zapytaj AI (czat z darmowymi dostawcami lub Claude Code)"), _ => new ValueTask(AskAiAsync()))
          .Register(CommandIds.AiProviders, Loc.T("Dostawcy AI — logowanie, kolejność, limity"), _ => { OpenAiProviders(); return ValueTask.CompletedTask; })
          .Register(CommandIds.AiWritePlugin, Loc.T("Napisz wtyczkę z AI (według przewodnika, z instalacją)"), _ => new ValueTask(WritePluginWithAiAsync()))
-         .Register(CommandIds.TogglePalettes, Loc.T("Palety: pokaż / ukryj"), _ => new ValueTask(TogglePalettesAsync()))
-         .Register(CommandIds.Palettes, Loc.T("Palety: położenie (szybkie akcje, ulubione, widoki, wtyczki)"), () => OpenSettings(Loc.T("paleta")))
-         .Register(CommandIds.AddFavorite, Loc.T("Dodaj bieżący folder do ulubionych"), _ => new ValueTask(AddFavoriteAsync()))
+         .Register(CommandIds.McpConnect, Loc.T("Połącz Claude Code lub innego klienta MCP z Commander4K"), OpenMcpConnect)
          .Register(CommandIds.Edit, Loc.T("Edycja"), EditCurrentAsync)
          .Register(CommandIds.Copy, Loc.T("Kopiuj"), _ => TransferAsync(TransferMode.Copy))
          .Register(CommandIds.Move, Loc.T("Przenieś"), _ => TransferAsync(TransferMode.Move))
@@ -2028,6 +1933,7 @@ public sealed class MainWindow : Window, IShell
          .Register(CommandIds.CancelCurrentOperation, Loc.T("Przerwij"), CancelCurrent)
          .Register(CommandIds.SelectSkin, Loc.T("Wybór skórki"), _ => new ValueTask(new SkinPickerDialog(_host, _skins!).ShowAsync(this)))
          .Register(CommandIds.NextSkin, Loc.T("Następna skórka"), NextSkin)
+         .Register(CommandIds.EditSkin, Loc.T("Edytor skórki (JSON)"), _ => new ValueTask(new SkinEditorDialog(_host, _skins!).ShowAsync(this)))
          .Register(CommandIds.ToggleHidden, Loc.T("Pokaż / ukryj pliki ukryte"), ToggleHiddenAsync)
          .Register(CommandIds.CommandPalette, Loc.T("Paleta komend"), ShowCommandPaletteAsync)
          .Register(CommandIds.Settings, Loc.T("Ustawienia"), () => OpenSettings())
@@ -2046,6 +1952,146 @@ public sealed class MainWindow : Window, IShell
 
     /// <summary>Runs any command id (built-in, <c>panel:</c>, <c>plugin:</c>) as if invoked from the keymap; for automation and tests.</summary>
     public Task ExecuteCommandAsync(string commandId) => ExecuteAsync(commandId);
+
+    // MCP tools (Mcp/McpAppTools) call these on the UI thread, through Dispatcher.UIThread.InvokeAsync. Messages are English (for the model).
+
+    /// <summary>The current skin's brushes, for dialogs the MCP tools show.</summary>
+    internal SkinBrushes McpBrushes => _skins!.Current;
+
+    /// <summary><c>left</c>, <c>right</c>, <c>active</c> or <c>other</c>.</summary>
+    internal FilePanelView McpPanel(string which) => which.Trim().ToLowerInvariant() switch
+    {
+        "left" => _left,
+        "right" => _right,
+        "active" => _active,
+        "other" => Other,
+        _ => throw new ArgumentException($"Unknown panel '{which}': use left, right, active or other."),
+    };
+
+    /// <summary>Plain navigation (no c4k.dir action runs); completes when the listing has loaded or failed.</summary>
+    internal Task McpNavigateAsync(FilePanelView panel, string path) => panel.NavigateAsync(path);
+
+    /// <summary>Marks exactly <paramref name="names"/> (replacing earlier marks) and moves the cursor.</summary>
+    /// <returns>How many entries are marked, the names not found (once each) and whether the cursor name was found.</returns>
+    internal (int Marked, IReadOnlyList<string> Missing, bool CursorFound) McpSelect(FilePanelView panel, IReadOnlyList<string> names, string? cursor)
+    {
+        var tab = panel.ActiveTab;
+        var missing = new List<string>();
+        tab.Marked.Clear();
+        foreach (var name in names)
+        {
+            if (FindRow(name) is { } index)
+            {
+                tab.Marked.Add(tab.Entries[index].Path);
+            }
+            else if (!missing.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                missing.Add(name);
+            }
+        }
+
+        var target = tab.Cursor;
+        var cursorFound = true;
+        if (cursor is not null)
+        {
+            if (FindRow(cursor) is { } index)
+            {
+                target = index;
+            }
+            else
+            {
+                cursorFound = false;
+            }
+        }
+
+        tab.MoveCursor(target); // Raises Changed, which repaints the marks too.
+        return (tab.Marked.Count, missing, cursorFound);
+
+        int? FindRow(string name)
+        {
+            var index = tab.Entries.FindIndex(e => e.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action)
+                && string.Equals(e.Name, name, StringComparison.OrdinalIgnoreCase));
+            return index >= 0 ? index : null;
+        }
+    }
+
+    /// <summary><c>files</c>, <c>preview</c> or <c>panel:&lt;id&gt;</c>; false when the mode is unknown or could not open.</summary>
+    internal async Task<bool> McpSetModeAsync(FilePanelView panel, string mode)
+    {
+        var source = panel == _left ? _right : _left;
+        switch (mode.Trim())
+        {
+            case var files when files.Equals("files", StringComparison.OrdinalIgnoreCase):
+                panel.CloseMode();
+                return true;
+            case var preview when preview.Equals("preview", StringComparison.OrdinalIgnoreCase):
+                if (panel.Mode is not PreviewPanelView)
+                {
+                    panel.ShowMode(CreatePreview(source));
+                }
+
+                return true;
+            case var id when id.StartsWith(CommandIds.PanelPrefix, StringComparison.OrdinalIgnoreCase):
+                var pluginId = id[CommandIds.PanelPrefix.Length..];
+                if (_host!.FindPanel(pluginId) is null)
+                {
+                    return false;
+                }
+
+                var before = panel.Mode;
+                await OpenPanelInAsync(pluginId, null, panel);
+                return panel.Mode is PluginPanelView && panel.Mode != before;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// What plugin code is told (<c>ExternalPlugin.Context</c>, via <see cref="PluginHostAdapter"/>): the visible file
+    /// panel's path, the other path and the marked entries (or the cursor).
+    /// </summary>
+    internal Mcp.McpPanelContext McpPluginContext()
+    {
+        var panel = _active.Mode is null ? _active : Other;
+        var other = (_active.Mode is null ? Other : _active).ActiveTab.Path;
+        return new Mcp.McpPanelContext(panel.ActiveTab.Path, other, [.. panel.ActiveTab.MarkedOrCurrent()]);
+    }
+
+    /// <summary>What a built-in command acts on: the active panel (location and selection) and the other panel (copy/move target).</summary>
+    internal Mcp.McpPanelContext McpCommandContext() =>
+        new(_active.ActiveTab.Path, Other.ActiveTab.Path, [.. _active.ActiveTab.MarkedOrCurrent()]);
+
+    /// <summary>Runs a plugin's command like the menu does; <c>null</c> on success, otherwise why it did not run.</summary>
+    internal async Task<string?> McpRunPluginCommandAsync(string pluginId, string commandId, CancellationToken cancellationToken = default)
+    {
+        if (_host!.FindCommandPlugin(pluginId) is not { } plugin)
+        {
+            return $"No plugin with commands has the id '{pluginId}'. Call list_plugins or list_commands.";
+        }
+
+        var command = plugin.Commands.FirstOrDefault(c => string.Equals(c.Id, commandId, StringComparison.OrdinalIgnoreCase));
+        if (command is null)
+        {
+            return $"Plugin '{pluginId}' has no command '{commandId}'. Its commands: {string.Join(", ", plugin.Commands.Select(c => c.Id).DefaultIfEmpty("none"))}.";
+        }
+
+        var host = _host.HostFor(plugin.Manifest);
+        if (!plugin.CanExecute(command.Id, host))
+        {
+            return $"The command {pluginId}:{command.Id} cannot run in the current context.";
+        }
+
+        try
+        {
+            await plugin.ExecuteAsync(command.Id, host, cancellationToken);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Like the keymap path (ExecuteAsync): a failing plugin is a result, not a crash.
+            return $"The command {pluginId}:{command.Id} failed: {ex.Message}";
+        }
+    }
 
     private async Task ExecuteAsync(string commandId)
     {
@@ -2072,9 +2118,17 @@ public sealed class MainWindow : Window, IShell
                 return;
             }
 
-            if (_active.Mode is not null && FileCommands.Contains(commandId))
+            // F5 from a plugin panel that provides files copies them out; moving out of (or into) a plugin is not a thing.
+            if (_active.Mode is PluginPanelView && string.Equals(commandId, CommandIds.Move, StringComparison.OrdinalIgnoreCase))
             {
-                Notify(Loc.T("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach."));
+                Notify(MoveNotSupported);
+                return;
+            }
+
+            if (_active.Mode is not null && FileCommands.Contains(commandId)
+                && !(_active.Mode is PluginPanelView { Session.CanProvide: true } && string.Equals(commandId, CommandIds.Copy, StringComparison.OrdinalIgnoreCase)))
+            {
+                Notify(ModeActive);
                 return;
             }
 
@@ -2271,8 +2325,60 @@ public sealed class MainWindow : Window, IShell
             : result.Error ?? Loc.T("Nie znaleziono VS Code."), isError: !result.Launched);
     }
 
+    private static string MoveNotSupported => Loc.T("Przenoszenie z wtyczek i do wtyczek nie jest obsługiwane.");
+
+    private static string DoesNotReceive(string title) => Loc.T("Panel „{0}” nie przyjmuje plików.", title);
+
+    private static string ModeActive => Loc.T("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach.");
+
+    /// <summary>For <see cref="Core.Plugins.PanelTransferRouting"/>: only a preview (Ctrl+Q, pinned folder view) still shows the panel's folder.</summary>
+    private static Core.Plugins.PanelModeKind KindOf(IPanelModeView? mode) => mode switch
+    {
+        null => Core.Plugins.PanelModeKind.Files,
+        PreviewPanelView => Core.Plugins.PanelModeKind.Preview,
+        PluginPanelView => Core.Plugins.PanelModeKind.Plugin,
+        _ => Core.Plugins.PanelModeKind.Other,
+    };
+
+    /// <summary>The other panel still shows a folder files can be written to (file list, quick view or pinned folder view).</summary>
+    private static bool ShowsFolder(FilePanelView panel) => KindOf(panel.Mode) is Core.Plugins.PanelModeKind.Files or Core.Plugins.PanelModeKind.Preview;
+
+    /// <summary>
+    /// F5/F6, routed by <see cref="Core.Plugins.PanelTransferRouting.Decide"/>: a plugin panel on either side changes
+    /// what happens (the active one provides files, the other one receives them; copy only). A preview or pinned folder
+    /// still copies into the folder it shows; any other mode takes nothing.
+    /// </summary>
     private async ValueTask TransferAsync(TransferMode mode)
     {
+        var route = Core.Plugins.PanelTransferRouting.Decide(
+            KindOf(_active.Mode),
+            _active.Mode is PluginPanelView { Session.CanProvide: true },
+            KindOf(Other.Mode),
+            Other.Mode is PluginPanelView { Session.CanReceive: true },
+            mode == TransferMode.Move);
+        switch (route)
+        {
+            case Core.Plugins.PanelTransferRoute.RefuseMove:
+                Notify(MoveNotSupported);
+                return;
+            case Core.Plugins.PanelTransferRoute.BlockedModeActive:
+                Notify(ModeActive);
+                return;
+            case Core.Plugins.PanelTransferRoute.RefuseNotAccepting:
+                Notify(DoesNotReceive(Other.Mode?.Title ?? string.Empty));
+                return;
+            case Core.Plugins.PanelTransferRoute.ProvideFromPanel when _active.Mode is PluginPanelView source:
+                await GuardPanelTransferAsync(() => ProvideFromPanelAsync(_active, Other, source));
+                return;
+            case Core.Plugins.PanelTransferRoute.SendToPanel when Other.Mode is PluginPanelView panel:
+                await GuardPanelTransferAsync(() => SendToPanelAsync(_active, Other, panel));
+                return;
+            case Core.Plugins.PanelTransferRoute.OrdinaryCopy:
+                break;
+            default:
+                return;
+        }
+
         var sources = _active.ActiveTab.MarkedOrCurrent();
         if (sources.Count == 0)
         {
@@ -2290,6 +2396,255 @@ public sealed class MainWindow : Window, IShell
         RunJob(job, request.Queue ? JobQueueManager.DefaultQueue : null, refreshBoth: true);
         _active.ActiveTab.Marked.Clear();
     }
+
+    /// <summary>F5 onto a plugin panel: ask it for receivers, keep the ones that fit, let the user pick, run the job.</summary>
+    /// <param name="source">The file panel the files come from, captured when F5 was pressed.</param>
+    /// <param name="target">The panel showing <paramref name="panel"/>.</param>
+    private async Task SendToPanelAsync(FilePanelView source, FilePanelView target, PluginPanelView panel)
+    {
+        var session = panel.Session;
+        if (!session.CanReceive)
+        {
+            Notify(DoesNotReceive(panel.Title));
+            return;
+        }
+
+        var sources = source.ActiveTab.MarkedOrCurrent();
+        var items = sources.Select(ToTransferItem).ToList();
+        if (items.Count == 0)
+        {
+            return; // TransferMatching.WhyNone would give a misleading reason for nothing.
+        }
+
+        // The panel can be closed (session disposed) or the source can switch to a mode while we wait.
+        bool StillThere() => target.Mode == panel && source.Mode is null;
+
+        var offered = await AskPanelAsync(panel.Title, ct => session.GetReceiversAsync(items, ct));
+        if (offered is null || !Unchanged(StillThere()))
+        {
+            return;
+        }
+
+        // Ids pick the receiver after the dialog, so a duplicate id (a plugin bug) keeps only its first receiver.
+        var fitting = offered.Where(receiver => Core.Plugins.TransferMatching.Fits(receiver, items)).DistinctBy(r => r.Id, StringComparer.Ordinal).ToList();
+        if (fitting.Count == 0)
+        {
+            Notify(Core.Plugins.TransferMatching.WhyNone(offered, items) ?? DoesNotReceive(panel.Title));
+            return;
+        }
+
+        var choice = await new PanelTransferDialog(
+            _skins!.Current,
+            Loc.T("Wyślij do „{0}”", panel.Title),
+            Loc.T("Wyślij {0} do:", DescribeSelection(sources)),
+            [.. fitting.Select(r => (r.Id, r.Title, r.Description))],
+            target: null).ShowAsync(this);
+        if (choice is null || fitting.FirstOrDefault(r => r.Id == choice.OptionId) is not { } receiver || !Unchanged(StillThere()))
+        {
+            return;
+        }
+
+        var job = new PanelReceiveJob(session, panel.Title, receiver, items);
+        RunJob(job, queue: null, refreshBoth: false, handle =>
+        {
+            // The plugin's answer only exists when the call returned; a failed or cancelled call is reported by RunJob.
+            if (job.Result is { } result)
+            {
+                var report = new StringBuilder();
+                if (receiver.ReturnsMessage && !string.IsNullOrWhiteSpace(result.Text))
+                {
+                    report.AppendLine(result.Text);
+                }
+
+                var failed = result.Results?.Where(r => !r.Ok).ToList() ?? [];
+                if (failed.Count > 0)
+                {
+                    if (report.Length > 0)
+                    {
+                        report.AppendLine();
+                    }
+
+                    report.AppendLine(Loc.T("Wtyczka nie przyjęła:"));
+                    foreach (var item in failed)
+                    {
+                        report.Append("  ").AppendLine(Loc.T("{0}: {1}", item.Path, item.Error ?? Loc.T("nieznany błąd")));
+                    }
+                }
+
+                if (report.Length > 0)
+                {
+                    _ = ShowTextWindowAsync(panel.Title + " — " + receiver.Title, report.ToString().TrimEnd());
+                }
+            }
+
+            // Like after a panel action; only while the panel is still open (closing it disposed the session).
+            if (_left.Mode == panel || _right.Mode == panel)
+            {
+                panel.Reload(quiet: true);
+            }
+        });
+        source.ActiveTab.Marked.Clear();
+    }
+
+    /// <summary>F5 in a plugin panel that provides files: pick a provider and a target folder, then write what it returns.</summary>
+    /// <param name="source">The panel showing <paramref name="panel"/>, captured when F5 was pressed.</param>
+    /// <param name="target">The panel whose folder receives the files.</param>
+    private async Task ProvideFromPanelAsync(FilePanelView source, FilePanelView target, PluginPanelView panel)
+    {
+        if (!ShowsFolder(target))
+        {
+            Notify(DoesNotReceive(target.Mode?.Title ?? string.Empty));
+            return;
+        }
+
+        var rowIds = panel.SelectedRowIds;
+        if (rowIds.Count == 0)
+        {
+            Notify(Loc.T("Panel „{0}” nie ma wierszy do skopiowania.", panel.Title));
+            return;
+        }
+
+        // While we wait the target may turn into a mode that hides its folder, or the panel may close.
+        bool StillThere() => source.Mode == panel && ShowsFolder(target);
+
+        var session = panel.Session;
+        var asked = await AskPanelAsync(panel.Title, ct => session.GetProvidersAsync(rowIds, ct));
+        if (asked is null || !Unchanged(StillThere()))
+        {
+            return;
+        }
+
+        // Ids pick the provider after the dialog, so a duplicate id (a plugin bug) keeps only its first provider.
+        var providers = asked.DistinctBy(p => p.Id, StringComparer.Ordinal).ToList();
+
+        if (providers.Count == 0)
+        {
+            Notify(Loc.T("Ta wtyczka nie wydaje plików."));
+            return;
+        }
+
+        var choice = await new PanelTransferDialog(
+            _skins!.Current,
+            Loc.T("Kopiuj z „{0}”", panel.Title),
+            Loc.T("Kopiuj {0} z panelu „{1}”:", Loc.P(rowIds.Count, "{0} wiersz|{0} wiersze|{0} wierszy"), panel.Title),
+            [.. providers.Select(p => (p.Id, p.Title, p.Description))],
+            target.ActiveTab.Path).ShowAsync(this);
+        if (choice?.Target is not { } folder || providers.FirstOrDefault(p => p.Id == choice.OptionId) is not { } provider || !Unchanged(StillThere()))
+        {
+            return;
+        }
+
+        // Downloads of url files go through the plugin's own host: gated by its "net" permission and audited.
+        var host = (Core.Plugins.ScopedPluginHost)_host!.HostFor(panel.Plugin.Manifest);
+        var job = new PanelProvideJob(session, provider, rowIds, _host.Router, folder, choice.Overwrite, host.OpenHttpReadAsync, host.Audit);
+        RunJob(job, queue: null, refreshBoth: true, handle =>
+        {
+            // Also after a failure or cancel: the files that went wrong before it are still worth knowing (RunJob reports the failure itself).
+            var report = new StringBuilder();
+            if (handle.State == JobState.Completed && !string.IsNullOrWhiteSpace(job.Result?.Text))
+            {
+                report.AppendLine(job.Result.Text);
+            }
+
+            if (job.Errors.Count > 0)
+            {
+                if (report.Length > 0)
+                {
+                    report.AppendLine();
+                }
+
+                if (handle.State != JobState.Completed)
+                {
+                    report.AppendLine(handle.State == JobState.Canceled ? Loc.T("Przerwano kopiowanie.") : Loc.T("Kopiowanie nie powiodło się."));
+                }
+
+                report.AppendLine(Loc.T("Nie zapisano:"));
+                foreach (var error in job.Errors)
+                {
+                    report.Append("  ").AppendLine(error);
+                }
+            }
+
+            if (report.Length > 0)
+            {
+                _ = ShowTextWindowAsync(panel.Title + " — " + provider.Title, report.ToString().TrimEnd());
+            }
+        });
+    }
+
+    private bool _panelTransferPending;
+
+    /// <summary>One panel transfer question (and its dialog) at a time: a second F5 meanwhile would ask twice and could send the files twice.</summary>
+    private async Task GuardPanelTransferAsync(Func<Task> transfer)
+    {
+        if (_panelTransferPending)
+        {
+            Notify(Loc.T("Poczekaj — wtyczka jeszcze odpowiada."));
+            return;
+        }
+
+        _panelTransferPending = true;
+        try
+        {
+            await transfer();
+        }
+        finally
+        {
+            _panelTransferPending = false;
+        }
+    }
+
+    /// <summary>Returns <paramref name="unchanged"/>, with a message when the panels changed during a question or dialog.</summary>
+    private bool Unchanged(bool unchanged)
+    {
+        if (!unchanged)
+        {
+            Notify(Loc.T("Panele zmieniły się w międzyczasie — przerwano."));
+        }
+
+        return unchanged;
+    }
+
+    /// <summary>
+    /// Asks a plugin panel for its receivers or providers on the thread pool, with the 5 s limit a waiting dialog
+    /// allows; failures become a message and <c>null</c>.
+    /// </summary>
+    private async Task<IReadOnlyList<T>?> AskPanelAsync<T>(string title, Func<CancellationToken, Task<IReadOnlyList<T>>> ask)
+    {
+        var asking = Loc.T("Pytam wtyczkę „{0}”…", title);
+        Notify(asking);
+        using var timeout = new CancellationTokenSource(PanelQuestionTimeout);
+        try
+        {
+            // The executor turns a synchronous throw from the session into a faulted task (never out of a Task.Run lambda).
+            var answer = await _host!.Executor.RunAsync(ask, timeout.Token, PanelQuestionTimeout);
+            if (LastNotification == asking)
+            {
+                _notification.Text = string.Empty;
+            }
+
+            return answer;
+        }
+        catch (Exception ex) when (ex is TimeoutException || (ex is OperationCanceledException && timeout.IsCancellationRequested))
+        {
+            Notify(Loc.T("Panel „{0}” nie odpowiedział w ciągu 5 s.", title), isError: true);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Includes a cancellation that comes from the plugin itself rather than from our time limit.
+            Notify(Loc.T("{0}: {1}", title, ex.Message), isError: true);
+        }
+
+        return null;
+    }
+
+    private static readonly TimeSpan PanelQuestionTimeout = TimeSpan.FromSeconds(5);
+
+    private static TransferItem ToTransferItem(VfsEntry entry) => new(
+        entry.Path,
+        entry.Name,
+        entry.IsContainer && entry.Kind != VfsEntryKind.Archive ? TransferItemKind.Folder : TransferItemKind.File,
+        entry.Size);
 
     /// <summary>Alt+F5: the format follows the name typed (.zip, .tar, .tar.gz/.tgz); the archive goes to the other panel.</summary>
     private async ValueTask PackAsync(CommandInvocation _)
@@ -2402,7 +2757,8 @@ public sealed class MainWindow : Window, IShell
         _active.ActiveTab.Marked.Clear();
     }
 
-    private void RunJob(IJob job, string? queue, bool refreshBoth)
+    /// <param name="finished">Runs on the UI thread once the job has ended, whatever its state.</param>
+    private void RunJob(IJob job, string? queue, bool refreshBoth, Action<JobHandle>? finished = null)
     {
         var handle = _host!.Jobs.Enqueue(job, queue);
         _jobsDirty = true;
@@ -2413,6 +2769,8 @@ public sealed class MainWindow : Window, IShell
                 {
                     Notify($"{handle.Title}: {handle.Error?.Message}", isError: true);
                 }
+
+                finished?.Invoke(handle);
 
                 if (refreshBoth)
                 {
@@ -2695,7 +3053,7 @@ public sealed class MainWindow : Window, IShell
         _menu.Items.Add(Group(Loc.T("Pa_nele"), [Item(CommandIds.LeftDriveMenu), Item(CommandIds.RightDriveMenu), Item(CommandIds.OpenNetwork), Item(CommandIds.OpenRegistry), new Separator(),
             .. host.PanelPlugins.Select(p => Item(CommandIds.PanelPrefix + p.Id, p.Title))]));
         _menu.Items.Add(pluginMenu);
-        _menu.Items.Add(Group(Loc.T("_Konfiguracja"), [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.CommandPalette),
+        _menu.Items.Add(Group(Loc.T("_Konfiguracja"), [Item(CommandIds.Settings), Item(CommandIds.SelectSkin), Item(CommandIds.NextSkin), Item(CommandIds.EditSkin), Item(CommandIds.CommandPalette),
             new Separator(), Item(CommandIds.AskAi), Item(CommandIds.AiWritePlugin), Item(CommandIds.AiProviders)]));
         _menu.Items.Add(Group(Loc.T("Pomo_c"), [Item(CommandIds.Help), Item(CommandIds.CheckForUpdates), Item(CommandIds.About)]));
         if (_skins is not null)

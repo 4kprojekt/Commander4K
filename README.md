@@ -30,9 +30,10 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - The provider list ([`ai-providers.json`](src/Commander4K.Core/Ai/ai-providers.json)) is downloaded from this repository at start-up, so endpoints and free models can be updated without a new release. Add your own in `config/ai/providers.json`.
   - The AI knows where you are: it gets both panels' paths, the cursor, the marked files and the installed plugins. It can look into folders, and it reads a file only after you allow it.
   - **Plugins written by AI:** "Napisz wtyczkę z AI" gives the model the [plugin guide](docs/plugins.md) and installs the plugin from its answer. The plugin stays disabled until you approve its permissions.
-  - **Claude Code:** with the MCP server connected, Claude Code can read the app state and write and install plugins itself; otherwise the question or plugin request is copied for you to paste there.
+  - **Claude Code:** with the MCP server connected, Claude Code can read the app state and write and install plugins itself (see [Claude Code and MCP](#claude-code-and-mcp)); otherwise the question or plugin request is copied for you to paste there.
   - Keys are stored in `config/ai/credentials.json`, encrypted for the current Windows user (DPAPI). After moving a portable copy to another account or PC, sign in again.
   - The plugin manager's "Szukaj rozwiązania" sends a plugin's problem to that assistant, and plugins can open pages or searches here too.
+- **Claude Code over MCP:** Commander4K runs a local MCP server (127.0.0.1 only, with a token). Open "Połącz Claude Code" (command palette, or the MCP badge in the status bar), switch it on, add the folders the AI may use and run the `claude mcp add …` command it shows. Claude Code can then browse those folders, drive the panels, and write, check, install and try plugins. Every tool can be set to allow, ask or block. Risky calls (reading and writing files, running commands, installing or enabling a plugin) open a confirmation in the app. The app's own plugin, `config/` and `data/` folders cannot be read or written through MCP, and every call is logged. Details: [plugin guide](docs/plugins.md#writing-plugins-with-claude-code-over-mcp).
 - **Quick view (`Ctrl+Q`):** previews the entry under the cursor in the opposite panel:
   - Markdown is rendered with formatting, and `F4` switches to side-by-side editing with a live preview. ` ```mermaid ` diagrams are drawn offline with the bundled [Mermaid](https://mermaid.js.org) 12.2.0 (MIT), in the skin's colours;
   - the folder preview adapts to the content: an Obsidian vault, or a folder of Markdown notes, shows a link graph, the most linked notes, recent notes with excerpts, tags, unlinked notes and broken links. Obsidian `.canvas` boards show as diagrams;
@@ -40,21 +41,17 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - images are shown;
   - folders show their total size and per-subfolder bars, filled in as they are computed.
 
-  Moving the cursor cancels the running load at once. Plugins can add previews too.
+  Moving the cursor cancels the running load at once. Plugins can add previews too, including HTML/JS pages in a sandboxed WebView2 ([web previews](docs/plugins.md#web-previews)); [`examples/plugins/pdf-viewer-node`](examples/plugins/pdf-viewer-node) shows PDFs with PDF.js (search, zoom, print).
 - **Folders that decide how they look (`c4k.dir`):** a small JSON file in a folder sets what its preview shows and what `Enter` does ([guide](docs/plugins.md#folder-files-c4kdir), [schema](docs/c4k.dir.schema.json)). `Shift+Enter` always opens the plain file list.
   - It can show a photo gallery, a dashboard of tiles (folders, pages, scripts), the notes view, a README, or a plugin's view (for example the games of a Steam library, with covers).
   - It can open an SFTP server with a key, a web page in the panel browser, or run a script. A script runs only after you have seen the command and trusted that exact file; a changed or copied file asks again.
   - "Widok folderu (c4k.dir)" in the command palette writes the file for you.
+  - [Examples](#examples-folders-that-configure-themselves) shows screenshots together with their `c4k.dir` files.
   - Dashboard tiles can be live cards drawn by previews: folder statistics, gallery thumbnails, fields of any HTTP API (with charts that grow on every refresh), an SSH server's CPU, memory and disks, or another dashboard to open. Each card refreshes on its own interval while visible. "Dodaj kartę API" asks an API once and lets you pick the fields. Cards that sign in or change something wait until you trust the file, and API tokens stay encrypted outside it.
 - **Official plugin catalog:** [`plugins-catalog/catalog.json`](plugins-catalog/catalog.json) is downloaded at start-up. Its plugins install from the plugin manager (`Ctrl+I`), or with one click when a `c4k.dir` needs one.
   - Every file is checked against the catalog's SHA-256.
   - A new plugin stays disabled until you approve its permissions.
   - Official plugins so far: `official.steam-library` (a Steam library as tiles and a table) and `official.git-repo` (a Git repository at a glance: branch and upstream, changes, recent commits, branches, tags, remotes).
-- **Palettes:** button bars docked to the left, the right, the bottom or between the panels. Each palette's position is a setting.
-  - Quick actions: any command, panel or plugin command, one click away.
-  - Favourite folders (`Ctrl+D` adds the current one) and recently used folders.
-  - Saved views: both panels' folders and modes (files, preview, plugin panel), restored with one click.
-  - Plugins can add their own palettes. `Ctrl+B` shows or hides them all.
 - **Total Commander-style workflow:**
   - `F5`/`F6` copy and move in the background, with an `F2` queue;
   - `F3` viewer, `F4` your editor, `F7` new folder, `F8` delete;
@@ -85,6 +82,168 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
 | Modern | Midnight Commander | Total Commander classic |
 |---|---|---|
 | ![](docs/images/modern-dark.png) | ![](docs/images/midnight-commander.png) | ![](docs/images/total-commander-classic.png) |
+
+## Examples: folders that configure themselves
+
+Each screenshot below was taken in the app (skin *Modern*). The left panel shows the folder's view and the right panel shows the folder's `c4k.dir`; the same file is printed under each screenshot, so you can copy it. The file goes into the folder it describes. `Ctrl+Q` shows the `preview`, `Enter` runs `enter`, and `Shift+Enter` always opens the plain file list. Full reference: [guide](docs/plugins.md#folder-files-c4kdir), [schema](docs/c4k.dir.schema.json).
+
+### Dashboard with live cards: SSH server, HTTP API, gallery, notes
+
+![A dashboard with an SSH server card, a weather API card, a photo gallery, notes, a README and shortcut tiles](docs/images/example-dashboard.png)
+
+`Pulpit/c4k.dir`:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.dir.schema.json",
+  "title": "Pulpit",
+  "preview": "dashboard",
+  "enter": {
+    "view": "dashboard",
+    "tiles": [
+      {
+        "title": "VPS", "card": "ssh", "refresh": "5s",
+        "open": "sftp://demo@127.0.0.1:2222/config",
+        "options": { "keyFile": "../.ssh/id_ed25519" }
+      },
+      {
+        "title": "Pogoda: Warszawa", "card": "api", "refresh": "1m",
+        "api": {
+          "url": "https://api.open-meteo.com/v1/forecast?latitude=52.23&longitude=21.01&current=temperature_2m,wind_speed_10m",
+          "fields": [
+            { "path": "current.temperature_2m", "label": "Temperatura", "unit": "°C" },
+            { "path": "current.wind_speed_10m", "label": "Wiatr", "unit": "km/h" }
+          ]
+        }
+      },
+      { "title": "Zdjęcia", "open": "../Zdjęcia", "card": "gallery" },
+      { "title": "Notatki", "open": "../Notatki", "card": true },
+      { "title": "Projekt", "open": "../Projekt", "card": true },
+      { "title": "GitHub", "icon": "🌐", "url": "https://github.com/4kprojekt/Commander4K" },
+      { "title": "Wdróż", "icon": "🚀", "run": { "command": "pwsh", "args": ["-File", "../Projekt/deploy.ps1"] } }
+    ]
+  }
+}
+```
+
+- `"card": "ssh"` signs in to the server (here with the key from `options.keyFile`, relative to the folder) and shows status, CPU (a chart that grows on each refresh), memory, disks and uptime. It runs one fixed, read-only command.
+- `"card": "api"` asks an HTTP API and shows the chosen fields. `cm_AddApiCard` ("Dodaj kartę API") asks the API once and writes such a tile for you. Tokens go into headers as `{secret:name}` and stay encrypted outside the file.
+- `"card": true` draws whatever `Ctrl+Q` would show for the target, so the notes and the README come from their folders' own `c4k.dir`.
+- Tiles without `card` are shortcuts: `url` opens the page in the panel browser, `run` runs a command.
+- SSH cards (and API cards that change something) stay locked until you trust this exact file. A changed or copied file asks again.
+
+### SFTP server with a private key on `Enter`
+
+![The VPS folder opened as an SFTP listing, with a remote file in the quick view](docs/images/example-sftp.png)
+
+`VPS/c4k.dir`:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.dir.schema.json",
+  "title": "VPS",
+  "enter": {
+    "open": "sftp://demo@127.0.0.1:2222/config",
+    "keyFile": "../.ssh/id_ed25519"
+  }
+}
+```
+
+`Enter` on the folder opens the server in the same panel, so copying (`F5`), viewing and editing work as on a local disk. The key is used for this session only. Without `keyFile`, saved connections and your `~/.ssh` keys are tried, as `ssh` does. To keep a password or key, save a connection ("Dodaj połączenie"); never put secrets in `c4k.dir`.
+
+### Photo gallery
+
+![The quick view of a photo folder as a gallery of thumbnails](docs/images/example-gallery.png)
+
+`Zdjęcia/c4k.dir`:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.dir.schema.json",
+  "preview": "gallery",
+  "enter": "gallery"
+}
+```
+
+### Markdown notes with a link graph
+
+![A folder of Markdown notes: a Mermaid graph of their links, the most linked notes and recent changes](docs/images/example-notes.png)
+
+`Notatki/c4k.dir`:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.dir.schema.json",
+  "preview": "notes"
+}
+```
+
+The `[[links]]` between notes become a [Mermaid](https://mermaid.js.org) graph, drawn offline. An Obsidian vault gets this view even without a `c4k.dir`.
+
+### Project README as the folder preview
+
+![A project folder previewed through its README.md](docs/images/example-markdown.png)
+
+`Projekt/c4k.dir`:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.dir.schema.json",
+  "preview": { "view": "markdown", "file": "README.md" }
+}
+```
+
+<details>
+<summary>How the screenshots were made</summary>
+
+The folders above live in `C:\Users\Public\Commander4K-demo`. The SSH/SFTP server is a local container that accepts the demo key from `.ssh` in that folder:
+
+```powershell
+docker run -d --name c4k-ssh -p 127.0.0.1:2222:2222 -e USER_NAME=demo -e PASSWORD_ACCESS=false `
+  -e "PUBLIC_KEY=$(Get-Content C:\Users\Public\Commander4K-demo\.ssh\id_ed25519.pub)" lscr.io/linuxserver/openssh-server
+```
+
+The weather card reads the free [Open-Meteo](https://open-meteo.com) API, which needs no key.
+</details>
+
+## Claude Code and MCP
+
+Commander4K is an [MCP](https://modelcontextprotocol.io) server (Streamable HTTP, protocol 2025-06-18). Claude Code, or any other MCP client, connected to it can see both panels, move them, work with files in every place the app can open (disks, shares, SFTP, archives), use plugins, and write, check, install and try new plugins in a loop. It can also change settings and shortcuts, translate the interface and design skins. Each of these steps waits for your confirmation where the tool's mode says so.
+
+**Connect:** open "Połącz Claude Code" (command palette, or the MCP badge in the status bar). Switch the server on, add the folders the AI may use, then run once in a terminal the command the window shows:
+
+```powershell
+claude mcp add --transport http commander4k http://127.0.0.1:47800/mcp --header "Authorization: Bearer <token>"
+```
+
+The window also gives the same server as a `.mcp.json` entry for a project. Use `127.0.0.1` exactly, not `localhost`. The server listens only on that address, and every request needs the token, which is stored DPAPI-encrypted. "Nowy token" cuts off old clients.
+
+**What the AI may do** is set per tool in the settings (`Ctrl+,`, search "mcp"):
+
+| Tools | Default |
+|---|---|
+| `get_context`, `list_commands`, `list_plugins`, `get_plugin_guide`, `list_directory`, `stat`, `navigate`, `select`, `set_panel_mode`, `check_plugin`, `get_plugin_log`, `list_settings`, `list_key_bindings`, translation and skin guides and checks | allow |
+| `read_file`, `write_file`, `make_directory`, `run_command`, `run_plugin_command`, `load_plugin_panel`, `render_preview`, `reload_plugin`, `set_setting`, `set_key_binding`, `save_translation` | ask |
+| `move`, `delete`, `install_plugin`, `enable_plugin`, `save_skin` | always ask |
+
+- **Allowed folders:** file tools work only inside the folders you list. Any path the app understands can be one, for example `C:\Projects` or `sftp://demo@127.0.0.1:2222/config`. With an empty list, no file can be touched.
+- **Protected folders:** no tool can read or change the app's own `plugins/`, `config/` and `data/` folders, or the folder of `Commander4K.exe`, even inside an allowed folder.
+- **Confirmations:** "Tak", "Nie" or "Tak do końca sesji". A new plugin is installed disabled and runs only after you approve its permissions.
+- **Prompts:** `write_plugin`, `preview_plugin_for_file`, `explain_file_format`, `translate_ui` and `design_skin` show up in Claude Code as `/mcp__commander4k__…` commands.
+- **Audit:** every call is logged with its decision and result, and the connect window lists the last 50.
+
+The same settings in `config/settings.json`. The token is added by the app, never by hand:
+
+```json
+"mcp": {
+  "enabled": true,
+  "port": 47800,
+  "allowedRoots": [ "C:\\Projects", "sftp://demo@127.0.0.1:2222/config" ],
+  "toolModes": { "read_file": "allow", "run_command": "block" }
+}
+```
+
+Details, including the full plugin flow: [Writing plugins with Claude Code over MCP](docs/plugins.md#writing-plugins-with-claude-code-over-mcp).
 
 ## Install
 
@@ -138,19 +297,3 @@ AI-written code can contain mistakes that look plausible. Review changes as you 
 ## License
 
 [MIT](LICENSE) © 2026 4Kprojekt
-
----
-
-### Po polsku
-
-Commander4K to szybki, dwupanelowy menedżer plików dla Windows 11 w stylu Norton, Midnight i Total Commandera, na licencji MIT.
-
-- **Interfejs:** po polsku.
-- **Konfiguracja:** `Ctrl+,` otwiera ustawienia z wyszukiwarką, a `Ctrl+Shift+P` paletę komend.
-- **Przeglądarka:** `Ctrl+Alt+W` otwiera stronę w panelu.
-- **Czat AI (`Ctrl+Alt+A`):** zaloguj się do kilku darmowych dostawców w „Konfiguracja → Dostawcy AI” (OpenRouter jednym kliknięciem, Groq, Cerebras, Mistral…) albo uruchom modele lokalnie w Ollamie lub LM Studio — okno pokazuje instrukcję i instaluje je przez winget. Gdy jeden wyczerpie limit, odpowiada następny. Bez logowania `Ctrl+Alt+A` otwiera asystenta w przeglądarce. AI zna stan aplikacji (ścieżki, zaznaczenie, wtyczki) i potrafi napisać wtyczkę według przewodnika, a aplikacja ją instaluje (wyłączoną do Twojej zgody). Gemini, ChatGPT i Claude otwarte w panelu przeglądarki dostają ten sam kontekst z menu „🤖 AI”.
-- **Palety:** szybkie akcje, ulubione foldery, zapisane widoki i palety wtyczek, dokowane na dole, po bokach albo między panelami (`Ctrl+B` pokazuje i ukrywa).
-- **Skórki:** są w `config/skins`. Możesz też wygenerować je z pomocą AI.
-- **Aktualizacje:** pobierane z GitHub Releases.
-
-Projekt powstaje z dużym udziałem AI (Claude Code). Błędy zgłaszaj w zakładce Issues.

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -343,7 +344,230 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         return (preview, HostFor(plugin), entry);
     }
 
+    /// <summary>A catalog plugin started from its folder, previewing an existing file; the preview is the one with this id, else the first that accepts the entry.</summary>
+    private async Task<(ExternalPreviewPlugin Preview, IPluginHost Host, VfsEntry Entry)> CatalogPreviewOfAsync(string folder, string path, string? previewId = null)
+    {
+        var plugin = StartFrom(Path.Combine(RepositoryRoot(), "plugins-catalog", folder));
+        _started.Add(plugin);
+        var entry = new VfsEntry(Path.GetFileName(path), path, VfsEntryKind.File, new FileInfo(path).Length);
+        var previews = plugin.Manifest.Contributes!.Previews!.Select(p => new ExternalPreviewPlugin(plugin, p)).ToList();
+        var preview = previewId is null
+            ? previews.First(p => p.CanPreview(entry))
+            : previews.First(p => p.Id.EndsWith("/" + previewId, StringComparison.Ordinal));
+        return (preview, HostFor(plugin), entry);
+    }
+
     private readonly List<ExternalPlugin> _started = [];
+
+    [Fact]
+    public async Task Pe_preview_reads_native_exe_headers_and_imports()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe"); // MTP apphost
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", exe, "exe");
+        var md = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+        Assert.Contains(RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "ARM64" : "x64", md, StringComparison.Ordinal);
+        Assert.Contains("konsola", md, StringComparison.Ordinal);
+        Assert.Contains("KERNEL32.dll", md, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ASLR: ✅", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_lists_dll_exports_and_forwarders()
+    {
+        var kernel32 = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", kernel32, "dll");
+        var md = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+        Assert.Contains("## Eksporty", md, StringComparison.Ordinal);
+        Assert.Contains("CreateFileW", md, StringComparison.Ordinal);
+        Assert.Contains("→", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_of_non_pe_file()
+    {
+        var path = Path.Combine(_folder, "fake.exe");
+        var bytes = new byte[128];
+        bytes[0] = (byte)'M';
+        bytes[1] = (byte)'Z';
+        BitConverter.GetBytes(0x7FFFFFF0).CopyTo(bytes, 0x3C);
+        await File.WriteAllBytesAsync(path, bytes, TestToken);
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", path, "exe");
+        var md = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+        Assert.Contains("nie jest prawidłowym plikiem PE", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_survives_broken_import_table()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var bytes = await File.ReadAllBytesAsync(exe, TestToken);
+        var lfanew = BitConverter.ToInt32(bytes, 0x3C);
+        var plus = BitConverter.ToUInt16(bytes, lfanew + 24) == 0x20B;
+        BitConverter.GetBytes(0x7FFFFFF0).CopyTo(bytes, lfanew + 24 + (plus ? 112 : 96) + 8);
+        var path = Path.Combine(_folder, "broken.exe");
+        await File.WriteAllBytesAsync(path, bytes, TestToken);
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", path, "exe");
+        var md = Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+        Assert.Contains("## Nagłówek", md, StringComparison.Ordinal);
+        Assert.Contains("⚠", md, StringComparison.Ordinal);
+        Assert.Contains("tabela importów", md, StringComparison.Ordinal);
+    }
+
+    private async Task<string> RenderAsync(string folder, string path, string previewId)
+    {
+        var (preview, host, entry) = await CatalogPreviewOfAsync(folder, path, previewId);
+        return Assert.IsType<MarkdownPreview>(await preview.LoadAsync(entry, host, null, TestToken)).Markdown;
+    }
+
+    [Fact]
+    public async Task Pe_preview_shows_version_and_execution_level()
+    {
+        var regedit = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "regedit.exe");
+        var md = await RenderAsync("pe-info-python", regedit, "exe");
+        Assert.Contains("## Uprawnienia", md, StringComparison.Ordinal);
+        Assert.Contains("highestAvailable", md, StringComparison.Ordinal); // verified on this machine: regedit.exe asks for highestAvailable
+        Assert.Contains("Microsoft Corporation", md, StringComparison.Ordinal);
+        Assert.Contains("## Wersja", md, StringComparison.Ordinal);
+        Assert.True(md.IndexOf("## Uprawnienia", StringComparison.Ordinal) < md.IndexOf("## Nagłówek", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Pe_preview_respects_read_budget()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var path = Path.Combine(_folder, "big.exe");
+        await using (var output = File.Create(path))
+        {
+            await output.WriteAsync(await File.ReadAllBytesAsync(exe, TestToken), TestToken);
+            await output.WriteAsync(new byte[40 * 1024 * 1024], TestToken);
+        }
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var md = await RenderAsync("pe-info-python", path, "exe");
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(20), clock.Elapsed.ToString());
+        Assert.Contains("Dane doklejone", md, StringComparison.Ordinal);
+        Assert.Contains("40,0 MB", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_stops_endless_import_thunk_list()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var bytes = await File.ReadAllBytesAsync(exe, TestToken);
+        var lfanew = BitConverter.ToInt32(bytes, 0x3C);
+        var plus = BitConverter.ToUInt16(bytes, lfanew + 24) == 0x20B;
+        var optSize = BitConverter.ToUInt16(bytes, lfanew + 20);
+        var sectionCount = BitConverter.ToUInt16(bytes, lfanew + 6);
+        var table = lfanew + 24 + optSize;
+        var importDir = lfanew + 24 + (plus ? 112 : 96) + 8;
+        var importRva = BitConverter.ToUInt32(bytes, importDir);
+        uint ToOffset(uint rva)
+        {
+            for (var i = 0; i < sectionCount; i++)
+            {
+                var at = table + 40 * i;
+                var va = BitConverter.ToUInt32(bytes, at + 12);
+                var rawSize = BitConverter.ToUInt32(bytes, at + 16);
+                if (rva >= va && rva < va + rawSize) return rva - va + BitConverter.ToUInt32(bytes, at + 20);
+            }
+            throw new InvalidOperationException("RVA outside sections");
+        }
+        // thunk array in the first section's raw data: 0x41 bytes never form a 0 terminator
+        var firstVa = BitConverter.ToUInt32(bytes, table + 12);
+        var firstRaw = (int)BitConverter.ToUInt32(bytes, table + 20);
+        Array.Fill(bytes, (byte)0x41, firstRaw, 4096 * 8 + 256);
+        BitConverter.GetBytes(firstVa).CopyTo(bytes, (int)ToOffset(importRva)); // OriginalFirstThunk of descriptor 0
+        var path = Path.Combine(_folder, "loop.exe");
+        await File.WriteAllBytesAsync(path, bytes, TestToken);
+        var md = await RenderAsync("pe-info-python", path, "exe");
+        Assert.Contains("## Nagłówek", md, StringComparison.Ordinal);
+        Assert.Contains("⚠", md, StringComparison.Ordinal);
+        Assert.Contains("możliwa pętla", md, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("x86", @"C:\Windows", @"C:\Windows\SysWOW64")]
+    [InlineData("x64", @"C:\Windows", @"C:\Windows\System32")]
+    [InlineData("ARM64", @"C:\Windows", @"C:\Windows\System32")]
+    public async Task Dependency_folder_for_machine(string machine, string root, string expected)
+    {
+        var output = await RunPluginPythonAsync("pe-info-python", $"import deps; sys.stdout.write(deps.system_folder('{machine}', r'{root}'))");
+        Assert.Equal(expected, output);
+    }
+
+    /// <summary>Runs a snippet with the detected Python in isolated mode, with a catalog plugin's folder on sys.path; returns stdout.</summary>
+    private async Task<string> RunPluginPythonAsync(string folder, string code)
+    {
+        var python = _runtimes.FirstOrDefault(r => r.Type == "python" && r.Executable is not null);
+        Assert.SkipWhen(python is null, "Python is not installed");
+        var pluginFolder = Path.Combine(RepositoryRoot(), "plugins-catalog", folder);
+        var start = new System.Diagnostics.ProcessStartInfo(python!.Executable!) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var argument in new[] { "-I", "-c", $"import sys; sys.path.insert(0, r'{pluginFolder}'); {code}" })
+        {
+            start.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var error = process.StandardError.ReadToEndAsync(TestToken);
+        var output = await process.StandardOutput.ReadToEndAsync(TestToken);
+        await process.WaitForExitAsync(TestToken);
+        Assert.True(process.ExitCode == 0, await error);
+        return output;
+    }
+
+    [Fact]
+    public async Task Pe_preview_resolves_dependencies()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var md = await RenderAsync("pe-info-python", exe, "exe");
+        Assert.Contains("## Zależności", md, StringComparison.Ordinal);
+        var lines = md.Split('\n');
+        var kernel = lines.Single(l => l.Contains("KERNEL32.dll", StringComparison.OrdinalIgnoreCase) && l.TrimStart().StartsWith("- ", StringComparison.Ordinal) && l.Contains('—', StringComparison.Ordinal) && !l.Contains("**", StringComparison.Ordinal));
+        Assert.True(kernel.Contains("KnownDLLs", StringComparison.Ordinal) || kernel.Contains("System32", StringComparison.Ordinal), kernel);
+        var apiSets = lines.Where(l => l.Contains("api-ms-win-", StringComparison.Ordinal) && !l.Contains("**", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(apiSets);
+        Assert.All(apiSets, l => Assert.Contains("zestaw API", l, StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, l => l.Contains('❌', StringComparison.Ordinal) && l.Contains("nie znaleziono", StringComparison.Ordinal));
+        Assert.True(md.IndexOf("## Uprawnienia", StringComparison.Ordinal) < md.IndexOf("## Zależności", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Pe_preview_marks_missing_local_dependency()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var bytes = await File.ReadAllBytesAsync(exe, TestToken);
+        var name = Encoding.ASCII.GetBytes("KERNEL32.dll\0");
+        var at = bytes.AsSpan().IndexOf(name);
+        Assert.True(at > 0, "the apphost imports KERNEL32.dll");
+        Encoding.ASCII.GetBytes("KERNEQ32.dll").CopyTo(bytes, at);
+        var path = Path.Combine(_folder, "app.exe");
+        await File.WriteAllBytesAsync(path, bytes, TestToken);
+        var md = await RenderAsync("pe-info-python", path, "exe");
+        Assert.Contains("❌ KERNEQ32.dll — nie znaleziono", md, StringComparison.Ordinal);
+        var notes = md[md.IndexOf("## Uwagi", StringComparison.Ordinal)..];
+        Assert.Contains("KERNEQ32.dll", notes, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_preview_of_dll_shows_permissions_and_dependencies_after_exports()
+    {
+        var kernel32 = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var md = await RenderAsync("pe-info-python", kernel32, "dll");
+        var exports = md.IndexOf("## Eksporty", StringComparison.Ordinal);
+        var permissions = md.IndexOf("## Uprawnienia", StringComparison.Ordinal);
+        var dependencies = md.IndexOf("## Zależności", StringComparison.Ordinal);
+        Assert.True(exports >= 0 && exports < permissions && permissions < dependencies, $"{exports} {permissions} {dependencies}");
+    }
+
+    [Fact]
+    public async Task Pe_manifest_text_is_trimmed_and_failures_are_named()
+    {
+        var output = await RunPluginPythonAsync("pe-info-python",
+            "import resources; m = resources.parse_manifest('<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\"><trustInfo><security><requestedPrivileges>"
+            + "<requestedExecutionLevel level=\"asInvoker\"/></requestedPrivileges></security></trustInfo></assembly>\\0\\0 \\r\\n'); "
+            + "broken = resources.parse_manifest('<assembly>'); "
+            + "sys.stdout.write(str(m.execution_level) + '|' + str(m.error) + '|' + str(broken.error is not None))");
+        Assert.Equal("asInvoker|None|True", output);
+    }
 
     [Fact]
     public async Task Python_preview_returns_a_card()
@@ -503,6 +727,136 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Web_preview_round_trip()
+    {
+        var folder = Path.Combine(_folder, "web-tour");
+        Directory.CreateDirectory(Path.Combine(folder, "web"));
+        File.WriteAllText(Path.Combine(folder, "web", "index.html"), "<html></html>");
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", "python", "c4k.py"), Path.Combine(folder, "c4k.py"));
+        File.WriteAllText(Path.Combine(folder, ManifestReader.FileName), """
+            { "id": "tests.web-tour", "name": "Web tour", "version": "1.0.0", "author": "t", "description": "d",
+              "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+              "permissions": [],
+              "contributes": { "previews": [ { "id": "view", "title": "View", "extensions": [".webtest"], "webRoot": "web" } ] } }
+            """);
+        File.WriteAllText(Path.Combine(folder, "main.py"), """
+            import c4k
+
+            @c4k.handler("preview.render")
+            def render(params):
+                return {"kind": "web", "page": "index.html", "state": {"n": 1}}
+
+            c4k.serve()
+            """);
+        await using var plugin = StartFrom(folder);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var entry = new VfsEntry("a.webtest", Path.Combine(_folder, "a.webtest"), VfsEntryKind.File, 0);
+
+        var web = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, HostFor(plugin), null, TestToken));
+
+        Assert.Equal("tests.web-tour", web.PluginId);
+        Assert.Equal("index.html", web.Page);
+        Assert.Equal("{\"n\":1}", web.StateJson);
+        Assert.Equal(Path.Combine(folder, "web"), web.RootFolder);
+    }
+
+    [Fact]
+    public async Task Pdf_viewer_returns_a_web_preview()
+    {
+        await using var plugin = Start("pdf-viewer-node");
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var path = Path.Combine(_folder, "one.pdf");
+        var pdf = MinimalPdf();
+        await File.WriteAllBytesAsync(path, pdf, TestToken);
+        var entry = new VfsEntry("one.pdf", path, VfsEntryKind.File, pdf.Length);
+        var host = HostFor(plugin);
+
+        Assert.True(preview.CanPreview(entry));
+        Assert.False(preview.CanPreview(entry with { Name = "one.txt" }));
+        var web = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, host, null, TestToken));
+
+        Assert.Equal("examples.pdf-viewer", web.PluginId);
+        Assert.Equal("index.html", web.Page);
+        Assert.EndsWith("web", web.RootFolder, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(web.RootFolder, "index.html")));
+        Assert.Equal("{\"zoom\":\"page-width\"}", web.StateJson);
+
+        using var zoom = JsonDocument.Parse("{\"zoom\": 1.5}");
+        await preview.MessageAsync(entry, "saveZoom", zoom.RootElement, host, TestToken);
+        var again = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, host, null, TestToken));
+        Assert.Equal("{\"zoom\":1.5}", again.StateJson);
+    }
+
+    /// <summary>A valid one-page PDF with a correct cross-reference table.</summary>
+    private static byte[] MinimalPdf()
+    {
+        const string content = "BT /F1 24 Tf 20 100 Td (Hello PDF) Tj ET";
+        string[] objects =
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            $"<< /Length {content.Length} >>\nstream\n{content}\nendstream",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ];
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        var text = new StringBuilder("%PDF-1.4\n");
+        var offsets = new List<int>();
+        for (var i = 0; i < objects.Length; i++)
+        {
+            offsets.Add(text.Length);
+            text.Append(invariant, $"{i + 1} 0 obj\n{objects[i]}\nendobj\n");
+        }
+        var xref = text.Length;
+        text.Append(invariant, $"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
+        foreach (var offset in offsets)
+            text.Append(invariant, $"{offset:D10} 00000 n \n");
+        text.Append(invariant, $"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return Encoding.ASCII.GetBytes(text.ToString());
+    }
+
+    [Fact]
+    public async Task Preview_message_round_trip()
+    {
+        var folder = Path.Combine(_folder, "web-msg");
+        Directory.CreateDirectory(Path.Combine(folder, "web"));
+        File.WriteAllText(Path.Combine(folder, "web", "index.html"), "<html></html>");
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", "python", "c4k.py"), Path.Combine(folder, "c4k.py"));
+        File.WriteAllText(Path.Combine(folder, ManifestReader.FileName), """
+            { "id": "tests.web-msg", "name": "Web msg", "version": "1.0.0", "author": "t", "description": "d",
+              "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+              "permissions": [],
+              "contributes": { "previews": [ { "id": "view", "title": "View", "extensions": [".webtest"], "webRoot": "web" } ] } }
+            """);
+        File.WriteAllText(Path.Combine(folder, "main.py"), """
+            import c4k
+
+            @c4k.handler("preview.render")
+            def render(params):
+                return c4k.web_preview("index.html", {"n": 1})
+
+            @c4k.handler("preview.message")
+            def message(params):
+                return {"method": params["method"], "n": params["params"]["n"] + 1, "entry": params["entry"]["name"], "preview": params["preview"]}
+
+            c4k.serve()
+            """);
+        await using var plugin = StartFrom(folder);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        var entry = new VfsEntry("a.webtest", Path.Combine(_folder, "a.webtest"), VfsEntryKind.File, 0);
+
+        var web = Assert.IsType<WebPreview>(await preview.LoadAsync(entry, HostFor(plugin), null, TestToken));
+        using var parameters = JsonDocument.Parse("{\"n\": 41}");
+        var answer = await preview.MessageAsync(entry, "bump", parameters.RootElement, HostFor(plugin), TestToken);
+
+        Assert.Equal("{\"n\":1}", web.StateJson);
+        Assert.Equal("bump", answer.GetProperty("method").GetString());
+        Assert.Equal(42, answer.GetProperty("n").GetInt32());
+        Assert.Equal("a.webtest", answer.GetProperty("entry").GetString());
+        Assert.Equal("view", answer.GetProperty("preview").GetString());
+    }
+
+    [Fact]
     public async Task New_api_calls_are_gated_by_permissions()
     {
         var host = HostFor(new PluginManifest("acme.none", "None", "1.0.0", "a", "d", []));
@@ -647,6 +1001,100 @@ public sealed class ExternalPluginTests : IAsyncLifetime
 
         public Task<string> SendAsync(string pluginId, MailAccount account, Stream message, CancellationToken ct) =>
             throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task Upload_client_receives_and_provides()
+    {
+        // The app keeps one host per plugin: the session and the plugin's own requests share it, so read grants apply.
+        var discovered = ManifestReader.Read(Path.Combine(Examples, "upload-client-python"));
+        Assert.True(discovered.IsValid, string.Join("; ", discovered.Errors));
+        var missing = RuntimeCatalog.CheckRequirement(discovered.Manifest!.Runtime, _runtimes);
+        Assert.SkipWhen(missing is not null, missing ?? string.Empty);
+        var host = HostFor(discovered.Manifest);
+        await using var plugin = new ExternalPlugin(discovered, _runtimes.First(r => r.Type == discovered.Manifest.Runtime.Type), host, _audit, _storage);
+        using var server = new RecordingServer("{\"ok\":true}");
+        _storage.Set("examples.upload-client", "endpoints", new System.Text.Json.Nodes.JsonArray(server.Url));
+        var session = new ExternalPanelPlugin(plugin, plugin.Manifest.Contributes!.Panels!.Single(p => p.Id == "endpoints"))
+            .CreateSession(new PanelRequest(null, null), host);
+        var a = Path.Combine(_folder, "a.txt");
+        var b = Path.Combine(_folder, "b.txt");
+        File.WriteAllText(a, "alpha");
+        File.WriteAllText(b, "beta");
+        var items = new[] { a, b }.Select(f => new TransferItem(f, Path.GetFileName(f), TransferItemKind.File, new FileInfo(f).Length)).ToList();
+
+        var receivers = await session.GetReceiversAsync(items, TestToken);
+
+        var receiver = Assert.Single(receivers);
+        Assert.True(receiver.Multiple);
+        Assert.True(receiver.ReturnsMessage);
+
+        // A folder is refused per item and not counted: N/M and the progress count files only.
+        var withFolder = items.Append(new TransferItem(_folder, Path.GetFileName(_folder), TransferItemKind.Folder, 0)).ToList();
+        var progress = new SyncProgress();
+        var result = await session.ReceiveAsync(receiver.Id, withFolder, progress, TestToken);
+
+        Assert.Contains("2/2", result.Text, StringComparison.Ordinal);
+        Assert.Equal([1, 2], progress.Items.Select(p => p.Done));
+        Assert.All(progress.Items, p => Assert.Equal(2, p.Total));
+        Assert.Equal(9, progress.Items[^1].Bytes);
+        var refused = Assert.Single(result.Results!, r => !r.Ok);
+        Assert.Equal(_folder, refused.Path);
+        Assert.Equal(2, server.Posts.Count);
+        Assert.All(server.Posts, post => Assert.Contains("multipart/form-data", post.ContentType, StringComparison.Ordinal));
+        Assert.Contains(server.Posts, post => post.Body.Contains("alpha", StringComparison.Ordinal));
+        Assert.Contains(server.Posts, post => post.Body.Contains("beta", StringComparison.Ordinal));
+
+        var providers = await session.GetProvidersAsync([server.Url], TestToken);
+        Assert.Contains(providers, p => p.Id == "save-response");
+
+        var provideProgress = new SyncProgress();
+        var provided = await session.ProvideAsync("save-response", [server.Url, server.Url + "api/data", server.Url + "missing"], provideProgress, TestToken);
+
+        Assert.Equal(3, provided.Files.Count);
+        Assert.Equal(3, provided.Files.Select(f => f.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(provided.Files, f => Assert.EndsWith(".json", f.Name, StringComparison.Ordinal));
+        Assert.Equal("{\"ok\":true}", provided.Files[0].Text);
+        Assert.Equal("{\"ok\":true}", provided.Files[1].Text);
+        Assert.Contains("api_data", provided.Files[1].Name, StringComparison.Ordinal);
+
+        // A failed GET is that file's error, never an error text saved as the file.
+        Assert.Null(provided.Files[2].Text);
+        Assert.Contains("404", provided.Files[2].Error, StringComparison.Ordinal);
+        Assert.Equal([1, 2, 3], provideProgress.Items.Select(p => p.Done));
+
+        // An address that is not http(s) is refused with an error, not silently dropped.
+        _ui.PromptAnswer = "ftp://example.com/";
+        await session.ExecuteActionAsync("add", [], TestToken);
+        Assert.True(_ui.LastNotificationWasError);
+        Assert.Contains("ftp://example.com/", _ui.LastNotification, StringComparison.Ordinal);
+        Assert.Equal([server.Url], ((System.Text.Json.Nodes.JsonArray)_storage.Get("examples.upload-client", "endpoints")!).Select(n => n!.GetValue<string>()));
+    }
+
+    /// <summary>Records progress on the reporting thread (Progress&lt;T&gt; would post it later).</summary>
+    private sealed class SyncProgress : IProgress<TransferProgress>
+    {
+        private readonly Lock _gate = new();
+        private readonly List<TransferProgress> _items = [];
+
+        public IReadOnlyList<TransferProgress> Items
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return [.. _items];
+                }
+            }
+        }
+
+        public void Report(TransferProgress value)
+        {
+            lock (_gate)
+            {
+                _items.Add(value);
+            }
+        }
     }
 
     [Fact]
@@ -856,10 +1304,13 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("site-check-node", "node", "c4k.js")]
     [InlineData("git-powershell", "powershell", "c4k.ps1")]
     [InlineData("project-modules-python", "python", "c4k.py")]
+    [InlineData("upload-client-python", "python", "c4k.py")]
+    [InlineData("pdf-viewer-node", "node", "c4k.js")]
     [InlineData("../../plugins-catalog/steam-library-powershell", "powershell", "c4k.ps1")]
     [InlineData("../../plugins-catalog/json-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/openapi-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/html-preview-python", "python", "c4k.py")]
+    [InlineData("../../plugins-catalog/pe-info-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/git-repo-powershell", "powershell", "c4k.ps1")]
     [InlineData("../../plugins-catalog/mail-powershell", "powershell", "c4k.ps1")]
     public void Example_sdk_clients_match_plugins_sdk(string example, string language, string file) =>
@@ -1017,13 +1468,12 @@ public sealed class ExternalPluginTests : IAsyncLifetime
 
         public Task NavigateAsync(string path, string? focusName) => Task.CompletedTask;
 
+        public bool LastNotificationWasError { get; private set; }
+
         public string? LastNotificationTarget { get; set; }
 
-        public void Notify(string message, bool isError, string? target)
-        {
-            LastNotification = message;
-            LastNotificationTarget = target;
-        }
+        public void Notify(string message, bool isError, string? target) =>
+            (LastNotification, LastNotificationWasError, LastNotificationTarget) = (message, isError, target);
 
         public Task ShowTextAsync(string title, string text)
         {
@@ -1060,6 +1510,68 @@ public sealed class ExternalPluginTests : IAsyncLifetime
             LastCopied = text;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class RecordingServer : IDisposable
+    {
+        private readonly HttpListener _listener = new();
+        private readonly List<(string ContentType, string Body)> _posts = [];
+
+        public RecordingServer(string response)
+        {
+            using var socket = new TcpListener(IPAddress.Loopback, 0);
+            socket.Start();
+            Url = $"http://127.0.0.1:{((IPEndPoint)socket.LocalEndpoint).Port}/";
+            socket.Stop();
+            _listener.Prefixes.Add(Url);
+            _listener.Start();
+            _ = Task.Run(async () =>
+            {
+                while (_listener.IsListening)
+                {
+                    try
+                    {
+                        var context = await _listener.GetContextAsync();
+                        if (context.Request.HttpMethod == "POST")
+                        {
+                            using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
+                            var body = await reader.ReadToEndAsync();
+                            lock (_posts)
+                            {
+                                _posts.Add((context.Request.ContentType ?? string.Empty, body));
+                            }
+                        }
+
+                        // Paths containing "missing" answer 404, so error handling can be tested.
+                        var missing = context.Request.Url?.AbsolutePath.Contains("missing", StringComparison.Ordinal) == true;
+                        var bytes = Encoding.UTF8.GetBytes(missing ? "not here" : response);
+                        context.Response.StatusCode = missing ? 404 : 200;
+                        context.Response.ContentType = "application/json";
+                        await context.Response.OutputStream.WriteAsync(bytes);
+                        context.Response.Close();
+                    }
+                    catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException)
+                    {
+                        return;
+                    }
+                }
+            });
+        }
+
+        public string Url { get; }
+
+        public IReadOnlyList<(string ContentType, string Body)> Posts
+        {
+            get
+            {
+                lock (_posts)
+                {
+                    return [.. _posts];
+                }
+            }
+        }
+
+        public void Dispose() => _listener.Close();
     }
 
     private sealed class LocalHttpServer : IDisposable

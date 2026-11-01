@@ -17,12 +17,15 @@ public sealed partial class WebView2Host : NativeControlHost
     private static readonly Dictionary<string, Task<CoreWebView2Environment>> Environments = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly string _profileFolder;
+    private readonly string? _browserArguments;
     private CoreWebView2Controller? _controller;
     private bool _destroyed;
 
-    public WebView2Host(string profileFolder)
+    /// <param name="browserArguments">Chromium switches for the profile's environment (only the first environment of a folder uses them).</param>
+    public WebView2Host(string profileFolder, string? browserArguments = null)
     {
         _profileFolder = profileFolder;
+        _browserArguments = browserArguments;
     }
 
     /// <summary>Raised on the UI thread once the browser can navigate.</summary>
@@ -73,14 +76,16 @@ public sealed partial class WebView2Host : NativeControlHost
     public void FocusPage() => _controller?.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
 
     /// <summary>The shared environment for a profile folder (the browser and the Mermaid renderer use the same one).</summary>
-    public static Task<CoreWebView2Environment> GetEnvironmentAsync(string profileFolder)
+    /// <param name="browserArguments">Chromium switches, used when this call creates the folder's environment.</param>
+    public static Task<CoreWebView2Environment> GetEnvironmentAsync(string profileFolder, string? browserArguments = null)
     {
         lock (Environments)
         {
             if (!Environments.TryGetValue(profileFolder, out var environment) || environment.IsFaulted)
             {
                 Directory.CreateDirectory(profileFolder);
-                environment = CoreWebView2Environment.CreateAsync(null, profileFolder);
+                environment = CoreWebView2Environment.CreateAsync(null, profileFolder,
+                    browserArguments is null ? null : new CoreWebView2EnvironmentOptions(browserArguments));
                 Environments[profileFolder] = environment;
             }
 
@@ -92,7 +97,7 @@ public sealed partial class WebView2Host : NativeControlHost
     {
         try
         {
-            var controller = await (await GetEnvironmentAsync(_profileFolder)).CreateCoreWebView2ControllerAsync(hwnd);
+            var controller = await (await GetEnvironmentAsync(_profileFolder, _browserArguments)).CreateCoreWebView2ControllerAsync(hwnd);
             if (_destroyed)
             {
                 controller.Close(); // The panel closed while the browser was starting.

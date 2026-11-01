@@ -38,16 +38,9 @@ public static class CommandIds
     public const string AskAi = "cm_AskAi";
     public const string AiProviders = "cm_AiProviders";
     public const string AiWritePlugin = "cm_AiWritePlugin";
+    /// <summary>Connects Claude Code (or another MCP client): the MCP server, its token and the allowed folders.</summary>
+    public const string McpConnect = "cm_McpConnect";
     public const string OpenInVsCode = "cm_OpenInVsCode";
-
-    /// <summary>Shows or hides all docked palettes (Ctrl+B).</summary>
-    public const string TogglePalettes = "cm_TogglePalettes";
-
-    /// <summary>Settings filtered to palette positions.</summary>
-    public const string Palettes = "cm_Palettes";
-
-    /// <summary>Adds the active folder to the favourites palette (Ctrl+D).</summary>
-    public const string AddFavorite = "cm_AddFavorite";
     public const string CheckForUpdates = "cm_CheckForUpdates";
     public const string About = "cm_About";
     public const string AddConnection = "cm_AddConnection";
@@ -89,5 +82,7 @@ public static class CommandIds
     public const string SelectSkin = "cm_SelectSkin";
     /// <summary>Switches straight to the next skin, for quick previewing.</summary>
     public const string NextSkin = "cm_NextSkin";
+    /// <summary>Skin JSON editor: paste, validate, open an existing skin or start a new one from it.</summary>
+    public const string EditSkin = "cm_EditSkin";
     public const string Exit = "cm_Exit";
 }

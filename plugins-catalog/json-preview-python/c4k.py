@@ -88,6 +88,7 @@ def action_target(action, **args):                                              
         return "".join(c if c.isascii() and (c.isalnum() or c in "-._~") else "".join(f"%{b:02X}" for b in c.encode("utf-8")) for c in str(text))
     query = "&".join(f"{esc(k)}={esc(v)}" for k, v in args.items())
     return "c4k:plugin/" + esc(action) + ("?" + query if query else "")
+def web_preview(page, state=None):   return {"kind": "web", "page": page, "state": state}     # result of preview.render: an HTML page from the preview's webRoot
 def storage_get(key, default=None):                                                          # the plugin's own settings/data (no permission)
     value = call("storage.get", key=key)
     return default if value is None else value
@@ -109,8 +110,13 @@ def run(file, args=(), cwd=None, elevated=False):                               
     return call("shell.run", file=file, args=list(args), cwd=cwd, elevated=elevated)
 def system_info():                   return call("system.info")                              # system.info -> {os, machine, user, processors, memoryBytes, drives}
 def http_get(url):                   return call("net.get", url=url)                         # net -> body text (error on non-2xx)
-def http_request(url, method="GET", headers=None, body=None, content_type=None):             # net -> {status, headers, body}
-    return call("net.request", url=url, method=method, headers=headers or {}, body=body, contentType=content_type)
+def http_request(url, method="GET", headers=None, body=None, content_type=None, body_file=None, multipart=None):  # net -> {status, headers, body}
+    # body_file=path streams a file as the body; multipart={"field": "file", "path": path, "fileName": None} sends it as
+    # a form part. The app reads the file (fs.read, or the files granted to panel.receive) — it never passes through here.
+    return call("net.request", url=url, method=method, headers=headers or {}, body=body, contentType=content_type,
+                bodyFile=body_file, multipart=multipart)
+def report_progress(job_id, done, total, bytes=0, text=None):                                # progress of panel.receive/provide (params["jobId"])
+    _send({"jsonrpc": "2.0", "method": "job.progress", "params": {"jobId": job_id, "done": done, "total": total, "bytes": bytes, "text": text}})
 
 
 # ---- mail (permission "mail"; fetch/compose/attachments also need fs.write, parse/send/append fs.read) ----

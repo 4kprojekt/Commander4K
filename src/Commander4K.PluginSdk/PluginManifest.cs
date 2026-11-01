@@ -57,18 +57,23 @@ public sealed record CommandContribution(string Id, string Title, string Categor
 
 public sealed record PanelActionContribution(string Id, string Title, string? Shortcut = null, bool Confirm = false, bool AppliesToRows = true);
 
+/// <param name="Accepts">The panel can receive files sent from a file panel (F5); see <c>IPanelSession.GetReceiversAsync</c>.</param>
+/// <param name="Provides">The panel can provide files for a file panel (F5 from the plugin panel).</param>
 public sealed record PanelContribution(
     string Id,
     string Title,
     string? Description = null,
     bool RequiresArgument = false,
     int? RefreshSeconds = null,
-    IReadOnlyList<PanelActionContribution>? Actions = null);
+    IReadOnlyList<PanelActionContribution>? Actions = null,
+    bool Accepts = false,
+    bool Provides = false);
 
 /// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
+/// <param name="WebRoot">Folder inside the plugin (relative) with the HTML/JS shown for <c>kind: "web"</c> results.</param>
 /// <param name="Card">The plugin answers <c>preview.card</c>, so dashboards can show this preview as a live card.</param>
 /// <param name="Enter">Enter on a matching file opens the pinned preview; Shift+Enter keeps the shell open.</param>
-public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, bool Card = false, bool Enter = false);
+public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, string? WebRoot = null, bool Card = false, bool Enter = false);
 
 /// <param name="Interval">How often the host calls the plugin in the background (<c>"1m"</c>, <c>"5m"</c>…); clamped to at least one minute.</param>
 public sealed record BackgroundContribution(string Interval);

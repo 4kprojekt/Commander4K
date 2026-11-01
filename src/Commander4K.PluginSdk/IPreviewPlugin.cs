@@ -119,6 +119,11 @@ public static class PreviewActionTargets
         return true;
     }
 }
+/// <summary>An HTML page from the plugin folder, shown in the browser engine.</summary>
+/// <param name="RootFolder">Absolute folder (<c>&lt;plugin folder&gt;/&lt;webRoot&gt;</c>) the page and its files are served from.</param>
+/// <param name="Page">Path of the page inside <paramref name="RootFolder"/>, with <c>/</c> separators.</param>
+/// <param name="StateJson">Raw JSON of the result's <c>state</c>, or null.</param>
+public sealed record WebPreview(string PluginId, string RootFolder, string Page, string? StateJson) : PreviewContent;
 
 /// <summary>
 /// Quick view (Ctrl+Q / F2 ▸ Podgląd) for the entry under the cursor. The host picks the highest-priority plugin whose

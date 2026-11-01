@@ -40,7 +40,6 @@ public static class SettingsCatalog
     // Category names are display texts (translated), so they cannot be constants.
     public static string Appearance => Loc.T("Wygląd");
     public static string Panels => Loc.T("Panele");
-    public static string Palettes => Loc.T("Palety");
     public static string Columns => Loc.T("Kolumny");
     public static string Network => Loc.T("Sieć");
     public static string Preview => Loc.T("Podgląd");
@@ -48,6 +47,7 @@ public static class SettingsCatalog
     public static string Browser => Loc.T("Przeglądarka");
     public static string Language => Loc.T("Język");
     public static string Ai => Loc.T("Sztuczna inteligencja");
+    public static string Mcp => Loc.T("MCP (AI z zewnątrz)");
 
     public static IReadOnlyList<SettingDescriptor> Create(Func<IReadOnlyList<SettingChoice>> skinChoices, Func<IReadOnlyList<SettingChoice>>? languageChoices = null) =>
     [
@@ -62,6 +62,10 @@ public static class SettingsCatalog
         new("skin", Appearance, Loc.T("Skórka"), Loc.T("Kolorystyka i styl całej aplikacji (Norton Commander, Midnight Commander, nowoczesna…)."),
             SettingKind.Choice, s => s.Skin, (s, v) => s.Skin = (string)v!, ["motyw", "kolory", "theme", Loc.T("wygląd")])
         { Choices = skinChoices },
+
+        new("splashScreen", Appearance, Loc.T("Animacja przy starcie"),
+            Loc.T("Przy uruchomieniu pokazuje animowany ekran startowy, dopóki aplikacja się nie wczyta (Esc lub kliknięcie go pomija). Tę samą animację można obejrzeć w „O programie”."),
+            SettingKind.Toggle, s => s.SplashScreen, (s, v) => s.SplashScreen = (bool)v!, ["splash", "start", "startup", "animacja", "animation", "ekran startowy", "intro"]),
 
         new("density", Appearance, Loc.T("Gęstość listy"), Loc.T("Kompaktowa: 12 px, wiersz 18 px · domyślna: wg skórki · wygodna: 14 px, wiersz 24 px."),
             SettingKind.Choice, s => s.Density, (s, v) => s.Density = (string)v!, ["density", "gestosc", "wiersz", "rozmiar", "czcionka", "kompaktowa", "wygodna"])
@@ -85,9 +89,6 @@ public static class SettingsCatalog
             Loc.T("Przeciągnij krawędź kolumny w nagłówku listy plików, aby zmienić jej szerokość; podwójne kliknięcie krawędzi przywraca domyślną. Tutaj zapisane szerokości (np. size=96, date=140); puste pole przywraca wszystkie domyślne."),
             SettingKind.Text, s => FormatColumnWidths(s.ColumnWidths), (s, v) => ParseColumnWidths(v as string, s.ColumnWidths),
             ["szerokosc", "width", "kolumna", "column", "rozmiar", "data", "naglowek", "header", "resize"]),
-
-        new("showPalettes", Palettes, Loc.T("Pokazuj palety"), Loc.T("Palety z szybkimi akcjami, ulubionymi folderami, zapisanymi widokami i palety wtyczek (Ctrl+B). Położenie każdej palety ustawisz poniżej."),
-            SettingKind.Toggle, s => s.ShowPalettes, (s, v) => s.ShowPalettes = (bool)v!, [Loc.T("paleta"), "pasek", "przyciski", "ulubione", "widoki", "toolbar"]),
 
         new("markdownEdit", Preview, Loc.T("Markdown: od razu edycja"), Loc.T("Podgląd (Ctrl+Q) otwiera pliki .md w edycji z podglądem na żywo obok, zamiast samego widoku sformatowanego (F4 przełącza)."),
             SettingKind.Toggle, s => s.MarkdownEditByDefault, (s, v) => s.MarkdownEditByDefault = (bool)v!, ["markdown", "md", "edytor", Loc.T("podgląd"), "quick view"]),
@@ -115,6 +116,22 @@ public static class SettingsCatalog
         new("aiCatalogUrl", Ai, Loc.T("Lista dostawców AI (adres)"), Loc.T("Plik ai-providers.json pobierany przy starcie z repozytorium projektu, więc nowe darmowe modele pojawiają się bez aktualizacji programu. Własne wpisy: config/ai/providers.json."),
             SettingKind.Text, s => s.AiCatalogUrl, (s, v) => s.AiCatalogUrl = NullIfEmpty(v) ?? AppSettings.DefaultAiCatalogUrl,
             ["ai", "dostawcy", "lista", "repozytorium", "modele", "providers"]),
+
+        new("mcp.enabled", Mcp, Loc.T("Serwer MCP dla Claude Code"), Loc.T("Udostępnia aplikację przez Model Context Protocol na lokalnym porcie (tylko 127.0.0.1, z tokenem), żeby Claude Code mógł przeglądać pliki, pisać wtyczki i sterować panelami. Dostęp ogranicza lista folderów poniżej, a każde narzędzie ma własny tryb: zezwalaj, pytaj albo zablokuj."),
+            SettingKind.Toggle, s => s.Mcp.Enabled, (s, v) => s.Mcp.Enabled = (bool)v!, McpKeywords),
+        new("mcp.port", Mcp, Loc.T("Port serwera MCP"), Loc.T("Port na 127.0.0.1 (1024–65535). Po zmianie podłącz Claude Code ponownie."),
+            SettingKind.Text, s => s.Mcp.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            (s, v) =>
+            {
+                if (v is string text && int.TryParse(text.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var port) && port is >= 1024 and <= 65535)
+                {
+                    s.Mcp.Port = port;
+                }
+            }, McpKeywords),
+        new("mcp.roots", Mcp, Loc.T("Foldery dostępne dla MCP"), Loc.T("Foldery (dowolna ścieżka: dysk, udział sieciowy, sftp://…), do których AI może zaglądać i w których może pisać; kilka oddziel średnikiem. Pusta lista: żaden."),
+            SettingKind.Text, s => string.Join(';', s.Mcp.AllowedRoots),
+            (s, v) => s.Mcp.AllowedRoots = [.. (v as string ?? string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal)],
+            McpKeywords),
 
         new("checkForUpdates", Updates, Loc.T("Sprawdzaj aktualizacje automatycznie"), Loc.T("Raz na dobę sprawdza wydania na GitHubie i informuje o nowej wersji."),
             SettingKind.Toggle, s => s.CheckForUpdates, (s, v) => s.CheckForUpdates = (bool)v!, ["update", "wersja", "nowa"]),
@@ -174,6 +191,8 @@ public static class SettingsCatalog
 
         return builder.ToString();
     }
+
+    private static readonly string[] McpKeywords = ["mcp", "claude", "claude code", "ai", "serwer", "port", "foldery", "dostęp"];
 
     private static string? NullIfEmpty(object? value) => value is string s && !string.IsNullOrWhiteSpace(s) ? s.Trim() : null;
 

@@ -25,11 +25,13 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
     public AppHost Host => host;
 
     /// <summary>Markdown snapshot of the app state. Safe from any thread (panel state is read on the UI thread).</summary>
-    public string Describe()
+    /// <param name="showListing">Which panel locations may show their contents (cursor, marks, listing sample); the
+    /// paths themselves are always shown. <c>null</c> = all of them (the in-app chat). MCP passes its allowed folders.</param>
+    public string Describe(Func<string, bool>? showListing = null)
     {
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            return Dispatcher.UIThread.Invoke(Describe);
+            return Dispatcher.UIThread.Invoke(() => Describe(showListing));
         }
 
         var (active, other, activeIsLeft) = panels();
@@ -38,8 +40,8 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
             .AppendLine($"- App: Commander4K {AppVersion.Display}, UI language {Core.Localization.Loc.Language}, skin {host.Settings.Skin}")
             .AppendLine($"- System: {RuntimeInformation.OSDescription} ({RuntimeInformation.OSArchitecture}), user {Environment.UserName}")
             .AppendLine();
-        Panel(text, "Active", activeIsLeft ? "left" : "right", active, isActive: true);
-        Panel(text, "Other", activeIsLeft ? "right" : "left", other, isActive: false);
+        Panel(text, "Active", activeIsLeft ? "left" : "right", active, isActive: true, showListing);
+        Panel(text, "Other", activeIsLeft ? "right" : "left", other, isActive: false, showListing);
 
         text.AppendLine("## Plugins")
             .AppendLine($"- Plugin folders: {string.Join(", ", host.PluginRoots)}")
@@ -67,6 +69,9 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
     /// </summary>
     public string PluginGuide() => Resource("docs/plugins.md");
 
+    /// <summary>The manifest JSON schema (docs/plugin.schema.json).</summary>
+    public string PluginSchema() => Resource("docs/plugin.schema.json");
+
     /// <summary>
     /// The example for the preferred installed runtime (Python, then Node, then PowerShell) as File:/code-block pairs;
     /// with <paramref name="preview"/> the dedicated quick-view example (Python) when Python is installed.
@@ -76,11 +81,36 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
         var runtime = new[] { "python", "node", "powershell" }
             .FirstOrDefault(type => host.Runtimes.Any(r => r.IsInstalled && string.Equals(r.Type, type, StringComparison.OrdinalIgnoreCase))) ?? "powershell";
         var key = preview && runtime == "python" ? "preview" : runtime;
-        if (!PluginManagerPanel.Templates.TryGetValue(key, out var template))
+        return PluginManagerPanel.Templates.TryGetValue(key, out var template) ? ExampleText(template, runtime) : null;
+    }
+
+    /// <summary>A bundled example by folder name (see <see cref="ExampleNames"/>), or <c>null</c> when there is none.</summary>
+    public static string? Example(string name)
+    {
+        var folder = ExampleNames().FirstOrDefault(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+        if (folder is null)
         {
             return null;
         }
 
+        var runtime = PluginManagerPanel.Templates.FirstOrDefault(t => t.Key != "preview" && string.Equals(t.Value, folder, StringComparison.OrdinalIgnoreCase)).Key
+            ?? (folder.EndsWith("-python", StringComparison.OrdinalIgnoreCase) ? "python" : "plugin");
+        return ExampleText(folder, runtime);
+    }
+
+    /// <summary>Folder names of the example plugins embedded in the app.</summary>
+    public static IReadOnlyList<string> ExampleNames() =>
+    [
+        .. typeof(AiAppContext).Assembly.GetManifestResourceNames()
+            .Select(n => n.Replace('\\', '/'))
+            .Where(n => n.StartsWith("examples/", StringComparison.OrdinalIgnoreCase) && n.IndexOf('/', "examples/".Length) > 0)
+            .Select(n => n["examples/".Length..n.IndexOf('/', "examples/".Length)])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase),
+    ];
+
+    private static string ExampleText(string template, string runtime)
+    {
         var prefix = $"examples/{template}/";
         var assembly = typeof(AiAppContext).Assembly;
         var text = new StringBuilder($"Example plugin \"{template}\" ({runtime}) in the required output format:\n\n");
@@ -146,10 +176,11 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
     }
 
     /// <summary>Validates an answer's files and returns the draft (folder = plugins/&lt;id&gt; in the data folder).</summary>
-    public PluginDraft PrepareInstall(IReadOnlyList<GeneratedFile> files) =>
-        PluginAuthoring.Prepare(files, Path.Combine(host.DataDirectory, "plugins"), SdkClient);
+    /// <param name="limits">File limits; <c>null</c> = <see cref="PluginLimits.Answer"/> (a folder on disk uses <see cref="PluginLimits.Folder"/>).</param>
+    public PluginDraft PrepareInstall(IReadOnlyList<GeneratedFile> files, PluginLimits? limits = null) =>
+        PluginAuthoring.Prepare(files, Path.Combine(host.DataDirectory, "plugins"), SdkClient, limits);
 
-    private static void Panel(StringBuilder text, string role, string side, FilePanelView panel, bool isActive)
+    private static void Panel(StringBuilder text, string role, string side, FilePanelView panel, bool isActive, Func<string, bool>? showListing)
     {
         var tab = panel.ActiveTab;
         text.AppendLine($"## {role} panel ({side}{(isActive ? ", has focus" : string.Empty)})")
@@ -158,6 +189,12 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
         if (panel.Tabs.Count > 1)
         {
             text.AppendLine($"- Tabs: {string.Join(" | ", panel.Tabs.Select(t => t.Path))}");
+        }
+
+        if (showListing is not null && !showListing(tab.Path))
+        {
+            text.AppendLine("- Contents hidden: this folder is outside the folders allowed for MCP.").AppendLine();
+            return;
         }
 
         if (tab.CurrentEntry is { } cursor)

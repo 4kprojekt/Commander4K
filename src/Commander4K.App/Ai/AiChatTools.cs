@@ -71,22 +71,30 @@ public sealed class AiChatTools(AiAppContext context, Func<string, Task<bool>> a
         var reader = context.Host.Router.OpenListing(path, timeout.Token);
         var text = new StringBuilder($"Listing of {path}:\n");
         var count = 0;
-        await foreach (var entry in reader.ReadAllAsync(timeout.Token))
+        try
         {
-            if (entry.Kind == VfsEntryKind.ParentLink)
+            await foreach (var entry in reader.ReadAllAsync(timeout.Token))
             {
-                continue;
-            }
+                if (entry.Kind == VfsEntryKind.ParentLink)
+                {
+                    continue;
+                }
 
-            if (++count > MaxListing)
-            {
-                text.AppendLine("… (more entries not shown)");
-                break;
-            }
+                if (++count > MaxListing)
+                {
+                    text.AppendLine("… (more entries not shown)");
+                    break;
+                }
 
-            text.AppendLine(entry.IsContainer
-                ? $"{entry.Name}/  [{entry.Kind}]"
-                : $"{entry.Name}  {(entry.Size >= 0 ? entry.Size + " B" : string.Empty)}  {entry.LastWriteTime.LocalDateTime:yyyy-MM-dd HH:mm}");
+                text.AppendLine(entry.IsContainer
+                    ? $"{entry.Name}/  [{entry.Kind}]"
+                    : $"{entry.Name}  {(entry.Size >= 0 ? entry.Size + " B" : string.Empty)}  {entry.LastWriteTime.LocalDateTime:yyyy-MM-dd HH:mm}");
+            }
+        }
+        finally
+        {
+            // Stops the router's producer (and the provider's enumerator) when we leave early at the cap.
+            await timeout.CancelAsync();
         }
 
         return count == 0 ? $"{path} is empty." : text.ToString();

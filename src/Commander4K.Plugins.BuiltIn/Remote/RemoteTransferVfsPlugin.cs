@@ -66,6 +66,19 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
             ?? (RemoteLogin.DefaultKeyFiles().Count > 0 ? new RemoteLogin(endpoint.UserName ?? Environment.UserName) : null);
     }
 
+    /// <summary>The user written in a remote path (<c>sftp://me@host/…</c>); <c>null</c> when it has none or is not one.</summary>
+    public static string? UserNameOf(string path)
+    {
+        try
+        {
+            return RemoteEndpoint.Parse(path).UserName;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The session key of a path (user, host and port), or the realm itself when it already is one.</summary>
     public static string RealmFor(string realmOrPath)
     {

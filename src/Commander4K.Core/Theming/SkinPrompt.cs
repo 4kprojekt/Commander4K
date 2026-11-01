@@ -37,26 +37,45 @@ public static class SkinPrompt
         """;
 
     /// <summary>Full prompt to paste into claude.ai or Claude Design.</summary>
-    public static string ForChat(string? description)
+    /// <param name="baseSkin">Skin to start from (the skin editor's JSON); <c>null</c> = a new design with an example.</param>
+    public static string ForChat(string? description, Skin? baseSkin = null)
     {
         var builder = new StringBuilder();
         builder.AppendLine(DesignBrief);
         builder.AppendLine();
-        builder.AppendLine("The skin JSON must validate against this JSON Schema:");
+        builder.AppendLine("The skin JSON must validate against this JSON Schema (draft 2020-12):");
         builder.AppendLine("```json");
         builder.AppendLine(SkinSchema.CreateJson());
         builder.AppendLine("```");
         builder.AppendLine();
-        builder.AppendLine("Example (the built-in Norton Commander skin):");
+        builder.AppendLine("""
+            Hard requirements (Commander4K refuses the file otherwise):
+            - One JSON object, no comments, no trailing commas; property names exactly as in the schema (camelCase).
+            - Every property the schema lists under "required" is present; colours match the "pattern" (#RRGGBB or #AARRGGBB).
+            - id is lower-case letters, digits and hyphens (max 64 characters) and is also the file name: <id>.json.
+            - Optional palette tokens (windowForeground, mutedForeground, surface2, hover/pressed backgrounds, focusRing,
+              activeHeader*, selectedBackground, warning/success, the *Background tints, codeBackground) may be omitted;
+              they are then derived from the required colours.
+            """);
+        if (baseSkin is null)
+        {
+            builder.AppendLine("Example (the built-in Norton Commander skin):");
+        }
+        else
+        {
+            builder.AppendLine("Start from this skin and keep what the request does not ask to change; give the result a new id and displayName:");
+        }
+
         builder.AppendLine("```json");
-        builder.AppendLine(JsonSerializer.Serialize(BuiltInSkins.NortonCommander, ConfigJsonContext.Default.Skin));
+        builder.AppendLine(JsonSerializer.Serialize(baseSkin ?? BuiltInSkins.NortonCommander, ConfigJsonContext.Default.Skin));
         builder.AppendLine("```");
         builder.AppendLine();
+        var task = baseSkin is null ? "Design a new skin" : "Design a skin based on the one above";
         builder.AppendLine(string.IsNullOrWhiteSpace(description)
-            ? "Design a new skin. Describe the idea in one sentence, then give the complete JSON in a single ```json code block."
-            : $"Design a skin matching this description: \"{description.Trim()}\". Give the complete JSON in a single ```json code block.");
+            ? task + ". Describe the idea in one sentence, then give the complete JSON in a single ```json code block."
+            : $"{task} matching this description: \"{description.Trim()}\". Give the complete JSON in a single ```json code block.");
         builder.AppendLine("If you can produce files (for example in Claude Design), also offer it as a downloadable <id>.json file.");
-        builder.AppendLine("The user will save it into Commander4K's config/skins folder.");
+        builder.AppendLine("The user will paste it into Commander4K's skin editor, which validates it, or save it into the config/skins folder.");
         return builder.ToString();
     }
 

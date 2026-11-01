@@ -164,7 +164,7 @@ public sealed class AppHost : IAsyncDisposable
         {
             if (!_hosts.TryGetValue(manifest.Id, out var host))
             {
-                host = new ScopedPluginHost(manifest, PluginUi, Router, Http, Audit,
+                host = new ScopedPluginHost(manifest, PluginUi, Router, PluginHttp, Audit,
                     () => SystemSnapshots.Processes(Plugins.BuiltIn.Interop.ProcessLookups.ParentIds, Plugins.BuiltIn.Interop.ProcessLookups.ImagePath),
                     Mail);
                 _hosts[manifest.Id] = host;
@@ -212,7 +212,6 @@ public sealed class AppHost : IAsyncDisposable
         PanelPlugins = [.. BuiltInPanels, .. external.SelectMany(e => (e.Manifest.Contributes?.Panels ?? []).Select(p => (IPanelPlugin)new ExternalPanelPlugin(e, p)))];
         CommandPlugins = [PowerShell, .. external.Where(e => e.Manifest.Contributes?.Commands is { Count: > 0 }).Select(e => (ICommandPlugin)new ExternalCommandPlugin(e))];
         PreviewPlugins = [.. BuiltInPreviews, .. external.SelectMany(e => (e.Manifest.Contributes?.Previews ?? []).Select(p => (IPreviewPlugin)new ExternalPreviewPlugin(e, p)))];
-        ExternalPalettes = [.. external.SelectMany(e => (e.Manifest.Contributes?.Palettes ?? []).Select(p => (IPalettePlugin)new ExternalPalettePlugin(e, p)))];
         Background.Restart(external);
         PluginsChanged?.Invoke();
     }
@@ -264,6 +263,12 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>Shared client for GitHub release checks and downloads.</summary>
     public HttpClient Http { get; } = new() { Timeout = TimeSpan.FromMinutes(10) };
 
+    /// <summary>
+    /// Plugins' <c>net.*</c> calls. No client timeout: <see cref="ScopedPluginHost"/> applies its own 10-minute limit to
+    /// every request except streamed file uploads, which may take longer and end with their job.
+    /// </summary>
+    public HttpClient PluginHttp { get; } = new() { Timeout = Timeout.InfiniteTimeSpan };
+
     public UpdateService Updates { get; }
 
     /// <summary>AI providers: the live list, signed-in keys (<c>config/ai</c>) and the rotating router that asks them.</summary>
@@ -308,11 +313,8 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>Static settings plus those registered at runtime (palette positions).</summary>
     public IReadOnlyList<SettingDescriptor> SettingsCatalog => [.. _baseSettings, .. ExtraSettings];
 
-    /// <summary>Settings contributed by the window (one "position" setting per palette).</summary>
+    /// <summary>Settings contributed by the window (one on/off switch per plugin column).</summary>
     public IReadOnlyList<SettingDescriptor> ExtraSettings { get; set; } = [];
-
-    /// <summary>Palettes contributed by external plugins (built-in palettes live in the window).</summary>
-    public IReadOnlyList<IPalettePlugin> ExternalPalettes { get; private set; } = [];
 
     public string DataDirectory { get; }
 
@@ -443,9 +445,17 @@ public sealed class AppHost : IAsyncDisposable
     public ISearchProviderPlugin? FindSearchProvider(string rootPath) =>
         SearchProviders.FirstOrDefault(p => p.CanSearch(rootPath));
 
+    /// <summary>The MCP server, set by the window; disposed first, so no tool call runs while the rest shuts down.</summary>
+    public IAsyncDisposable? Mcp { get; set; }
+
     public async ValueTask DisposeAsync()
     {
         _background?.Stop();
+        if (Mcp is not null)
+        {
+            await Mcp.DisposeAsync();
+        }
+
         foreach (var plugin in ExternalPlugins)
         {
             await plugin.DisposeAsync();
@@ -461,6 +471,7 @@ public sealed class AppHost : IAsyncDisposable
         await Mail.DisposeAsync();
         await Audit.DisposeAsync();
         Http.Dispose();
+        PluginHttp.Dispose();
         if (Index is not null)
         {
             await Index.DisposeAsync();
