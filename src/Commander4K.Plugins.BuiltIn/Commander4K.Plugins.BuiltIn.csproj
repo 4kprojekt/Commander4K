@@ -16,5 +16,7 @@
     <PackageReference Include="SSH.NET" />
     <PackageReference Include="SharpCompress" />
     <PackageReference Include="System.Management" />
+    <PackageReference Include="TextMateSharp" />
+    <PackageReference Include="TextMateSharp.Grammars" />
   </ItemGroup>
 </Project>

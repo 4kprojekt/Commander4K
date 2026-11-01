@@ -6,7 +6,8 @@ public abstract record PreviewContent;
 /// <summary>Markdown rendered with headings, lists, tables, code and quotes; editable side by side when <paramref name="CanEdit"/>.</summary>
 public sealed record MarkdownPreview(string Markdown, bool CanEdit) : PreviewContent;
 
-public sealed record TextPreview(string Text, bool CanEdit, bool Truncated = false) : PreviewContent;
+/// <param name="FileName">Name of the file shown, so the host can pick a syntax for colouring; <c>null</c> = plain text.</param>
+public sealed record TextPreview(string Text, bool CanEdit, bool Truncated = false, string? FileName = null) : PreviewContent;
 
 public sealed record ImagePreview(ReadOnlyMemory<byte> EncodedImage) : PreviewContent;
 

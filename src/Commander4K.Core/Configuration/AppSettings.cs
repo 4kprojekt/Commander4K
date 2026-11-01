@@ -89,6 +89,9 @@ public sealed class AppSettings
     /// <summary>Quick view opens Markdown files in side-by-side editing instead of the formatted view.</summary>
     public bool MarkdownEditByDefault { get; set; }
 
+    /// <summary>Quick view colours the syntax of text files (TextMate grammars, as in VS Code).</summary>
+    public bool SyntaxHighlighting { get; set; } = true;
+
     /// <summary>Honour <c>c4k.dir</c> files: a folder's own preview and what entering it does.</summary>
     public bool FolderConfigs { get; set; } = true;
 

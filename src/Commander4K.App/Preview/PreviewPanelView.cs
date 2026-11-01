@@ -15,6 +15,7 @@ using Commander4K.Core.Folders;
 using Commander4K.Core.Localization;
 using Commander4K.Core.Plugins;
 using Commander4K.PluginSdk;
+using Commander4K.Plugins.BuiltIn.Previews;
 using Commander4K.Plugins.BuiltIn.Viewers;
 
 namespace Commander4K.App.Preview;
@@ -1177,7 +1178,56 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             return CreateEditor(text.Text);
         }
 
-        return Monospace(text.Text, text.Truncated ? Loc.T("Pokazano początek pliku (2 MB).") : null);
+        var view = Monospace(text.Text, text.Truncated ? Loc.T("Pokazano początek pliku (2 MB).") : null);
+        if (_app.Settings.SyntaxHighlighting && text.FileName is not null && FindMonospaceText(view) is { } block)
+        {
+            _ = HighlightAsync(block, text);
+        }
+
+        return view;
+    }
+
+    private static SelectableTextBlock? FindMonospaceText(Control view) => (view as ScrollViewer)?.Content as SelectableTextBlock;
+
+    /// <summary>Tokenizes off the UI thread, then swaps the plain text for coloured runs if the preview is still the one on screen.</summary>
+    private async Task HighlightAsync(SelectableTextBlock block, TextPreview text)
+    {
+        var dark = _brushes.PanelBackground.Color is { } c && (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) < 128;
+        var cts = _loading;
+        try
+        {
+            var spans = await Task.Run(() =>
+            {
+                try
+                {
+                    return SyntaxHighlighter.Highlight(text.Text, text.FileName, dark, cts?.Token ?? CancellationToken.None);
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or InvalidOperationException or ArgumentException or IOException)
+                {
+                    return null; // Cancelled, or a grammar failed to load: stay plain.
+                }
+            }).ConfigureAwait(true);
+
+            if (spans is null || !ReferenceEquals(Inner(_shown), text) || TopLevel.GetTopLevel(block) is null)
+            {
+                return;
+            }
+
+            block.Text = null;
+            foreach (var span in spans)
+            {
+                var run = new Avalonia.Controls.Documents.Run(span.Text);
+                if (span.Rgb is { } rgb)
+                {
+                    run.Foreground = new SolidColorBrush(Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb));
+                }
+
+                block.Inlines!.Add(run);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 
     private TextBox CreateEditor(string text)
@@ -1223,17 +1273,15 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private Control Monospace(string text, string? note)
     {
-        var box = new TextBox
+        var box = new SelectableTextBlock
         {
             Text = text,
-            IsReadOnly = true,
-            AcceptsReturn = true,
             TextWrapping = TextWrapping.NoWrap,
             FontFamily = FontFamily.Parse("Cascadia Mono, Consolas, Courier New"),
             FontSize = _brushes.FontSize - 1,
             Background = _brushes.PanelBackground,
             Foreground = _brushes.FileForeground,
-            BorderThickness = new Thickness(0),
+            Padding = new Thickness(4, 2),
         };
         if (note is not null)
         {

@@ -16,6 +16,8 @@
     <PackageVersion Include="System.Management" Version="10.0.14" />
     <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.14" />
     <PackageVersion Include="Markdig" Version="1.5.1" />
+    <PackageVersion Include="TextMateSharp" Version="2.0.4" />
+    <PackageVersion Include="TextMateSharp.Grammars" Version="2.0.4" />
     <PackageVersion Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
     <PackageVersion Include="Avalonia.Headless" Version="12.1.4" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />

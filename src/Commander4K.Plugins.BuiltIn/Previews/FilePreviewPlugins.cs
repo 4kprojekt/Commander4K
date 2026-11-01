@@ -72,7 +72,7 @@ public sealed class TextPreviewPlugin : IPreviewPlugin
             return new HexPreview(data.AsMemory(0, Math.Min(length, 64 * 1024)), entry.Size > 0 ? entry.Size : length);
         }
 
-        return new TextPreview(PreviewReading.Decode(data, length), CanEdit: !truncated && entry.Kind == VfsEntryKind.File, truncated);
+        return new TextPreview(PreviewReading.Decode(data, length), CanEdit: !truncated && entry.Kind == VfsEntryKind.File, truncated, entry.Name);
     }
 }
 

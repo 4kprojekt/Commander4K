@@ -95,6 +95,8 @@ public static class SettingsCatalog
 
         new("markdownEdit", Preview, Loc.T("Markdown: od razu edycja"), Loc.T("Podgląd (Ctrl+Q) otwiera pliki .md w edycji z podglądem na żywo obok, zamiast samego widoku sformatowanego (F4 przełącza)."),
             SettingKind.Toggle, s => s.MarkdownEditByDefault, (s, v) => s.MarkdownEditByDefault = (bool)v!, ["markdown", "md", "edytor", Loc.T("podgląd"), "quick view"]),
+        new("syntaxHighlighting", Preview, Loc.T("Kolorowanie składni w podglądzie"), Loc.T("Podgląd (Ctrl+Q) koloruje pliki tekstowe gramatykami TextMate (jak VS Code): kod, JSON, YAML, konfiguracje i inne. Wtyczka podglądu przypisana do pliku ma pierwszeństwo. Pliki dłuższe niż kilka tysięcy linii pokazywane są dalej bez kolorów."),
+            SettingKind.Toggle, s => s.SyntaxHighlighting, (s, v) => s.SyntaxHighlighting = (bool)v!, ["kolory", "skladnia", "syntax", "highlight", "textmate", "kod", "code", "podswietlanie", Loc.T("podgląd")]),
         new("folderConfigs", Preview, Loc.T("Pliki c4k.dir w folderach"), Loc.T("Plik c4k.dir w folderze decyduje, co pokazuje jego podgląd i co się dzieje po wejściu: galeria, kafelki, notatki, wtyczka (np. gry Steam), połączenie SSH z kluczem albo skrypt (uruchamiany dopiero po Twojej zgodzie). Shift+Enter wchodzi zawsze do zwykłej listy plików."),
             SettingKind.Toggle, s => s.FolderConfigs, (s, v) => s.FolderConfigs = (bool)v!, ["c4k.dir", "folder", "widok", "galeria", "dashboard", "kafelki", "steam", "skrypt", "ssh"]),
         new("pluginBackground", Preview, Loc.T("Wtyczki mogą działać w tle"),

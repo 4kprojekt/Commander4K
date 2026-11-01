@@ -376,6 +376,8 @@
   "ścieżka": "path",
   "Folder startowy prawego panelu": "Right panel start folder",
   "Markdown: od razu edycja": "Markdown: edit right away",
+  "Kolorowanie składni w podglądzie": "Syntax highlighting in preview",
+  "Podgląd (Ctrl+Q) koloruje pliki tekstowe gramatykami TextMate (jak VS Code): kod, JSON, YAML, konfiguracje i inne. Wtyczka podglądu przypisana do pliku ma pierwszeństwo. Pliki dłuższe niż kilka tysięcy linii pokazywane są dalej bez kolorów.": "Quick view (Ctrl+Q) colours text files with TextMate grammars (as VS Code does): code, JSON, YAML, configuration and more. A preview plugin bound to the file takes precedence. Files longer than a few thousand lines stay uncoloured.",
   "Podgląd (Ctrl+Q) otwiera pliki .md w edycji z podglądem na żywo obok, zamiast samego widoku sformatowanego (F4 przełącza).": "Quick view (Ctrl+Q) opens .md files in the editor with a live preview next to it instead of the formatted view only (F4 switches).",
   "Wykrywaj hosty w sieci LAN": "Discover LAN hosts",
   "Przy otwarciu net:// skanuje lokalną podsieć (porty 445, 22, 21) i pokazuje znalezione maszyny.": "When net:// opens, scans the local subnet (ports 445, 22, 21) and lists the machines found.",
