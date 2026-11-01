@@ -309,9 +309,58 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
 }
 
 /// <summary>One <c>contributes.previews</c> entry: quick view rendered by the plugin (<c>preview.render</c>).</summary>
-public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewCardPlugin, IInteractivePreviewPlugin
+public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewCardPlugin, IInteractivePreviewPlugin, IFolderSuggestingPreview, Folders.IAskingFolderSuggester
 {
     private const int MaxCardImages = 4;
+
+    /// <summary>How long a <c>preview.suggest</c> answer may take, process start included.</summary>
+    public static readonly TimeSpan SuggestTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>The manifest rule decides alone; only with <c>ask</c> does a matching folder reach the plugin (<c>preview.suggest</c>).</summary>
+    public bool AsksPlugin => preview.Suggest?.Ask == true;
+
+    /// <remarks>
+    /// <c>preview.suggest</c> gets <c>{ preview, folder, entries, truncated, context }</c> and answers
+    /// <c>{ score, message, options? }</c> or <c>null</c>. Plugin errors and malformed answers mean "no suggestion".
+    /// </remarks>
+    public async Task<FolderSuggestion?> SuggestAsync(FolderSnapshot folder, IPluginHost host, CancellationToken cancellationToken)
+    {
+        if (preview.Suggest is not { } rule || Folders.FolderSuggestionRules.Match(rule, folder) is not { } count)
+        {
+            return null;
+        }
+
+        var view = new FolderSuggestionView(Plugin: plugin.Manifest.Id, Preview: preview.Id);
+        if (!rule.Ask)
+        {
+            return new FolderSuggestion(0.7, Folders.FolderSuggestionRules.MessageFor(rule, count, Loc.Language, preview.Title), view);
+        }
+
+        try
+        {
+            var result = await plugin.CallAsync("preview.suggest", new
+            {
+                preview = preview.Id,
+                folder = ExternalPlugin.EntryDto(folder.Folder),
+                entries = folder.Entries.Select(ExternalPlugin.EntryDto).ToArray(),
+                truncated = folder.Truncated,
+                context = ExternalPlugin.Context(host),
+            }, cancellationToken, SuggestTimeout).ConfigureAwait(false);
+            if (result.ValueKind != JsonValueKind.Object
+                || !result.TryGetProperty("score", out var score) || !score.TryGetDouble(out var value)
+                || CardString(result, "message") is not { Length: > 0 } message)
+            {
+                return null;
+            }
+
+            var options = result.TryGetProperty("options", out var o) && o.ValueKind == JsonValueKind.Object ? o.GetRawText() : null;
+            return new FolderSuggestion(Math.Clamp(value, 0, 1), message, view with { OptionsJson = options });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return null; // A failing plugin only loses its own suggestion.
+        }
+    }
 
     public string Id => $"{plugin.Manifest.Id}/{preview.Id}";
 
@@ -333,10 +382,7 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
     /// <c>.csv</c> = extension; anything else is a file name or a pattern with <c>*</c>/<c>?</c> (<c>package.json</c>,
     /// <c>requirements*.txt</c>, <c>*.openapi.json</c>), so a preview can claim specific files without a whole extension.
     /// </summary>
-    public static bool Matches(string pattern, string name) =>
-        pattern.StartsWith('.') && pattern.IndexOfAny(['*', '?']) < 0
-            ? string.Equals(Path.GetExtension(name), pattern, StringComparison.OrdinalIgnoreCase)
-            : pattern != "/" && System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(pattern, name, ignoreCase: true);
+    public static bool Matches(string pattern, string name) => Folders.FolderSuggestionRules.MatchesPattern(pattern, name);
 
     public Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken) =>
         LoadWithOptionsAsync(entry, host, null, pinned: false, cancellationToken);

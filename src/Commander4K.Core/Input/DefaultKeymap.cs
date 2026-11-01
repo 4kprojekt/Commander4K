@@ -37,6 +37,7 @@ public static class DefaultKeymap
         ["Tab"] = CommandIds.SwitchPanel,
         ["Enter"] = CommandIds.Open,
         ["Shift+Enter"] = CommandIds.EnterFolderPlain,
+        ["Ctrl+Enter"] = CommandIds.AcceptFolderSuggestion,
         ["Backspace"] = CommandIds.GoToParent,
         ["Ctrl+R"] = CommandIds.Refresh,
         ["Ctrl+T"] = CommandIds.NewTab,

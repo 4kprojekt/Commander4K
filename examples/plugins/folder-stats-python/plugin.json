@@ -21,7 +21,14 @@
       }
     ],
     "previews": [
-      { "id": "csv", "title": "Tabela CSV", "extensions": [".csv"], "priority": 60, "card": true }
+      { "id": "csv", "title": "Tabela CSV", "extensions": [".csv"], "priority": 60, "card": true },
+      {
+        "id": "tables",
+        "title": "Tabele CSV w folderze",
+        "extensions": ["/"],
+        "priority": -1,
+        "suggest": { "files": [".csv"], "minCount": 3, "minShare": 0.5, "ask": true }
+      }
     ]
   }
 }

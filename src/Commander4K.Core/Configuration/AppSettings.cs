@@ -143,6 +143,9 @@ public sealed class AppSettings
     /// <summary>Approved plugins with <c>contributes.background</c> are called on a timer, also while their panel is closed.</summary>
     public bool PluginBackground { get; set; } = true;
 
+    /// <summary>Hint "switch to the gallery?" when the cursor rests on a folder whose content suits a preview.</summary>
+    public bool FolderSuggestions { get; set; } = true;
+
     /// <summary>Animated splash screen while the app starts (also under "About").</summary>
     public bool SplashScreen { get; set; } = true;
 

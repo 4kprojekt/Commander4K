@@ -94,6 +94,7 @@ module.exports = {
   actionTarget: (action, args = {}) => 'c4k:plugin/' + encodeURIComponent(action) + // preview button target "c4k:plugin/<action>?k=v" -> comes back as preview.action
     (Object.keys(args).length ? '?' + Object.entries(args).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&') : ''),
   webPreview: (page, state = null) => ({ kind: 'web', page, state }),            // result of preview.render: an HTML page from the preview's webRoot
+  folderSuggestion: (score, message, options = null) => ({ score, message, options }), // result of preview.suggest (score 0..1)
   storageGet: async (key, fallback = null) => (await call('storage.get', { key })) ?? fallback, // the plugin's own settings/data (no permission)
   storageSet: (key, value) => call('storage.set', { key, value }),              // any JSON value; null removes the key
   listDir: path => call('fs.list', { path }),                                  // fs.read -> [entry]

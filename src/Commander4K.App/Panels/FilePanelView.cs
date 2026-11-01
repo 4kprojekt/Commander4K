@@ -74,9 +74,28 @@ public sealed class FilePanelView : ViewBase
     /// <summary>Mode shown over the file list (plugin panel, preview…), or <c>null</c> in file mode.</summary>
     public IPanelModeView? Mode { get; private set; }
 
+    /// <summary>The folder-view hint shown over the list, or <c>null</c>.</summary>
+    public FolderSuggestionCard? Suggestion { get; private set; }
+
+    /// <summary>Shows <paramref name="card"/> in the list's corner (replacing any other); <c>null</c> hides it.</summary>
+    public void ShowSuggestion(FolderSuggestionCard? card)
+    {
+        if (Suggestion is { } old)
+        {
+            _content.Children.Remove(old);
+        }
+
+        Suggestion = card;
+        if (card is not null)
+        {
+            _content.Children.Add(card);
+        }
+    }
+
     /// <summary>Replaces the file list with a mode until <see cref="CloseMode"/> (Esc / Backspace).</summary>
     public void ShowMode(IPanelModeView view)
     {
+        ShowSuggestion(null);
         CloseMode();
         Mode = view;
         view.IsActivePanel = _isActive;

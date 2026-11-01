@@ -915,6 +915,78 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Equal("https://example.com", Assert.Single(card.Actions).Target);
     }
 
+    private FolderSnapshot SnapshotWithCsv(int csvFiles)
+    {
+        for (var i = 0; i < csvFiles; i++)
+        {
+            File.WriteAllText(Path.Combine(_folder, $"t{i}.csv"), "a;b\n1;2\n");
+        }
+
+        var entries = Directory.GetFiles(_folder).Select(f => new VfsEntry(Path.GetFileName(f), f, VfsEntryKind.File, new FileInfo(f).Length)).ToList();
+        return new FolderSnapshot(new VfsEntry(Path.GetFileName(_folder), _folder, VfsEntryKind.Directory, 0), entries, false);
+    }
+
+    private static PreviewContribution Tables(ExternalPlugin plugin) => plugin.Manifest.Contributes!.Previews!.Single(p => p.Id == "tables");
+
+    [Fact]
+    public async Task Folder_suggest_rule_asks_the_plugin()
+    {
+        await using var plugin = Start("folder-stats-python");
+        var preview = new ExternalPreviewPlugin(plugin, Tables(plugin));
+
+        var suggestion = await preview.SuggestAsync(SnapshotWithCsv(3), HostFor(plugin), TestToken);
+
+        Assert.NotNull(suggestion);
+        Assert.Equal(0.8, suggestion.Score);
+        Assert.Contains("3", suggestion.Message, StringComparison.Ordinal);
+        Assert.Equal("examples.folder-stats", suggestion.View.Plugin);
+        Assert.Equal("tables", suggestion.View.Preview);
+    }
+
+    [Fact]
+    public async Task Folder_suggest_rule_mismatch_does_not_start_the_plugin()
+    {
+        await using var plugin = Start("folder-stats-python");
+        var preview = new ExternalPreviewPlugin(plugin, Tables(plugin));
+
+        Assert.Null(await preview.SuggestAsync(SnapshotWithCsv(1), HostFor(plugin), TestToken));
+        Assert.False(plugin.IsRunning);
+    }
+
+    [Fact]
+    public async Task Folder_suggest_without_ask_uses_manifest_message()
+    {
+        await using var plugin = Start("folder-stats-python");
+        var tables = Tables(plugin);
+        var preview = new ExternalPreviewPlugin(plugin, tables with { Suggest = tables.Suggest! with { Ask = false, Message = new Dictionary<string, string> { ["en"] = "{count} tables" } } });
+
+        var suggestion = await preview.SuggestAsync(SnapshotWithCsv(3), HostFor(plugin), TestToken);
+
+        Assert.NotNull(suggestion);
+        Assert.Equal(0.7, suggestion.Score);
+        Assert.Equal("3 tables", suggestion.Message);
+        Assert.False(plugin.IsRunning);
+    }
+
+    [Fact]
+    public void Manifest_reader_reads_suggest()
+    {
+        var tables = ManifestReader.Read(Path.Combine(Examples, "folder-stats-python")).Manifest!.Contributes!.Previews!.Single(p => p.Id == "tables");
+
+        Assert.Equal(3, tables.Suggest!.MinCount);
+        Assert.True(tables.Suggest.Ask);
+    }
+
+    [Fact]
+    public async Task Folder_suggest_plugin_error_is_no_suggestion()
+    {
+        await using var plugin = Start("folder-stats-python");
+        var csv = plugin.Manifest.Contributes!.Previews!.Single(p => p.Id == "csv");
+        var preview = new ExternalPreviewPlugin(plugin, csv with { Suggest = Tables(plugin).Suggest });
+
+        Assert.Null(await preview.SuggestAsync(SnapshotWithCsv(3), HostFor(plugin), TestToken));
+    }
+
     [Fact]
     public async Task Previews_without_card_flag_get_the_default_card()
     {

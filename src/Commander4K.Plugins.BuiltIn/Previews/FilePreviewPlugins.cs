@@ -104,8 +104,11 @@ public sealed class ImagePreviewPlugin : IPreviewPlugin
 /// Folder contents with sizes: files immediately, then every subfolder's recursive size computed in parallel through
 /// the host and pushed as it completes. Moving the cursor cancels the whole computation.
 /// </summary>
-public sealed class FolderPreviewPlugin : IPreviewCardPlugin
+public sealed class FolderPreviewPlugin : IPreviewCardPlugin, IFolderSuggestingPreview
 {
+    public Task<FolderSuggestion?> SuggestAsync(FolderSnapshot folder, IPluginHost host, CancellationToken cancellationToken) =>
+        Task.FromResult(FolderSuggestions.Gallery(folder) ?? FolderSuggestions.Notes(folder));
+
     private const int MaxItems = 5000;
     private const int Parallelism = 4;
 

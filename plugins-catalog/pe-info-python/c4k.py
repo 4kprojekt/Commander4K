@@ -90,6 +90,7 @@ def action_target(action, **args):                                              
     query = "&".join(f"{esc(k)}={esc(v)}" for k, v in args.items())
     return "c4k:plugin/" + esc(action) + ("?" + query if query else "")
 def web_preview(page, state=None):   return {"kind": "web", "page": page, "state": state}     # result of preview.render: an HTML page from the preview's webRoot
+def folder_suggestion(score, message, options=None): return {"score": score, "message": message, "options": options}  # result of preview.suggest (score 0..1)
 def storage_get(key, default=None):                                                          # the plugin's own settings/data (no permission)
     value = call("storage.get", key=key)
     return default if value is None else value
