@@ -25,22 +25,21 @@ public sealed class McpConfirmDialog : DialogWindow<McpConsent>
         var details = new SelectableTextBlock().Text(summary).TextWrapping(TextWrapping.Wrap)
             .FontFamily(brushes.MonospaceFamily);
         // "Nie" is the default button: an Enter meant for the panel must not approve anything.
-        var buttons = new List<(string, Action, bool)>
-        {
-            (Loc.T("Tak"), () => Complete(McpConsent.Yes), false),
-            (Loc.T("Nie"), () => Complete(McpConsent.No), true),
-        };
+        // The default button stays the rightmost one, as in every dialog.
+        var buttons = new List<(string, Action, bool)> { (Loc.T("Tak"), () => Complete(McpConsent.Yes), false) };
         if (!confirmation.AlwaysAsk)
         {
             buttons.Add((Loc.T("Tak do końca sesji"), () => Complete(McpConsent.YesForSession), false));
         }
 
+        buttons.Add((Loc.T("Nie"), () => Complete(McpConsent.No), true));
         var row = ButtonRow([.. buttons]);
+        NoButton = row.Children.OfType<Button>().Last();
         var body = new List<Control>
         {
             Label(Loc.T("Klient MCP: {0} (nazwę podaje sam klient)", confirmation.ClientName)),
             Label(Loc.T("Narzędzie: {0}", confirmation.Tool)),
-            new ScrollViewer().MaxHeight(260).Content(details),
+            Ds.Box(brushes, new ScrollViewer().MaxHeight(260).Content(details)),
         };
         if (confirmation.Details is { Length: > 0 } extra)
         {
@@ -48,15 +47,13 @@ public sealed class McpConfirmDialog : DialogWindow<McpConsent>
             Preview = new SelectableTextBlock().Text(extra.Length > MaxSummaryLength ? extra[..MaxSummaryLength] + "…" : extra)
                 .TextWrapping(TextWrapping.Wrap).FontFamily(brushes.MonospaceFamily);
             body.Add(Label(Loc.T("Treść:")).Margin(0, 8, 0, 4));
-            body.Add(new Border().BorderBrush(brushes.PanelBorder).BorderThickness(1).Padding(6)
-                .Child(new ScrollViewer().MaxHeight(260).Content(Preview)));
+            body.Add(Ds.Box(brushes, new ScrollViewer().MaxHeight(260).Content(Preview)));
         }
 
         body.Add(row);
         SetBody([.. body]);
 
         // Focus starts on "Nie": keys typed for the panel (Space, Enter, Tab) must not land on "Tak".
-        NoButton = row.Children.OfType<Button>().ElementAt(1);
         Opened += (sender, args) => NoButton.Focus();
     }
 

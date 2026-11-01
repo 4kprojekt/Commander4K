@@ -47,7 +47,7 @@ public sealed class ApiFieldsDialog : DialogWindow<ApiCardChoice?>
             Label(fields.Count == 0 ? Loc.T("Odpowiedź nie jest JSON-em — karta pokaże jej początek.") : Loc.T("Pola odpowiedzi (zaznacz te, które ma pokazać karta):")),
             search,
             new ScrollViewer { MaxHeight = 380, Content = _list },
-            ButtonRow((Loc.T("Dodaj kartę"), Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
+            ButtonRow((Loc.T("Anuluj"), () => Complete(null), false), (Loc.T("Dodaj kartę"), Accept, true)));
     }
 
     private void Filter(string? text)

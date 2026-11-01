@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
@@ -24,35 +24,29 @@ namespace Commander4K.App.Dialogs;
 /// One searchable page for everything configurable: settings, key bindings and the raw JSON files. Changes are
 /// saved immediately; JSON stays the source of truth, so hand edits keep working.
 /// </summary>
-public sealed class SettingsWindow : Window
+public sealed class SettingsWindow : ToolWindow
 {
     private static string KeysCategory => Loc.T("Skróty klawiszowe");
     private static string FilesCategory => Loc.T("Pliki konfiguracyjne");
 
     private readonly AppHost _host;
     private readonly Action<string> _onChanged;
-    private readonly Func<Task> _checkForUpdates;
     private readonly Action<string> _openInPanel;
-    private SkinBrushes _brushes;
+    private readonly Func<Task> _checkForUpdates;
     private TextBox _search = null!;
     private StackPanel _content = null!;
     private StackPanel _nav = null!;
-    private ScrollViewer _scroll = null!;
     private TextBlock _keyStatus = null!;
 
-    public SettingsWindow(AppHost host, SkinBrushes brushes, Action<string> onChanged, Func<Task> checkForUpdates, Action<string> openInPanel, string? query = null)
+    public SettingsWindow(AppHost host, SkinBrushes brushes, Action<string> onChanged,     Func<Task> checkForUpdates, Action<string> openInPanel, string? query = null)
+        : base(Loc.T("Ustawienia — Commander4K"), brushes, 1000, 700, 640)
     {
         _host = host;
-        _brushes = brushes;
         _onChanged = onChanged;
+            _openInPanel = openInPanel;
         _checkForUpdates = checkForUpdates;
-        _openInPanel = openInPanel;
-        Title = Loc.T("Ustawienia — Commander4K");
-        Height = 700;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Width = 1000;
-        MinWidth = 640;
-        BuildLayout(query);
+        _initialQuery = query;
+        Build();
 
         Opened += (_, _) =>
         {
@@ -61,24 +55,13 @@ public sealed class SettingsWindow : Window
         };
     }
 
-    /// <summary>Repaints the whole window in a new skin (switching skin or density here applies to this window too).</summary>
-    public void ApplySkin(SkinBrushes brushes)
-    {
-        if (ReferenceEquals(brushes, _brushes))
-        {
-            return;
-        }
+    private readonly string? _initialQuery;
+    private ScrollViewer _scroll = null!;
 
-        _brushes = brushes;
-        var offset = _scroll.Offset;
-        BuildLayout(_search.Text);
-        Dispatcher.UIThread.Post(() => _scroll.Offset = offset, DispatcherPriority.Loaded);
-    }
-
-    private void BuildLayout(string? query)
+    protected override Control BuildLayout()
     {
-        var brushes = _brushes;
-        WindowSkin.Apply(this, brushes, panelSurface: true);
+        var brushes = Brushes;
+        var query = _search?.Text ?? _initialQuery;
 
         _search = new TextBox().Text(query ?? string.Empty)
             .PlaceholderText(Loc.T("Szukaj ustawień, skrótów, plików… (np. „ukryte”, „F5”, „aktualizacje”)"));
@@ -87,10 +70,9 @@ public sealed class SettingsWindow : Window
         _content = new StackPanel().Spacing(22).Margin(24, 20, 24, 24);
         _nav = new StackPanel().Spacing(2);
         _keyStatus = new TextBlock().TextWrapping(TextWrapping.Wrap).Foreground(brushes.Error).IsVisible(false).Margin(24, 10, 24, 0);
-        _scroll = new ScrollViewer().Content(_content);
 
         // Design system: top bar (title + search), section list on the left, cards on the right, footer with actions.
-        var top = new Border().BorderBrush(brushes.PanelBorder).BorderThickness(new Thickness(0, 0, 0, 1)).Padding(20, 14).Child(
+        var top = new Border().BorderBrush(brushes.PanelBorder).BorderThickness(new Thickness(0, 0, 0, 1)).Padding(Ds.WindowHeaderPadding).Child(
             new Grid().Cols("Auto,*").Children(
                 new TextBlock().Text(Loc.T("Ustawienia")).FontSize(18).FontWeight(FontWeight.SemiBold).Foreground(brushes.FileForeground)
                     .VerticalAlignment(VerticalAlignment.Center).Margin(0, 0, 24, 0).MinWidth(160),
@@ -102,22 +84,19 @@ public sealed class SettingsWindow : Window
             .BorderThickness(new Thickness(0, 0, 1, 0)).Padding(10, 12).Child(new DockPanel().Children(
                 version,
                 new ScrollViewer().Content(_nav)));
-        var buttons = new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Children(
-            new Button().Content(Loc.T("Sprawdź aktualizacje")).Height(30).OnClick(async _ => await _checkForUpdates()),
-            new Button().Content(Loc.T("O programie")).Height(30).OnClick(async _ => await new AboutDialog(brushes).ShowAsync(this)),
-            WindowSkin.ApplyAccent(new Button().Content(Loc.T("Zamknij")).Height(30), brushes).OnClick(_ => Close()));
-        DockPanel.SetDock(buttons, Dock.Right);
-        var footer = new Border().Background(brushes.HeaderBackground).BorderBrush(brushes.PanelBorder).BorderThickness(new Thickness(0, 1, 0, 0))
-            .Padding(20, 10).Child(new DockPanel().Children(
-                buttons,
-                new TextBlock().Text(Loc.T("Esc czyści wyszukiwanie, drugie Esc zamyka · Tab przechodzi między kontrolkami")).FontSize(12)
-                    .Foreground(brushes.MutedForeground).VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis)));
+        var footer = Ds.Footer(brushes,
+            new TextBlock().Text(Loc.T("Esc czyści wyszukiwanie, drugie Esc zamyka · Tab przechodzi między kontrolkami")).FontSize(12)
+                .Foreground(brushes.MutedForeground).TextTrimming(TextTrimming.CharacterEllipsis),
+            Ds.Button(brushes, Loc.T("Sprawdź aktualizacje"), () => _ = _checkForUpdates()),
+            Ds.Button(brushes, Loc.T("O programie"), () => _ = new AboutDialog(brushes).ShowAsync(this)),
+            Ds.Button(brushes, Loc.T("Zamknij"), Close, ButtonKind.Primary));
         DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(footer, Dock.Bottom);
         DockPanel.SetDock(nav, Dock.Left);
         DockPanel.SetDock(_keyStatus, Dock.Top);
-        Content = new DockPanel().Children(top, footer, nav, _keyStatus, _scroll);
+        var content = new DockPanel().Children(top, footer, nav, _keyStatus, _scroll = Scroll(_content));
         Rebuild();
+        return content;
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -164,15 +143,15 @@ public sealed class SettingsWindow : Window
         if (SettingsCatalog.Search([FilesCategory], query, s => s, _ => ["json", "folder", "konfiguracja", "keymap", "tools", Loc.T("narzędzia"), Loc.T("skórki"), "plik"]).Count > 0)
         {
             Section(FilesCategory, [new Border().Padding(16, 12).Child(new WrapPanel().Children(
-                FileButton(Loc.T("📂 Folder konfiguracji"), () => _ = FolderOpener.OpenAsync(this, _brushes, _host.Config.ConfigDirectory)),
+                FileButton(Loc.T("📂 Folder konfiguracji"), () => SkinPickerDialog.OpenFolder(_host.Config.ConfigDirectory)),
                 FileButton("⌨ keymap.json", () => _ = _host.Tools.EditAsync(_host.Config.KeymapPath)),
                 FileButton(Loc.T("🛠 tools.json (edytor, diff, terminal)"), () => _ = _host.Tools.EditAsync(_host.Config.ToolsPath)),
-                FileButton(Loc.T("🎨 Folder skórek"), () => _ = FolderOpener.OpenAsync(this, _brushes, _host.Config.SkinsDirectory))))]);
+                FileButton(Loc.T("🎨 Folder skórek"), () => SkinPickerDialog.OpenFolder(_host.Config.SkinsDirectory))))]);
         }
 
         if (_content.Children.Count == 0)
         {
-            _content.Children.Add(new TextBlock().Text(Loc.T("Nic nie pasuje do wyszukiwania.")).Foreground(_brushes.MutedForeground).Margin(0, 20));
+            _content.Children.Add(new TextBlock().Text(Loc.T("Nic nie pasuje do wyszukiwania.")).Foreground(Brushes.MutedForeground).Margin(0, 20));
         }
     }
 
@@ -187,29 +166,28 @@ public sealed class SettingsWindow : Window
         {
             if (i > 0 && rows[i] is Border row)
             {
-                row.BorderBrush = _brushes.PanelBorder;
+                row.BorderBrush = Brushes.PanelBorder;
                 row.BorderThickness = new Thickness(0, 1, 0, 0);
             }
 
             card.Children.Add(rows[i]);
         }
 
-        var heading = new TextBlock().Text(title.ToUpper(Loc.Culture)).FontSize(11).FontWeight(FontWeight.SemiBold).Foreground(_brushes.Accent)
+        var heading = Ds.SectionHeading(Brushes, title)
             .Margin(0, 0, 0, 8);
         var section = new StackPanel().Children(heading);
         if (note is not null)
         {
-            section.Children.Add(new TextBlock().Text(note).FontSize(12).Foreground(_brushes.MutedForeground).TextWrapping(TextWrapping.Wrap).Margin(0, 0, 0, 8));
+            section.Children.Add(Ds.Muted(Brushes, note).Margin(0, 0, 0, 8));
         }
 
-        section.Children.Add(new Border().CornerRadius(new CornerRadius(6)).BorderBrush(_brushes.PanelBorder).BorderThickness(new Thickness(1))
-            .Background(_brushes.WindowBackground).ClipToBounds(true).Child(card));
+        section.Children.Add(Ds.Box(Brushes, card, new Thickness(0)).ClipToBounds(true));
         _content.Children.Add(section);
 
         var navButton = new Button().Height(32).Padding(10, 0).HorizontalAlignment(HorizontalAlignment.Stretch)
             .HorizontalContentAlignment(HorizontalAlignment.Left).VerticalContentAlignment(VerticalAlignment.Center)
             .Background(Avalonia.Media.Brushes.Transparent).BorderThickness(new Thickness(0))
-            .Foreground(_brushes.WindowForeground).Content(new TextBlock().Text(title).TextTrimming(TextTrimming.CharacterEllipsis))
+            .Foreground(Brushes.WindowForeground).Content(new TextBlock().Text(title).TextTrimming(TextTrimming.CharacterEllipsis))
             .OnClick(_ => ScrollToSection(section));
         _nav.Children.Add(navButton);
     }
@@ -232,8 +210,8 @@ public sealed class SettingsWindow : Window
             .MinHeight(60)
             .Child(new Grid().Cols("*,Auto").Children(
                 new StackPanel().VerticalAlignment(VerticalAlignment.Center).Children(
-                    new TextBlock().Text(title).FontWeight(FontWeight.SemiBold).Foreground(_brushes.FileForeground).TextWrapping(TextWrapping.Wrap),
-                    new TextBlock().Text(description).FontSize(12).Foreground(_brushes.MutedForeground).TextWrapping(TextWrapping.Wrap).Margin(0, 2, 0, 0)),
+                    new TextBlock().Text(title).FontWeight(FontWeight.SemiBold).Foreground(Brushes.FileForeground).TextWrapping(TextWrapping.Wrap),
+                    new TextBlock().Text(description).FontSize(12).Foreground(Brushes.MutedForeground).TextWrapping(TextWrapping.Wrap).Margin(0, 2, 0, 0)),
                 editor.Col(1).Margin(16, 0, 0, 0).VerticalAlignment(VerticalAlignment.Center)));
 
     private Control Editor(SettingDescriptor setting)
@@ -290,7 +268,7 @@ public sealed class SettingsWindow : Window
             return;
         }
 
-        var target = await new LinkOpenDialog(_brushes, url!).ShowAsync(this);
+        var target = await new LinkOpenDialog(Brushes, url!).ShowAsync(this);
         if (target == LinkOpenTarget.SystemBrowser)
         {
             AboutDialog.OpenUrl(url!);
@@ -319,7 +297,7 @@ public sealed class SettingsWindow : Window
 
     private TextBox BindingEditor(string commandId)
     {
-        var box = new TextBox().Width(220).Text(BindingsText(commandId)).FontFamily(_brushes.MonospaceFamily);
+        var box = new TextBox().Width(220).Text(BindingsText(commandId)).FontFamily(Brushes.MonospaceFamily);
         async Task CommitAsync()
         {
             var requested = (box.Text ?? string.Empty)
@@ -350,14 +328,14 @@ public sealed class SettingsWindow : Window
 
                 await _host.SaveKeyBindingsAsync(bindings);
                 _keyStatus.IsVisible = conflicts.Count > 0;
-                _keyStatus.Foreground = _brushes.SelectedForeground;
+                _keyStatus.Foreground = Brushes.SelectedForeground;
                 _keyStatus.Text = conflicts.Count > 0 ? Loc.T("Przeniesiono skróty: ") + string.Join("; ", conflicts) + "." : string.Empty;
                 box.Text = BindingsText(commandId);
             }
             catch (FormatException ex)
             {
                 _keyStatus.IsVisible = true;
-                _keyStatus.Foreground = _brushes.Error;
+                _keyStatus.Foreground = Brushes.Error;
                 _keyStatus.Text = Loc.T("Niepoprawny skrót: {0}", ex.Message);
             }
         }
@@ -396,16 +374,17 @@ public sealed class AboutDialog : DialogWindow<bool>
 
     public AboutDialog(SkinBrushes brushes) : base(Loc.T("O programie"), brushes, 520)
     {
+        HeaderGlyph = "▦";
+        FooterLeading = Ds.Button(brushes, Loc.T("Animacja startowa"), () => _ = new SplashWindow(brushes, SplashMode.Demo).ShowDialog(this));
         SetBody(
-            new TextBlock().Text("Commander4K").FontSize(22).FontWeight(FontWeight.Bold),
-            new SelectableTextBlock().Text(
+            new TextBlock().Text("Commander4K").FontSize(20).FontWeight(FontWeight.Bold).Foreground(brushes.FileForeground),
+            new SelectableTextBlock().FontSize(12).Foreground(brushes.MutedForeground).Text(
                 $"Wersja {AppVersion.Display}\n" +
                 $".NET {Environment.Version} · {RuntimeInformation.ProcessArchitecture} · {RuntimeInformation.OSDescription}"),
-            Label(Loc.T("Dwupanelowy menedżer plików dla Windows 11 inspirowany Norton, Midnight i Total Commanderem.")).Margin(0, 12, 0, 6),
-            Label(Loc.T("Oprogramowanie open source na licencji MIT. © 2026 4Kprojekt.")),
-            Label(Loc.T("🤖 Projekt jest tworzony z pomocą sztucznej inteligencji (Claude Code). Kod generowany przez AI może zawierać błędy — zgłaszaj je na GitHubie.")),
+            Message(Loc.T("Dwupanelowy menedżer plików dla Windows 11 inspirowany Norton, Midnight i Total Commanderem.")).Margin(0, 12, 0, 6),
+            Message(Loc.T("Oprogramowanie open source na licencji MIT. © 2026 4Kprojekt.")),
+            Ds.Notice(brushes, Loc.T("🤖 Projekt jest tworzony z pomocą sztucznej inteligencji (Claude Code). Kod generowany przez AI może zawierać błędy — zgłaszaj je na GitHubie.")),
             ButtonRow(
-                (Loc.T("Animacja startowa"), () => _ = new SplashWindow(brushes, SplashMode.Demo).ShowDialog(this), false),
                 ("GitHub", () => OpenUrl(RepositoryUrl), false),
                 ("OK", () => Complete(true), true)));
     }
@@ -438,25 +417,25 @@ public sealed class UpdateDialog : DialogWindow<bool>
                 ? Loc.T("Instalator MSI zostanie pobrany z GitHuba, sprawdzony sumą SHA-256 i uruchomiony (Windows może poprosić o zgodę administratora).")
                 : Loc.T("Wersja przenośna: archiwum ZIP zostanie pobrane z GitHuba, sprawdzone sumą SHA-256 i podmienione."))
             : Loc.T("Ta kopia nie jest pojedynczym plikiem z wydania (np. uruchomiona przez dotnet run), więc pobierz nową wersję ze strony wydania."));
-        _install = new Button().Content(Loc.T("Pobierz i zainstaluj")).IsVisible(canInstall).OnClick(async _ => await InstallAsync());
+        _install = Ds.Button(brushes, Loc.T("Pobierz i zainstaluj"), async () => await InstallAsync(), ButtonKind.Primary).IsVisible(canInstall);
+        FooterLeading = Ds.Button(brushes, Loc.T("Strona wydania"), () => AboutDialog.OpenUrl(update.PageUrl));
 
         SetBody(
-            new TextBlock().Text($"{update.Name}{(update.IsPrerelease ? Loc.T("  (wersja testowa)") : "")}").FontSize(18).FontWeight(FontWeight.SemiBold),
+            new TextBlock().Text($"{update.Name}{(update.IsPrerelease ? Loc.T("  (wersja testowa)") : "")}").FontSize(17).FontWeight(FontWeight.SemiBold).Foreground(brushes.FileForeground),
             Label($"Zainstalowana: {AppVersion.Display} → nowa: {update.Version}"),
             new ScrollViewer().MaxHeight(260).Margin(0, 6, 0, 0).Content(
                 MarkdownRenderer.Render(string.IsNullOrWhiteSpace(update.Notes) ? Loc.T("(brak opisu zmian)") : update.Notes, brushes)),
             _progress,
             _status,
-            new StackPanel().Orientation(Orientation.Horizontal).HorizontalAlignment(HorizontalAlignment.Right).Spacing(8).Margin(0, 14, 0, 0).Children(
-                _install,
-                new Button().Content(Loc.T("Strona wydania")).OnClick(_ => AboutDialog.OpenUrl(update.PageUrl)),
-                new Button().Content(Loc.T("Pomiń tę wersję")).OnClick(async _ =>
+            FooterRow(
+                Ds.Button(brushes, Loc.T("Pomiń tę wersję"), async () =>
                 {
                     host.Settings.SkippedVersion = update.Version.ToString();
                     await host.SaveSettingsAsync();
                     Complete(false);
                 }),
-                new Button().Content(Loc.T("Później")).OnClick(_ => Close())));
+                Ds.Button(brushes, Loc.T("Później"), Close, canInstall ? ButtonKind.Secondary : ButtonKind.Primary),
+                _install));
         Closed += (_, _) => _download?.Cancel();
     }
 

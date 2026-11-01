@@ -1296,15 +1296,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private Button BannerButton(string text, Func<Task> action, bool primary)
     {
-        var button = new Button { Content = text, Height = 28, Padding = new Thickness(10, 0), Margin = new Thickness(0, 0, 8, 0), VerticalContentAlignment = VerticalAlignment.Center };
-        if (primary)
-        {
-            button.Background = _brushes.Accent;
-            button.BorderBrush = _brushes.Accent;
-            button.Foreground = _brushes.AccentForeground;
-        }
-
-        button.Click += async (_, _) => await action();
+        var button = Ds.Button(_brushes, text, async () => await action(), primary ? ButtonKind.Primary : ButtonKind.Toolbar);
+        button.Margin = new Thickness(0, 0, 8, 0);
         return button;
     }
 

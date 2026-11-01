@@ -78,6 +78,12 @@ public sealed class CardResolver(
     /// <summary>Folder views, "card": true and plugin cards.</summary>
     private async Task<CardSource> ResolveTargetAsync(FolderConfig config, FolderTile tile, string card, string? target, CancellationToken cancellationToken)
     {
+        if (WidgetCards.IsWidget(card))
+        {
+            var host = hostFor(_folders.Manifest);
+            return new CardSource((previous, ct) => WidgetCards.LoadAsync(card, tile, target, host, DateTimeOffset.Now, ct), false, null);
+        }
+
         if (FolderCardViews.Contains(card, StringComparer.OrdinalIgnoreCase))
         {
             return target is null

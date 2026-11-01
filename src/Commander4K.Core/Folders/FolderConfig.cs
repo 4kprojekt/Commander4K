@@ -32,11 +32,73 @@ public static class FolderViewIds
     public static readonly IReadOnlyList<string> All = [Files, Gallery, Dashboard, Notes, Markdown, Api];
 }
 
-/// <summary>Width of a card on a dashboard: one column or two.</summary>
+/// <summary>Footprint of a tile on the dashboard grid, in columns × rows.</summary>
 public enum TileSize
 {
+    /// <summary>1 × 1.</summary>
     Small,
+
+    /// <summary>2 × 1.</summary>
     Wide,
+
+    /// <summary>1 × 2.</summary>
+    Tall,
+
+    /// <summary>2 × 2.</summary>
+    Large,
+
+    /// <summary>3 × 2: a chart or a long list.</summary>
+    Huge,
+
+    /// <summary>Every column of the row, one row high (a banner, a note, a status line).</summary>
+    Full,
+}
+
+/// <summary>Names and spans of <see cref="TileSize"/>.</summary>
+public static class TileSizes
+{
+    /// <summary>The order the dashboard's resize button cycles through.</summary>
+    public static readonly IReadOnlyList<TileSize> Cycle = [TileSize.Small, TileSize.Wide, TileSize.Tall, TileSize.Large, TileSize.Huge, TileSize.Full];
+
+    /// <summary>Spans in grid units; <see cref="TileSize.Full"/> reports 0 columns = the whole row.</summary>
+    public static (int Columns, int Rows) Span(TileSize size) => size switch
+    {
+        TileSize.Wide => (2, 1),
+        TileSize.Tall => (1, 2),
+        TileSize.Large => (2, 2),
+        TileSize.Huge => (3, 2),
+        TileSize.Full => (0, 1),
+        _ => (1, 1),
+    };
+
+    public static string Name(TileSize size) => size.ToString().ToLowerInvariant();
+
+    /// <returns><c>null</c> for an unknown name.</returns>
+    public static TileSize? Parse(string? name) => name switch
+    {
+        null or "small" => TileSize.Small,
+        "wide" => TileSize.Wide,
+        "tall" => TileSize.Tall,
+        "large" => TileSize.Large,
+        "huge" => TileSize.Huge,
+        "full" => TileSize.Full,
+        _ => null,
+    };
+
+    public static TileSize Next(TileSize size) => Cycle[(Cycle.IndexOf(size) + 1) % Cycle.Count];
+
+    private static int IndexOf(this IReadOnlyList<TileSize> list, TileSize size)
+    {
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (list[i] == size)
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
 }
 
 /// <summary>How an API field is shown: as a value, as a point added to a chart on every refresh, or as a status colour.</summary>
@@ -427,12 +489,8 @@ public sealed record FolderConfig
                     ? throw new FormatException("\"refresh\" must be text such as \"10s\".")
                     : ParseRefresh(String(tile, "refresh")),
                 Options = tile.TryGetProperty("options", out var options) && options.ValueKind == JsonValueKind.Object ? options.GetRawText() : null,
-                Size = String(tile, "size") switch
-                {
-                    null or "small" => TileSize.Small,
-                    "wide" => TileSize.Wide,
-                    var other => throw new FormatException($"Unknown \"size\" '{other}' (small, wide)."),
-                },
+                Size = TileSizes.Parse(String(tile, "size"))
+                    ?? throw new FormatException($"Unknown \"size\" '{String(tile, "size")}' (small, wide, tall, large, huge, full)."),
                 Api = api,
             };
         }

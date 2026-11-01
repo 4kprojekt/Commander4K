@@ -72,6 +72,9 @@ public sealed class ConnectionDialog : DialogWindow<ConnectionDialogResult?>
 
         _type.SelectionChanged += (_, _) => UpdateFields(typeChanged: true);
         _auth.SelectionChanged += (_, _) => UpdateFields(typeChanged: false);
+        HeaderGlyph = "🖧";
+        HeaderGlyphBrush = brushes.NetworkForeground;
+        FooterLeading = Ds.Button(brushes, Loc.T("Testuj"), () => _ = TestAsync());
         SetBody(
             Ds.Caption(Brushes, Loc.T("Rodzaj:")), _type,
             Ds.Caption(Brushes, Loc.T("Nazwa na liście:")).Margin(0, 10, 0, 4), _name,
@@ -84,9 +87,8 @@ public sealed class ConnectionDialog : DialogWindow<ConnectionDialogResult?>
             Ds.Caption(Brushes, Loc.T("Folder startowy:")).Margin(0, 10, 0, 4), _folder,
             _status.Margin(0, 10, 0, 0),
             ButtonRow(
-                (Loc.T("Zapisz i otwórz"), Accept, true),
-                (Loc.T("Testuj"), () => _ = TestAsync(), false),
-                (Loc.T("Anuluj"), () => Complete(null), false)));
+                (Loc.T("Anuluj"), () => Complete(null), false),
+                (Loc.T("Zapisz i otwórz"), Accept, true)));
         UpdateFields(typeChanged: true);
         if (initialSetting is not null)
         {

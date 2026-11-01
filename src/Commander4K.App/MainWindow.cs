@@ -1,4 +1,4 @@
-﻿using Avalonia;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -2496,7 +2496,6 @@ public sealed class MainWindow : Window
     private void ShowViewer(VfsEntry entry)
     {
         var window = new ViewerWindow(_host!, _skins!.Current, entry);
-        FollowSkin(window, window.ApplySkin);
         window.Show(this);
     }
 
@@ -2867,6 +2866,7 @@ public sealed class MainWindow : Window
                 DashboardTileEdit.Remove => FolderConfigWriter.RemoveTile(existing, dashboard.Section, index, tile.Title),
                 DashboardTileEdit.MoveUp => FolderConfigWriter.MoveTile(existing, dashboard.Section, index, -1, tile.Title),
                 DashboardTileEdit.MoveDown => FolderConfigWriter.MoveTile(existing, dashboard.Section, index, 1, tile.Title),
+                DashboardTileEdit.Resize => FolderConfigWriter.ResizeTile(existing, dashboard.Section, index, TileSizes.Next(tile.Size), tile.Title),
                 _ => throw new ArgumentOutOfRangeException(nameof(edit)),
             };
             await Task.Run(() => WriteFolderConfigTextAsync(file, updated, CancellationToken.None));
@@ -3339,7 +3339,6 @@ public sealed class MainWindow : Window
 
             Activate();
         });
-        FollowSkin(window, window.ApplySkin);
         window.Show(this);
     }
 
@@ -3612,7 +3611,6 @@ public sealed class MainWindow : Window
     private Task ShowTextWindowAsync(string title, string text)
     {
         var window = new TextWindow(_skins!.Current, title, text);
-        FollowSkin(window, window.ApplySkin);
         window.Show(this);
         return Task.CompletedTask;
     }

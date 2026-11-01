@@ -68,12 +68,12 @@
         "url": { "type": "string" },
         "run": { "$ref": "#/$defs/run" },
         "card": {
-          "description": "Show the tile as a live card: true = the preview Ctrl+Q would pick for open; or a name: files, gallery, notes, markdown, dashboard, api, ssh, or a plugin id (plugin or plugin/preview).",
+          "description": "Show the tile as a live card: true = the preview Ctrl+Q would pick for open; or a name: files, gallery, notes, markdown, dashboard, api, ssh, the widgets clock, note, disks, or a plugin id (plugin or plugin/preview).",
           "oneOf": [{ "type": "boolean" }, { "type": "string" }]
         },
         "refresh": { "type": "string", "pattern": "^[0-9]+[smh]$", "description": "Read the card again every 10s, 5m, 1h… while the dashboard is visible (at least 2 s)." },
         "options": { "type": "object", "description": "Passed to the card's preview." },
-        "size": { "enum": ["small", "wide"], "description": "Card width: one column or two." },
+        "size": { "enum": ["small", "wide", "tall", "large", "huge", "full"], "description": "Footprint on the dashboard grid (columns × rows): small 1×1, wide 2×1, tall 1×2, large 2×2, huge 3×2, full = the whole row." },
         "api": { "$ref": "#/$defs/api" }
       },
       "required": ["title"],

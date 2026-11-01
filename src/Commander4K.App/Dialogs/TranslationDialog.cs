@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
@@ -28,7 +28,7 @@ public sealed class TranslationDialog : DialogWindow<bool>
         _languageName = new TextBlock().VerticalAlignment(VerticalAlignment.Center).Margin(8, 0, 0, 0);
         _code.TextChanged += (_, _) => _languageName.Text = AppHost.LanguageName(Code);
         _languageName.Text = AppHost.LanguageName(Code);
-        _report = new SelectableTextBlock().TextWrapping(TextWrapping.Wrap).FontFamily(brushes.MonospaceFamily).FontSize(12);
+        _report = new SelectableTextBlock().TextWrapping(TextWrapping.Wrap).FontFamily(Brushes.MonospaceFamily).FontSize(12);
 
         SetBody(
             Label(Loc.T("Obecny język: {0}. Teksty interfejsu są w plikach JSON — jeden plik na język. Brakujące teksty pokazują się w oryginale, więc niepełne tłumaczenie niczego nie psuje.",
@@ -40,7 +40,11 @@ public sealed class TranslationDialog : DialogWindow<bool>
                 _languageName),
             new WrapPanel().Children(
                 Action(Loc.T("📋 Kopiuj prompt dla AI"), CopyPromptAsync),
-                Action(Loc.T("📂 Folder tłumaczeń"), () => FolderOpener.OpenAsync(this, Brushes, Folder)),
+                Action(Loc.T("📂 Folder tłumaczeń"), () =>
+                {
+                    SkinPickerDialog.OpenFolder(Folder);
+                    return Task.CompletedTask;
+                }),
                 Action(Loc.T("✔ Sprawdź pliki"), () =>
                 {
                     _report.Text = TranslationKit.Report(_host.Config.ConfigDirectory);

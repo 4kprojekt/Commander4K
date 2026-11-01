@@ -7,6 +7,7 @@ using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Commander4K.App.Composition;
+using Commander4K.App.Dialogs;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
 using Commander4K.Core.Mcp;
@@ -20,13 +21,11 @@ namespace Commander4K.App.Mcp;
 /// command or a <c>.mcp.json</c> entry, replace the token, choose the allowed folders, see the last calls and revoke
 /// "yes for this session" answers. Non-modal; follows the skin through <c>MainWindow.FollowSkin</c>.
 /// </summary>
-public sealed class McpConnectWindow : Window
+public sealed class McpConnectWindow : ToolWindow
 {
     private readonly AppHost _host;
     private readonly McpHost _mcp;
     private readonly Func<string?> _activeFolder;
-    private SkinBrushes _brushes;
-    private ScrollViewer _scroll = null!;
     private ToggleSwitch _enabled = null!;
     private TextBox _port = null!;
     private TextBlock _status = null!;
@@ -37,33 +36,19 @@ public sealed class McpConnectWindow : Window
     private bool _refreshPending;
 
     public McpConnectWindow(AppHost host, McpHost mcp, SkinBrushes brushes, Func<string?> activeFolder)
+        : base(Loc.T("Połącz Claude Code — Commander4K"), brushes, 820, 780, 560)
     {
         _host = host;
         _mcp = mcp;
-        _brushes = brushes;
         _activeFolder = activeFolder;
-        Title = Loc.T("Połącz Claude Code — Commander4K");
-        Width = 820;
-        Height = 780;
-        MinWidth = 560;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        BuildLayout();
+        Build();
         mcp.Changed += ScheduleRefresh;
         Closed += (sender, args) => mcp.Changed -= ScheduleRefresh;
     }
 
-    public void ApplySkin(SkinBrushes brushes)
+    protected override Control BuildLayout()
     {
-        _brushes = brushes;
-        var offset = _scroll.Offset;
-        BuildLayout();
-        Dispatcher.UIThread.Post(() => _scroll.Offset = offset, DispatcherPriority.Loaded);
-    }
-
-    private void BuildLayout()
-    {
-        var b = _brushes;
-        WindowSkin.Apply(this, b, panelSurface: true);
+        var b = Brushes;
         var settings = _host.Settings.Mcp;
 
         _enabled = new ToggleSwitch().IsChecked(settings.Enabled).OnContent(Loc.T("Wł.")).OffContent(Loc.T("Wył."));
@@ -75,7 +60,7 @@ public sealed class McpConnectWindow : Window
         _roots = new StackPanel().Spacing(4);
         _recent = new StackPanel().Spacing(2);
 
-        var list = new StackPanel().Spacing(10).Margin(24, 16, 24, 24).Children(
+        var list = new StackPanel().Spacing(10).Margin(Ds.WindowBodyPadding).Children(
             Heading(Loc.T("Serwer")),
             new StackPanel().Orientation(Orientation.Horizontal).Spacing(12).Children(
                 new TextBlock().Text(Loc.T("Serwer MCP")).VerticalAlignment(VerticalAlignment.Center),
@@ -103,17 +88,12 @@ public sealed class McpConnectWindow : Window
             _recent,
             SmallButton(Loc.T("Cofnij zgody z tej sesji"), () => _mcp.RevokeSessionGrants()));
 
-        _scroll = new ScrollViewer().Content(list);
-        var top = new Border().BorderBrush(b.PanelBorder).BorderThickness(new Thickness(0, 0, 0, 1)).Padding(24, 14).Child(new StackPanel().Spacing(4).Children(
-            new TextBlock().Text(Loc.T("Połącz Claude Code")).FontSize(18).FontWeight(FontWeight.SemiBold).Foreground(b.FileForeground),
-            Muted(Loc.T("Claude Code łączy się z Commander4K przez MCP na 127.0.0.1 i może przeglądać pliki w wybranych folderach, pisać i instalować wtyczki oraz sterować panelami. O ryzykowne akcje aplikacja zawsze pyta."))));
-        var footer = new Border().Background(b.HeaderBackground).BorderBrush(b.PanelBorder).BorderThickness(new Thickness(0, 1, 0, 0))
-            .Padding(24, 10).Child(WindowSkin.ApplyAccent(new Button().Content(Loc.T("Zamknij")).Height(30).HorizontalAlignment(HorizontalAlignment.Right), b)
-                .OnClick(click => Close()));
-        DockPanel.SetDock(top, Dock.Top);
-        DockPanel.SetDock(footer, Dock.Bottom);
-        Content = new DockPanel().Children(top, footer, _scroll);
+        var footer = Ds.Footer(b, null, Ds.Button(b, Loc.T("Zamknij"), Close, ButtonKind.Primary));
+        var frame = Frame(Loc.T("Połącz Claude Code"),
+            Loc.T("Claude Code łączy się z Commander4K przez MCP na 127.0.0.1 i może przeglądać pliki w wybranych folderach, pisać i instalować wtyczki oraz sterować panelami. O ryzykowne akcje aplikacja zawsze pyta."),
+            Scroll(list), footer);
         Refresh();
+        return frame;
     }
 
     private void ScheduleRefresh()
@@ -134,7 +114,7 @@ public sealed class McpConnectWindow : Window
 
     private void Refresh()
     {
-        var b = _brushes;
+        var b = Brushes;
         var settings = _host.Settings.Mcp;
         _enabled.IsChecked = settings.Enabled; // Changed elsewhere (settings window); equal values are ignored.
         _status.Text = _mcp.StatusText();
@@ -198,7 +178,7 @@ public sealed class McpConnectWindow : Window
         if (!int.TryParse(_port.Text?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var port) || port is < 1024 or > 65535)
         {
             _status.Text = Loc.T("Port musi być liczbą od 1024 do 65535.");
-            _status.Foreground = _brushes.Error;
+            _status.Foreground = Brushes.Error;
             return;
         }
 
@@ -212,7 +192,7 @@ public sealed class McpConnectWindow : Window
         if (!IsRealFolder(folder))
         {
             _status.Text = Loc.T("Otwórz w aktywnym panelu folder na dysku, w udziale sieciowym albo na serwerze SFTP/FTP.");
-            _status.Foreground = _brushes.Error;
+            _status.Foreground = Brushes.Error;
             return;
         }
 
@@ -263,7 +243,7 @@ public sealed class McpConnectWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             _status.Text = Loc.T("Nie udało się zapisać ustawień: {0}", ex.Message);
-            _status.Foreground = _brushes.Error;
+            _status.Foreground = Brushes.Error;
         }
     }
 
@@ -275,22 +255,16 @@ public sealed class McpConnectWindow : Window
         }
     }
 
-    private SelectableTextBlock Code() =>
-        new SelectableTextBlock().TextWrapping(TextWrapping.Wrap).FontFamily(_brushes.MonospaceFamily).FontSize(12).Foreground(_brushes.FileForeground);
+    private SelectableTextBlock Code() => Ds.Code(Brushes);
 
-    private Border Box(Control content) =>
-        new Border().Background(_brushes.WindowBackground).BorderBrush(_brushes.PanelBorder).BorderThickness(new Thickness(1))
-            .CornerRadius(new CornerRadius(_brushes.IsModern ? 6 : 0)).Padding(10, 8).Child(content);
+    private Border Box(Control content) => Ds.Box(Brushes, content);
 
-    private TextBlock Heading(string text) =>
-        new TextBlock().Text(text.ToUpper(Loc.Culture)).FontSize(11).FontWeight(FontWeight.SemiBold).Foreground(_brushes.Accent);
+    private TextBlock Heading(string text) => Ds.SectionHeading(Brushes, text);
 
-    private TextBlock Muted(string text) =>
-        new TextBlock().Text(text).FontSize(12).TextWrapping(TextWrapping.Wrap).Foreground(_brushes.MutedForeground);
+    private TextBlock Muted(string text) => Ds.Muted(Brushes, text);
 
     private static TextBlock Cell(string text, int column, IBrush brush) =>
         new TextBlock().Text(text).Col(column).FontSize(12).Margin(0, 0, 10, 0).Foreground(brush);
 
-    private static Button SmallButton(string text, Action onClick) =>
-        new Button().Content(text).Height(28).Padding(10, 0).VerticalContentAlignment(VerticalAlignment.Center).OnClick(click => onClick());
+    private Button SmallButton(string text, Action onClick) => Ds.Button(Brushes, text, onClick, ButtonKind.Toolbar);
 }

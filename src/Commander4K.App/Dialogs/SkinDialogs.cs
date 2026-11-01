@@ -199,4 +199,10 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
             await clipboard.SetTextAsync(text);
         }
     }
+
+    internal static void OpenFolder(string path)
+    {
+        Directory.CreateDirectory(path);
+        using var _ = Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { path }, UseShellExecute = false });
+    }
 }

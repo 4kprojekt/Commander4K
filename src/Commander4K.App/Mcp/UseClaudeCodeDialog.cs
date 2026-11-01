@@ -21,11 +21,11 @@ public sealed class UseClaudeCodeDialog : DialogWindow<bool>
     {
         _prompt = prompt;
         var text = new SelectableTextBlock().Text(prompt).TextWrapping(TextWrapping.Wrap)
-            .FontFamily(brushes.MonospaceFamily);
+            .FontFamily(brushes.MonospaceFamily).FontSize(12);
         SetBody(
             Label(Loc.T("Wklej to w Claude Code połączonym z Commander4K przez MCP")),
-            new ScrollViewer().MaxHeight(360).Content(text),
-            new TextBlock().Text(mcpStatus).TextWrapping(TextWrapping.Wrap).Foreground(brushes.MutedForeground).Margin(0, 6, 0, 0),
+            Ds.Box(brushes, new ScrollViewer().MaxHeight(360).Content(text)),
+            Ds.Muted(brushes, mcpStatus).Margin(0, 6, 0, 0),
             ButtonRow(
                 (Loc.T("Połącz Claude Code"), () =>
                 {
