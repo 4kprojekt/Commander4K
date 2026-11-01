@@ -56,7 +56,7 @@ public sealed class PanelTransferDialog : DialogWindow<PanelTransferChoice?>
             body.Add(_overwrite.Margin(0, 8, 0, 0));
         }
 
-        body.Add(ButtonRow(("OK", Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
+        body.Add(ButtonRow((Loc.T("Anuluj"), () => Complete(null), false), ("OK", Accept, true)));
         SetBody([.. body]);
         ShowDescription();
         Opened += (_, _) =>

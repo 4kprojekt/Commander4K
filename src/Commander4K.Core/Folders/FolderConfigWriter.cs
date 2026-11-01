@@ -183,7 +183,7 @@ public static class FolderConfigWriter
 
     /// <summary>Removes the tile at <paramref name="index"/> from the dashboard in the selected section.</summary>
     public static string RemoveTile(string existing, string section, int index, string? expectedTitle = null) =>
-        EditTile(existing, section, index, expectedTitle, remove: true, moveBy: 0);
+        EditTile(existing, section, index, expectedTitle, (tiles, at) => Edit(tiles, at, remove: true, moveBy: 0));
 
     /// <summary>Moves the tile at <paramref name="index"/> one place in the selected dashboard.</summary>
     public static string MoveTile(string existing, string section, int index, int moveBy, string? expectedTitle = null)
@@ -193,10 +193,29 @@ public static class FolderConfigWriter
             throw new ArgumentOutOfRangeException(nameof(moveBy), "A tile can only move one place up or down.");
         }
 
-        return EditTile(existing, section, index, expectedTitle, remove: false, moveBy);
+        return EditTile(existing, section, index, expectedTitle, (tiles, at) => Edit(tiles, at, remove: false, moveBy));
     }
 
-    private static string EditTile(string existing, string section, int index, string? expectedTitle, bool remove, int moveBy)
+    /// <summary>Sets the tile's <c>size</c>; <see cref="TileSize.Small"/> removes the key, since it is the default.</summary>
+    public static string ResizeTile(string existing, string section, int index, TileSize size, string? expectedTitle = null) =>
+        EditTile(existing, section, index, expectedTitle, (tiles, at) =>
+        {
+            if ((uint)at >= (uint)tiles.Count || tiles[at] is not JsonObject tile)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index), "The dashboard tile does not exist.");
+            }
+
+            if (size == TileSize.Small)
+            {
+                tile.Remove("size");
+            }
+            else
+            {
+                tile["size"] = TileSizes.Name(size);
+            }
+        });
+
+    private static string EditTile(string existing, string section, int index, string? expectedTitle, Action<JsonArray, int> edit)
     {
         var root = JsonNode.Parse(existing, documentOptions: new JsonDocumentOptions
         {
@@ -276,10 +295,10 @@ public static class FolderConfigWriter
         var mirror = otherTiles is not null && !ReferenceEquals(targetTiles, otherTiles) && JsonNode.DeepEquals(targetTiles, otherTiles)
             ? otherTiles
             : null;
-        Edit(targetTiles, index, remove, moveBy);
+        edit(targetTiles, index);
         if (mirror is not null)
         {
-            Edit(mirror, index, remove, moveBy);
+            edit(mirror, index);
         }
 
         return root.ToJsonString(Indented) + "\n";

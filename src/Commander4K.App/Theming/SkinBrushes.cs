@@ -57,6 +57,7 @@ public sealed class SkinBrushes
         CursorSelectedForeground = Brush(p.CursorSelectedForeground ?? p.SelectedForeground);
         InactiveCursorBorder = Brush(p.InactiveCursorBorder ?? p.CursorBackground);
         AccentForeground = ContrastingForeground(Accent.Color);
+        ErrorForeground = ContrastingForeground(Error.Color);
         Warning = Brush(warning);
         Success = Brush(p.Success ?? p.Progress);
         WarningBackground = Brush(p.WarningBackground ?? p.PanelBackground.Mix(warning, 0.14));
@@ -126,6 +127,9 @@ public sealed class SkinBrushes
     public IImmutableSolidColorBrush CursorSelectedForeground { get; }
     public IImmutableSolidColorBrush InactiveCursorBorder { get; }
     public IImmutableSolidColorBrush AccentForeground { get; }
+
+    /// <summary>Text on an <see cref="Error"/> fill (danger buttons).</summary>
+    public IImmutableSolidColorBrush ErrorForeground { get; }
     public IImmutableSolidColorBrush Warning { get; }
     public IImmutableSolidColorBrush Success { get; }
     public IImmutableSolidColorBrush WarningBackground { get; }

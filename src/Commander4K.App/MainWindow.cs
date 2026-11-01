@@ -2860,6 +2860,7 @@ public sealed class MainWindow : Window
                 DashboardTileEdit.Remove => FolderConfigWriter.RemoveTile(existing, dashboard.Section, index, tile.Title),
                 DashboardTileEdit.MoveUp => FolderConfigWriter.MoveTile(existing, dashboard.Section, index, -1, tile.Title),
                 DashboardTileEdit.MoveDown => FolderConfigWriter.MoveTile(existing, dashboard.Section, index, 1, tile.Title),
+                DashboardTileEdit.Resize => FolderConfigWriter.ResizeTile(existing, dashboard.Section, index, TileSizes.Next(tile.Size), tile.Title),
                 _ => throw new ArgumentOutOfRangeException(nameof(edit)),
             };
             await Task.Run(() => WriteFolderConfigTextAsync(file, updated, CancellationToken.None));

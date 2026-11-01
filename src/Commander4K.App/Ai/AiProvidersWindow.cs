@@ -17,15 +17,13 @@ namespace Commander4K.App.Ai;
 /// Sign in to AI providers (browser login, pasted key, environment variable or GitHub CLI), choose their order and
 /// model, test them, and see which one is waiting for its limit. Changes are saved at once to <c>config/ai</c>.
 /// </summary>
-public sealed class AiProvidersWindow : Window
+public sealed class AiProvidersWindow : ToolWindow
 {
     private readonly AppHost _host;
     private readonly Dictionary<string, string> _testResults = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _showKeyBox = new(StringComparer.OrdinalIgnoreCase);
-    private SkinBrushes _brushes;
     private StackPanel _list = null!;
     private TextBlock _source = null!;
-    private ScrollViewer _scroll = null!;
     /// <summary>Local servers found on this computer: provider id → number of models (0 = running without models); missing = not answering.</summary>
     private readonly Dictionary<string, int> _detected = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _installOpen = new(StringComparer.OrdinalIgnoreCase);
@@ -34,15 +32,10 @@ public sealed class AiProvidersWindow : Window
     private bool _detecting;
 
     public AiProvidersWindow(AppHost host, SkinBrushes brushes)
+        : base(Loc.T("Dostawcy AI — Commander4K"), brushes, 860, 760, 600)
     {
         _host = host;
-        _brushes = brushes;
-        Title = Loc.T("Dostawcy AI — Commander4K");
-        Width = 860;
-        Height = 760;
-        MinWidth = 600;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        BuildLayout();
+        Build();
         _ = DetectLocalAsync();
         host.Ai.StateChanged += ScheduleRebuild;
         Closed += (_, _) =>
@@ -52,43 +45,20 @@ public sealed class AiProvidersWindow : Window
         };
     }
 
-    public void ApplySkin(SkinBrushes brushes)
+    protected override Control BuildLayout()
     {
-        _brushes = brushes;
-        var offset = _scroll.Offset;
-        BuildLayout();
-        Dispatcher.UIThread.Post(() => _scroll.Offset = offset, DispatcherPriority.Loaded);
-    }
-
-    private void BuildLayout()
-    {
-        var b = _brushes;
-        Background = b.PanelBackground;
-        Foreground = b.WindowForeground;
-        FontFamily = b.FontFamily;
-        FontSize = b.FontSize;
-
-        _list = new StackPanel().Spacing(10).Margin(24, 16, 24, 24);
-        _scroll = new ScrollViewer().Content(_list);
-        _source = new TextBlock().FontSize(11).Foreground(b.MutedForeground).VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
-
-        var top = new Border().BorderBrush(b.PanelBorder).BorderThickness(new Thickness(0, 0, 0, 1)).Padding(24, 14).Child(new StackPanel().Spacing(4).Children(
-            new TextBlock().Text(Loc.T("Dostawcy AI")).FontSize(18).FontWeight(FontWeight.SemiBold).Foreground(b.FileForeground),
-            new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12).Foreground(b.MutedForeground).Text(
-                Loc.T("Zaloguj się do kilku darmowych usług — gdy jedna wyczerpie limit albo zablokuje dostęp, odpowiada następna w kolejności. Klucze są zapisywane w config/ai/credentials.json, zaszyfrowane dla bieżącego konta Windows."))));
-        var buttons = new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Children(
-            new Button().Content(Loc.T("Odśwież listę")).Height(30).OnClick(async _ => await RefreshCatalogAsync()),
-            new Button().Content(Loc.T("📂 Folder config/ai")).Height(30).OnClick(_ =>
-                SkinPickerDialog.OpenFolder(Path.GetDirectoryName(_host.AiCredentials.FilePath)!)),
-            new Button().Content(Loc.T("Zamknij")).Height(30).Background(b.Accent).BorderBrush(b.Accent)
-                .Foreground(Avalonia.Media.Brushes.White).FontWeight(FontWeight.SemiBold).OnClick(_ => Close()));
-        DockPanel.SetDock(buttons, Dock.Right);
-        var footer = new Border().Background(b.HeaderBackground).BorderBrush(b.PanelBorder).BorderThickness(new Thickness(0, 1, 0, 0))
-            .Padding(24, 10).Child(new DockPanel().Children(buttons, _source));
-        DockPanel.SetDock(top, Dock.Top);
-        DockPanel.SetDock(footer, Dock.Bottom);
-        Content = new DockPanel().Children(top, footer, _scroll);
+        var b = Brushes;
+        _list = new StackPanel().Spacing(10).Margin(Ds.WindowBodyPadding);
+        _source = new TextBlock().FontSize(11).Foreground(b.MutedForeground).TextTrimming(TextTrimming.CharacterEllipsis);
+        var footer = Ds.Footer(b, _source,
+            Ds.Button(b, Loc.T("Odśwież listę"), () => _ = RefreshCatalogAsync()),
+            Ds.Button(b, Loc.T("📂 Folder config/ai"), () => SkinPickerDialog.OpenFolder(Path.GetDirectoryName(_host.AiCredentials.FilePath)!)),
+            Ds.Button(b, Loc.T("Zamknij"), Close, ButtonKind.Primary));
+        var frame = Frame(Loc.T("Dostawcy AI"),
+            Loc.T("Zaloguj się do kilku darmowych usług — gdy jedna wyczerpie limit albo zablokuje dostęp, odpowiada następna w kolejności. Klucze są zapisywane w config/ai/credentials.json, zaszyfrowane dla bieżącego konta Windows."),
+            Scroll(_list), footer);
         Rebuild();
+        return frame;
     }
 
     private void ScheduleRebuild()
@@ -134,12 +104,11 @@ public sealed class AiProvidersWindow : Window
         }
     }
 
-    private TextBlock Heading(string text) =>
-        new TextBlock().Text(text.ToUpper(Loc.Culture)).FontSize(11).FontWeight(FontWeight.SemiBold).Foreground(_brushes.Accent);
+    private TextBlock Heading(string text) => Ds.SectionHeading(Brushes, text);
 
     private Border Card(AiProviderState state, int position, IReadOnlyList<AiProviderState> signedIn)
     {
-        var b = _brushes;
+        var b = Brushes;
         var provider = state.Provider;
         var (statusText, statusBrush) = state.Status switch
         {
@@ -208,8 +177,7 @@ public sealed class AiProvidersWindow : Window
             body.Children.Add(InstallSection(provider, install, state));
         }
 
-        return new Border().CornerRadius(new CornerRadius(6)).BorderBrush(b.PanelBorder).BorderThickness(new Thickness(1))
-            .Background(b.WindowBackground).Padding(16, 12).Child(body);
+        return Ds.Card(b, body);
     }
 
     private Control Actions(AiProviderState state, int position, IReadOnlyList<AiProviderState> signedIn)
@@ -269,7 +237,7 @@ public sealed class AiProvidersWindow : Window
             if (provider.GitHubCli)
             {
                 row.Children.Add(new TextBlock().Text(Loc.T("albo: gh auth login (GitHub CLI) i uruchom ponownie")).FontSize(11)
-                    .Foreground(_brushes.MutedForeground).VerticalAlignment(VerticalAlignment.Center));
+                    .Foreground(Brushes.MutedForeground).VerticalAlignment(VerticalAlignment.Center));
             }
 
             return row;
@@ -296,7 +264,7 @@ public sealed class AiProvidersWindow : Window
         if (!stored || state.KeySource is "gh" || state.KeySource?.StartsWith("env:", StringComparison.Ordinal) == true)
         {
             row.Children.Add(new TextBlock().Text(Loc.T("klucz spoza aplikacji — wylogowanie: usuń zmienną lub gh auth logout")).FontSize(11)
-                .Foreground(_brushes.MutedForeground).VerticalAlignment(VerticalAlignment.Center));
+                .Foreground(Brushes.MutedForeground).VerticalAlignment(VerticalAlignment.Center));
         }
 
         return row;
@@ -347,7 +315,7 @@ public sealed class AiProvidersWindow : Window
         var current = _host.AiCredentials.Get(provider.Id)?.Model;
         var items = new List<PickerItem> { new(Loc.T("Automatycznie (kolejność z listy dostawców)"), null, string.Empty) };
         items.AddRange(models.Select(m => new PickerItem(m, m == current ? Loc.T("wybrany") : provider.Models.Contains(m) ? Loc.T("polecany") : null, m)));
-        var choice = await new PickerDialog(_brushes, Loc.T("Model — {0}", provider.Name), items, Loc.T("Model próbowany jako pierwszy (pozostałe zostają zapasowe):")).ShowAsync(this);
+        var choice = await new PickerDialog(Brushes, Loc.T("Model — {0}", provider.Name), items, Loc.T("Model próbowany jako pierwszy (pozostałe zostają zapasowe):")).ShowAsync(this);
         if (choice is not null)
         {
             Store(() => _host.AiCredentials.Update(provider.Id, c => (c ?? new AiCredential()) with { Model = choice.Value.Length == 0 ? null : choice.Value }));
@@ -408,7 +376,7 @@ public sealed class AiProvidersWindow : Window
     /// </summary>
     private Control InstallSection(AiProviderInfo provider, AiInstallInfo install, AiProviderState state)
     {
-        var b = _brushes;
+        var b = Brushes;
         var open = _installOpen.TryGetValue(provider.Id, out var chosen) ? chosen
             : !_detecting && !_detected.ContainsKey(provider.Id) && state.Status == AiProviderStatus.NotSignedIn;
         var toggle = new Button().Content((open ? "▾ " : "▸ ") + Loc.T("Jak zainstalować")).Height(28).Padding(8, 0)
@@ -510,14 +478,9 @@ public sealed class AiProvidersWindow : Window
     /// <summary>Credential writes touch the disk, so they run off the UI thread; the store's Changed event rebuilds the list.</summary>
     private static void Store(Action write) => _ = Task.Run(write);
 
-    private Border Chip(string text, IBrush foreground) =>
-        new Border().CornerRadius(new CornerRadius(10)).BorderBrush(_brushes.PanelBorder).BorderThickness(new Thickness(1)).Padding(8, 1)
-            .Margin(0, 0, 6, 0).VerticalAlignment(VerticalAlignment.Center)
-            .Child(new TextBlock().Text(text).FontSize(11).Foreground(foreground));
+    private Border Chip(string text, IBrush foreground) => Ds.Chip(Brushes, text, foreground);
 
-    private static Button Button(string text, Action onClick, bool enabled = true) =>
-        new Button().Content(text).Height(30).IsEnabled(enabled).VerticalContentAlignment(VerticalAlignment.Center).OnClick(_ => onClick());
+    private Button Button(string text, Action onClick, bool enabled = true) => Ds.Button(Brushes, text, onClick, ButtonKind.Secondary, enabled);
 
-    private Button Primary(string text, Action onClick) =>
-        Button(text, onClick).Background(_brushes.Accent).BorderBrush(_brushes.Accent).Foreground(Avalonia.Media.Brushes.White).FontWeight(FontWeight.SemiBold);
+    private Button Primary(string text, Action onClick) => Ds.Button(Brushes, text, onClick, ButtonKind.Primary);
 }

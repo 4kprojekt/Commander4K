@@ -1271,15 +1271,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private Button BannerButton(string text, Func<Task> action, bool primary)
     {
-        var button = new Button { Content = text, Height = 28, Padding = new Thickness(10, 0), Margin = new Thickness(0, 0, 8, 0), VerticalContentAlignment = VerticalAlignment.Center };
-        if (primary)
-        {
-            button.Background = _brushes.Accent;
-            button.BorderBrush = _brushes.Accent;
-            button.Foreground = Avalonia.Media.Brushes.White;
-        }
-
-        button.Click += async (_, _) => await action();
+        var button = Ds.Button(_brushes, text, async () => await action(), primary ? ButtonKind.Primary : ButtonKind.Toolbar);
+        button.Margin = new Thickness(0, 0, 8, 0);
         return button;
     }
 
@@ -1422,7 +1415,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             AcceptsReturn = true,
             AcceptsTab = true,
             TextWrapping = TextWrapping.Wrap,
-            FontFamily = FontFamily.Parse("Cascadia Mono, Consolas, Courier New"),
+            FontFamily = _brushes.MonospaceFamily,
             FontSize = _brushes.FontSize,
             Background = _brushes.PanelBackground,
             Foreground = _brushes.FileForeground,
@@ -1461,7 +1454,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             Text = text,
             TextWrapping = TextWrapping.NoWrap,
-            FontFamily = FontFamily.Parse("Cascadia Mono, Consolas, Courier New"),
+            FontFamily = _brushes.MonospaceFamily,
             FontSize = _brushes.FontSize - 1,
             Background = _brushes.PanelBackground,
             Foreground = _brushes.FileForeground,

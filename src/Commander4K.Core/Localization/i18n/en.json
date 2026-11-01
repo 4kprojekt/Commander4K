@@ -1404,5 +1404,16 @@
   "Nie zapisano c4k.dir ({0}) — widok otwarty tylko teraz.": "c4k.dir was not saved ({0}) — the view is open just this once.",
   "Tu (albo Esc) wrócisz do zwykłej listy plików. Shift+Enter wchodzi do folderu bez widoku.": "Here (or Esc) takes you back to the plain file list. Shift+Enter enters a folder without its view.",
   "OK": "OK",
-  "Folder ma już własny c4k.dir — otwieram go zamiast propozycji.": "The folder already has its own c4k.dir — opening that instead of the suggestion."
+  "Folder ma już własny c4k.dir — otwieram go zamiast propozycji.": "The folder already has its own c4k.dir — opening that instead of the suggestion.",
+  "_// Commander4K.Plugins.BuiltIn/Dashboard/WidgetCards.cs": "",
+  "Brak dysków do pokazania.": "No disks to show.",
+  "Karta „note” potrzebuje „options.text” albo „open” z plikiem tekstowym.": "The \"note\" card needs \"options.text\" or \"open\" with a text file.",
+  "Przesunięcie": "Offset",
+  "Strefa": "Time zone",
+  "Tydzień": "Week",
+  "nieznana: {0}": "unknown: {0}",
+  "{0} wolne z {1}": "{0} free of {1}",
+  "_// Commander4K.App/Preview/DashboardView.cs (tile sizes)": "",
+  "Rozmiar kafelka: {0} → {1}": "Tile size: {0} → {1}",
+  "cała szerokość": "full width"
 }

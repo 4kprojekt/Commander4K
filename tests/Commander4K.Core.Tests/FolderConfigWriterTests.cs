@@ -67,6 +67,20 @@ public sealed class FolderConfigWriterTests
     }
 
     [Fact]
+    public void Resize_tile_writes_size_and_small_removes_it()
+    {
+        const string Existing = """{ "preview": { "view": "dashboard", "tiles": [ { "title": "A", "open": "a" }, { "title": "B", "open": "b", "size": "wide" } ] }, "enter": "dashboard" }""";
+
+        var large = FolderConfigWriter.ResizeTile(Existing, "preview", 0, TileSize.Large, expectedTitle: "A");
+        var config = FolderConfig.Parse(@"C:\Dom", large);
+        Assert.Equal([TileSize.Large, TileSize.Wide], config.Preview!.Tiles.Select(tile => tile.Size));
+
+        var small = FolderConfig.Parse(@"C:\Dom", FolderConfigWriter.ResizeTile(large, "preview", 1, TileSize.Small));
+        Assert.Equal([TileSize.Large, TileSize.Small], small.Preview!.Tiles.Select(tile => tile.Size));
+        Assert.DoesNotContain("\"wide\"", FolderConfigWriter.ResizeTile(large, "preview", 1, TileSize.Small), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Move_tile_rejects_moving_past_dashboard_edges()
     {
         const string Existing = """{ "preview": { "view": "dashboard", "tiles": [ { "title": "A", "open": "a" } ] } }""";

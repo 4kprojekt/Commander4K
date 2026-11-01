@@ -9,9 +9,16 @@ using Commander4K.Core.Localization;
 
 namespace Commander4K.App.Dialogs;
 
-/// <summary>Modal dialog painted from the active skin; Escape cancels with <c>default</c>.</summary>
+/// <summary>
+/// Modal dialog painted from the active skin, with the design system's anatomy (see <see cref="Ds"/>): a 44 px header
+/// with an optional glyph and a close button, the body (16/18 px padding, 12 px between groups) and the footer band
+/// with the buttons to the right. Modern skins draw the header themselves (the window keeps only its border, and the
+/// header drags it); retro skins keep the system title bar and their flat look. Escape cancels with <c>default</c>.
+/// </summary>
 public abstract class DialogWindow<TResult> : Window
 {
+    private const string FooterTag = "dialog-footer";
+
     protected DialogWindow(string title, SkinBrushes brushes, double width = 480)
     {
         Brushes = brushes;
@@ -21,13 +28,22 @@ public abstract class DialogWindow<TResult> : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         CanResize = false;
         ShowInTaskbar = false;
-        Background = brushes.IsModern ? brushes.Surface2 : brushes.WindowBackground;
-        Foreground = brushes.WindowForeground;
-        FontFamily = brushes.FontFamily;
-        FontSize = brushes.FontSize;
+        Ds.ApplySurface(this, brushes, dialog: true);
+        if (brushes.IsModern)
+        {
+            WindowDecorations = WindowDecorations.BorderOnly;
+        }
     }
 
     protected SkinBrushes Brushes { get; }
+
+    /// <summary>Glyph in the header (set before <see cref="SetBody"/>); e.g. "⚠" with <see cref="SkinBrushes.Warning"/>.</summary>
+    protected string? HeaderGlyph { get; set; }
+
+    protected IBrush? HeaderGlyphBrush { get; set; }
+
+    /// <summary>A control on the left of the footer (a secondary action such as "Do kolejki", or a status).</summary>
+    protected Control? FooterLeading { get; set; }
 
     public Task<TResult> ShowAsync(Window owner) => ShowDialog<TResult>(owner);
 
@@ -43,57 +59,99 @@ public abstract class DialogWindow<TResult> : Window
 
     protected void Complete(TResult result) => Close(result);
 
-    protected static TextBlock Label(string text) =>
-        new TextBlock().Text(text).TextWrapping(TextWrapping.Wrap).Margin(0, 0, 0, 6);
+    /// <summary>Text above a field: 12/600 label on modern skins, plain text on retro ones.</summary>
+    protected TextBlock Label(string text) =>
+        Brushes.IsModern ? Ds.FieldLabel(Brushes, text) : new TextBlock().Text(text).TextWrapping(TextWrapping.Wrap).Margin(0, 0, 0, 6);
 
-    private const string FooterTag = "dialog-footer";
+    /// <summary>Running text of the dialog (a question, an explanation).</summary>
+    protected TextBlock Message(string text) =>
+        new TextBlock().Text(text).TextWrapping(TextWrapping.Wrap).Foreground(Brushes.IsModern ? Brushes.FileForeground : Brushes.WindowForeground).Margin(0, 0, 0, 6);
 
-    /// <summary>Right-aligned buttons (design system: 30 px, min 88 px; the default one filled with the accent).</summary>
-    protected StackPanel ButtonRow(params (string Text, Action OnClick, bool IsDefault)[] buttons)
+    /// <summary>Right-aligned buttons; the default one is the primary (accent) button.</summary>
+    protected StackPanel ButtonRow(params (string Text, Action OnClick, bool IsDefault)[] buttons) =>
+        ButtonRow([.. buttons.Select(b => (b.Text, b.OnClick, b.IsDefault ? ButtonKind.Primary : ButtonKind.Secondary))]);
+
+    /// <summary>
+    /// Right-aligned buttons in explicit roles; a <see cref="ButtonKind.Primary"/> or <see cref="ButtonKind.Danger"/>
+    /// one is the default (Enter) and is moved to the right end, as the design system orders them (Cancel, then the action).
+    /// </summary>
+    protected StackPanel ButtonRow(params (string Text, Action OnClick, ButtonKind Kind)[] buttons)
     {
+        buttons = [.. buttons.Where(b => b.Kind is not (ButtonKind.Primary or ButtonKind.Danger)), .. buttons.Where(b => b.Kind is ButtonKind.Primary or ButtonKind.Danger)];
         var row = new StackPanel()
             .Orientation(Orientation.Horizontal)
             .HorizontalAlignment(HorizontalAlignment.Right)
             .Spacing(8)
             .Tag(FooterTag);
-        foreach (var (text, onClick, isDefault) in buttons)
+        foreach (var (text, onClick, kind) in buttons)
         {
-            var button = new Button().Content(text).MinWidth(88).Height(30).HorizontalContentAlignment(HorizontalAlignment.Center)
-                .VerticalContentAlignment(VerticalAlignment.Center).IsDefault(isDefault).OnClick(_ => onClick());
-            if (isDefault)
-            {
-                button.Background = Brushes.Accent;
-                button.BorderBrush = Brushes.Accent;
-                button.Foreground = Avalonia.Media.Brushes.White;
-                button.FontWeight = FontWeight.SemiBold;
-            }
-
+            var button = Ds.Button(Brushes, text, onClick, kind);
+            button.MinWidth = Ds.ButtonMinWidth;
+            button.IsDefault = kind is ButtonKind.Primary or ButtonKind.Danger;
             row.Children.Add(button);
         }
 
         return row;
     }
 
-    /// <summary>Body with 16/18 px padding; a trailing <see cref="ButtonRow"/> becomes the footer band (header colour, top rule).</summary>
+    /// <summary>A footer row of buttons the dialog keeps references to (made with <see cref="Ds.Button"/>), in the given order.</summary>
+    protected StackPanel FooterRow(params Button[] buttons)
+    {
+        var row = new StackPanel().Orientation(Orientation.Horizontal).HorizontalAlignment(HorizontalAlignment.Right).Spacing(8).Tag(FooterTag);
+        foreach (var button in buttons)
+        {
+            button.MinWidth = Math.Max(button.MinWidth, Ds.ButtonMinWidth);
+            row.Children.Add(button);
+        }
+
+        return row;
+    }
+
+    /// <summary>Header, body and — when the last child is a <see cref="ButtonRow"/> — the footer band.</summary>
     protected void SetBody(params Control[] children)
     {
         var footer = children.Length > 0 && children[^1] is StackPanel { Tag: FooterTag } row ? row : null;
-        var body = new StackPanel().Margin(18, 16).Spacing(Brushes.IsModern ? 6 : 0)
+        var body = new StackPanel().Margin(Ds.BodyPadding).Spacing(Brushes.IsModern ? 6 : 0)
             .Children(footer is null ? children : children[..^1]);
-        if (footer is null)
+        var dock = new DockPanel();
+        if (Brushes.IsModern)
         {
-            Content = body;
-            return;
+            var header = Ds.DialogHeader(Brushes, Title ?? string.Empty, HeaderGlyph, HeaderGlyphBrush);
+            var close = Ds.Button(Brushes, "✕", () => Close(default(TResult)), ButtonKind.Ghost);
+            close.Width = 28;
+            close.Height = 28;
+            close.Padding = new Thickness(0);
+            close.IsTabStop = false;
+            ToolTip.SetTip(close, Loc.T("Zamknij (Esc)"));
+            var bar = new DockPanel { Background = Avalonia.Media.Brushes.Transparent };
+            DockPanel.SetDock(close, Dock.Right);
+            close.Margin = new Thickness(0, 0, 8, 0);
+            close.VerticalAlignment = VerticalAlignment.Center;
+            bar.Children.Add(close);
+            header.BorderThickness = new Thickness(0);
+            bar.Children.Add(header);
+            var band = new Border { BorderBrush = Brushes.PanelBorder, BorderThickness = new Thickness(0, 0, 0, 1), Child = bar };
+            band.PointerPressed += (_, e) =>
+            {
+                if (e.GetCurrentPoint(band).Properties.IsLeftButtonPressed)
+                {
+                    BeginMoveDrag(e);
+                }
+            };
+            DockPanel.SetDock(band, Dock.Top);
+            dock.Children.Add(band);
         }
 
-        var band = new Border()
-            .Background(Brushes.IsModern ? Brushes.HeaderBackground : Avalonia.Media.Brushes.Transparent)
-            .BorderBrush(Brushes.PanelBorder)
-            .BorderThickness(new Thickness(0, Brushes.IsModern ? 1 : 0, 0, 0))
-            .Padding(18, 12)
-            .Child(footer);
-        DockPanel.SetDock(band, Dock.Bottom);
-        Content = new DockPanel().Children(band, body);
+        if (footer is not null)
+        {
+            // The row itself goes into the band, so callers can still reach its buttons (default/focus handling).
+            var band = Ds.Footer(Brushes, FooterLeading, footer);
+            DockPanel.SetDock(band, Dock.Bottom);
+            dock.Children.Add(band);
+        }
+
+        dock.Children.Add(body);
+        Content = dock;
     }
 }
 
@@ -104,7 +162,7 @@ public sealed class InputDialog : DialogWindow<string?>
     public InputDialog(SkinBrushes brushes, string title, string prompt, string initial = "") : base(title, brushes)
     {
         _input = new TextBox().Text(initial);
-        SetBody(Label(prompt), _input, ButtonRow(("OK", Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
+        SetBody(Label(prompt), _input, ButtonRow((Loc.T("Anuluj"), () => Complete(null), false), ("OK", Accept, true)));
         Opened += (_, _) =>
         {
             _input.Focus();
@@ -123,11 +181,24 @@ public sealed class ConfirmDialog : DialogWindow<bool>
 {
     /// <param name="cancelIsDefault">For dialogs that open unprompted (an MCP client asks): Cancel is the default and
     /// focused button, so an Enter or Space meant for the panel does not confirm.</param>
-    public ConfirmDialog(SkinBrushes brushes, string title, string message, string? confirmText = null, bool cancelIsDefault = false) : base(title, brushes)
+    /// <param name="danger">The confirmation deletes or overwrites something: a red button and a warning glyph.</param>
+    public ConfirmDialog(SkinBrushes brushes, string title, string message, string? confirmText = null, bool cancelIsDefault = false, bool danger = false)
+        : base(title, brushes)
     {
-        var row = ButtonRow((confirmText ?? Loc.T("Tak"), () => Complete(true), !cancelIsDefault), (Loc.T("Anuluj"), () => Complete(false), cancelIsDefault));
-        SetBody(Label(message), row);
-        CancelButton = row.Children.OfType<Button>().ElementAt(1);
+        if (danger)
+        {
+            HeaderGlyph = "⚠";
+            HeaderGlyphBrush = brushes.Error;
+        }
+
+        var cancelEntry = (Loc.T("Anuluj"), (Action)(() => Complete(false)), cancelIsDefault ? ButtonKind.Primary : ButtonKind.Secondary);
+        var confirmEntry = (confirmText ?? Loc.T("Tak"), (Action)(() => Complete(true)),
+            cancelIsDefault ? ButtonKind.Secondary : danger ? ButtonKind.Danger : ButtonKind.Primary);
+
+        // The default (Enter) button is always the rightmost one.
+        var row = cancelIsDefault ? ButtonRow(confirmEntry, cancelEntry) : ButtonRow(cancelEntry, confirmEntry);
+        CancelButton = row.Children.OfType<Button>().ElementAt(cancelIsDefault ? 1 : 0);
+        SetBody(Message(message), row);
         if (cancelIsDefault)
         {
             Opened += (sender, args) => CancelButton.Focus();
@@ -144,7 +215,7 @@ public sealed class MessageDialog : DialogWindow<bool>
         var text = new SelectableTextBlock().Text(message).TextWrapping(TextWrapping.Wrap);
         if (monospace)
         {
-            text.FontFamily = FontFamily.Parse("Cascadia Mono, Consolas");
+            text.FontFamily = brushes.MonospaceFamily;
         }
 
         SetBody(new ScrollViewer().MaxHeight(520).Content(text), ButtonRow(("OK", () => Complete(true), true)));
@@ -164,14 +235,15 @@ public sealed class TransferDialog : DialogWindow<TransferRequest?>
     {
         _target = new TextBox().Text(target);
         _overwrite = new CheckBox().Content(Loc.T("Nadpisuj istniejące pliki"));
+        HeaderGlyph = move ? "➜" : "⧉";
+        FooterLeading = Ds.Button(brushes, Loc.T("Do kolejki (F2)"), () => Accept(queue: true));
         SetBody(
             Label($"{(move ? Loc.T("Przenieś") : Loc.T("Kopiuj"))} {description} do:"),
             _target,
             _overwrite.Margin(0, 8, 0, 0),
             ButtonRow(
-                ("OK", () => Accept(queue: false), true),
-                (Loc.T("Do kolejki (F2)"), () => Accept(queue: true), false),
-                (Loc.T("Anuluj"), () => Complete(null), false)));
+                (Loc.T("Anuluj"), () => Complete(null), false),
+                (move ? Loc.T("Przenieś") : Loc.T("Kopiuj"), () => Accept(queue: false), true)));
         Opened += (_, _) => _target.Focus();
     }
 
@@ -214,7 +286,7 @@ public sealed class LoginDialog : DialogWindow<LoginResult?>
         _user = new TextBox().Text(userName ?? string.Empty).PlaceholderText(Loc.T("użytkownik (np. DOMENA\\jan)"));
         _user.IsEnabled = !lockUser;
         _password = new TextBox().PasswordChar('•').PlaceholderText(Loc.T("hasło"));
-        var body = new List<Control> { Label(Loc.T("„{0}” wymaga zalogowania.", realm)), _user, _password.Margin(0, 6, 0, 0) };
+        var body = new List<Control> { Message(Loc.T("„{0}” wymaga zalogowania.", realm)), Label(Loc.T("Użytkownik")), _user, Label(Loc.T("Hasło")).Margin(0, 6, 0, 4), _password };
         if (allowKey)
         {
             _keyFile = new TextBox().IsEnabled(false).Text(Plugins.BuiltIn.Remote.RemoteLogin.DefaultKeyFiles().FirstOrDefault() ?? string.Empty)
@@ -225,7 +297,8 @@ public sealed class LoginDialog : DialogWindow<LoginResult?>
             body.Add(_keyFile.Margin(0, 4, 0, 0));
         }
 
-        body.Add(ButtonRow((Loc.T("Zaloguj"), Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
+        HeaderGlyph = "🔑";
+        body.Add(ButtonRow((Loc.T("Anuluj"), () => Complete(null), false), (Loc.T("Zaloguj"), Accept, true)));
         SetBody([.. body]);
         Opened += (_, _) => (string.IsNullOrEmpty(_user.Text) ? _user : _password).Focus();
     }
@@ -249,14 +322,18 @@ public sealed class HostKeyDialog : DialogWindow<bool>
             ? Loc.T("Serwer {0}:{1} przedstawił INNY klucz niż poprzednio. Może to oznaczać atak typu man-in-the-middle ", host, port) +
               Loc.T("albo reinstalację serwera. Połącz się tylko, jeśli wiesz, dlaczego klucz się zmienił.")
             : Loc.T("Łączysz się z {0}:{1} po raz pierwszy. Sprawdź odcisk klucza z administratorem serwera, zanim mu zaufasz.", host, port);
-        var print = new SelectableTextBlock().Text("SHA256:" + fingerprint).FontFamily(FontFamily.Parse("Cascadia Mono, Consolas")).Margin(0, 4, 0, 0);
+        var print = Ds.Code(brushes, "SHA256:" + fingerprint);
         if (mismatch)
         {
             print.Foreground = brushes.Error;
         }
 
-        SetBody(Label(message), print,
-            ButtonRow((mismatch ? Loc.T("Zaufaj nowemu kluczowi") : Loc.T("Zaufaj i połącz"), () => Complete(true), !mismatch), (Loc.T("Anuluj"), () => Complete(false), mismatch)));
+        HeaderGlyph = mismatch ? "⚠" : "🔑";
+        HeaderGlyphBrush = mismatch ? brushes.Error : brushes.Warning;
+        SetBody(Message(message), Ds.Box(brushes, print),
+            ButtonRow(
+                (Loc.T("Anuluj"), () => Complete(false), mismatch ? ButtonKind.Primary : ButtonKind.Secondary),
+                (mismatch ? Loc.T("Zaufaj nowemu kluczowi") : Loc.T("Zaufaj i połącz"), () => Complete(true), mismatch ? ButtonKind.Danger : ButtonKind.Primary)));
     }
 }
 
@@ -281,7 +358,7 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
             hint is null ? new Panel() : Label(hint),
             _filter,
             _list,
-            ButtonRow(("OK", Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
+            ButtonRow((Loc.T("Anuluj"), () => Complete(null), false), ("OK", Accept, true)));
         ApplyFilter();
         Opened += (_, _) => _filter.Focus();
     }

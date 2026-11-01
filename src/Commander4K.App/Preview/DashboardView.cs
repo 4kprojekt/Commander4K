@@ -21,6 +21,9 @@ public enum DashboardTileEdit
     Remove,
     MoveUp,
     MoveDown,
+
+    /// <summary>The next size in <see cref="TileSizes.Cycle"/>.</summary>
+    Resize,
 }
 
 /// <summary>
@@ -30,9 +33,14 @@ public enum DashboardTileEdit
 /// </summary>
 public sealed class DashboardView : ScrollViewer
 {
-    private const double SmallWidth = 260;
+    /// <summary>Narrowest column; the grid adds columns as the panel widens and stretches them to fill it.</summary>
+    private const double UnitWidth = 240;
+
+    /// <summary>Lowest row; cards taller than this make their row grow instead of being cut.</summary>
+    private const double UnitHeight = 136;
+
     private const double TileGap = 12;
-    private const double MinimumTileWidth = 220;
+    private const double SideMargin = 12;
 
     private readonly AppHost _app;
     private readonly DashboardPreview _dashboard;
@@ -44,7 +52,9 @@ public sealed class DashboardView : ScrollViewer
     private readonly ConcurrentDictionary<int, CardSource> _sources = new();
     private readonly Dictionary<int, CardView> _cards = [];
     private readonly Dictionary<int, string> _targets = [];
-    private readonly List<TileLayout> _tileLayouts = [];
+    private readonly List<Control> _tiles = [];
+    private Grid? _grid;
+    private int _columns;
     private readonly Dictionary<string, Bitmap?> _thumbnails = new(StringComparer.Ordinal);
     private readonly FolderSizeCache? _sizes;
     private CardRefreshLoop? _loop;
@@ -69,7 +79,7 @@ public sealed class DashboardView : ScrollViewer
         _askTrust = askTrust;
         _sizes = app.BuiltInPreviews.OfType<FolderPreviewPlugin>().FirstOrDefault()?.Sizes;
         HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
-        SizeChanged += (_, _) => UpdateTileWidths();
+        SizeChanged += (_, _) => LayoutTiles();
         foreach (var slot in dashboard.Slots.Where(s => s.Tile.Card is not null))
         {
             _cards[slot.Index] = new CardView(this, slot);
@@ -124,71 +134,124 @@ public sealed class DashboardView : ScrollViewer
 
     private void Build()
     {
-        var stack = new StackPanel { Margin = new Thickness(12, 8), Spacing = 6 };
+        var stack = new StackPanel { Margin = new Thickness(SideMargin, 10), Spacing = 6 };
         if (_dashboard.Title.Length > 0)
         {
-            stack.Children.Add(new TextBlock { Text = _dashboard.Title, FontSize = _brushes.FontSize + 4, FontWeight = FontWeight.Bold, Foreground = _brushes.DirectoryForeground });
+            stack.Children.Add(new TextBlock { Text = _dashboard.Title, FontSize = _brushes.FontSize + 5, FontWeight = FontWeight.SemiBold, Foreground = _brushes.FileForeground });
         }
 
         if (_dashboard.Description is { Length: > 0 } description)
         {
-            stack.Children.Add(new TextBlock { Text = description, Foreground = _brushes.MutedForeground, TextWrapping = TextWrapping.Wrap });
+            stack.Children.Add(new TextBlock { Text = description, FontSize = Math.Max(11, _brushes.FontSize - 1), Foreground = _brushes.MutedForeground, TextWrapping = TextWrapping.Wrap });
         }
 
-        var wrap = new WrapPanel { Margin = new Thickness(-6, 4, 0, 0) };
-        _tileLayouts.Clear();
+        _grid = new Grid { ColumnSpacing = TileGap, RowSpacing = TileGap, Margin = new Thickness(0, 6, 0, 0) };
+        _tiles.Clear();
         foreach (var slot in _dashboard.Slots)
         {
-            var wide = slot.Tile.Size == TileSize.Wide;
-            var width = SmallWidth * (wide ? 2 : 1);
-            var hasCard = _cards.TryGetValue(slot.Index, out var card);
-            var tile = hasCard ? card!.Render(width - TileGap) : _shortcut(slot.Shortcut, width - TileGap);
-            var commands = new StackPanel
+            var (_, rows) = TileSizes.Span(slot.Tile.Size);
+            var minHeight = UnitHeight * rows + TileGap * (rows - 1);
+            Control tile;
+            if (_cards.TryGetValue(slot.Index, out var card))
             {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Spacing = 1,
-            };
-            commands.Children.Add(EditButton("↑", Loc.T("Przesuń kafelek w górę"), slot.Index > 0, slot.Index, DashboardTileEdit.MoveUp));
-            commands.Children.Add(EditButton("↓", Loc.T("Przesuń kafelek w dół"), slot.Index < _dashboard.Slots.Count - 1, slot.Index, DashboardTileEdit.MoveDown));
-            commands.Children.Add(EditButton("×", Loc.T("Usuń kafelek"), true, slot.Index, DashboardTileEdit.Remove));
-            var item = new StackPanel { Width = width, Spacing = 1 };
-            item.Children.Add(commands);
-            item.Children.Add(tile);
-            wrap.Children.Add(item);
-            _tileLayouts.Add(new TileLayout(item, tile, wide, card));
+                tile = card.Render(minHeight);
+            }
+            else
+            {
+                tile = _shortcut(slot.Shortcut, UnitWidth);
+                tile.Width = double.NaN;
+                tile.MinHeight = minHeight;
+                tile.HorizontalAlignment = HorizontalAlignment.Stretch;
+                tile.VerticalAlignment = VerticalAlignment.Stretch;
+                if (tile is ContentControl content)
+                {
+                    content.VerticalContentAlignment = VerticalAlignment.Top;
+                }
+            }
+
+            _tiles.Add(WithCommands(tile, slot));
         }
 
-        stack.Children.Add(wrap);
+        _grid.Children.AddRange(_tiles);
+        stack.Children.Add(_grid);
         Content = stack;
-        UpdateTileWidths();
+        _columns = 0;
+        LayoutTiles();
     }
 
-    private void UpdateTileWidths()
+    /// <summary>Places the tiles again when the number of columns that fit the panel changes.</summary>
+    private void LayoutTiles()
     {
-        if (_tileLayouts.Count == 0 || Bounds.Width <= 0)
+        if (_grid is null || _tiles.Count == 0)
         {
             return;
         }
 
-        var available = Math.Max(MinimumTileWidth, Bounds.Width - 36);
-        var totalUnits = Math.Max(1, (int)Math.Floor((available + TileGap) / (SmallWidth + TileGap)));
-        var unitWidth = Math.Max(MinimumTileWidth, (available - TileGap * (totalUnits - 1)) / totalUnits);
-        foreach (var layout in _tileLayouts)
+        var width = Bounds.Width > 0 ? Bounds.Width - SideMargin * 2 - 12 : UnitWidth * 3;
+        var columns = TileGridLayout.ColumnsFor(width, UnitWidth, TileGap);
+        if (columns == _columns)
         {
-            var span = Math.Min(layout.Wide ? 2 : 1, totalUnits);
-            var itemWidth = unitWidth * span + TileGap * (span - 1);
-            var contentWidth = Math.Max(160, itemWidth - TileGap);
-            layout.Container.Width = itemWidth;
-            if (layout.Card is not null)
-            {
-                layout.Card.SetWidth(contentWidth);
-            }
-            else if (layout.Tile is Button button)
-            {
-                button.Width = contentWidth;
-            }
+            return;
         }
+
+        _columns = columns;
+        var placements = TileGridLayout.Place([.. _dashboard.Slots.Select(s => s.Tile.Size)], columns);
+        _grid.ColumnDefinitions.Clear();
+        for (var i = 0; i < columns; i++)
+        {
+            _grid.ColumnDefinitions.Add(new Avalonia.Controls.ColumnDefinition(1, GridUnitType.Star));
+        }
+
+        _grid.RowDefinitions.Clear();
+        for (var i = TileGridLayout.RowCount(placements); i > 0; i--)
+        {
+            _grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto) { MinHeight = UnitHeight });
+        }
+
+        for (var i = 0; i < _tiles.Count; i++)
+        {
+            var place = placements[i];
+            Grid.SetColumn(_tiles[i], place.Column);
+            Grid.SetRow(_tiles[i], place.Row);
+            Grid.SetColumnSpan(_tiles[i], place.ColumnSpan);
+            Grid.SetRowSpan(_tiles[i], place.RowSpan);
+        }
+    }
+
+    /// <summary>The tile with its edit buttons over its top-right corner, shown while the pointer is on the tile.</summary>
+    private Control WithCommands(Control tile, DashboardSlot slot)
+    {
+        var commands = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 6, 6, 0),
+            Spacing = 2,
+            IsVisible = false,
+        };
+        var next = TileSizes.Next(slot.Tile.Size);
+        commands.Children.Add(EditButton("⤢", Loc.T("Rozmiar kafelka: {0} → {1}", SizeName(slot.Tile.Size), SizeName(next)), true, slot.Index, DashboardTileEdit.Resize));
+        commands.Children.Add(EditButton("↑", Loc.T("Przesuń kafelek w górę"), slot.Index > 0, slot.Index, DashboardTileEdit.MoveUp));
+        commands.Children.Add(EditButton("↓", Loc.T("Przesuń kafelek w dół"), slot.Index < _dashboard.Slots.Count - 1, slot.Index, DashboardTileEdit.MoveDown));
+        commands.Children.Add(EditButton("×", Loc.T("Usuń kafelek"), true, slot.Index, DashboardTileEdit.Remove));
+        var cell = new Panel { Background = Avalonia.Media.Brushes.Transparent };
+        cell.Children.Add(tile);
+        cell.Children.Add(commands);
+        if (_editTile is not null)
+        {
+            cell.PointerEntered += (_, _) => commands.IsVisible = true;
+            cell.PointerExited += (_, _) => commands.IsVisible = false;
+        }
+
+        return cell;
+    }
+
+    /// <summary>Display name of a tile size (columns × rows).</summary>
+    public static string SizeName(TileSize size)
+    {
+        var (columns, rows) = TileSizes.Span(size);
+        return columns == 0 ? Loc.T("cała szerokość") : $"{columns}×{rows}";
     }
 
     private Button EditButton(string label, string description, bool enabled, int index, DashboardTileEdit edit)
@@ -197,13 +260,16 @@ public sealed class DashboardView : ScrollViewer
         {
             Content = label,
             Padding = new Thickness(0),
-            Width = 20,
-            Height = 20,
-            MinWidth = 20,
+            Width = 24,
+            Height = 22,
+            MinWidth = 24,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
             IsEnabled = enabled && _editTile is not null,
             Background = _brushes.Surface2,
             Foreground = _brushes.HeaderForeground,
             BorderBrush = _brushes.PanelBorder,
+            CornerRadius = new CornerRadius(_brushes.ControlRadius),
             FontSize = Math.Max(10, _brushes.FontSize - 1),
         };
         ToolTip.SetTip(button, description);
@@ -217,8 +283,6 @@ public sealed class DashboardView : ScrollViewer
         };
         return button;
     }
-
-    private sealed record TileLayout(StackPanel Container, Control Tile, bool Wide, CardView? Card);
 
     /// <summary>
     /// Every card resolves its tile inside its own read: the cards resolve side by side, each within the loop's time
@@ -263,7 +327,7 @@ public sealed class DashboardView : ScrollViewer
                 }
 
                 return await source.Load(previous, ct).ConfigureAwait(false);
-            }, tile.Refresh);
+            }, tile.Refresh ?? WidgetCards.DefaultRefresh(tile.Card));
         }
 
         if (!_stopped)
@@ -359,7 +423,7 @@ public sealed class DashboardView : ScrollViewer
             try
             {
                 using var stream = new MemoryStream(data.ToArray());
-                return Bitmap.DecodeToWidth(stream, 112);
+                return Bitmap.DecodeToWidth(stream, 192);
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException or IOException)
             {
@@ -376,7 +440,12 @@ public sealed class DashboardView : ScrollViewer
         private readonly Border _frame = new();
         private CardState _state = new(slot.Index, null, true, null);
 
-        public Control Render(double width)
+        /// <summary>Rows the tile spans: a taller card shows more lines, a bigger chart and larger thumbnails.</summary>
+        private int Rows => TileSizes.Span(slot.Tile.Size).Rows;
+
+        private bool IsWide => TileSizes.Span(slot.Tile.Size).Columns is 0 or >= 2;
+
+        public Control Render(double minHeight)
         {
             // The frame outlives a rebuild (a skin change): take it out of the old grid before it joins the new one.
             if (_frame.Parent is Panel old)
@@ -385,8 +454,9 @@ public sealed class DashboardView : ScrollViewer
             }
 
             var brushes = owner._brushes;
-            _frame.Width = width;
-            _frame.Margin = new Thickness(6);
+            _frame.MinHeight = minHeight;
+            _frame.HorizontalAlignment = HorizontalAlignment.Stretch;
+            _frame.VerticalAlignment = VerticalAlignment.Stretch;
             _frame.Background = brushes.PanelBackground;
             _frame.BorderBrush = brushes.PanelBorder;
             _frame.BorderThickness = new Thickness(1);
@@ -395,8 +465,6 @@ public sealed class DashboardView : ScrollViewer
             _frame.Child = Content(brushes);
             return _frame;
         }
-
-        public void SetWidth(double width) => _frame.Width = width;
 
         public void Update(CardState state)
         {
@@ -411,31 +479,45 @@ public sealed class DashboardView : ScrollViewer
         {
             var card = _state.Card;
             var status = _state.Error is not null ? CardStatus.Error : card?.Status ?? CardStatus.None;
-            var body = new StackPanel { Spacing = 4, Margin = new Thickness(10, 8) };
+            var body = new StackPanel { Spacing = 4, Margin = new Thickness(12, 10) };
+            var lines = 4 * Rows;
 
             var heading = new DockPanel();
             var spinner = new TextBlock { Text = _state.Loading ? "⏳" : string.Empty, Foreground = brushes.MutedForeground, Margin = new Thickness(4, 0, 0, 0) };
             DockPanel.SetDock(spinner, Dock.Right);
             heading.Children.Add(spinner);
+            var isClock = string.Equals(slot.Tile.Card, WidgetCards.Clock, StringComparison.OrdinalIgnoreCase) && card?.Title is not null;
             heading.Children.Add(new TextBlock
             {
-                Text = $"{card?.Icon ?? slot.Shortcut.Icon ?? "▪"}  {card?.Title ?? slot.Tile.Title}",
+                Text = isClock ? $"{card?.Icon ?? "▪"}  {slot.Tile.Title}" : $"{card?.Icon ?? slot.Shortcut.Icon ?? "▪"}  {card?.Title ?? slot.Tile.Title}",
                 FontWeight = FontWeight.SemiBold,
                 Foreground = brushes.FileForeground,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
             body.Children.Add(heading);
+            if (isClock)
+            {
+                // The time is the card: as large as the tile allows.
+                body.Children.Add(new TextBlock
+                {
+                    Text = card!.Title,
+                    FontSize = brushes.FontSize * (Rows > 1 ? 4.2 : IsWide ? 3.2 : 2.6),
+                    FontWeight = FontWeight.Light,
+                    Foreground = brushes.FileForeground,
+                    Margin = new Thickness(0, 0, 0, 2),
+                });
+            }
 
             if ((card?.Subtitle ?? slot.Tile.Subtitle) is { Length: > 0 } subtitle)
             {
-                body.Children.Add(new TextBlock { Text = subtitle, FontSize = brushes.FontSize - 1, Foreground = brushes.MutedForeground, TextWrapping = TextWrapping.Wrap, MaxLines = 3 });
+                body.Children.Add(new TextBlock { Text = subtitle, FontSize = brushes.FontSize - 1, Foreground = brushes.MutedForeground, TextWrapping = TextWrapping.Wrap, MaxLines = 2 * Rows + 1 });
             }
 
             if (card is not null)
             {
                 for (var i = 0; i < card.Items.Count; i++)
                 {
-                    body.Children.Add(Item(card.Items[i], i, brushes));
+                    body.Children.Add(Item(card.Items[i], i, lines, brushes));
                 }
             }
 
@@ -444,7 +526,7 @@ public sealed class DashboardView : ScrollViewer
                 body.Children.Add(new TextBlock { Text = "⚠ " + error, Foreground = brushes.Error, TextWrapping = TextWrapping.Wrap, MaxLines = 3 });
             }
 
-            var actions = new WrapPanel { Margin = new Thickness(-3, 2, 0, 0) };
+            var actions = new WrapPanel { Margin = new Thickness(-3, 4, 0, 0) };
             IEnumerable<CardAction> buttons = card?.Actions ?? [];
             if (_state.Error is not null && !buttons.Any(a => a.Target == CardActions.Refresh))
             {
@@ -453,7 +535,19 @@ public sealed class DashboardView : ScrollViewer
 
             foreach (var action in buttons)
             {
-                var button = new Button { Content = action.Label, Padding = new Thickness(8, 2), Margin = new Thickness(3), FontSize = brushes.FontSize - 1 };
+                var button = new Button
+                {
+                    Content = action.Label,
+                    Height = 26,
+                    Padding = new Thickness(10, 0),
+                    Margin = new Thickness(3),
+                    FontSize = brushes.FontSize - 1,
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                    Background = brushes.Surface2,
+                    BorderBrush = brushes.PanelBorder,
+                    Foreground = brushes.FileForeground,
+                    CornerRadius = new CornerRadius(brushes.ControlRadius),
+                };
                 button.Click += async (_, e) =>
                 {
                     e.Handled = true;
@@ -487,12 +581,12 @@ public sealed class DashboardView : ScrollViewer
             return grid;
         }
 
-        private Control Item(CardItem item, int position, SkinBrushes brushes) => item switch
+        private Control Item(CardItem item, int position, int lines, SkinBrushes brushes) => item switch
         {
             CardValue value => Row(value.Label, value.Value, StatusBrush(value.Status, brushes) ?? brushes.FileForeground, brushes),
             CardProgress progress => Bar(progress, brushes),
-            CardText text => new TextBlock { Text = text.Text, Foreground = brushes.FileForeground, TextWrapping = TextWrapping.Wrap, MaxLines = 4 },
-            CardChart chart => new ChartControl(brushes) { Chart = chart.Chart, Height = 80, Margin = new Thickness(0, 2) },
+            CardText text => new TextBlock { Text = text.Text, Foreground = brushes.FileForeground, TextWrapping = TextWrapping.Wrap, MaxLines = lines, TextTrimming = TextTrimming.CharacterEllipsis },
+            CardChart chart => new ChartControl(brushes) { Chart = chart.Chart, Height = 80 + 96 * (Rows - 1), Margin = new Thickness(0, 2) },
             CardThumbnails thumbnails => Thumbnails(thumbnails, position, brushes),
             _ => new Panel(),
         };
@@ -521,10 +615,11 @@ public sealed class DashboardView : ScrollViewer
 
         private Control Thumbnails(CardThumbnails thumbnails, int position, SkinBrushes brushes)
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            var row = new WrapPanel { ItemSpacing = 4, LineSpacing = 4 };
             for (var i = 0; i < thumbnails.Images.Count; i++)
             {
-                var image = new Image { Width = 56, Height = 56, Stretch = Stretch.UniformToFill };
+                var side = Rows > 1 ? 96 : 56;
+                var image = new Image { Width = side, Height = side, Stretch = Stretch.UniformToFill };
                 _ = owner.DecodeAsync($"{slot.Index}|{position}|{i}|{thumbnails.Images[i].Length}", thumbnails.Images[i], image);
                 row.Children.Add(new Border { Background = brushes.Skeleton, CornerRadius = new CornerRadius(brushes.ControlRadius), ClipToBounds = true, Child = image });
             }

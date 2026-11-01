@@ -28,7 +28,7 @@ public sealed class TranslationDialog : DialogWindow<bool>
         _languageName = new TextBlock().VerticalAlignment(VerticalAlignment.Center).Margin(8, 0, 0, 0);
         _code.TextChanged += (_, _) => _languageName.Text = AppHost.LanguageName(Code);
         _languageName.Text = AppHost.LanguageName(Code);
-        _report = new SelectableTextBlock().TextWrapping(TextWrapping.Wrap).FontFamily(FontFamily.Parse("Cascadia Mono, Consolas")).FontSize(12);
+        _report = new SelectableTextBlock().TextWrapping(TextWrapping.Wrap).FontFamily(Brushes.MonospaceFamily).FontSize(12);
 
         SetBody(
             Label(Loc.T("Obecny język: {0}. Teksty interfejsu są w plikach JSON — jeden plik na język. Brakujące teksty pokazują się w oryginale, więc niepełne tłumaczenie niczego nie psuje.",

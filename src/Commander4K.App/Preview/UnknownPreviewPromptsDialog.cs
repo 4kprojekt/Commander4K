@@ -59,8 +59,7 @@ public sealed class UnknownPreviewPromptsDialog : DialogWindow<bool>
             Label(Loc.T("Rodzaj promptu:")).Margin(0, 8, 0, 0),
             _promptType,
             _warning,
-            new Border().BorderBrush(brushes.PanelBorder).BorderThickness(1).Padding(8)
-                .Child(new ScrollViewer().MaxHeight(420).MinHeight(240).Content(_prompt)),
+            Ds.Box(brushes, new ScrollViewer().MaxHeight(420).MinHeight(240).Content(_prompt)),
             _copyStatus,
             ButtonRow(
                 (Loc.T("Kopiuj prompt"), () => _ = CopyAsync(), true),

@@ -59,6 +59,36 @@ public sealed class DashboardTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Note_widget_shows_inline_text()
+    {
+        var card = await LoadAsync("""{ "title": "Notatka", "card": "note", "size": "full", "options": { "text": "Kopia w piątek" } }""");
+
+        Assert.Equal("Kopia w piątek", Assert.Single(card.Items.OfType<CardText>()).Text);
+    }
+
+    [Fact]
+    public async Task Note_widget_reads_the_file_in_open()
+    {
+        File.WriteAllText(Path.Combine(_root, "plain", "todo.md"), "- mleko\r\n- chleb\r\n");
+
+        var card = await LoadAsync("""{ "title": "Zakupy", "card": "note", "open": "plain/todo.md" }""");
+
+        Assert.Equal("- mleko\n- chleb", Assert.Single(card.Items.OfType<CardText>()).Text);
+    }
+
+    [Fact]
+    public void Clock_widget_converts_to_the_named_zone()
+    {
+        var tile = new FolderTile("Tokio", null, null, null, null, null, null) { Card = WidgetCards.Clock };
+        using var options = System.Text.Json.JsonDocument.Parse("""{ "timeZone": "Asia/Tokyo" }""");
+
+        var card = WidgetCards.ClockCard(tile, options.RootElement.Clone(), new DateTimeOffset(2026, 11, 1, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal("21:00", card.Title);
+        Assert.Equal("44", card.Items.OfType<CardValue>().Single(v => v.Label == "Tydzień").Value);
+    }
+
+    [Fact]
     public async Task Auto_card_follows_target_c4k_dir_preview()
     {
         var card = await LoadAsync("""{ "title": "Foto", "open": "photos", "card": true }""");

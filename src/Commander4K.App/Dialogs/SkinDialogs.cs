@@ -51,7 +51,7 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
                 }),
                 Action(Loc.T("🔄 Przeładuj"), ReloadAsync)),
             _info,
-            ButtonRow(("OK", Accept, true), (Loc.T("Anuluj"), Cancel, false)));
+            ButtonRow((Loc.T("Anuluj"), Cancel, false), ("OK", Accept, true)));
         Fill(_original.Id);
     }
 
@@ -351,7 +351,7 @@ public sealed class SkinEditorDialog : DialogWindow<Skin?>
             .AcceptsReturn(true)
             .TextWrapping(TextWrapping.NoWrap)
             .Height(380)
-            .FontFamily(FontFamily.Parse("Cascadia Mono, Consolas"))
+            .FontFamily(Brushes.MonospaceFamily)
             .FontSize(12)
             .PlaceholderText(Loc.T("Wklej tutaj JSON skórki…"));
         _json.TextChanged += (_, _) => Validate(preview: false);
@@ -371,7 +371,7 @@ public sealed class SkinEditorDialog : DialogWindow<Skin?>
                 Action(Loc.T("📋 Kopiuj prompt dla Claude (ze schematem)"), CopyPromptAsync),
                 Action(Loc.T("📂 Otwórz folder skórek"), () => SkinPickerDialog.OpenFolder(host.Config.SkinsDirectory))),
             _status,
-            ButtonRow((Loc.T("💾 Zapisz i użyj"), () => _ = SaveAsync(), true), (Loc.T("Zamknij"), Discard, false)));
+            ButtonRow((Loc.T("Zamknij"), Discard, false), (Loc.T("💾 Zapisz i użyj"), () => _ = SaveAsync(), true)));
         Load(start ?? _original, asNew: false);
         Opened += (_, _) => _json.Focus();
     }

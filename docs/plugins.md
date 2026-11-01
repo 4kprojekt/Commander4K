@@ -502,16 +502,20 @@ A dashboard tile with `"card"` is a live card drawn by a preview instead of a pl
       { "title": "Grafana", "card": "api", "refresh": "1m", "size": "wide",
         "api": { "url": "https://grafana.example.com/api/health", "headers": { "Authorization": "{secret:grafana}" },
                  "fields": [ { "path": "database", "label": "Baza", "as": "status", "ok": ["ok"] }, { "path": "version" } ] } },
-      { "title": "Konfiguracja", "open": "config.json", "card": "official.json-preview" }
+      { "title": "Konfiguracja", "open": "config.json", "card": "official.json-preview" },
+      { "title": "Tokio", "card": "clock", "options": { "timeZone": "Asia/Tokyo" } },
+      { "title": "Dyski", "card": "disks", "size": "tall" },
+      { "title": "Na piątek", "card": "note", "size": "full", "options": { "text": "Kopia NAS i przegląd certyfikatów." } }
     ]
   },
   "preview": "dashboard"
 }
 ```
 
-- `card`: `true` = the preview Ctrl+Q would pick for `open`, including that folder's own `c4k.dir`; or a name: `files`, `gallery`, `notes`, `markdown`, `dashboard`, `api`, `ssh`, or a plugin id (`plugin` or `plugin/preview`). A named card ignores the target's `c4k.dir`. A card that points at a folder with a dashboard shows that dashboard's title and tiles, and a click opens it in place: ← (Alt+←, Backspace) goes back, the breadcrumbs jump, and Esc shows the files of the folder on screen.
+- `card`: `true` = the preview Ctrl+Q would pick for `open`, including that folder's own `c4k.dir`; or a name: `files`, `gallery`, `notes`, `markdown`, `dashboard`, `api`, `ssh`, the widgets `clock`, `note`, `disks`, or a plugin id (`plugin` or `plugin/preview`). A named card ignores the target's `c4k.dir`. A card that points at a folder with a dashboard shows that dashboard's title and tiles, and a click opens it in place: ← (Alt+←, Backspace) goes back, the breadcrumbs jump, and Esc shows the files of the folder on screen.
 - `refresh`: `10s`, `5m`, `1h` (at least 2 s), only while the dashboard is visible. Without it the card is read once and has "Odśwież".
-- `size`: `small` (default) or `wide`. `options`: passed to the card's preview.
+- `size`: the tile's footprint on the dashboard grid, columns × rows: `small` 1×1 (default), `wide` 2×1, `tall` 1×2, `large` 2×2, `huge` 3×2, `full` (the whole row, 1 high). The grid has as many columns as fit the panel (at least 240 px each) and places tiles in order, filling a hole beside a taller tile with the next small ones; spans wider than the grid shrink to it. A taller card shows more text lines, a taller chart and bigger thumbnails. The ⤢ button over a tile (shown on hover, next to ↑ ↓ ×) cycles the sizes and writes `size` into the `c4k.dir`. `options`: passed to the card's preview.
+- Widget cards need no folder: `clock` (time and date; `options.timeZone` is an IANA or Windows id; read every 15 s), `note` (`options.text`, or the start of the text file in `open`) and `disks` (used and free space of this computer's disks, or of the disk holding `open`; read every minute). `refresh` overrides those intervals.
 - `api`: `url`, `method` (GET by default), `headers`, `body`, `contentType`, `fields` (`path` such as `a.b` or `items[0].name`, `label`, `as`: `value`, `chart` or `status`, `unit`, `ok`). `cm_AddApiCard` asks the API once, lists the fields of its answer and writes the tile. `"preview": { "view": "api", "api": { … } }` shows the same fields as the folder's preview (GET and HEAD only).
 - Secrets: write `{secret:name}` in a header or the body (never in the url, which is logged); the value lives encrypted in `config/secrets.json`, bound to the origin (scheme, host, port) it was first saved for, and a card that misses it offers to enter it. Never put tokens in `c4k.dir`.
 - Consent: `api` cards with methods other than GET/HEAD and every `ssh` card wait until the user trusts this `c4k.dir` (the same trust as `run`; a changed file asks again), and only on disks and shares.

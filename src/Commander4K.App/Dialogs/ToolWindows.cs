@@ -18,6 +18,11 @@ namespace Commander4K.App.Dialogs;
 /// <summary>F3: text or hex view, loaded entirely in the background.</summary>
 public sealed class ViewerWindow : Window
 {
+    /// <summary>The 26 px status bar of tool windows (design system: <c>statusBackground</c>, a rule above).</summary>
+    internal static Border StatusBar(SkinBrushes brushes, Control content) =>
+        new Border().MinHeight(26).Background(brushes.StatusBackground).BorderBrush(brushes.PanelBorder)
+            .BorderThickness(new Avalonia.Thickness(0, 1, 0, 0)).Child(content);
+
     private readonly CancellationTokenSource _loading = new();
 
     public ViewerWindow(AppHost host, SkinBrushes brushes, VfsEntry entry)
@@ -25,22 +30,22 @@ public sealed class ViewerWindow : Window
         Title = Loc.T("Podgląd – {0}", entry.Name);
         Width = 960;
         Height = 680;
-        Background = brushes.PanelBackground;
+        Ds.ApplySurface(this, brushes, dialog: false);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        var status = new TextBlock().Text(Loc.T("Wczytywanie…")).Margin(8, 4).Foreground(brushes.StatusForeground);
+        var status = new TextBlock().Text(Loc.T("Wczytywanie…")).Margin(8, 4).FontSize(12).Foreground(brushes.StatusForeground);
         var busy = new WaveDots { Foreground = brushes.StatusForeground, Margin = new Avalonia.Thickness(8, 0, 0, 0) };
         var text = new TextBox()
             .IsReadOnly(true)
             .AcceptsReturn(true)
             .TextWrapping(TextWrapping.NoWrap)
-            .FontFamily(FontFamily.Parse("Cascadia Mono, Consolas, Courier New"))
+            .FontFamily(brushes.MonospaceFamily)
             .Background(brushes.PanelBackground)
             .Foreground(brushes.FileForeground)
             .BorderThickness(new Avalonia.Thickness(0));
         Content = new Grid().Rows("*,Auto").Children(
             new ScrollViewer().Row(0).HorizontalScrollBarVisibility(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto).Content(text),
-            new Border().Row(1).Background(brushes.StatusBackground).Child(new Grid().Cols("Auto,*").Children(busy, status.Col(1))));
+            StatusBar(brushes, new Grid().Cols("Auto,*").Children(busy, status.Col(1))).Row(1));
 
         Closed += (_, _) => _loading.Cancel();
         Opened += async (_, _) =>
@@ -96,22 +101,22 @@ public sealed class TextWindow : Window
         Title = title;
         Width = 960;
         Height = 640;
-        Background = brushes.PanelBackground;
+        Ds.ApplySurface(this, brushes, dialog: false);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var box = new TextBox()
             .Text(text)
             .IsReadOnly(true)
             .AcceptsReturn(true)
             .TextWrapping(TextWrapping.NoWrap)
-            .FontFamily(FontFamily.Parse("Cascadia Mono, Consolas, Courier New"))
+            .FontFamily(brushes.MonospaceFamily)
             .Background(brushes.PanelBackground)
             .Foreground(brushes.FileForeground)
             .BorderThickness(new Avalonia.Thickness(0));
         Content = new Grid().Rows("*,Auto").Children(
             new ScrollViewer().Row(0).HorizontalScrollBarVisibility(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto).Content(box),
-            new StackPanel().Row(1).Orientation(Orientation.Horizontal).HorizontalAlignment(HorizontalAlignment.Right).Spacing(8).Margin(8).Children(
-                new Button().Content(Loc.T("Kopiuj")).OnClick(async _ => await SkinPickerDialog.CopyToClipboardAsync(this, text)),
-                new Button().Content(Loc.T("Zamknij")).OnClick(_ => Close())));
+            Ds.Footer(brushes, null,
+                Ds.Button(brushes, Loc.T("Kopiuj"), () => _ = SkinPickerDialog.CopyToClipboardAsync(this, text)),
+                Ds.Button(brushes, Loc.T("Zamknij"), Close, ButtonKind.Primary)).Row(1));
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -149,24 +154,30 @@ public sealed class SearchWindow : Window
         Title = Loc.T("Szukaj (Alt+F7)");
         Width = 820;
         Height = 620;
-        Background = brushes.WindowBackground;
+        Ds.ApplySurface(this, brushes, dialog: false);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         _root = new TextBox().Text(rootPath);
         _pattern = new TextBox().Text("*").PlaceholderText("Nazwa, np. *.log");
         _text = new TextBox().PlaceholderText(Loc.T("Zawiera tekst (opcjonalnie)"));
         _caseSensitive = new CheckBox().Content(Loc.T("Rozróżniaj wielkość liter"));
-        _start = new Button().Content(Loc.T("Szukaj")).IsDefault(true).OnClick(async _ => await ToggleAsync());
-        _status = new TextBlock().Margin(0, 6).Foreground(brushes.StatusForeground);
+        _start = Ds.Button(brushes, Loc.T("Szukaj"), () => _ = ToggleAsync(), ButtonKind.Primary).IsDefault(true);
+        _start.MinWidth = Ds.ButtonMinWidth;
+        _status = new TextBlock().Margin(12, 4).FontSize(12).Foreground(brushes.StatusForeground).TextTrimming(TextTrimming.CharacterEllipsis);
         _list = new ListBox().ItemsSource(_results);
         _list.DoubleTapped += (_, _) => GoToSelected();
 
-        Content = new Grid().Rows("Auto,Auto,Auto,Auto,*").Margin(14).Children(
-            Row(0, "W:", _root),
-            Row(1, Loc.T("Nazwa:"), _pattern),
-            Row(2, Loc.T("Tekst:"), _text),
-            new StackPanel().Row(3).Orientation(Orientation.Horizontal).Spacing(12).Children(_caseSensitive, _start, _status),
-            _list.Row(4).Margin(0, 8, 0, 0));
+        DockPanel.SetDock(_start, Dock.Right);
+        // Design system (tool windows): the form is a tool bar on headerBackground, results on the panel, status bar below.
+        var form = new Border().Background(brushes.IsModern ? brushes.HeaderBackground : brushes.WindowBackground).BorderBrush(brushes.PanelBorder)
+            .BorderThickness(new Avalonia.Thickness(0, 0, 0, 1)).Padding(14, 12).Child(new Grid().Rows("Auto,Auto,Auto,Auto").Children(
+                Row(0, "W:", _root),
+                Row(1, Loc.T("Nazwa:"), _pattern),
+                Row(2, Loc.T("Tekst:"), _text),
+                new DockPanel().Row(3).Margin(96, 2, 0, 0).Children(_start, _caseSensitive.VerticalAlignment(VerticalAlignment.Center))));
+        _list.Background = brushes.PanelBackground;
+        _list.BorderThickness = new Avalonia.Thickness(0);
+        Content = new Grid().Rows("Auto,*,Auto").Children(form, _list.Row(1), ViewerWindow.StatusBar(brushes, _status).Row(2));
         Opened += (_, _) => _pattern.Focus();
         Closed += (_, _) => _running?.Cancel();
     }
@@ -194,9 +205,9 @@ public sealed class SearchWindow : Window
         }
     }
 
-    private static Grid Row(int row, string label, Control input) =>
-        new Grid().Row(row).Cols("70,*").Margin(0, 0, 0, 6).Children(
-            new TextBlock().Text(label).VerticalAlignment(VerticalAlignment.Center),
+    private Grid Row(int row, string label, Control input) =>
+        new Grid().Row(row).Cols("96,*").Margin(0, 0, 0, 6).Children(
+            Ds.FieldLabel(_brushes, label).Margin(0).VerticalAlignment(VerticalAlignment.Center),
             input.Col(1));
 
     private async Task ToggleAsync()
