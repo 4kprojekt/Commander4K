@@ -105,12 +105,41 @@ public sealed class ExternalPlugin : IAsyncDisposable
             }
 
             // Kill first: a pending pipe read only ends when the process (and its stdout) goes away.
-            StopProcess();
+            await StopProcessAsync().ConfigureAwait(false);
             await connection.DisposeAsync().ConfigureAwait(false);
         }
 
-        StopProcess();
+        await StopProcessAsync().ConfigureAwait(false);
         _startGate.Dispose();
+    }
+
+    /// <summary>
+    /// Kills the process and waits (up to 2 s) until it is gone: <see cref="Process.Kill(bool)"/> returns before the
+    /// process ends, and until then it still holds its working folder, so deleting or replacing the plugin failed.
+    /// </summary>
+    private async Task StopProcessAsync()
+    {
+        if (_process is not { } process)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await process.WaitForExitAsync(wait.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException or System.ComponentModel.Win32Exception)
+        {
+        }
+
+        process.Dispose();
+        _process = null;
     }
 
     private async Task<JsonRpcConnection> EnsureStartedAsync(CancellationToken cancellationToken)
@@ -123,7 +152,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
                 return _connection;
             }
 
-            StopProcess();
+            await StopProcessAsync().ConfigureAwait(false);
             var info = RuntimeCatalog.BuildStartInfo(_runtime, _discovered.EntryPath, Folder);
             _audit.Record(Manifest.Id, "start", $"{info.FileName} {string.Join(' ', info.ArgumentList)}", AuditOutcome.Info);
             var process = Process.Start(info) ?? throw new InvalidOperationException(Loc.T("Nie udało się uruchomić wtyczki {0}.", Manifest.Name));
@@ -371,26 +400,6 @@ public sealed class ExternalPlugin : IAsyncDisposable
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
         {
-        }
-    }
-
-    private void StopProcess()
-    {
-        if (_process is { } process)
-        {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch (InvalidOperationException)
-            {
-            }
-
-            process.Dispose();
-            _process = null;
         }
     }
 }

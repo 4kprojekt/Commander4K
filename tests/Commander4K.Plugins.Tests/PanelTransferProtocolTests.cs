@@ -118,7 +118,7 @@ public sealed class PanelTransferProtocolTests : IAsyncLifetime
     {
         await _audit.DisposeAsync();
         _http.Dispose();
-        Directory.Delete(_folder, recursive: true);
+        await TestFolder.DeleteAsync(_folder);
     }
 
     [Fact]
