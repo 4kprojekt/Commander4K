@@ -16,8 +16,11 @@ import pe
 METADATA_SIGNATURE = 0x424A5342
 MAX_STREAMS = 16
 MAX_REFERENCES = 1024
-BLOB_SCAN = 4 * 1024 * 1024     # at most this much of #Blob is searched for the target framework
+BLOB_SCAN = 1024 * 1024         # at most this much of #Blob is searched for the target framework
 FRAMEWORK_PREFIXES = (b".NETCoreApp,Version=", b".NETFramework,Version=", b".NETStandard,Version=")
+SCAN_CHUNK = 65536
+SCAN_OVERLAP = max(len(p) for p in FRAMEWORK_PREFIXES) + 32   # a hit starting in a chunk is read with its version
+MAX_FRAMEWORK_TEXT = 256
 
 # coded index kinds (ECMA-335 II.24.2.6): the tables each one can point to, in tag order (None = unused tag)
 CODED = {
@@ -261,21 +264,22 @@ def _target_framework(reader, blob):
     start, size = blob
     if not size:
         return None
-    limit, chunk, overlap = min(size, BLOB_SCAN), 65536, 64
+    limit = min(size, BLOB_SCAN)
     position = 0
-    while position < limit:
-        try:
-            data = reader.read_clamped(start + position, min(chunk + overlap, limit - position))
-        except pe.ReadLimit:
-            return None
-        for prefix in FRAMEWORK_PREFIXES:
-            found = data.find(prefix)
-            if found >= 0:
-                end = found
-                while end < len(data) and 0x20 <= data[end] < 0x7F:
+    try:
+        while position < limit:
+            data = reader.read_clamped(start + position, min(SCAN_CHUNK + SCAN_OVERLAP, limit - position))
+            hits = [found for found in (data.find(prefix) for prefix in FRAMEWORK_PREFIXES) if found >= 0]
+            if hits:
+                found = min(hits)   # the earliest hit, whichever prefix it has
+                text = reader.read_clamped(start + position + found, min(MAX_FRAMEWORK_TEXT, size - position - found))
+                end = 0
+                while end < len(text) and 0x20 <= text[end] < 0x7F:
                     end += 1
-                return data[found:end].decode("ascii")
-        position += chunk
+                return text[:end].decode("ascii")
+            position += SCAN_CHUNK
+    except pe.ReadLimit:
+        return None
     return None
 
 

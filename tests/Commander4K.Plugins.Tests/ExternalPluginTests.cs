@@ -640,6 +640,75 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Pe_signature_refuses_huge_oids_quickly()
+    {
+        // a ContentInfo whose OID is ~1 MB of 0xFF (quadratic to decode before the cap), then one with a > 64-bit arc
+        const string code = """
+
+            import time, types, pe, signature
+            def tlv(tag, body):
+                n = len(body)
+                count = (n.bit_length() + 7) // 8
+                return bytes([tag]) + (bytes([n]) if n < 0x80 else bytes([0x80 | count]) + n.to_bytes(count, 'big')) + body
+            results = []
+            for oid in (b'\xff' * 1000000, b'\xff' * 60 + b'\x01'):
+                blob = tlv(0x30, tlv(0x06, oid) + tlv(0xA0, tlv(0x30, b'')))
+                cert = (8 + len(blob)).to_bytes(4, 'little') + b'\x00\x02\x02\x00' + blob
+                data = b'\0' * 8 + cert
+                reader = pe.RangeReader('C:\\hostile.exe', len(data), fetch=lambda p, o, n, d=data: d[o:o + n])
+                image = types.SimpleNamespace(data_dirs=[(0, 0)] * 4 + [(8, len(cert))] + [(0, 0)] * 11)
+                began = time.perf_counter()
+                found = signature.signer(reader, image)
+                results.append(f'{time.perf_counter() - began < 1}|{found.present}|{"OID" in (found.error or "")}')
+            sys.stdout.write(';'.join(results))
+            """;
+        Assert.Equal("True|True|True;True|True|True", await RunPluginPythonAsync("pe-info-python", code));
+    }
+
+    [Fact]
+    public async Task Pe_signature_keeps_the_signer_when_attributes_are_broken()
+    {
+        // coreclr.dll's signature with the OID of its first unauthenticated attribute (the timestamp) turned into a NULL
+        var coreclr = Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "coreclr.dll");
+        const string code = """
+
+            import pe, signature
+            data = bytearray(open(r'CORECLR', 'rb').read())   # test code only; the plugin reads through c4k
+            reader = pe.RangeReader(r'CORECLR', len(data), fetch=lambda p, o, n: bytes(data[o:o + n]))
+            image = pe.parse(reader, details=False, entropy=False)
+            at, size = image.data_dirs[4]
+            fields = signature._signed_data(signature.read_tlv(bytes(data[at + 8:at + size]), 0), 0)
+            signer = [f for f in fields if f.tag == 0x31][-1].children(3)[0]
+            unauth = [p for p in signer.children(4) if p.tag == 0xA1][0]
+            data[at + 8 + unauth.children(5)[0].children(6)[0].header] = 0x05
+            reader = pe.RangeReader(r'CORECLR', len(data), fetch=lambda p, o, n: bytes(data[o:o + n]))
+            found = signature.signer(reader, image)
+            sys.stdout.write(f'{found.subject}|{found.organization}|{found.not_after is not None}|{found.error is not None}|{found.timestamped}')
+            """;
+        var output = await RunPluginPythonAsync("pe-info-python", code.Replace("CORECLR", coreclr, StringComparison.Ordinal));
+        Assert.Equal(".NET|Microsoft Corporation|True|True|False", output);
+    }
+
+    [Fact]
+    public async Task Pe_plural_and_target_framework_scan()
+    {
+        // the earliest framework string wins, whatever its prefix, and one starting just before a chunk boundary is whole
+        const string code = """
+
+            import types
+            stub = types.ModuleType('c4k'); stub.handler = lambda m: (lambda f: f); stub.serve = lambda: None; stub.HostError = Exception
+            sys.modules['c4k'] = stub
+            import main, pe, clr
+            plural = ','.join(main._plural(n, 'a', 'b', 'c') for n in (1, 2, 5, 12, 22))
+            heap = b'\0' * (clr.SCAN_CHUNK - 3) + b'.NETFramework,Version=v4.7.2,Profile=Client-0123456789-0123456789-0123456789\x01' + b'.NETCoreApp,Version=v8.0\x01'
+            reader = pe.RangeReader('C:\\x.dll', len(heap), fetch=lambda p, o, n: heap[o:o + n])
+            sys.stdout.write(plural + '|' + str(clr._target_framework(reader, (0, len(heap)))))
+            """;
+        Assert.Equal("a,b,c,c,b|.NETFramework,Version=v4.7.2,Profile=Client-0123456789-0123456789-0123456789",
+            await RunPluginPythonAsync("pe-info-python", code));
+    }
+
+    [Fact]
     public async Task Pe_manifest_text_is_trimmed_and_failures_are_named()
     {
         var output = await RunPluginPythonAsync("pe-info-python",

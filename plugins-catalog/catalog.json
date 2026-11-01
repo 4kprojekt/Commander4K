@@ -349,7 +349,7 @@
         },
         {
           "path": "clr.py",
-          "sha256": "784fb1330610a775d768a2530d026bbb7b857bc6c0450d158b868b9fe5859591"
+          "sha256": "602002fd2253e7949791c8bafc6e0bd79bccbcc52c672e7137c3382d8022a6b4"
         },
         {
           "path": "deps.py",
@@ -357,7 +357,7 @@
         },
         {
           "path": "main.py",
-          "sha256": "aec3253e76e9ccc921316f8290a8d75d83ada35fb9c70340462fa59dc982bbfb"
+          "sha256": "4f21c6aec91df54c56907b55db1c8ebbfab33b756d6c7ed09396d57ec6fea1e6"
         },
         {
           "path": "pe.py",
@@ -373,7 +373,7 @@
         },
         {
           "path": "signature.py",
-          "sha256": "540250f92a2af9597b588c2c2ef5e4bf302d7d4fdbb65fc2ab4b2c1caebffdab"
+          "sha256": "b60fb1242ff5c5dae6708c4170be3bdac6da25ae7327a14c600e48577291fa11"
         }
       ]
     }

@@ -28,6 +28,8 @@ LEVELS = {"asInvoker": "uprawnienia użytkownika",
 NO_MANIFEST = "brak manifestu — uprawnienia użytkownika, wirtualizacja UAC dla starszych programów"
 NO_LEVEL = "manifest bez requestedExecutionLevel — uprawnienia użytkownika"
 MAX_MODULES = 60
+MAX_RESOLVED_REFERENCES = 200   # each one costs a c4k.stat; the rest are listed without a location
+ONCE_LABELS = {"version": "zasoby wersji", "clr": ".NET", "references": "odwołania .NET"}
 ASSEMBLY_KINDS = {"local": "✅", "package": "✅", "framework": "ℹ️", "gac": "ℹ️", "missing": "❌"}
 NO_SIGNATURE = "brak osadzonego podpisu — pliki Windows bywają podpisane katalogiem (.cat), którego ta wtyczka nie sprawdza"
 NOT_VERIFIED = "podpis nie został zweryfikowany kryptograficznie — to dane odczytane z pliku, nie potwierdzenie autentyczności"
@@ -216,6 +218,9 @@ def section_dotnet(image, entry, ctx):
         for name, version, token, kind, detail in references:
             key = f", token {token}" if token else ""
             lines.append(f"- {ASSEMBLY_KINDS.get(kind, 'ℹ️')} {_cell(name)} {version}{key} — {_cell(detail)}")
+        if ctx.more_references:
+            word = _plural(ctx.more_references, "referencja", "referencje", "referencji")
+            lines.append(f"- … i jeszcze {ctx.more_references} {word} (nie sprawdzono)")
         lines.append("")
     return lines
 
@@ -225,7 +230,7 @@ def section_signature(image, entry, ctx):
     lines = ["## Podpis", ""]
     if not sig.present:
         return lines + ["- brak osadzonego podpisu Authenticode", ""]
-    if sig.error and not sig.subject:
+    if sig.error and not (sig.subject or sig.organization or sig.issuer or sig.serial):
         return lines + [f"⚠ nie udało się odczytać podpisu: {_cell(sig.error)}", ""]
     rows = (("Podpisujący", sig.subject), ("Organizacja", sig.organization), ("Wystawca", sig.issuer),
             ("Numer seryjny", sig.serial), ("Ważny od", sig.not_before), ("Ważny do", sig.not_after),
@@ -311,20 +316,25 @@ class Context:
         self._signature = None
         self._references = None
         self._runtimeconfig = None
+        self.more_references = 0
         self._done = set()
 
-    def _once(self, name, read):
+    def _once(self, name, read, failed=None):
+        """read() the first time `name` is asked for; an exception never escapes: it becomes failed(text) when given,
+        the manifest error, or a warning."""
         if name in self._done:
             return None
         self._done.add(name)
         try:
             return read()
-        except Exception as error:  # render reads resources before any section's own try: nothing may escape
+        except Exception as error:  # render reads these before any section's own try: nothing may escape
             text = str(error) or type(error).__name__
+            if failed is not None:
+                return failed(text)
             if name == "manifest":
                 self.manifest_error = text
             else:
-                self.image.warnings.append(f"zasoby wersji: {text}")
+                self.image.warnings.append(f"{ONCE_LABELS.get(name, name)}: {text}")
         return None
 
     def manifest(self):
@@ -340,17 +350,19 @@ class Context:
         return self._version or {}
 
     def clr(self):
-        """The .NET metadata (clr.clr_info, which never raises), read once; None for a native image."""
-        if "clr" not in self._done:
-            self._done.add("clr")
-            self._clr = clr.clr_info(self.reader, self.image)
+        """The .NET metadata (clr.clr_info), read once; None for a native image."""
+        value = self._once("clr", lambda: clr.clr_info(self.reader, self.image))
+        if value is not None:
+            self._clr = value
         return self._clr
 
     def signature(self):
-        """The embedded Authenticode signer (signature.signer, which never raises), read once."""
-        if self._signature is None:
-            self._signature = signature.signer(self.reader, self.image)
-        return self._signature
+        """The embedded Authenticode signer (signature.signer), read once; a failure is a Signature with an error."""
+        value = self._once("signature", lambda: signature.signer(self.reader, self.image),
+                           failed=lambda text: signature.Signature(present=True, error=text))
+        if value is not None:
+            self._signature = value
+        return self._signature or signature.Signature()
 
     def _sibling(self, suffix):
         """(base, path) of `<base><suffix>` next to the file; base is the file name without its extension."""
@@ -367,23 +379,29 @@ class Context:
         return self._runtimeconfig
 
     def assembly_references(self):
-        """(name, version, token, kind, detail) of every AssemblyRef, resolved once (one c4k.stat each)."""
-        if self._references is None:
-            self._references = []
-            info = self.clr()
-            if info is None or not info.references or self.path is None:
-                return self._references
-            base, deps_path = self._sibling(".deps.json")
-            manifest = clr.read_json(deps_path)
-            folder, cache = deps.folder_of(self.path), {}
-            for name, version, token in info.references:
-                try:
-                    kind, detail = clr.resolve_assembly(name, folder, base, self.runtimeconfig(), manifest,
-                                                        info.target_framework, cache)
-                except Exception as error:  # nothing may raise out of preview.render
-                    kind, detail = "missing", f"⚠ {error}"
-                self._references.append((name, version, token, kind, detail))
-        return self._references
+        """(name, version, token, kind, detail) of the first MAX_RESOLVED_REFERENCES AssemblyRefs, resolved once (one
+        c4k.stat each); more_references counts the rest."""
+        value = self._once("references", self._resolve_references)
+        if value is not None:
+            self._references = value
+        return self._references or []
+
+    def _resolve_references(self):
+        info = self.clr()
+        if info is None or not info.references or self.path is None:
+            return []
+        base, deps_path = self._sibling(".deps.json")
+        manifest = clr.read_json(deps_path)
+        folder, cache, result = deps.folder_of(self.path), {}, []
+        self.more_references = max(0, len(info.references) - MAX_RESOLVED_REFERENCES)
+        for name, version, token in info.references[:MAX_RESOLVED_REFERENCES]:
+            try:
+                kind, detail = clr.resolve_assembly(name, folder, base, self.runtimeconfig(), manifest,
+                                                    info.target_framework, cache)
+            except Exception as error:  # nothing may raise out of preview.render
+                kind, detail = "missing", f"⚠ {error}"
+            result.append((name, version, token, kind, detail))
+        return result
 
     def dependencies(self):
         """The dependency tree (deps.tree), built once; a failure is kept in dependencies_error."""

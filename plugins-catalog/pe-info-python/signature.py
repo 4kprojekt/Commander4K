@@ -11,6 +11,8 @@ import pe
 
 MAX_CERTIFICATE = 1024 * 1024
 MAX_DEPTH = 32
+MAX_OID_BYTES = 64          # longer OIDs are refused: decoding huge arcs is quadratic
+MAX_ARC = (1 << 64) - 1
 CERT_PKCS7 = 2
 
 OID_SIGNED_DATA = "1.2.840.113549.1.7.2"
@@ -98,9 +100,15 @@ def _oid(item):
     data = item.content
     if not data:
         raise DerError("pusty OID")
+    if len(data) > MAX_OID_BYTES:
+        raise DerError("zbyt długi OID")
+    if data[-1] & 0x80:
+        raise DerError("ucięty OID")
     parts, value = [], 0
     for byte in data:
         value = value << 7 | byte & 0x7F
+        if value > MAX_ARC:
+            raise DerError("zbyt duży składnik OID")
         if not byte & 0x80:
             parts.append(value)
             value = 0
@@ -124,10 +132,15 @@ def _name(item, depth):
     """{oid: value} of an X.501 Name (the first value of each attribute type)."""
     values = {}
     for rdn in item.children(depth):
-        for pair in rdn.children(depth + 1):
-            parts = pair.children(depth + 2)
-            if len(parts) >= 2 and parts[0].tag == 0x06:
-                values.setdefault(_oid(parts[0]), "".join(ch if ch.isprintable() else "?" for ch in _text(parts[1])))
+        if rdn.tag != 0x31:   # not a SET: skipped, the other parts of the name are still read
+            continue
+        try:
+            for pair in rdn.children(depth + 1):
+                parts = pair.children(depth + 2)
+                if len(parts) >= 2 and parts[0].tag == 0x06:
+                    values.setdefault(_oid(parts[0]), "".join(ch if ch.isprintable() else "?" for ch in _text(parts[1])))
+        except _PARTIAL:
+            continue
     return values
 
 
@@ -187,6 +200,18 @@ def _countersignature_time(signer, depth):
     return _time(values[0]) if values else None
 
 
+_PARTIAL = (DerError, IndexError, ValueError, UnicodeError)
+
+
+def _keep(result, read):
+    """Run one optional part of the decoding; a failure is noted in result.error and the fields read so far stay."""
+    try:
+        read()
+    except _PARTIAL as error:
+        if result.error is None:
+            result.error = str(error) or type(error).__name__
+
+
 def decode(data):
     """Signature fields of a PKCS#7 blob (Authenticode); raises DerError on malformed data."""
     result = Signature(present=True)
@@ -213,24 +238,42 @@ def decode(data):
         serial, issuer, validity, subject = tbs[index], tbs[index + 2], tbs[index + 3], tbs[index + 4]
         if serial.content != wanted_serial or issuer.raw != wanted_issuer:
             continue
-        names = _name(subject, 6)
-        result.subject = names.get(OID_CN)
-        result.organization = names.get(OID_O)
-        issuer_names = _name(issuer, 6)
-        result.issuer = issuer_names.get(OID_CN) or issuer_names.get(OID_O)
         result.serial = serial.content.lstrip(b"\0").hex().upper() or "00"
-        times = validity.children(6)
-        if len(times) >= 2:
-            result.not_before, result.not_after = _time(times[0]), _time(times[1])
+
+        def subject_names(subject=subject):
+            names = _name(subject, 6)
+            result.subject = names.get(OID_CN)
+            result.organization = names.get(OID_O)
+
+        def issuer_names(issuer=issuer):
+            names = _name(issuer, 6)
+            result.issuer = names.get(OID_CN) or names.get(OID_O)
+
+        def validity_times(validity=validity):
+            times = validity.children(6)
+            if len(times) >= 2:
+                result.not_before, result.not_after = _time(times[0]), _time(times[1])
+
+        for read in (subject_names, issuer_names, validity_times):
+            _keep(result, read)
         break
     else:
         result.error = "nie znaleziono certyfikatu podpisującego"
 
+    _keep(result, lambda: _signing_time(result, signer_parts))
+    _keep(result, lambda: _timestamp(result, signer_parts))
+    return result
+
+
+def _signing_time(result, signer_parts):
     auth = next((p for p in signer_parts if p.tag == 0xA0), None)
     if auth is not None:
         values = _attributes(auth, 5).get(OID_SIGNING_TIME)
         if values:
             result.signing_time = _time(values[0])
+
+
+def _timestamp(result, signer_parts):
     unauth = next((p for p in signer_parts if p.tag == 0xA1), None)
     if unauth is not None:
         attributes = _attributes(unauth, 5)
@@ -242,7 +285,6 @@ def decode(data):
                         result.signing_time = read(attributes[oid][0], 6)
                     except (DerError, IndexError, ValueError):
                         pass   # the timestamp exists; only its time could not be read
-    return result
 
 
 def signer(reader, image):
