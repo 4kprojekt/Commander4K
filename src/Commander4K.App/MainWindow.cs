@@ -1738,9 +1738,51 @@ public sealed class MainWindow : Window
         }
     }
 
-    /// <summary>The spotlight on "📄 Pliki (Esc)" after a suggested view opened (Task 7).</summary>
+    private Tour.SpotlightOverlay? _tour;
+
+    /// <summary>
+    /// After a suggested view opened: the spotlight on "📄 Pliki (Esc)", until the user closed it three times or once
+    /// went back to the files that way.
+    /// </summary>
     private void ShowBackToFilesTour(FilePanelView panel)
     {
+        var memory = _host!.FolderSuggestions.Memory;
+        if (!memory.ShouldShowTour || panel.Mode is not PreviewPanelView preview)
+        {
+            return;
+        }
+
+        void Used()
+        {
+            preview.CloseRequested -= Used;
+            _tour?.Close();
+            _ = Task.Run(memory.RecordTourUsedAsync);
+        }
+
+        preview.CloseRequested += Used;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (panel.Mode != preview || Avalonia.Controls.Primitives.OverlayLayer.GetOverlayLayer(this) is not { } layer)
+            {
+                return;
+            }
+
+            _tour?.Close();
+            var tour = new Tour.SpotlightOverlay(_skins!.Current, preview.FilesButton,
+                Loc.T("Tu (albo Esc) wrócisz do zwykłej listy plików. Shift+Enter wchodzi do folderu bez widoku."), Loc.T("OK"));
+            tour.Closed += closed =>
+            {
+                layer.Children.Remove(closed);
+                if (_tour == closed)
+                {
+                    _tour = null;
+                }
+
+                _ = Task.Run(memory.RecordTourDismissedAsync);
+            };
+            _tour = tour;
+            layer.Children.Add(tour);
+        }, DispatcherPriority.Loaded);
     }
 
     private async ValueTask ResetFolderSuggestionsAsync(CommandInvocation invocation)
@@ -1766,6 +1808,17 @@ public sealed class MainWindow : Window
         if (_host is null || _active is null)
         {
             return;
+        }
+
+        // The spotlight closes on any key; Esc and Enter only close it, so the first Esc does not leave the view too.
+        if (_tour is { } tour && e.Key is not (Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin))
+        {
+            tour.Close();
+            if (e.Key is Key.Escape or Key.Enter)
+            {
+                e.Handled = true;
+                return;
+            }
         }
 
         var focused = FocusManager?.GetFocusedElement();
