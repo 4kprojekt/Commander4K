@@ -140,14 +140,6 @@ public sealed class PluginAuthoringTests : IDisposable
     }
 
     [Fact]
-    public void Assistants_have_a_chat_page_for_long_prompts()
-    {
-        Assert.Equal("https://gemini.google.com/app", SearchEngines.Get("gemini").ChatUrl);
-        Assert.Equal("https://chatgpt.com/", SearchEngines.Get("chatgpt").ChatUrl);
-        Assert.Equal("https://claude.ai/", SearchEngines.Get("claude").ChatUrl);
-    }
-
-    [Fact]
     public void Binary_files_are_written_byte_exact()
     {
         byte[] data = [0, 255, 10];

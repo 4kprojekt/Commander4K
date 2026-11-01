@@ -756,16 +756,10 @@ public sealed class MainWindow : Window
         return browser;
     }
 
-    /// <summary><see cref="IPluginHost.SearchWebAsync"/>: <c>null</c> = search engine, <c>assistant</c> = AI assistant, else an engine id.</summary>
+    /// <summary><see cref="IPluginHost.SearchWebAsync"/>: an engine id, otherwise (also the former "assistant") the user's search engine.</summary>
     private Task SearchWebAsync(string query, string? engine)
     {
-        var settings = _host!.Settings;
-        var resolved = engine switch
-        {
-            null or "" => SearchEngines.Get(settings.SearchEngine),
-            "assistant" => SearchEngines.Get(settings.AssistantEngine, SearchEngines.DefaultAssistant),
-            _ => SearchEngines.Get(engine),
-        };
+        var resolved = SearchEngines.Get(engine, _host!.Settings.SearchEngine);
         return OpenBrowser(null).SearchAsync(query, resolved);
     }
 

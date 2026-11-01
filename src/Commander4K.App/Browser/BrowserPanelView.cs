@@ -185,39 +185,11 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         }
     }
 
-    /// <summary>
-    /// Searches with <paramref name="engine"/>. Assistants that take no query in the address (Gemini), and prompts too
-    /// long for one, go to the clipboard with the chat opened (see <see cref="AskWithPromptAsync"/>).
-    /// </summary>
-    public async Task SearchAsync(string query, SearchEngine engine)
+    /// <summary>Searches with <paramref name="engine"/>.</summary>
+    public Task SearchAsync(string query, SearchEngine engine)
     {
-        if (engine.IsAssistant && (!engine.AcceptsQuery || query.Length > SearchEngine.MaxQueryLength))
-        {
-            await AskWithPromptAsync(query, engine);
-            return;
-        }
-
         Navigate(engine.BuildUrl(query));
-    }
-
-    /// <summary>
-    /// Opens the assistant's chat and puts <paramref name="prompt"/> on the clipboard; the user pastes it (Ctrl+V) on the page.
-    /// </summary>
-    public async Task AskWithPromptAsync(string prompt, SearchEngine engine)
-    {
-        if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
-        {
-            await clipboard.SetTextAsync(prompt);
-        }
-
-        var onAssistant = CurrentUrl is { } current && Uri.TryCreate(current, UriKind.Absolute, out var page)
-            && Uri.TryCreate(engine.ChatUrl, UriKind.Absolute, out var chat) && page.Host == chat.Host;
-        if (!onAssistant)
-        {
-            Navigate(engine.ChatUrl);
-        }
-
-        _notify(Loc.T("Pytanie jest w schowku — wklej je na stronie (Ctrl+V)."), false);
+        return Task.CompletedTask;
     }
 
     private SkinBrushes? _brushes;

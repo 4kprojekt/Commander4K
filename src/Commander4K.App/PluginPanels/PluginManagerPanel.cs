@@ -95,7 +95,6 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
             new("catalog", Loc.T("Odśwież katalog"), "Ctrl+R", AppliesToRows: false),
             new("disable", Loc.T("Wyłącz"), "Ctrl+D"),
             new("log", Loc.T("Dziennik audytu"), "F3", AppliesToRows: false),
-            new("search", Loc.T("Szukaj rozwiązania"), "Ctrl+F"),
             new("template", Loc.T("Nowa wtyczka z przykładu"), "Ctrl+N", AppliesToRows: false),
             new("folder", Loc.T("Folder wtyczek"), "F7", AppliesToRows: false),
         ];
@@ -262,20 +261,6 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                     return entries.Count == 0
                         ? Loc.T("Dziennik jest pusty.")
                         : Loc.T("Dziennik audytu{0} ({1} wpisów, najnowsze na dole):\n\n", (id is null ? "" : $" — {id}"), entries.Count) + string.Join('\n', entries);
-
-                case "search":
-                    var problem = plugin is not null ? app.PluginBlocker(plugin) : rowIds.FirstOrDefault()?.StartsWith("runtime:", StringComparison.Ordinal) == true
-                        ? $"install {rowIds[0][8..]} Windows 11"
-                        : null;
-                    if (string.IsNullOrWhiteSpace(problem))
-                    {
-                        return Loc.T("Wybierz wtyczkę lub środowisko z problemem.");
-                    }
-
-                    // The question goes to the user's AI assistant in the internal browser (sign-in is remembered there).
-                    var subject = plugin?.Manifest is { } broken ? Loc.T("wtyczka Commander4K „{0}” ({1} {2})", broken.Name, broken.Runtime.Type, broken.Runtime.Version) : Loc.T("środowisko wtyczek");
-                    await host.SearchWebAsync(Loc.T("Windows 11, {0}: {1} Jak to naprawić krok po kroku?", subject, problem), "assistant");
-                    return null;
 
                 case "template":
                     var choice = await host.PromptAsync(Loc.T("Nowa wtyczka z przykładu"), Loc.T("Przykład: python, node, powershell albo preview (dedykowany podgląd plików, Python)"), "python");

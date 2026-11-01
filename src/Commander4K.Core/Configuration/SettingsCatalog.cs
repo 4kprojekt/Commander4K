@@ -116,9 +116,6 @@ public static class SettingsCatalog
         new("searchEngine", Browser, Loc.T("Wyszukiwarka w przeglądarce"), Loc.T("Co dzieje się z tekstem wpisanym w pasek adresu wewnętrznej przeglądarki (Ctrl+Alt+W), gdy nie jest adresem."),
             SettingKind.Choice, s => s.SearchEngine, (s, v) => s.SearchEngine = (string)v!, ["google", "bing", "duckduckgo", "szukaj", "www", "internet"])
         { Choices = () => [.. Web.SearchEngines.All.Select(e => new SettingChoice(e.Id, e.Name))] },
-        new("assistantEngine", Browser, Loc.T("Asystent AI do szukania rozwiązań"), Loc.T("Kogo pyta „Szukaj rozwiązania” (menedżer wtyczek) i wyszukiwania asystenta z wtyczek. Zaloguj się raz w przeglądarce — sesja zostaje zapamiętana."),
-            SettingKind.Choice, s => s.AssistantEngine, (s, v) => s.AssistantEngine = (string)v!, ["ai", "chatgpt", "gemini", "claude", "perplexity", "asystent", "pomoc"])
-        { Choices = () => [.. Web.SearchEngines.All.OrderBy(e => !e.IsAssistant).Select(e => new SettingChoice(e.Id, e.IsAssistant ? e.Name : e.Name + Loc.T(" (wyszukiwarka)")))] },
 
         new("mcp.enabled", Mcp, Loc.T("Serwer MCP dla Claude Code"), Loc.T("Udostępnia aplikację przez Model Context Protocol na lokalnym porcie (tylko 127.0.0.1, z tokenem), żeby Claude Code mógł przeglądać pliki, pisać wtyczki i sterować panelami. Dostęp ogranicza lista folderów poniżej, a każde narzędzie ma własny tryb: zezwalaj, pytaj albo zablokuj."),
             SettingKind.Toggle, s => s.Mcp.Enabled, (s, v) => s.Mcp.Enabled = (bool)v!, McpKeywords),

@@ -185,7 +185,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `ui.navigate` | `{ path, focus? }` | `null` | — |
 | `ui.openUrl` | `{ url }` | `null` | — (http/https only; opens the app's built-in browser panel, audited) |
 | `ui.openFolder` | `{ path }` | `null` | — (the user is asked where to open it: Explorer or the active panel; nothing is created; audited) |
-| `ui.search` | `{ query, engine? }` | `null` | — (`engine`: omitted = the user's search engine, `"assistant"` = the user's AI assistant, or `google`, `bing`, `duckduckgo`, `chatgpt`, `claude`, `perplexity`, `gemini`; use it e.g. to let the user look up an error) |
+| `ui.search` | `{ query, engine? }` | `null` | — (`engine`: omitted = the user's search engine, or `google`, `bing`, `duckduckgo`; any other value, such as the former `"assistant"`, uses the user's search engine; use it e.g. to let the user look up an error) |
 | `ui.copyText` | `{ text }` | `null` | — (clipboard, write only) |
 | `storage.get` | `{ key }` | any JSON value or `null` | — (the plugin's own data) |
 | `storage.set` | `{ key, value }` (`null` removes; max 1 MB per plugin) | `null` | — |

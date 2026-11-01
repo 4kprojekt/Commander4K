@@ -1,46 +1,29 @@
 namespace Commander4K.Core.Web;
 
-/// <param name="UrlTemplate">Search URL with <c>{0}</c> for the escaped query; without <c>{0}</c> the page cannot take a query.</param>
-/// <param name="IsAssistant">An AI chat (asking it is the "find a solution" path) rather than a classic search engine.</param>
-public sealed record SearchEngine(string Id, string Name, string UrlTemplate, bool IsAssistant)
+/// <param name="UrlTemplate">Search URL with <c>{0}</c> for the escaped query.</param>
+public sealed record SearchEngine(string Id, string Name, string UrlTemplate)
 {
-    public bool AcceptsQuery => UrlTemplate.Contains("{0}", StringComparison.Ordinal);
-
     public string BuildUrl(string query) =>
-        AcceptsQuery ? string.Format(System.Globalization.CultureInfo.InvariantCulture, UrlTemplate, Uri.EscapeDataString(query.Trim())) : UrlTemplate;
-
-    /// <summary>
-    /// The page with an empty chat, for prompts too long for a URL (the browser panel types them into the page): the
-    /// template itself when it takes no query, otherwise the site's root.
-    /// </summary>
-    public string ChatUrl => AcceptsQuery ? new Uri(BuildUrl("x")).GetLeftPart(UriPartial.Authority) + "/" : UrlTemplate;
-
-    /// <summary>Longest prompt sent in the address; longer ones are typed into the page.</summary>
-    public const int MaxQueryLength = 1500;
+        string.Format(System.Globalization.CultureInfo.InvariantCulture, UrlTemplate, Uri.EscapeDataString(query.Trim()));
 }
 
-/// <summary>Search engines and AI assistants the internal browser can send a question to.</summary>
+/// <summary>Search engines the internal browser's address bar (and plugins' <c>ui.search</c>) can use.</summary>
 public static class SearchEngines
 {
     public const string DefaultSearch = "google";
-    public const string DefaultAssistant = "chatgpt";
 
     public static IReadOnlyList<SearchEngine> All { get; } =
     [
-        new("google", "Google", "https://www.google.com/search?q={0}", false),
-        new("bing", "Bing", "https://www.bing.com/search?q={0}", false),
-        new("duckduckgo", "DuckDuckGo", "https://duckduckgo.com/?q={0}", false),
-        new("chatgpt", "ChatGPT", "https://chatgpt.com/?q={0}", true),
-        new("claude", "Claude", "https://claude.ai/new?q={0}", true),
-        new("perplexity", "Perplexity", "https://www.perplexity.ai/search?q={0}", true),
-
-        // Gemini has no query parameter: the browser opens it and puts the question on the clipboard.
-        new("gemini", "Gemini", "https://gemini.google.com/app", true),
+        new("google", "Google", "https://www.google.com/search?q={0}"),
+        new("bing", "Bing", "https://www.bing.com/search?q={0}"),
+        new("duckduckgo", "DuckDuckGo", "https://duckduckgo.com/?q={0}"),
     ];
 
+    /// <summary>The engine <paramref name="id"/>, else <paramref name="fallback"/>, else Google (settings may name a removed engine).</summary>
     public static SearchEngine Get(string? id, string fallback = DefaultSearch) =>
         All.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase))
-        ?? All.First(e => e.Id == fallback);
+        ?? All.FirstOrDefault(e => string.Equals(e.Id, fallback, StringComparison.OrdinalIgnoreCase))
+        ?? All[0];
 
     /// <summary>
     /// What the address bar does with typed text: URLs (with or without scheme) are opened, anything else is searched.

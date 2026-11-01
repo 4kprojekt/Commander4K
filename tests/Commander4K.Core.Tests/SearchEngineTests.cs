@@ -18,21 +18,11 @@ public sealed class SearchEngineTests
         Assert.Equal(expected, SearchEngines.ResolveAddress(input, Google));
 
     [Fact]
-    public void Assistants_take_the_question_in_the_url_except_gemini()
-    {
-        Assert.Equal("https://chatgpt.com/?q=Node%2018%3F", SearchEngines.Get("chatgpt").BuildUrl(" Node 18? "));
-        Assert.StartsWith("https://claude.ai/new?q=", SearchEngines.Get("claude").BuildUrl("x"), StringComparison.Ordinal);
-
-        var gemini = SearchEngines.Get("gemini");
-        Assert.False(gemini.AcceptsQuery);
-        Assert.Equal("https://gemini.google.com/app", gemini.BuildUrl("anything"));
-    }
-
-    [Fact]
     public void Unknown_engine_falls_back()
     {
         Assert.Equal("google", SearchEngines.Get("altavista").Id);
-        Assert.Equal("chatgpt", SearchEngines.Get(null, SearchEngines.DefaultAssistant).Id);
+        Assert.Equal("bing", SearchEngines.Get("assistant", "bing").Id);
+        Assert.Equal("google", SearchEngines.Get("chatgpt", "chatgpt").Id); // an engine removed from an old settings.json
         Assert.All(SearchEngines.All, e => Assert.StartsWith("https://", e.UrlTemplate, StringComparison.Ordinal));
     }
 }

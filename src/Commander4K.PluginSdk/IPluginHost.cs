@@ -112,9 +112,9 @@ public interface IPluginHost
     /// </summary>
     Task OpenFolderAsync(string path);
     /// <summary>
-    /// Searches the web or asks an AI assistant in the internal browser. <paramref name="engine"/>: <c>null</c> = the
-    /// user's search engine, <c>"assistant"</c> = the user's AI assistant, or an id (<c>google</c>, <c>chatgpt</c>,
-    /// <c>gemini</c>, <c>claude</c>, <c>perplexity</c>, <c>bing</c>, <c>duckduckgo</c>).
+    /// Searches the web in the internal browser. <paramref name="engine"/>: <c>null</c> = the user's search engine, or
+    /// an id (<c>google</c>, <c>bing</c>, <c>duckduckgo</c>); any other value (such as the former <c>"assistant"</c>)
+    /// means the user's search engine.
     /// </summary>
     Task SearchWebAsync(string query, string? engine = null);
 
