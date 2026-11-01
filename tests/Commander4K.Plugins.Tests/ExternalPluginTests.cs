@@ -1,3 +1,5 @@
+using System.Formats.Tar;
+using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Net.Sockets;
@@ -8,6 +10,7 @@ using Commander4K.Core.Plugins;
 using Commander4K.Core.Updates;
 using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
+using Commander4K.Plugins.BuiltIn.Archives;
 using Commander4K.Plugins.BuiltIn.Local;
 
 namespace Commander4K.Plugins.Tests;
@@ -20,12 +23,18 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     private readonly string _folder = Directory.CreateTempSubdirectory("c4k-ext-").FullName;
     private readonly AuditLog _audit = new(null);
     private readonly FakeUi _ui = new();
-    private readonly VfsRouter _router = new(new ResilientAsyncExecutor(), [new LocalFileSystemPlugin()]);
+    private readonly ArchiveVfsPlugin _archives = new();
+    private readonly VfsRouter _router;
     private readonly HttpClient _http = new();
     private readonly PluginStorage _storage;
     private IReadOnlyList<RuntimeInfo> _runtimes = [];
 
-    public ExternalPluginTests() => _storage = new PluginStorage(Path.Combine(_folder, "plugin-data"));
+    public ExternalPluginTests()
+    {
+        _storage = new PluginStorage(Path.Combine(_folder, "plugin-data"));
+        _router = new(new ResilientAsyncExecutor(), [new LocalFileSystemPlugin(), _archives]);
+        _archives.Router = _router; // like AppHost: archives open their container through the router that contains them
+    }
 
     private static CancellationToken TestToken => TestContext.Current.CancellationToken;
 
@@ -719,6 +728,122 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Equal("asInvoker|None|True", output);
     }
 
+    /// <summary>Writes a zip with these text entries to the test folder.</summary>
+    private string ZipOf(string name, params (string Path, string Text)[] files)
+    {
+        var path = Path.Combine(_folder, name);
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
+        foreach (var (inner, text) in files)
+        {
+            using var writer = new StreamWriter(zip.CreateEntry(inner).Open(), new UTF8Encoding(false));
+            writer.Write(text);
+        }
+
+        return path;
+    }
+
+    [Fact]
+    public async Task Archive_preview_summarises_zip()
+    {
+        var zip = ZipOf("demo.zip", ("readme.md", "# Witaj\nopis"), ("src/a.cs", "class A {}"), ("src/b.cs", "class B {}"), ("faktura.pdf.exe", "MZ"));
+        var md = await RenderAsync("archive-info-python", zip, "archive");
+        Assert.Contains("Pliki: 4", md, StringComparison.Ordinal);
+        Assert.Contains("Foldery: 1", md, StringComparison.Ordinal);
+        Assert.Contains("## README", md, StringComparison.Ordinal);
+        Assert.Contains("# Witaj", md[md.IndexOf("## README", StringComparison.Ordinal)..], StringComparison.Ordinal);
+        Assert.Contains("faktura.pdf.exe", md[md.IndexOf("## Uwagi", StringComparison.Ordinal)..], StringComparison.Ordinal);
+        Assert.Contains(".cs", md[md.IndexOf("## Typy plików", StringComparison.Ordinal)..], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_lists_tar_gz()
+    {
+        var path = Path.Combine(_folder, "data.tar.gz");
+        await using (var file = File.Create(path))
+        await using (var gzip = new GZipStream(file, CompressionLevel.Fastest))
+        await using (var tar = new TarWriter(gzip, TarEntryFormat.Pax))
+        {
+            var entry = new PaxTarEntry(TarEntryType.RegularFile, "x/y.txt") { DataStream = new MemoryStream("hello"u8.ToArray()) };
+            await tar.WriteEntryAsync(entry, TestToken);
+        }
+
+        var md = await RenderAsync("archive-info-python", path, "archive");
+        Assert.Contains("y.txt", md, StringComparison.Ordinal);
+        Assert.DoesNotContain("⚠", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_reads_nuspec_dependencies()
+    {
+        const string nuspec = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+              <metadata>
+                <id>Demo</id>
+                <version>1.0.0</version>
+                <authors>4Kprojekt</authors>
+                <dependencies>
+                  <group targetFramework="net8.0"><dependency id="Newtonsoft.Json" version="13.0.1"/></group>
+                </dependencies>
+              </metadata>
+            </package>
+            """;
+        var nupkg = ZipOf("Demo.1.0.0.nupkg", ("Demo.nuspec", nuspec), ("lib/net8.0/Demo.dll", "MZ"));
+        var md = await RenderAsync("archive-info-python", nupkg, "archive");
+        Assert.Contains("## Pakiet NuGet", md, StringComparison.Ordinal);
+        Assert.Contains("Newtonsoft.Json", md, StringComparison.Ordinal);
+        Assert.Contains("13.0.1", md, StringComparison.Ordinal);
+        Assert.Contains("net8.0", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_reads_wheel_and_jar()
+    {
+        var wheel = ZipOf("demo-1.0-py3-none-any.whl",
+            ("demo/__init__.py", ""),
+            ("demo-1.0.dist-info/METADATA", "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\nRequires-Python: >=3.9\nRequires-Dist: requests>=2\n\nOpis pakietu.\n"));
+        var md = await RenderAsync("archive-info-python", wheel, "archive");
+        Assert.Contains("## Python (wheel)", md, StringComparison.Ordinal);
+        Assert.Contains("requests>=2", md, StringComparison.Ordinal);
+        Assert.Contains(">=3.9", md, StringComparison.Ordinal);
+
+        var jar = ZipOf("app.jar", ("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nMain-Class: pl.demo.App\r\nImplementation-Version: 2.3\r\n"), ("pl/demo/App.class", "x"));
+        md = await RenderAsync("archive-info-python", jar, "archive");
+        Assert.Contains("## Java (JAR)", md, StringComparison.Ordinal);
+        Assert.Contains("pl.demo.App", md, StringComparison.Ordinal);
+        Assert.Contains("2.3", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_skips_xml_with_dtd()
+    {
+        const string nuspec = """<!DOCTYPE package [<!ENTITY x "y">]><package><metadata><id>&x;</id></metadata></package>""";
+        var nupkg = ZipOf("Evil.1.0.0.nupkg", ("Evil.nuspec", nuspec));
+        var md = await RenderAsync("archive-info-python", nupkg, "archive");
+        Assert.Contains("pominięto: DTD w XML", md, StringComparison.Ordinal);
+        Assert.DoesNotContain("Traceback", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_caps_large_listing()
+    {
+        var files = Enumerable.Range(0, 2500).Select(i => ($"d{i:D4}/f.txt", "x")).ToArray();
+        var zip = ZipOf("big.zip", files);
+        var md = await RenderAsync("archive-info-python", zip, "archive");
+        Assert.Contains("lista niepełna", md, StringComparison.Ordinal);
+        Assert.Contains("## Podsumowanie", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Archive_preview_of_broken_zip()
+    {
+        var path = Path.Combine(_folder, "broken.zip");
+        await File.WriteAllBytesAsync(path, [(byte)'P', (byte)'K', 3, 4, .. Enumerable.Repeat((byte)0x5A, 200)], TestToken);
+        var md = await RenderAsync("archive-info-python", path, "archive");
+        Assert.Contains("⚠", md, StringComparison.Ordinal);
+        Assert.DoesNotContain("Traceback", md, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Python_preview_returns_a_card()
     {
@@ -1114,6 +1239,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     [InlineData("../../plugins-catalog/openapi-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/html-preview-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/pe-info-python", "python", "c4k.py")]
+    [InlineData("../../plugins-catalog/archive-info-python", "python", "c4k.py")]
     [InlineData("../../plugins-catalog/git-repo-powershell", "powershell", "c4k.ps1")]
     public void Example_sdk_clients_match_plugins_sdk(string example, string language, string file) =>
         Assert.Equal(
