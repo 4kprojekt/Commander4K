@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
+  "id": "official.log-viewer",
+  "name": "Przeglądarka logów",
+  "version": "1.0.0",
+  "author": "4Kprojekt",
+  "description": "Oficjalna wtyczka: pliki logów jako tabela wpisów (czas, poziom, źródło, komunikat) pogrupowana według żądań lub źródeł, z filtrem, licznikami poziomów, szczegółami ze stosem wywołań i śledzeniem na żywo.",
+  "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },
+  "permissions": ["fs.read"],
+  "contributes": {
+    "previews": [
+      { "id": "log", "title": "Logi", "extensions": [".log", ".out", ".err", "*.log.?"], "priority": 60, "webRoot": "web", "enter": true }
+    ]
+  }
+}

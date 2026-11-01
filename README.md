@@ -43,7 +43,7 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
 - **Official plugin catalog:** [`plugins-catalog/catalog.json`](plugins-catalog/catalog.json) is downloaded at start-up. Its plugins install from the plugin manager (`Ctrl+I`), or with one click when a `c4k.dir` needs one.
   - Every file is checked against the catalog's SHA-256.
   - A new plugin stays disabled until you approve its permissions.
-  - Official plugins so far: `official.steam-library` (a Steam library as tiles and a table), `official.git-repo` (a Git repository at a glance: branch and upstream, changes, recent commits, branches, tags, remotes), `official.pe-info` (EXE/DLL files from their headers: architecture, version, signer, permissions, dependencies, exports) and `official.archive-info` (what is inside a ZIP, 7z, RAR or TAR, plus NuGet, wheel, JAR and VSIX metadata).
+  - Official plugins so far: `official.steam-library` (a Steam library as tiles and a table), `official.git-repo` (a Git repository at a glance: branch and upstream, changes, recent commits, branches, tags, remotes), `official.pe-info` (EXE/DLL files from their headers: architecture, version, signer, permissions, dependencies, exports), `official.archive-info` (what is inside a ZIP, 7z, RAR or TAR, plus NuGet, wheel, JAR and VSIX metadata) and `official.log-viewer` (log files as a table of entries grouped by request or source, with level chips, a filter, stack traces in the details and a live tail).
 - **Total Commander-style workflow:**
   - `F5`/`F6` copy and move in the background, with an `F2` queue;
   - `F3` viewer, `F4` your editor, `F7` new folder, `F8` delete;
@@ -53,7 +53,6 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
 - **Plugin panels:**
   - system information (hardware, OS, security, hot-fixes, start-up, environment);
   - task manager, with a process tree, live CPU and memory, and per-process resources and loaded DLLs;
-  - log analyzer, which groups messages into patterns and shows a per-hour timeline;
   - a catalogue of PowerShell commands you can run on the current folder or the selected files.
 
 - **Plugins in any language:** Python, Node.js, PowerShell, .NET or any executable. Each runs as a separate process and speaks a small JSON-RPC protocol.

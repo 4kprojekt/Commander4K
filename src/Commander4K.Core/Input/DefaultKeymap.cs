@@ -14,7 +14,7 @@ public static class DefaultKeymap
     ];
 
     /// <summary>Commands that no longer exist (the docked palettes); their bindings are dropped from existing keymap.json files.</summary>
-    public static IReadOnlyList<string> RemovedCommands { get; } = ["cm_TogglePalettes", "cm_Palettes", "cm_AddFavorite", "cm_AskAi", "cm_AiProviders", "cm_AiWritePlugin"];
+    public static IReadOnlyList<string> RemovedCommands { get; } = ["cm_TogglePalettes", "cm_Palettes", "cm_AddFavorite", "cm_AskAi", "cm_AiProviders", "cm_AiWritePlugin", "panel:builtin.logs"];
 
     public static IReadOnlyDictionary<string, string> Bindings { get; } = new Dictionary<string, string>
     {
@@ -22,7 +22,6 @@ public static class DefaultKeymap
         ["Ctrl+Shift+P"] = CommandIds.CommandPalette,
         ["Ctrl+Alt+I"] = CommandIds.PanelPrefix + "builtin.sysinfo",
         ["Ctrl+Alt+T"] = CommandIds.PanelPrefix + "builtin.taskmanager",
-        ["Ctrl+Alt+L"] = CommandIds.PanelPrefix + "builtin.logs",
         ["Ctrl+Alt+P"] = CommandIds.PanelPrefix + "builtin.powershell",
         ["Ctrl+,"] = CommandIds.Settings,
         ["F2"] = CommandIds.PanelModes,

@@ -586,6 +586,61 @@
         "MikroTik API",
         "MikroTik API-SSL"
       ]
+    },
+    {
+      "id": "official.log-viewer",
+      "name": "Przeglądarka logów",
+      "version": "1.0.0",
+      "author": "4Kprojekt",
+      "runtime": "python",
+      "description": {
+        "pl": "Pliki logów jako tabela wpisów (czas, poziom, źródło, komunikat), pogrupowana według żądań lub źródeł: chipy poziomów z licznikami, filtr, szczegóły ze stosem wywołań, śledzenie na żywo i eksport.",
+        "en": "Log files as a table of entries (time, level, source, message) grouped by request or source: level chips with counts, a filter, details with the stack trace, live tail and export."
+      },
+      "tags": [
+        "log",
+        "logi",
+        "logs",
+        "błędy",
+        "errors",
+        "tail",
+        "podgląd",
+        "preview"
+      ],
+      "example": "{ \"preview\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Log aplikacji\", \"open\": \"app.log\" } ] } }",
+      "path": "plugins-catalog/log-viewer-python",
+      "files": [
+        {
+          "path": "c4k.py",
+          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+        },
+        {
+          "path": "main.py",
+          "sha256": "c6ebb6e1569c40e51c7dee5912262a0b5eec2e956d755ec9f2aae53189abb383"
+        },
+        {
+          "path": "plugin.json",
+          "sha256": "7b54e9352839302d823a8ad52889b85609b5b8f7db68285b22f1565aac10f974"
+        },
+        {
+          "path": "web/index.html",
+          "sha256": "27bfd4a2f87e0b9d5fdfe21fc1f4be781ffc607b28c344afbddd786cb5808b00"
+        },
+        {
+          "path": "web/viewer.css",
+          "sha256": "5f7e2eab2e582ca664e0aeb6d70bed9a6113c0bdcbbc614d653a18311e0fb55e"
+        },
+        {
+          "path": "web/viewer.js",
+          "sha256": "7b036e8d0d966cff5d1609abb216848397ef639b8616ef6cc819caf578e0fde2"
+        }
+      ],
+      "previewExtensions": [
+        "*.log.?",
+        ".err",
+        ".log",
+        ".out"
+      ]
     }
   ]
 }

@@ -22,7 +22,6 @@ using Commander4K.Plugins.BuiltIn.Network;
 using Commander4K.Plugins.BuiltIn.Registry;
 using Commander4K.Plugins.BuiltIn.Remote;
 using Commander4K.Plugins.BuiltIn.Search;
-using Commander4K.Plugins.BuiltIn.Logs;
 using Commander4K.Plugins.BuiltIn.PowerShell;
 using Commander4K.Plugins.BuiltIn.Previews;
 using Commander4K.Plugins.BuiltIn.SystemInfo;
@@ -108,7 +107,7 @@ public sealed class AppHost : IAsyncDisposable
             new Core.Mail.MailCertificateStore(Path.Combine(config.ConfigDirectory, "mail_certificates.json"),
                 (hostPort, fingerprint) => MailCertificatePrompt?.Invoke(hostPort, fingerprint) ?? Task.FromResult(false)),
             warning: message => Audit.Record("mail", "mail.warning", message, AuditOutcome.Failed));
-        BuiltInPanels = [new SystemInfoPanelPlugin(), new TaskManagerPanelPlugin(), new LogAnalyzerPanelPlugin(), PowerShell, new PluginManagerPanel(this)];
+        BuiltInPanels = [new SystemInfoPanelPlugin(), new TaskManagerPanelPlugin(), PowerShell, new PluginManagerPanel(this)];
         PanelPlugins = BuiltInPanels;
         CommandPlugins = [PowerShell];
         BuiltInPreviews = [BrowserPlugin.Instance, SftpConnectionPreviewPlugin.Instance, new MarkdownPreviewPlugin(), new CanvasPreviewPlugin(), new ImagePreviewPlugin(), new FolderPreviewPlugin(), new TextPreviewPlugin()];
