@@ -44,7 +44,20 @@ public sealed class DirectorySizeCalculator(VfsRouter router)
 
         void Inaccessible() => Interlocked.Increment(ref inaccessible);
 
+        // Cancellation ends the workers quietly: an exception leaving a Task.Run lambda stops a debugger with
+        // "Just My Code" as user-unhandled. Only this method reports the cancellation, after the workers are done.
         async Task WorkerAsync()
+        {
+            try
+            {
+                await WalkAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+        }
+
+        async Task WalkAsync()
         {
             await foreach (var directory in queue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
@@ -97,10 +110,11 @@ public sealed class DirectorySizeCalculator(VfsRouter router)
         var workers = new Task[workerCount];
         for (var i = 0; i < workers.Length; i++)
         {
-            workers[i] = Task.Run(WorkerAsync, cancellationToken);
+            workers[i] = Task.Run(WorkerAsync, CancellationToken.None);
         }
 
         await Task.WhenAll(workers).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var result = Snapshot();
         progress?.Report(result);

@@ -268,6 +268,71 @@ public sealed class PreviewTests : IAsyncDisposable
 
     private static string? Value(PreviewCard card, string label) => card.Items.OfType<CardValue>().FirstOrDefault(v => v.Label == label)?.Value;
 
+    [Fact]
+    public async Task Folder_preview_cancellation_does_not_escape_the_parallel_size_loop()
+    {
+        var plugin = new FolderPreviewPlugin();
+        var router = new VfsRouter(new ResilientAsyncExecutor(), [new HangingFolders()]);
+        var host = new ScopedPluginHost(plugin.Manifest, new NullUi(), router, _http, _audit);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+
+        // Every rethrow of a cancellation that already went through the size loop's body.
+        var escaped = new System.Collections.Concurrent.ConcurrentBag<string>();
+        void OnFirstChance(object? sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
+        {
+            if (e.Exception is OperationCanceledException && e.Exception.StackTrace?.Contains("<LoadAsync>b__", StringComparison.Ordinal) == true)
+            {
+                escaped.Add(e.Exception.StackTrace);
+            }
+        }
+
+        AppDomain.CurrentDomain.FirstChanceException += OnFirstChance;
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                plugin.LoadAsync(new VfsEntry("root", "hang://root", VfsEntryKind.Directory), host, null, cancel.Token));
+        }
+        finally
+        {
+            AppDomain.CurrentDomain.FirstChanceException -= OnFirstChance;
+        }
+
+        // Thrown out of the Parallel.ForEachAsync body into .NET code, a cancellation is "user-unhandled" for the debugger.
+        Assert.Empty(escaped);
+    }
+
+    /// <summary><c>hang://root</c> has two folders whose contents never arrive (until cancelled).</summary>
+    private sealed class HangingFolders : IVfsProviderPlugin
+    {
+        public string Id => "test.hang";
+
+        public string DisplayName => "Hang";
+
+        public PluginManifest Manifest { get; } = new("test.hang", "Hang", "1.0.0", "tests", "", [PluginPermissions.FileRead]);
+
+        public IReadOnlyList<string> Schemes { get; } = ["hang"];
+
+        public VfsCapabilities Capabilities => VfsCapabilities.Read;
+
+        public async IAsyncEnumerable<VfsEntry> EnumerateAsync(string path, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            if (path == "hang://root")
+            {
+                yield return new VfsEntry("a", "hang://root/a", VfsEntryKind.Directory);
+                yield return new VfsEntry("b", "hang://root/b", VfsEntryKind.Directory);
+                yield break;
+            }
+
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+
+        public ValueTask<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken) => ValueTask.FromResult<VfsEntry?>(null);
+
+        public string? GetParentPath(string path) => null;
+
+        public string Combine(string directoryPath, string name) => directoryPath + "/" + name;
+    }
+
     private ScopedPluginHost Host(PluginManifest manifest) => new(manifest, new NullUi(), _router, _http, _audit);
 
     private static VfsEntry Dir(string path) => new(Path.GetFileName(path), path, VfsEntryKind.Directory);

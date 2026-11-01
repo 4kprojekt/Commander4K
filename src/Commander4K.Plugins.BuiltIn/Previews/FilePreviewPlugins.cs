@@ -177,6 +177,10 @@ public sealed class FolderPreviewPlugin : IPreviewCardPlugin, IFolderSuggestingP
             {
                 size = default;
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return; // The cursor moved on; Parallel.ForEachAsync reports the cancellation itself.
+            }
 
             lock (gate)
             {
