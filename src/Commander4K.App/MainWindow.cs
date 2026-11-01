@@ -737,6 +737,7 @@ public sealed class MainWindow : Window
         {
             AskAiAboutFile = AskAiAboutFileAsync,
             CreatePreviewPlugin = CreatePreviewPluginAsync,
+            CreateBrowserPreview = url => new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut),
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
             RunShortcut = RunShortcut,
             AskFolderTrust = AskFolderTrustAsync,
@@ -2365,7 +2366,9 @@ public sealed class MainWindow : Window
     /// <param name="plain">Shift+Enter: skip a preview that claims Enter (<c>"enter": true</c>) and open the file as before.</param>
     private void OpenFile(FilePanelView panel, VfsEntry entry, bool plain = false)
     {
-        if (Uri.TryCreate(entry.Path, UriKind.Absolute, out var url)
+        var previewPlugin = PreviewPluginResolver.Resolve(_host!.PreviewPlugins, entry);
+        if (previewPlugin is BrowserPlugin
+            && Uri.TryCreate(entry.Path, UriKind.Absolute, out var url)
             && url.Scheme is "http" or "https")
         {
             OpenBrowser(url.AbsoluteUri, panel);
@@ -2373,7 +2376,7 @@ public sealed class MainWindow : Window
         }
 
         // A preview that asks for Enter (a mail message…) shows the file pinned over the panel; Esc returns to the files.
-        if (!plain && _host!.PreviewPlugins.Where(p => p.CanPreview(entry)).OrderByDescending(p => p.Priority).FirstOrDefault() is Core.Plugins.ExternalPreviewPlugin { OpensOnEnter: true })
+        if (!plain && previewPlugin is Core.Plugins.ExternalPreviewPlugin { OpensOnEnter: true })
         {
             panel.ShowMode(CreatePreview(panel, pinnedFile: entry));
             SetActive(panel);

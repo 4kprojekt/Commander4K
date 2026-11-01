@@ -8,6 +8,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Commander4K.App.Composition;
+using Commander4K.App.Browser;
 using Commander4K.App.Input;
 using Commander4K.App.Panels;
 using Commander4K.App.Theming;
@@ -56,6 +57,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private TextBox? _editor;
     private WebPreviewView? _web;
     private WebPreview? _webShown;
+    private BrowserPanelView? _browserPreview;
     private ScrollViewer? _livePreview;
     private DispatcherTimer? _liveDelay;
 
@@ -70,6 +72,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     public Button FilesButton { get; }
     private readonly StackPanel _trail = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
     private readonly Dictionary<string, Bitmap?> _thumbnails = new(StringComparer.Ordinal);
+    private const int SmallPictureBytes = 256 * 1024;
 
     private PinnedFolder? _pinned => _history.Trail.Count > 0 ? _history.Current : null;
 
@@ -170,6 +173,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     /// <summary>A tile was clicked; the folder is the one whose preview (or <c>c4k.dir</c>) produced it.</summary>
     public Func<PreviewTile, VfsEntry?, Task>? OpenTile { get; init; }
+
+    public Func<string, BrowserPanelView>? CreateBrowserPreview { get; init; }
 
     /// <summary>App shortcuts pressed inside a web preview page (Avalonia never sees those keys); Esc closes the preview first.</summary>
     public Func<Core.Input.KeyStroke, bool>? RunShortcut { get; init; }
@@ -275,6 +280,11 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     public bool HandleKey(KeyEventArgs e)
     {
+        if (_browserPreview?.HandleKey(e) == true)
+        {
+            return true;
+        }
+
         if (e.Key == Key.F4 && CanEdit)
         {
             ToggleEdit();
@@ -328,6 +338,12 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     public void AppendText(string text)
     {
+        if (_browserPreview is { } browser)
+        {
+            browser.AppendText(text);
+            return;
+        }
+
         // Typing goes to the editor when editing; otherwise the preview ignores it.
         if (_editor is { IsReadOnly: false } editor)
         {
@@ -340,6 +356,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _loading?.Cancel();
         _debounce?.Cancel();
         DisposeWeb();
+        DisposeBrowserPreview();
         StopDashboard();
         _ = FlushFormAsync(); // the last edit still reaches the plugin (its own time limit, not the view's)
         _lifetime.Cancel();
@@ -511,7 +528,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             }
         }
 
-        plugin ??= _app.PreviewPlugins.Where(p => p.CanPreview(target)).OrderByDescending(p => p.Priority).FirstOrDefault();
+        plugin ??= PreviewPluginResolver.Resolve(_app.PreviewPlugins, target);
         _plugin = plugin;
         if (plugin is null)
         {
@@ -605,7 +622,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
         if (action.Plugin is not { } pluginId)
         {
-            return (folderPlugin, (host, progress, ct) => Plugins.BuiltIn.Previews.FolderViews.LoadAsync(config, action, section, folder, host, progress, ct));
+            return (folderPlugin, (host, progress, ct) => Plugins.BuiltIn.Previews.FolderViews.LoadAsync(config, action, section, folder, host, folderPlugin.Thumbnails, progress, ct));
         }
 
         var external = _app.PreviewPlugins.OfType<ExternalPreviewPlugin>()
@@ -674,6 +691,11 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             DisposeWeb(); // Another kind of preview: the page and its WebView2 go away.
         }
 
+        if (content is not BrowserPagePreview)
+        {
+            DisposeBrowserPreview();
+        }
+
         if (Inner(content) is not FormPreview)
         {
             _form = null;
@@ -699,6 +721,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private Control? Render(PreviewContent content) => content switch
     {
+        BrowserPagePreview browser => BrowserView(browser),
         WebPreview web => WebView(web),
         ActionsPreview actions => ActionsView(actions),
         FormPreview form => FormView(form),
@@ -714,6 +737,44 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         MessagePreview message => new TextBlock { Text = message.Message, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap },
         _ => null,
     };
+
+    private Control BrowserView(BrowserPagePreview page)
+    {
+        if (_browserPreview is null)
+        {
+            if (CreateBrowserPreview is not { } create)
+            {
+                return new TextBlock { Text = Loc.T("Brak widoku przeglądarki dla „{0}”.", page.Url), Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap };
+            }
+
+            _browserPreview = create(page.Url);
+            _browserPreview.CloseRequested += () => CloseRequested?.Invoke();
+            _browserPreview.Activated += () => Activated?.Invoke();
+            _browserPreview.TitleChanged += () =>
+            {
+                if (_browserPreview is { } current && _shown is BrowserPagePreview)
+                {
+                    _title.Text = current.Title;
+                }
+            };
+        }
+        else if (!string.Equals(_browserPreview.CurrentUrl, page.Url, StringComparison.OrdinalIgnoreCase))
+        {
+            _browserPreview.Navigate(page.Url);
+        }
+
+        _browserPreview.ApplySkin(_brushes);
+        return _browserPreview;
+    }
+
+    private void DisposeBrowserPreview()
+    {
+        if (_browserPreview is { } browser)
+        {
+            _browserPreview = null;
+            _ = browser.DisposeModeAsync();
+        }
+    }
 
     /// <summary>A bar of the plugin's buttons above its content (Reply, Delete…); shortcuts work while this panel is active.</summary>
     private Control ActionsView(ActionsPreview actions)
@@ -1506,7 +1567,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             try
             {
                 using var stream = new MemoryStream(data.ToArray());
-                return Bitmap.DecodeToWidth(stream, width);
+                // A stored thumbnail is already small: decoded as is (DecodeToWidth would blow it up to the tile).
+                return data.Length <= SmallPictureBytes ? new Bitmap(stream) : Bitmap.DecodeToWidth(stream, width);
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException or IOException)
             {

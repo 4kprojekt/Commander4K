@@ -34,6 +34,7 @@ A fast, keyboard-driven, dual-pane file manager for Windows 11 in the tradition 
   - The plugin manager's "Szukaj rozwiązania" sends a plugin's problem to that assistant, and plugins can open pages or searches here too.
 - **Claude Code over MCP:** Commander4K runs a local MCP server (127.0.0.1 only, with a token). Open "Połącz Claude Code" (command palette, or the MCP badge in the status bar), switch it on, add the folders the AI may use and run the `claude mcp add …` command it shows. Claude Code can then browse those folders, drive the panels, and write, check, install and try plugins. Every tool can be set to allow, ask or block. Risky calls (reading and writing files, running commands, installing or enabling a plugin) open a confirmation in the app. The app's own plugin, `config/` and `data/` folders cannot be read or written through MCP, and every call is logged. Details: [plugin guide](docs/plugins.md#writing-plugins-with-claude-code-over-mcp).
 - **Quick view (`Ctrl+Q`):** previews the entry under the cursor in the opposite panel:
+  - HTTP/HTTPS entries use the same built-in Browser plugin as `Enter`, including its address bar and navigation controls;
   - Markdown is rendered with formatting, and `F4` switches to side-by-side editing with a live preview. ` ```mermaid ` diagrams are drawn offline with the bundled [Mermaid](https://mermaid.js.org) 12.2.0 (MIT), in the skin's colours;
   - the folder preview adapts to the content: an Obsidian vault, or a folder of Markdown notes, shows a link graph, the most linked notes, recent notes with excerpts, tags, unlinked notes and broken links. Obsidian `.canvas` boards show as diagrams;
   - text files are editable;
@@ -163,6 +164,8 @@ Each screenshot below was taken in the app (skin *Modern*). The left panel shows
   "enter": "gallery"
 }
 ```
+
+The tiles appear at once; the pictures are small WebP thumbnails (256 px on the longer side) made on the gallery's own background threads and kept in a hidden `.thumbnail.c4k` folder next to the photos, so a share with hundreds of pictures shows them immediately on the next visit. A thumbnail is remade when its photo changes and deleted when the photo is gone. The setting "Miniaturki galerii w folderze" turns the folder off (thumbnails then stay in memory); read-only places (archives, read-only shares) get the same.
 
 ### Markdown notes with a link graph
 

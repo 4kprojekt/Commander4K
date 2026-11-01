@@ -19,7 +19,7 @@ using CoreModifiers = Commander4K.Core.Input.KeyModifiers;
 namespace Commander4K.App.Browser;
 
 /// <summary>Identity of the built-in browser in the plugin manager and the audit log (every top-level navigation is logged).</summary>
-public sealed class BrowserPlugin : IPlugin
+public sealed class BrowserPlugin : IPreviewPlugin
 {
     public const string PluginId = "builtin.browser";
 
@@ -32,7 +32,18 @@ public sealed class BrowserPlugin : IPlugin
     public PluginManifest Manifest { get; } = new(PluginId, Loc.T("Przeglądarka"), "1.0.0", "4Kprojekt",
         Loc.T("Panel przeglądarki (Microsoft Edge WebView2): strony, wyszukiwarki i asystenci AI. Logowania są zapamiętywane w profilu aplikacji."),
         [PluginPermissions.Network]);
+
+    public int Priority => int.MaxValue;
+
+    public bool CanPreview(VfsEntry entry) =>
+        Uri.TryCreate(entry.Path, UriKind.Absolute, out var url)
+        && (url.Scheme == Uri.UriSchemeHttp || url.Scheme == Uri.UriSchemeHttps);
+
+    public Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken) =>
+        Task.FromResult<PreviewContent>(new BrowserPagePreview(entry.Path));
 }
+
+public sealed record BrowserPagePreview(string Url) : PreviewContent;
 
 /// <summary>
 /// Panel mode with a WebView2 browser: address bar that also searches, back/forward/reload, a search-engine picker

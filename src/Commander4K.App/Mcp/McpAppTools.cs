@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Avalonia.Threading;
 using Commander4K.App.Ai;
 using Commander4K.App.Composition;
+using Commander4K.App.Browser;
 using Commander4K.App.Dialogs;
 using Commander4K.App.PluginPanels;
 using Commander4K.Core.Input;
@@ -635,7 +636,7 @@ public static class McpAppTools
             else
             {
                 // The same choice as the quick view (PreviewPanelView): the highest priority that accepts the entry.
-                plugin = host.PreviewPlugins.Where(p => p.CanPreview(entry)).OrderByDescending(p => p.Priority).FirstOrDefault();
+                plugin = PreviewPluginResolver.Resolve(host.PreviewPlugins, entry);
                 if (plugin is null)
                 {
                     return McpToolResult.Error($"No preview for {entry.Name}.");
@@ -665,6 +666,7 @@ public static class McpAppTools
         FolderPreview folder => FolderText(folder),
         MessagePreview message => message.Message,
         WebPreview web => $"Web preview: page {web.Page} of plugin {web.PluginId} (shown in the app window; not available as text).",
+        BrowserPagePreview browser => $"Web page: {browser.Url} (shown in the app browser; not available as text).",
         _ => $"({content.GetType().Name}: no text form)",
     };
 

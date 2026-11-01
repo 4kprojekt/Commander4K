@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Commander4K.Core.Folders;
 using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
@@ -14,6 +15,9 @@ public static class FolderViews
     private const int MaxImages = 400;
     private const int MaxImageBytes = 16 * 1024 * 1024;
     private const int MaxMarkdownBytes = 4 * 1024 * 1024;
+    private const int GalleryBatch = 12;
+    private static readonly TimeSpan GalleryPoll = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan GalleryRedraw = TimeSpan.FromMilliseconds(500);
 
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico"];
 
@@ -24,14 +28,15 @@ public static class FolderViews
     public static string RunTarget(string section, int tile) => $"c4k:run/{section}/{tile}";
 
     /// <param name="section"><c>preview</c> or <c>enter</c> — which part of the file <paramref name="action"/> came from.</param>
+    /// <param name="thumbnails">The gallery's thumbnails (<see cref="FolderPreviewPlugin.Thumbnails"/>).</param>
     public static async Task<PreviewContent> LoadAsync(FolderConfig config, FolderAction action, string section, VfsEntry folder, IPluginHost host,
-        IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
+        ThumbnailStore thumbnails, IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
     {
         var view = (action.View ?? FolderViewIds.Files).ToLowerInvariant();
         switch (view)
         {
             case FolderViewIds.Gallery:
-                return await GalleryAsync(config, folder, host, progress, cancellationToken).ConfigureAwait(false);
+                return await GalleryAsync(config, folder, host, thumbnails, progress, cancellationToken).ConfigureAwait(false);
             case FolderViewIds.Dashboard:
                 return await WithPicturesAsync(Dashboard(config, action, section), config, host, cancellationToken).ConfigureAwait(false);
             case FolderViewIds.Notes:
@@ -50,12 +55,16 @@ public static class FolderViews
         }
     }
 
-    /// <summary>Tiles appear at once with icons; the pictures fill in as they are read.</summary>
-    private static async Task<TilesPreview> GalleryAsync(FolderConfig config, VfsEntry folder, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
+    /// <summary>
+    /// Tiles appear at once with icons; the pictures are small thumbnails that <see cref="ThumbnailStore"/> reads from
+    /// the folder's <c>.thumbnail.c4k</c> or makes on its own threads, so a share full of photos never holds the view.
+    /// </summary>
+    private static async Task<TilesPreview> GalleryAsync(FolderConfig config, VfsEntry folder, IPluginHost host, ThumbnailStore thumbnails,
+        IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
     {
         var listing = await host.ListAsync(folder.Path, cancellationToken).ConfigureAwait(false);
         var images = listing
-            .Where(e => e.Kind == VfsEntryKind.File && ImageExtensions.Contains(Path.GetExtension(e.Name), StringComparer.OrdinalIgnoreCase))
+            .Where(IsImage)
             .OrderBy(e => e.Name, StringComparer.CurrentCultureIgnoreCase)
             .Take(MaxImages)
             .ToList();
@@ -64,33 +73,47 @@ public static class FolderViews
         var tiles = images.Select(e => new PreviewTile(e.Name, Size(e.Size), "🖼", null, e.Path)).ToArray();
         progress?.Report(new TilesPreview(title, [.. tiles], description, 220));
 
-        for (var i = 0; i < images.Count; i++)
+        var gate = new Lock();
+        var changed = 0;
+        var job = thumbnails.RequestAsync(host, folder.Path, images, (index, picture) =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (images[i].Size is > MaxImageBytes)
+            lock (gate)
             {
-                continue;
+                tiles[index] = tiles[index] with { Image = picture };
+                changed++;
             }
+        }, cancellationToken);
 
-            try
+        TilesPreview Snapshot()
+        {
+            lock (gate)
             {
-                var (data, length, truncated) = await PreviewReading.ReadHeadAsync(host, images[i].Path, MaxImageBytes, cancellationToken).ConfigureAwait(false);
-                if (!truncated)
-                {
-                    tiles[i] = tiles[i] with { Image = data.AsMemory(0, length) };
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-            }
-
-            if (i % 12 == 11)
-            {
-                progress?.Report(new TilesPreview(title, [.. tiles], description, 220));
+                changed = 0;
+                return new TilesPreview(title, [.. tiles], description, 220);
             }
         }
 
-        return new TilesPreview(title, tiles, description, 220);
+        // Pictures arrive on the thumbnail threads; the view is redrawn in batches, never per picture.
+        var reported = Stopwatch.GetTimestamp();
+        while (!job.IsCompleted)
+        {
+            await Task.WhenAny(job, Task.Delay(GalleryPoll, cancellationToken)).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            bool due;
+            lock (gate)
+            {
+                due = changed >= GalleryBatch || (changed > 0 && Stopwatch.GetElapsedTime(reported) >= GalleryRedraw);
+            }
+
+            if (due && !job.IsCompleted)
+            {
+                progress?.Report(Snapshot());
+                reported = Stopwatch.GetTimestamp();
+            }
+        }
+
+        await job.ConfigureAwait(false);
+        return Snapshot();
     }
 
     /// <summary>The dashboard's tiles as shortcuts (no I/O); the window turns card tiles into live cards.</summary>

@@ -115,6 +115,9 @@ public sealed class FolderPreviewPlugin : IPreviewCardPlugin, IFolderSuggestingP
     /// <summary>Recursive sizes shown on folder cards, computed once per folder version.</summary>
     public FolderSizeCache Sizes { get; } = new();
 
+    /// <summary>Gallery thumbnails, made on their own threads and kept in each gallery's <c>.thumbnail.c4k</c>.</summary>
+    public ThumbnailStore Thumbnails { get; } = new();
+
     public Task<PreviewCard> LoadCardAsync(PreviewCardRequest request, IPluginHost host, CancellationToken cancellationToken) =>
         request.Target is { } folder
             ? FolderCards.LoadAsync(Core.Folders.FolderViewIds.Files, folder, null, host, request, Sizes, cancellationToken)
@@ -125,7 +128,8 @@ public sealed class FolderPreviewPlugin : IPreviewCardPlugin, IFolderSuggestingP
     public string DisplayName => "Folder";
 
     public PluginManifest Manifest { get; } = BuiltInManifest.Create("builtin.preview.folder", Loc.T("Podgląd folderu"),
-        Loc.T("Objętość folderu i podfolderów, doczytywana rekurencyjnie."), PluginPermissions.FileRead);
+        Loc.T("Objętość folderu i podfolderów, doczytywana rekurencyjnie; miniaturki galerii zapisywane w .thumbnail.c4k."),
+        PluginPermissions.FileRead, PluginPermissions.FileWrite);
 
     public int Priority => 10;
 

@@ -107,6 +107,42 @@ public sealed class PreviewActionParsingTests
     }
 }
 
+public sealed class PreviewPluginResolverTests
+{
+    private static readonly VfsEntry Entry = new("entry", "C:\\entry", VfsEntryKind.File);
+
+    [Fact]
+    public void Resolver_uses_highest_priority_matching_preview()
+    {
+        var entry = new VfsEntry("page", "http://router.lan/", VfsEntryKind.File);
+        var lower = new StubPreview("test.lower", 10, true);
+        var higher = new StubPreview("test.higher", 20, true);
+        var unmatched = new StubPreview("test.unmatched", 100, false);
+
+        Assert.Same(higher, PreviewPluginResolver.Resolve([lower, higher, unmatched], entry));
+    }
+
+    [Fact]
+    public void Resolver_returns_null_when_no_preview_accepts_entry() =>
+        Assert.Null(PreviewPluginResolver.Resolve([new StubPreview("test.none", 1, false)], Entry));
+
+    private sealed class StubPreview(string id, int priority, bool accepts) : IPreviewPlugin
+    {
+        public string Id => id;
+
+        public string DisplayName => id;
+
+        public PluginManifest Manifest { get; } = new(id, id, "1.0.0", "test", "test preview", []);
+
+        public int Priority => priority;
+
+        public bool CanPreview(VfsEntry entry) => accepts;
+
+        public Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken) =>
+            Task.FromResult<PreviewContent>(new MessagePreview(id));
+    }
+}
+
 public sealed class PreviewShortcutTests
 {
     private static CancellationToken TestToken => TestContext.Current.CancellationToken;

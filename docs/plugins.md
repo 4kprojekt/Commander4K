@@ -446,7 +446,7 @@ Each action is a built-in view name, a plugin id, or an object with one target:
 
 | Target | Example | What happens |
 |---|---|---|
-| `view` | `"gallery"`, `"dashboard"`, `"notes"`, `"markdown"`, `"files"` | Built-in views: image thumbnails, tiles from `tiles`, Markdown notes with their links, a Markdown file (`file`, README.md by default), the plain list. |
+| `view` | `"gallery"`, `"dashboard"`, `"notes"`, `"markdown"`, `"files"` | Built-in views: image thumbnails (made in the background and kept in the folder's hidden `.thumbnail.c4k`, named `<image>.<size>-<mtime>.webp`, stale ones deleted), tiles from `tiles`, Markdown notes with their links, a Markdown file (`file`, README.md by default), the plain list. |
 | `plugin` (+ `preview`) | `{ "plugin": "official.steam-library" }` | The plugin's preview (`contributes.previews`, `extensions: ["/"]`) renders the folder, with `options`. On Enter it fills the panel; Esc returns to the files. |
 | `panel` (+ `plugin`) | `{ "plugin": "examples.git", "panel": "log" }` | Opens a panel plugin with the folder as `argument` and `options`. |
 | `open` (+ `user`, `keyFile`) | `{ "open": "sftp://me@nas.lan/srv", "keyFile": "~/.ssh/id_ed25519" }` | Goes there instead; relative paths are resolved against the folder. |

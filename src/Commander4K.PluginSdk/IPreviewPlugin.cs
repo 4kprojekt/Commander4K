@@ -141,4 +141,11 @@ public interface IPreviewPlugin : IPlugin
     Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken);
 }
 
+/// <summary>Resolves the same highest-priority preview plugin wherever the app needs to preview an entry.</summary>
+public static class PreviewPluginResolver
+{
+    public static IPreviewPlugin? Resolve(IEnumerable<IPreviewPlugin> plugins, VfsEntry entry) =>
+        plugins.Where(plugin => plugin.CanPreview(entry)).OrderByDescending(plugin => plugin.Priority).FirstOrDefault();
+}
+
 public readonly record struct DirectorySizeInfo(long Bytes, long Files, long Folders, int Inaccessible);

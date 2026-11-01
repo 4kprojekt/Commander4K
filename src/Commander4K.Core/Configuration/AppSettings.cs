@@ -174,6 +174,9 @@ public sealed class AppSettings
     /// <summary>Hint "switch to the gallery?" when the cursor rests on a folder whose content suits a preview.</summary>
     public bool FolderSuggestions { get; set; } = true;
 
+    /// <summary>The gallery view keeps its thumbnails in a hidden <c>.thumbnail.c4k</c> folder next to the images.</summary>
+    public bool GalleryThumbnails { get; set; } = true;
+
     /// <summary>Animated splash screen while the app starts (also under "About").</summary>
     public bool SplashScreen { get; set; } = true;
 

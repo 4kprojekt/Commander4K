@@ -143,7 +143,7 @@ public sealed class CardResolver(
             }
         }
 
-        var best = previews.Where(p => p.CanPreview(found)).OrderByDescending(p => p.Priority).FirstOrDefault();
+        var best = PreviewPluginResolver.Resolve(previews, found);
         return best is null ? Fixed(DefaultCard(tile, target)) : PreviewCard(best, found, tile, target);
     }
 
