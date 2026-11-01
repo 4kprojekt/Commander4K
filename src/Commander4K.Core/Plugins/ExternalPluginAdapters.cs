@@ -134,7 +134,7 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
 }
 
 /// <summary>One <c>contributes.previews</c> entry: quick view rendered by the plugin (<c>preview.render</c>).</summary>
-public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewCardPlugin, IFolderSuggestingPreview
+public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewCardPlugin, IFolderSuggestingPreview, Folders.IAskingFolderSuggester
 {
     private const int MaxCardImages = 4;
 
