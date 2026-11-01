@@ -313,7 +313,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _title.FontSize = brushes.FontSize;
         foreach (var button in new[] { _backButton, _editButton, _saveButton, FilesButton })
         {
-            Ds.StyleToolButton(button, brushes);
+            Ds.Style(button, brushes, ButtonKind.Ghost);
             button.FontSize = Math.Max(12, brushes.FontSize - 1);
             button.VerticalAlignment = VerticalAlignment.Center;
         }

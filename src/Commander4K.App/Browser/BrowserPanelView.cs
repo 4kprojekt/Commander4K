@@ -236,7 +236,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         _toolbar.MinHeight = modern ? 36 : 0;
         foreach (var button in new[] { _back, _forward, _reload, _external, _close })
         {
-            Ds.StyleToolButton(button, brushes);
+            Ds.Style(button, brushes, ButtonKind.Ghost);
         }
 
         _address.CornerRadius = new CornerRadius(modern ? 6 : 0);

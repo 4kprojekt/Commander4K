@@ -41,13 +41,13 @@ public sealed class SkinAiPromptDialog : DialogWindow<Skin?>
             new TextBlock().TextWrapping(TextWrapping.Wrap).FontWeight(FontWeight.SemiBold)
                 .Text(Loc.T("Prompt jest w schowku. Wklej go do ulubionego asystenta (Gemini, ChatGPT, Claude…), a jego odpowiedź wklej poniżej.")),
             _answer,
-            new Button().Content(Loc.T("📋 Wklej ze schowka")).OnClick(async _ => await PasteAsync()),
+            Ds.Button(Brushes, Loc.T("📋 Wklej ze schowka"), async () => await PasteAsync()).HorizontalAlignment(HorizontalAlignment.Left),
             _status);
 
         SetBody(
             Label(Loc.T("Opisz, jak ma wyglądać skórka:")),
             _description,
-            new Button().Content(Loc.T("📋 Przygotuj i skopiuj prompt")).Margin(0, 6, 0, 0).OnClick(async _ => await PrepareAsync()),
+            Ds.Button(Brushes, Loc.T("📋 Przygotuj i skopiuj prompt"), async () => await PrepareAsync(), ButtonKind.Primary).Margin(0, 6, 0, 0),
             _step2,
             ButtonRow((Loc.T("Anuluj"), () => Complete(null), false)));
         _skins.Changed += ApplySkin;
@@ -67,7 +67,7 @@ public sealed class SkinAiPromptDialog : DialogWindow<Skin?>
         base.OnKeyDown(e);
     }
 
-    private void ApplySkin(SkinBrushes brushes) => WindowSkin.Apply(this, brushes, raisedSurface: true);
+    private void ApplySkin(SkinBrushes brushes) => Ds.ApplySurface(this, brushes, WindowSurface.Raised);
 
     private async Task PrepareAsync()
     {
@@ -233,13 +233,11 @@ public sealed class SkinEditorDialog : DialogWindow<Skin?>
 
     private Skin? SelectedSkin => (_source.SelectedItem as ComboBoxItem)?.Tag as Skin;
 
-    private void ApplySkin(SkinBrushes brushes) => WindowSkin.Apply(this, brushes, raisedSurface: true);
+    private void ApplySkin(SkinBrushes brushes) => Ds.ApplySurface(this, brushes, WindowSurface.Raised);
 
-    private static Button Action(string text, Action onClick) =>
-        new Button().Content(text).Margin(0, 0, 6, 6).OnClick(_ => onClick());
+    private Button Action(string text, Action onClick) => Ds.Button(Brushes, text, onClick).Margin(0, 0, 6, 6);
 
-    private static Button Action(string text, Func<Task> onClick) =>
-        new Button().Content(text).Margin(0, 0, 6, 6).OnClick(async _ => await onClick());
+    private Button Action(string text, Func<Task> onClick) => Ds.Button(Brushes, text, async () => await onClick()).Margin(0, 0, 6, 6);
 
     private void LoadSkin(Skin skin)
     {

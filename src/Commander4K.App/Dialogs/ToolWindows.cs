@@ -30,7 +30,7 @@ public sealed class ViewerWindow : Window
         Title = Loc.T("Podgląd – {0}", entry.Name);
         Width = 960;
         Height = 680;
-        Ds.ApplySurface(this, brushes, dialog: false);
+        Ds.ApplySurface(this, brushes, WindowSurface.Panel);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         var status = new TextBlock().Text(Loc.T("Wczytywanie…")).Margin(8, 4).FontSize(12).Foreground(brushes.StatusForeground);
@@ -101,7 +101,7 @@ public sealed class TextWindow : Window
         Title = title;
         Width = 960;
         Height = 640;
-        Ds.ApplySurface(this, brushes, dialog: false);
+        Ds.ApplySurface(this, brushes, WindowSurface.Panel);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var box = new TextBox()
             .Text(text)
@@ -154,7 +154,7 @@ public sealed class SearchWindow : Window
         Title = Loc.T("Szukaj (Alt+F7)");
         Width = 820;
         Height = 620;
-        Ds.ApplySurface(this, brushes, dialog: false);
+        Ds.ApplySurface(this, brushes, WindowSurface.Panel);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         _root = new TextBox().Text(rootPath);

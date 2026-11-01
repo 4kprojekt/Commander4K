@@ -74,8 +74,7 @@ public sealed class SettingsWindow : ToolWindow
         // Design system: top bar (title + search), section list on the left, cards on the right, footer with actions.
         var top = new Border().BorderBrush(brushes.PanelBorder).BorderThickness(new Thickness(0, 0, 0, 1)).Padding(Ds.WindowHeaderPadding).Child(
             new Grid().Cols("Auto,*").Children(
-                new TextBlock().Text(Loc.T("Ustawienia")).FontSize(18).FontWeight(FontWeight.SemiBold).Foreground(brushes.FileForeground)
-                    .VerticalAlignment(VerticalAlignment.Center).Margin(0, 0, 24, 0).MinWidth(160),
+                Ds.WindowTitle(brushes, Loc.T("Ustawienia")).Margin(0, 0, 24, 0).MinWidth(160),
                 searchField.Col(1).HorizontalAlignment(HorizontalAlignment.Left)));
         var version = new TextBlock().Text(Loc.T("Wersja {0} · zmiany zapisywane od razu w config/settings.json", AppVersion.Display)).FontSize(11)
             .Foreground(brushes.MutedForeground).TextWrapping(TextWrapping.Wrap).Margin(10, 8, 10, 0);

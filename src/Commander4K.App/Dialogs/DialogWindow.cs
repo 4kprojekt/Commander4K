@@ -29,7 +29,7 @@ public abstract class DialogWindow<TResult> : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         CanResize = false;
         ShowInTaskbar = false;
-        Ds.ApplySurface(this, brushes, dialog: true);
+        Ds.ApplySurface(this, brushes, WindowSurface.Raised);
         if (brushes.IsModern)
         {
             WindowDecorations = WindowDecorations.BorderOnly;

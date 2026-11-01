@@ -128,7 +128,7 @@ public sealed class AiChatWindow : Window
     private void BuildLayout()
     {
         var b = _brushes;
-        Ds.ApplySurface(this, b, dialog: false);
+        Ds.ApplySurface(this, b, WindowSurface.Panel);
 
         _messages = new StackPanel().Spacing(14).Margin(20, 16);
         _scroll = new ScrollViewer().Content(_messages);
@@ -171,8 +171,7 @@ public sealed class AiChatWindow : Window
         var sendRow = new DockPanel().Margin(0, 8, 0, 0);
         DockPanel.SetDock(_send, Dock.Right);
         sendRow.Children(_send, _status);
-        var bottom = new Border().Background(b.IsModern ? b.HeaderBackground : Avalonia.Media.Brushes.Transparent).BorderBrush(b.PanelBorder)
-            .BorderThickness(new Thickness(0, 1, 0, 0)).Padding(Ds.FooterPadding).Child(new StackPanel().Children(_input, sendRow));
+        var bottom = Ds.Band(b, new StackPanel().Children(_input, sendRow));
         DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(bottom, Dock.Bottom);
         Content = new DockPanel().Children(top, bottom, _scroll);

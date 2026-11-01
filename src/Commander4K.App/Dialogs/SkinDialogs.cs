@@ -80,7 +80,7 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
     private Skin? Selected => (_list.SelectedItem as ListBoxItem)?.Tag as Skin;
 
     private Button Action(string text, Func<Task> onClick) =>
-        new Button().Content(text).MinHeight(32).Padding(9, 4).Margin(0, 0, 6, 6).OnClick(async _ => await onClick());
+        Ds.Button(Brushes, text, async () => await onClick()).Margin(0, 0, 6, 6);
 
     private void Fill(string selectId)
     {
@@ -140,7 +140,7 @@ public sealed class SkinPickerDialog : DialogWindow<bool>
 
     private void ApplySkin(SkinBrushes brushes)
     {
-        WindowSkin.Apply(this, brushes, raisedSurface: true);
+        Ds.ApplySurface(this, brushes, WindowSurface.Raised);
         _warningCard.CornerRadius = new CornerRadius(brushes.ControlRadius);
         _errorCard.CornerRadius = new CornerRadius(brushes.ControlRadius);
         _errorCard.Background = brushes.WarningBackground;

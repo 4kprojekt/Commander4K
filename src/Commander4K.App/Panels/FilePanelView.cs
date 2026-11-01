@@ -584,9 +584,7 @@ public sealed class FilePanelView : ViewBase
         var brushes = _skins.Current;
         _emptyFolderSetup.Background = brushes.PanelBackground;
         _emptyFolderSetup.BorderBrush = brushes.PanelBorder;
-        _emptyFolderConfigure.Background = brushes.Accent;
-        _emptyFolderConfigure.Foreground = brushes.AccentForeground;
-        _emptyFolderConfigure.BorderBrush = brushes.Accent;
+        Ds.Style(_emptyFolderConfigure, brushes, ButtonKind.Primary);
         _emptyFolderMessage.Foreground = brushes.MutedForeground;
     }
 

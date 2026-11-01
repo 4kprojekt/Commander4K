@@ -1994,7 +1994,7 @@ public sealed class MainWindow : Window
 
     private void ApplySkin(SkinBrushes b)
     {
-        WindowSkin.Apply(this, b);
+        Ds.ApplySurface(this, b, WindowSurface.Window);
         _splitter.Background = b.WindowBackground;
         var radius = new CornerRadius(b.IsModern ? 6 : 0);
         _jobsBar.Background = b.StatusBackground;

@@ -50,7 +50,7 @@ public abstract class ToolWindow : Window
     /// <summary>Builds the content in the current skin; derived constructors call it once their fields are set.</summary>
     protected void Build()
     {
-        Ds.ApplySurface(this, Brushes, dialog: false);
+        Ds.ApplySurface(this, Brushes, WindowSurface.Panel);
         Content = BuildLayout();
     }
 

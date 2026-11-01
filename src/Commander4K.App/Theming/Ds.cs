@@ -85,9 +85,31 @@ public static class Ds
                 button.FontWeight = FontWeight.SemiBold;
                 break;
             case ButtonKind.Ghost:
-                button.Background = Brushes.Transparent;
-                button.BorderBrush = Brushes.Transparent;
-                button.Foreground = b.MutedForeground;
+                // Flat icon/tool button: hover and pressed come from the Fluent resources the skin sets; retro skins keep stock buttons.
+                if (b.IsModern)
+                {
+                    button.Background = Brushes.Transparent;
+                    button.BorderThickness = new Thickness(0);
+                    button.Foreground = b.WindowForeground;
+                    button.CornerRadius = new CornerRadius(b.ControlRadius);
+                    button.Height = ToolbarButtonHeight;
+                    button.MinWidth = 28;
+                    button.Padding = new Thickness(6, 0);
+                }
+                else
+                {
+                    button.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.BackgroundProperty);
+                    button.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.BorderThicknessProperty);
+                    button.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty);
+                    button.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.CornerRadiusProperty);
+                    button.Height = 24;
+                    button.MinWidth = 0;
+                    button.Padding = new Thickness(8, 2);
+                }
+
+                button.FontSize = Math.Max(12, b.FontSize);
+                button.HorizontalContentAlignment = HorizontalAlignment.Center;
+                button.VerticalContentAlignment = VerticalAlignment.Center;
                 break;
             case ButtonKind.Toolbar:
                 button.Background = b.Surface2;
@@ -142,21 +164,27 @@ public static class Ds
             row.Children.Add(leading);
         }
 
-        return new Border
-        {
-            Background = b.IsModern ? b.HeaderBackground : Brushes.Transparent,
-            BorderBrush = b.PanelBorder,
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding = FooterPadding,
-            Child = row,
-        };
+        return Band(b, row);
     }
+
+    /// <summary>
+    /// The band under a window's content (footer, chat composer): <c>headerBackground</c> on modern skins, a 1 px rule
+    /// above, 12/18 px padding.
+    /// </summary>
+    public static Border Band(SkinBrushes b, Control child) => new()
+    {
+        Background = b.IsModern ? b.HeaderBackground : Brushes.Transparent,
+        BorderBrush = b.PanelBorder,
+        BorderThickness = new Thickness(0, 1, 0, 0),
+        Padding = FooterPadding,
+        Child = child,
+    };
 
     /// <summary>Header band of a tool window: 18/600 title, an optional muted description, a rule below.</summary>
     public static Border WindowHeader(SkinBrushes b, string title, string? description = null, Control? trailing = null)
     {
         var text = new StackPanel { Spacing = 4 };
-        text.Children.Add(new TextBlock { Text = title, FontSize = 18, FontWeight = FontWeight.SemiBold, Foreground = b.FileForeground });
+        text.Children.Add(WindowTitle(b, title));
         if (description is not null)
         {
             text.Children.Add(Muted(b, description));
@@ -182,6 +210,16 @@ public static class Ds
             Child = child,
         };
     }
+
+    /// <summary>Title of a tool window: 18/600 in the main text colour.</summary>
+    public static TextBlock WindowTitle(SkinBrushes b, string title) => new()
+    {
+        Text = title,
+        FontSize = 18,
+        FontWeight = FontWeight.SemiBold,
+        Foreground = b.FileForeground,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
 
     /// <summary>Header band of a dialog: 44 px, an optional 18 px glyph in <paramref name="iconBrush"/>, a 15/600 title.</summary>
     public static Border DialogHeader(SkinBrushes b, string title, string? icon = null, IBrush? iconBrush = null)
@@ -316,10 +354,18 @@ public static class Ds
         },
     };
 
-    /// <summary>Applies the window surface: background, text colour and the skin's font.</summary>
-    public static void ApplySurface(Window window, SkinBrushes b, bool dialog)
+    /// <summary>
+    /// Paints a window's surface and text: <see cref="WindowSurface.Window"/> for the main window and the splash,
+    /// <see cref="WindowSurface.Panel"/> for tool windows, <see cref="WindowSurface.Raised"/> for dialogs.
+    /// </summary>
+    public static void ApplySurface(Window window, SkinBrushes b, WindowSurface surface)
     {
-        window.Background = dialog && b.IsModern ? b.Surface2 : dialog ? b.WindowBackground : b.PanelBackground;
+        window.Background = surface switch
+        {
+            WindowSurface.Raised when b.IsModern => b.Surface2,
+            WindowSurface.Panel => b.PanelBackground,
+            _ => b.WindowBackground,
+        };
         window.Foreground = b.WindowForeground;
         window.FontFamily = b.FontFamily;
         window.FontSize = b.FontSize;
@@ -364,53 +410,14 @@ public static class Ds
         return grid;
     }
 
-    /// <summary>Compact toolbar button: flat in modern skins (hover and pressed come from the Fluent resources the skin sets).</summary>
+    /// <summary>Flat icon button with a tooltip (<see cref="ButtonKind.Ghost"/>): tool bars, back/forward, close.</summary>
     public static Button ToolButton(SkinBrushes b, object content, string tip, Action click)
     {
         var button = new Button { Content = content };
         button.Click += (_, _) => click();
         ToolTip.SetTip(button, tip);
-        StyleToolButton(button, b);
-        return button;
+        return Style(button, b, ButtonKind.Ghost);
     }
-
-    public static void StyleToolButton(Button button, SkinBrushes b)
-    {
-        if (b.IsModern)
-        {
-            button.Background = Brushes.Transparent;
-            button.BorderThickness = new Thickness(0);
-            button.Foreground = b.WindowForeground;
-            button.CornerRadius = new CornerRadius(4);
-            button.Height = 26;
-            button.MinWidth = 28;
-            button.Padding = new Thickness(6, 0);
-        }
-        else
-        {
-            button.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.BackgroundProperty);
-            button.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.BorderThicknessProperty);
-            button.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty);
-            button.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.CornerRadiusProperty);
-            button.Height = 24;
-            button.MinWidth = 0;
-            button.Padding = new Thickness(8, 2);
-        }
-
-        button.FontSize = Math.Max(12, b.FontSize);
-        button.HorizontalContentAlignment = HorizontalAlignment.Center;
-        button.VerticalContentAlignment = VerticalAlignment.Center;
-    }
-
-    /// <summary>The 11 px muted caption used above fields and sections.</summary>
-    public static TextBlock Caption(SkinBrushes b, string text) => new()
-    {
-        Text = text,
-        FontSize = 11,
-        FontWeight = FontWeight.SemiBold,
-        Foreground = b.MutedForeground,
-        Margin = new Thickness(0, 0, 0, 4),
-    };
 }
 
 public enum NoticeKind
@@ -418,4 +425,17 @@ public enum NoticeKind
     Info,
     Warning,
     Error,
+}
+
+/// <summary>Which surface a window is painted on (<see cref="Ds.ApplySurface"/>).</summary>
+public enum WindowSurface
+{
+    /// <summary><c>windowBackground</c>: the main window, the splash.</summary>
+    Window,
+
+    /// <summary><c>panelBackground</c>: tool windows.</summary>
+    Panel,
+
+    /// <summary><c>surface2</c> on modern skins: dialogs.</summary>
+    Raised,
 }
