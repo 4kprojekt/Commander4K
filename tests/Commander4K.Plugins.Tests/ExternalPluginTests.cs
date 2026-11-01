@@ -840,8 +840,153 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         var path = Path.Combine(_folder, "broken.zip");
         await File.WriteAllBytesAsync(path, [(byte)'P', (byte)'K', 3, 4, .. Enumerable.Repeat((byte)0x5A, 200)], TestToken);
         var md = await RenderAsync("archive-info-python", path, "archive");
-        Assert.Contains("⚠", md, StringComparison.Ordinal);
+        Assert.Contains("⚠ Nie udało się otworzyć archiwum:", md, StringComparison.Ordinal);
         Assert.DoesNotContain("Traceback", md, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_card_shows_architecture_signature_and_level()
+    {
+        var regedit = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "regedit.exe");
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", regedit, "exe");
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        var values = card.Items.OfType<CardValue>().ToList();
+        foreach (var label in new[] { "Architektura", "Wersja", "Podpis", "Uprawnienia" })
+        {
+            Assert.Contains(values, v => v.Label == label);
+        }
+        Assert.Equal("najwyższe dostępne", values.Single(v => v.Label == "Uprawnienia").Value);
+        Assert.Equal(CardStatus.Ok, card.Status);
+        Assert.Contains(card.Actions, a => a.Target == entry.Path);
+    }
+
+    [Fact]
+    public async Task Pe_card_warns_about_unsigned_file_outside_windows()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe"); // the apphost is never signed
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", exe, "exe");
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        var signer = card.Items.OfType<CardValue>().Single(v => v.Label == "Podpis");
+        Assert.Equal("brak", signer.Value);
+        Assert.Equal(CardStatus.Warning, signer.Status);
+        Assert.Equal(CardStatus.Warning, card.Status);
+        Assert.Contains(card.Actions, a => a.Label == "Pokaż szczegóły" && a.Target == entry.Path);
+    }
+
+    [Fact]
+    public async Task Pe_card_of_non_pe_file()
+    {
+        var path = Path.Combine(_folder, "notatka.exe");
+        await File.WriteAllTextAsync(path, "to nie jest program", TestToken);
+        var (preview, host, entry) = await CatalogPreviewOfAsync("pe-info-python", path, "exe");
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        Assert.Equal(CardStatus.Error, card.Status);
+        Assert.Contains("To nie jest prawidłowy plik PE", Assert.IsType<CardText>(Assert.Single(card.Items)).Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Pe_dotnet_header_counts_every_reference()
+    {
+        // 200 references are resolved and 50 more are only counted: the header names all 250
+        const string code = """
+
+            import types
+            stub = types.ModuleType('c4k'); stub.handler = lambda m: (lambda f: f); stub.serve = lambda: None; stub.HostError = Exception
+            sys.modules['c4k'] = stub
+            import main
+            info = types.SimpleNamespace(runtime='v4.0.30319', flags=[], assembly=None, target_framework=None, warnings=[], references=[])
+            ctx = types.SimpleNamespace(clr=lambda: info, runtimeconfig=lambda: None, more_references=50,
+                                        assembly_references=lambda: [('A%d' % i, '1.0.0.0', None, 'local', 'obok pliku') for i in range(200)])
+            lines = main.section_dotnet(types.SimpleNamespace(machine='x64'), {}, ctx)
+            sys.stdout.write(f'{"Odwołania do zestawów (250):" in lines}|{any("i jeszcze 50 referencji" in l for l in lines)}')
+            """;
+        Assert.Equal("True|True", await RunPluginPythonAsync("pe-info-python", code));
+    }
+
+    [Fact]
+    public async Task Pe_signature_skips_a_broken_certificate_before_the_signer()
+    {
+        // SignedData whose certificate set holds a malformed certificate first and the signer's certificate second
+        const string code = """
+
+            import signature
+            def tlv(tag, *parts):
+                body = b''.join(parts)
+                n = len(body)
+                raw = n.to_bytes(4, 'big').lstrip(b'\0')
+                return bytes([tag]) + (bytes([n]) if n < 0x80 else bytes([0x80 | len(raw)]) + raw) + body
+            name = tlv(0x30, tlv(0x31, tlv(0x30, tlv(0x06, b'\x55\x04\x03'), tlv(0x0C, b'Demo'))))
+            serial = tlv(0x02, b'\x05')
+            algorithm = tlv(0x30, tlv(0x06, b'\x2A\x86\x48\x86\xF7\x0D\x01\x01\x0B'))
+            validity = tlv(0x30, tlv(0x17, b'260101000000Z'), tlv(0x17, b'270101000000Z'))
+            tbs = tlv(0x30, tlv(0xA0, tlv(0x02, b'\x02')), serial, algorithm, name, validity, name, tlv(0x30, algorithm))
+            good = tlv(0x30, tbs, algorithm, tlv(0x03, b'\0'))
+            bad = tlv(0x30, tlv(0x04, b'\0'))
+            signer = tlv(0x30, tlv(0x02, b'\x01'), tlv(0x30, name, serial), algorithm, algorithm, tlv(0x04, b'\0'))
+            signed = tlv(0x30, tlv(0x02, b'\x01'), tlv(0x31), tlv(0x30, tlv(0x06, b'\x2A\x86\x48\x86\xF7\x0D\x01\x07\x01')),
+                         tlv(0xA0, bad, good), tlv(0x31, signer))
+            blob = tlv(0x30, tlv(0x06, b'\x2A\x86\x48\x86\xF7\x0D\x01\x07\x02'), tlv(0xA0, signed))
+            found = signature.decode(blob)
+            sys.stdout.write(f'{found.subject}|{found.serial}|{found.not_after}|{found.error}')
+            """;
+        Assert.Equal("Demo|05|2027-01-01 00:00:00 UTC|None", await RunPluginPythonAsync("pe-info-python", code));
+    }
+
+    [Fact]
+    public async Task Archive_card_shows_counts_and_warning_status()
+    {
+        var zip = ZipOf("paczka.zip", ("faktura.pdf.exe", "MZ"));
+        var (preview, host, entry) = await CatalogPreviewOfAsync("archive-info-python", zip, "archive");
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        var values = card.Items.OfType<CardValue>().ToList();
+        Assert.Equal("1", values.Single(v => v.Label == "Pliki").Value);
+        Assert.Contains(values, v => v.Label == "Rozmiar po rozpakowaniu");
+        Assert.Equal(CardStatus.Warning, card.Status);
+        Assert.Contains(card.Actions, a => a.Label == "Otwórz archiwum" && a.Target == "zip://" + zip);
+    }
+
+    [Fact]
+    public async Task Archive_card_shows_package_id_and_version()
+    {
+        const string nuspec = """<package><metadata><id>Demo</id><version>2.1.0</version></metadata></package>""";
+        var nupkg = ZipOf("Demo.2.1.0.nupkg", ("Demo.nuspec", nuspec), ("lib/net8.0/Demo.txt", "x"));
+        var (preview, host, entry) = await CatalogPreviewOfAsync("archive-info-python", nupkg, "archive");
+
+        var card = await preview.LoadCardAsync(new PreviewCardRequest(entry, null, null), host, TestToken);
+
+        var values = card.Items.OfType<CardValue>().ToList();
+        Assert.Equal("Demo 2.1.0", values.Single(v => v.Label == "Pakiet").Value);
+        Assert.Equal(CardStatus.Ok, card.Status);
+    }
+
+    [Fact]
+    public async Task Archive_preview_accepts_compressed_tar_names()
+    {
+        await using var plugin = StartFrom(Path.Combine(RepositoryRoot(), "plugins-catalog", "archive-info-python"));
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews![0]);
+        foreach (var name in new[] { "dane.tar.xz", "dane.tar.bz2" })
+        {
+            Assert.True(preview.CanPreview(new VfsEntry(name, Path.Combine(_folder, name), VfsEntryKind.File, 10)), name);
+        }
+    }
+
+    [Fact]
+    public async Task Archive_preview_caps_double_extension_notes()
+    {
+        var files = Enumerable.Range(0, 12).Select(i => ($"f{i:D2}.pdf.exe", "MZ")).ToArray();
+        var md = await RenderAsync("archive-info-python", ZipOf("many.zip", files), "archive");
+        var notes = md[md.IndexOf("## Uwagi", StringComparison.Ordinal)..];
+        Assert.Contains("podwójne rozszerzenie (12)", notes, StringComparison.Ordinal);
+        Assert.DoesNotContain("f10.pdf.exe", notes[notes.IndexOf("podwójne", StringComparison.Ordinal)..], StringComparison.Ordinal);
+        Assert.Contains("… i jeszcze 2", notes[notes.IndexOf("podwójne", StringComparison.Ordinal)..], StringComparison.Ordinal);
     }
 
     [Fact]

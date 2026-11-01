@@ -25,6 +25,9 @@ SENSITIVE = {"VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread", "SetW
 LEVELS = {"asInvoker": "uprawnienia użytkownika",
           "highestAvailable": "najwyższe dostępne (administrator pyta o UAC)",
           "requireAdministrator": "wymaga administratora (UAC)"}
+CARD_LEVELS = {"asInvoker": "uprawnienia użytkownika", "highestAvailable": "najwyższe dostępne",
+               "requireAdministrator": "wymaga administratora"}
+CARD_BUDGET = 2 * 1024 * 1024   # a dashboard card reads less: no entropy, no tree, direct imports only
 NO_MANIFEST = "brak manifestu — uprawnienia użytkownika, wirtualizacja UAC dla starszych programów"
 NO_LEVEL = "manifest bez requestedExecutionLevel — uprawnienia użytkownika"
 MAX_MODULES = 60
@@ -214,7 +217,7 @@ def section_dotnet(image, entry, ctx):
         lines += [f"⚠ {_cell(w)}" for w in info.warnings] + [""]
     references = ctx.assembly_references()
     if references:
-        lines += [f"Odwołania do zestawów ({len(references)}):", ""]
+        lines += [f"Odwołania do zestawów ({len(references) + ctx.more_references}):", ""]
         for name, version, token, kind, detail in references:
             key = f", token {token}" if token else ""
             lines.append(f"- {ASSEMBLY_KINDS.get(kind, 'ℹ️')} {_cell(name)} {version}{key} — {_cell(detail)}")
@@ -303,8 +306,9 @@ ORDER = {
 class Context:
     """The reader and the lazily read resources of one render; a failure is kept, never raised."""
 
-    def __init__(self, reader, image, path=None):
+    def __init__(self, reader, image, path=None, max_depth=3):
         self.reader = reader
+        self.max_depth = max_depth
         self.image = image
         self.path = path
         self.manifest_error = None
@@ -411,7 +415,8 @@ class Context:
                 # the walk reads from what is left of this render's budget, and the main reader pays for it
                 budget = deps.Budget(self.reader.budget - self.reader.used)
                 try:
-                    self._dependencies = deps.tree(self.path, self.image, max_modules=MAX_MODULES, budget=budget)
+                    self._dependencies = deps.tree(self.path, self.image, max_depth=self.max_depth,
+                                                    max_modules=MAX_MODULES, budget=budget)
                 except Exception as error:  # nothing may raise out of preview.render
                     self.dependencies_error = str(error) or type(error).__name__
                 finally:
@@ -423,13 +428,13 @@ class Context:
         return [n.resolution.name for n in self.dependencies() if n.resolution.kind == "missing" and not n.delayed]
 
 
-def _analyze(entry, entropy=True):
+def _analyze(entry, entropy=True, budget=8 * 1024 * 1024, details=True):
     size = entry.get("size")
     if not size:
         found = c4k.stat(entry["path"])
         size = (found or {}).get("size") or 0
-    reader = pe.RangeReader(entry["path"], size)
-    return reader, pe.parse(reader, entropy=entropy)
+    reader = pe.RangeReader(entry["path"], size, budget=budget)
+    return reader, pe.parse(reader, details=details, entropy=entropy)
 
 
 @c4k.handler("preview.render")
@@ -459,20 +464,60 @@ def render(params):
     return {"kind": "markdown", "content": "\n".join(lines)}
 
 
+def _in_windows(path):
+    root = deps._system_root().rstrip("\\/").lower() + "\\"
+    return path.lower().startswith(root)
+
+
+def _card_signature(sig, path):
+    """(value, status) of the card's "Podpis" row; status is None for a readable signature. Files under %SystemRoot%
+    without an embedded signature are not flagged: Windows signs them in catalogs (.cat), which this plugin does not read."""
+    if not sig.present:
+        return ("brak osadzonego (pliki Windows mają podpis w katalogu)", None) if _in_windows(path) else ("brak", "warning")
+    who = sig.organization or sig.subject
+    return (who, None) if who else ("nie odczytano", "warning")
+
+
+def _card_level(ctx):
+    manifest = ctx.manifest()
+    level = manifest.execution_level if manifest is not None and not manifest.skipped_reason else None
+    return CARD_LEVELS.get(level, "uprawnienia użytkownika")
+
+
 @c4k.handler("preview.card")
 def card(params):
-    entry = params["entry"]
-    actions = [{"label": "Otwórz", "target": entry["path"]}]
+    """The dashboard form: architecture, version, signer, execution level and missing DLLs, read with CARD_BUDGET."""
+    entry = params.get("entry") or {}
+    path = entry.get("path") or ""
+    icon = "⚙"
+    actions = [{"label": "Pokaż szczegóły", "target": path}] if path else []
     try:
-        _reader, image = _analyze(entry)
-    except Exception as error:
-        return {"icon": "⚙", "status": "error", "items": [{"kind": "text", "text": f"To nie jest prawidłowy plik PE ({error})"}], "actions": actions}
-    items = [{"kind": "value", "label": "Architektura", "value": image.machine},
-             {"kind": "value", "label": "Typ", "value": "DLL" if image.is_dll else SUBSYSTEMS.get(image.subsystem, "program")},
-             {"kind": "value", "label": "Importy", "value": str(len(image.imports))}]
-    if image.exports is not None:
-        items.append({"kind": "value", "label": "Eksporty", "value": str(image.exports.total)})
-    return {"icon": "⚙", "status": "warning" if image.warnings else "ok", "items": items, "actions": actions}
+        reader, image = _analyze(entry, entropy=False, budget=CARD_BUDGET, details=False)
+    except pe.PeError:
+        return {"title": entry.get("name"), "icon": icon, "status": "error",
+                "items": [{"kind": "text", "text": "To nie jest prawidłowy plik PE"}], "actions": actions}
+    except Exception as error:  # an unreadable file is a card, never a JSON-RPC error
+        return {"title": entry.get("name"), "icon": icon, "status": "error",
+                "items": [{"kind": "text", "text": f"Nie udało się odczytać pliku: {error}"}], "actions": actions}
+    ctx = Context(reader, image, path, max_depth=1)
+    try:
+        ctx.manifest()
+        info = ctx.version()
+        sig = ctx.signature()
+        missing = ctx.missing()   # direct imports only (max_depth=1): one c4k.stat each, nothing walked
+        signer, signer_status = _card_signature(sig, path)
+        items = [{"kind": "value", "label": "Architektura", "value": f"{image.machine} ({'PE32+' if image.pe32_plus else 'PE32'})"},
+                 {"kind": "value", "label": "Wersja", "value": info.get("_fixed") or "—"},
+                 {"kind": "value", "label": "Podpis", "value": signer, **({"status": signer_status} if signer_status else {})},
+                 {"kind": "value", "label": "Uprawnienia", "value": _card_level(ctx)}]
+        if missing:
+            items.append({"kind": "value", "label": "Brakujące DLL", "value": str(len(missing)), "status": "error"})
+            items.append({"kind": "text", "text": ", ".join(missing[:5]) + (" …" if len(missing) > 5 else "")})
+    except Exception as error:  # nothing may raise out of preview.card
+        return {"title": entry.get("name"), "icon": icon, "status": "error",
+                "items": [{"kind": "text", "text": f"Nie udało się odczytać pliku: {error}"}], "actions": actions}
+    return {"title": info.get("FileDescription") or entry.get("name"), "subtitle": info.get("CompanyName"), "icon": icon,
+            "status": "warning" if signer_status or missing else "ok", "items": items, "actions": actions}
 
 
 c4k.serve()

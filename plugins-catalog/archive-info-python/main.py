@@ -263,6 +263,20 @@ def _package(root, listing, entry):
     return None
 
 
+def _read_package(found, read):
+    """(rows, dependencies) of the package description file, or the "⚠" line saying why it could not be read."""
+    try:
+        text = c4k.read_text(found["path"])
+    except Exception as error:
+        return None, f"⚠ Nie udało się odczytać {_md(found['relative'])}: {error}"
+    try:
+        return read(text), None
+    except packages.UnsafeXml as error:
+        return None, f"⚠ {_md(found['relative'])}: {error} — plik nie został odczytany."
+    except Exception as error:
+        return None, f"⚠ Nie udało się odczytać {_md(found['relative'])}: {error}"
+
+
 def section_package(root, listing, entry):
     package = _package(root, listing, entry)
     if package is None:
@@ -271,16 +285,10 @@ def section_package(root, listing, entry):
     lines = [f"## {title}", ""]
     if found is None:
         return lines + ["⚠ Nie znaleziono pliku z opisem pakietu.", ""]
-    try:
-        text = c4k.read_text(found["path"])
-    except Exception as error:
-        return lines + [f"⚠ Nie udało się odczytać {_md(found['relative'])}: {error}", ""]
-    try:
-        rows, dependencies = read(text)
-    except packages.UnsafeXml as error:
-        return lines + [f"⚠ {_md(found['relative'])}: {error} — plik nie został odczytany.", ""]
-    except Exception as error:
-        return lines + [f"⚠ Nie udało się odczytać {_md(found['relative'])}: {error}", ""]
+    parsed, problem = _read_package(found, read)
+    if problem:
+        return lines + [problem, ""]
+    rows, dependencies = parsed
     lines.append(f"*{_md(found['relative'])}*")
     lines.append("")
     if rows:
@@ -297,11 +305,15 @@ def notes(listing, entry):
         sample = ", ".join(_md(name) for name in executables[:10])
         more = f" … i jeszcze {len(executables) - 10}" if len(executables) > 10 else ""
         found.append(f"zawiera pliki wykonywalne lub skrypty ({len(executables)}): {sample}{more}")
+    doubles = []
     for item in listing.files:
-        name = posixpath.basename(item["relative"])
-        stem, last = posixpath.splitext(name.lower())
+        stem, last = posixpath.splitext(posixpath.basename(item["relative"]).lower())
         if last in EXECUTABLE and posixpath.splitext(stem)[1] in DECOYS:
-            found.append(f"podwójne rozszerzenie: {_md(item['relative'])} — wygląda na dokument, a jest plikiem wykonywalnym")
+            doubles.append(item["relative"])
+    if doubles:
+        sample = ", ".join(_md(name) for name in doubles[:10])
+        more = f" … i jeszcze {len(doubles) - 10}" if len(doubles) > 10 else ""
+        found.append(f"podwójne rozszerzenie ({len(doubles)}): {sample}{more} — wyglądają na dokumenty, a są plikami wykonywalnymi")
     total = _total(listing)
     if total > BOMB_SIZE and _ratio(total, entry.get("size") or 0) > BOMB_RATIO:
         found.append(f"możliwa bomba zip: {_size(total)} po rozpakowaniu z {_size(entry.get('size') or 0)}")
@@ -315,9 +327,10 @@ def section_notes(listing, entry):
 
 @c4k.handler("preview.render")
 def render(params):
-    entry = params["entry"]
-    lines = [f"# {_md(entry.get('name') or entry.get('path') or 'archiwum')}", ""]
+    lines = []
     try:
+        entry = params["entry"]
+        lines = [f"# {_md(entry.get('name') or entry.get('path') or 'archiwum')}", ""]
         root = archive_root(entry["path"])
         listing = walk(root)
     except Exception as error:  # nothing may raise out of preview.render
@@ -336,20 +349,52 @@ def render(params):
     return {"kind": "markdown", "content": "\n".join(lines)}
 
 
+def _package_name(root, listing, entry):
+    """"id version" of a NuGet/wheel/JAR/VSIX package, or None when the archive is not one (or it cannot be read)."""
+    package = _package(root, listing, entry)
+    if package is None or package[1] is None:
+        return None
+    parsed, _problem = _read_package(package[1], package[2])
+    if parsed is None:
+        return None
+    rows = dict(parsed[0])
+    name = rows.get("id") or rows.get("nazwa")
+    return " ".join(part for part in (name, rows.get("wersja")) if part) or None
+
+
 @c4k.handler("preview.card")
 def card(params):
-    # Minimal card; the full one comes with the dashboard work.
+    """The dashboard form: counts, unpacked size, compression, the package and a warning when there are notes."""
     entry = params.get("entry") or {}
-    actions = [{"label": "Otwórz", "target": entry.get("path", "")}] if entry.get("path") else []
+    path = entry.get("path") or ""
+    icon = "🗜"
     try:
-        listing = walk(archive_root(entry["path"]))
-    except Exception as error:
-        return {"icon": "🗜", "status": "error", "items": [{"kind": "text", "text": str(error)}], "actions": actions}
+        root = archive_root(path)
+        actions = [{"label": "Otwórz archiwum", "target": root}] if path else []
+        listing = walk(root)
+    except Exception as error:  # nothing may raise out of preview.card
+        return {"icon": icon, "status": "error", "items": [{"kind": "text", "text": f"Nie udało się odczytać archiwum: {error}"}], "actions": []}
     if listing.error is not None:
-        return {"icon": "🗜", "status": "error", "items": [{"kind": "text", "text": listing.error}], "actions": actions}
+        return {"icon": icon, "status": "error",
+                "items": [{"kind": "text", "text": f"Nie udało się otworzyć archiwum: {listing.error}"}], "actions": actions}
+    total, size = _total(listing), entry.get("size") or 0
     items = [{"kind": "value", "label": "Pliki", "value": str(len(listing.files))},
-             {"kind": "value", "label": "Rozmiar", "value": _size(_total(listing))}]
-    return {"icon": "🗜", "status": "warning" if listing.truncated else "ok", "items": items, "actions": actions}
+             {"kind": "value", "label": "Rozmiar po rozpakowaniu", "value": _size(total)}]
+    if size and total:
+        items.append({"kind": "value", "label": "Stopień kompresji", "value": f"{_ratio(total, size):.1f}×".replace(".", ",")})
+    try:
+        package = _package_name(root, listing, entry)
+        found = notes(listing, entry)
+    except Exception as error:  # a broken package file or note still leaves a card
+        package, found = None, [f"nie udało się przejrzeć zawartości: {error}"]
+    if package:
+        items.append({"kind": "value", "label": "Pakiet", "value": package})
+    if listing.truncated:
+        found.append("lista niepełna")
+    if found:
+        items.append({"kind": "value", "label": "Uwagi", "value": str(len(found)), "status": "warning"})
+        items.append({"kind": "text", "text": found[0].replace("\\", "")})
+    return {"icon": icon, "status": "warning" if found else "ok", "items": items, "actions": actions}
 
 
 c4k.serve()
