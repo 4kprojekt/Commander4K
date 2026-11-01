@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-31",
+  "updated": "2026-11-01",
   "baseUrl": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/",
   "plugins": [
     {
@@ -24,16 +24,16 @@
       "path": "plugins-catalog/steam-library-powershell",
       "files": [
         {
-          "path": "c4k.ps1",
-          "sha256": "837a8df8fe67c3a9dc27d17de365ff217f49f7e1361b0a76c39278cb42a75191"
+          "sha256": "2ec169b2ddfbf3a958b1b825702162b7809cbe313dff1c96f4e9c2994b10b491",
+          "path": "c4k.ps1"
         },
         {
-          "path": "main.ps1",
-          "sha256": "f980608a8748b13d6951e79adebe2f053b3a62dc4ccea64bffc7fd9ba463cafd"
+          "sha256": "f980608a8748b13d6951e79adebe2f053b3a62dc4ccea64bffc7fd9ba463cafd",
+          "path": "main.ps1"
         },
         {
-          "path": "plugin.json",
-          "sha256": "749bcba76cfc65e416760f11f8d6e183c0eb197706a67555a48989be43bd07b7"
+          "sha256": "749bcba76cfc65e416760f11f8d6e183c0eb197706a67555a48989be43bd07b7",
+          "path": "plugin.json"
         }
       ]
     },
@@ -59,16 +59,16 @@
       "path": "plugins-catalog/git-repo-powershell",
       "files": [
         {
-          "path": "c4k.ps1",
-          "sha256": "837a8df8fe67c3a9dc27d17de365ff217f49f7e1361b0a76c39278cb42a75191"
+          "sha256": "2ec169b2ddfbf3a958b1b825702162b7809cbe313dff1c96f4e9c2994b10b491",
+          "path": "c4k.ps1"
         },
         {
-          "path": "main.ps1",
-          "sha256": "9b3816b067df48187077586b044a3f00f08efc8c3e28394b9c11b5c1013d72a4"
+          "sha256": "9b3816b067df48187077586b044a3f00f08efc8c3e28394b9c11b5c1013d72a4",
+          "path": "main.ps1"
         },
         {
-          "path": "plugin.json",
-          "sha256": "28a58611126508d021e2573ee347ae0283aa1dbdd8748afcaea7e487332e9863"
+          "sha256": "28a58611126508d021e2573ee347ae0283aa1dbdd8748afcaea7e487332e9863",
+          "path": "plugin.json"
         }
       ]
     },
@@ -94,16 +94,16 @@
       "path": "examples/plugins/project-modules-python",
       "files": [
         {
-          "path": "c4k.py",
-          "sha256": "6ac48eebcd93659d898e449aeb04d010778fa7bc1e3a5dbdf8d23849c30ece3a"
+          "sha256": "483028cd0c6b69eaa5b92bb9b384fbbe3285314d32f48a991ba826e7b1f5e734",
+          "path": "c4k.py"
         },
         {
-          "path": "main.py",
-          "sha256": "4e5de27a6bed899e2c815f5da82ce784567c20a89c3fad87554d2e4be1d15fae"
+          "sha256": "4e5de27a6bed899e2c815f5da82ce784567c20a89c3fad87554d2e4be1d15fae",
+          "path": "main.py"
         },
         {
-          "path": "plugin.json",
-          "sha256": "aed790a4a2f4b9f1bb9e4f4b9cea7154131e313e44c7ac387a5308648559aea0"
+          "sha256": "aed790a4a2f4b9f1bb9e4f4b9cea7154131e313e44c7ac387a5308648559aea0",
+          "path": "plugin.json"
         }
       ]
     },
@@ -127,16 +127,16 @@
       "path": "examples/plugins/git-powershell",
       "files": [
         {
-          "path": "c4k.ps1",
-          "sha256": "837a8df8fe67c3a9dc27d17de365ff217f49f7e1361b0a76c39278cb42a75191"
+          "sha256": "2ec169b2ddfbf3a958b1b825702162b7809cbe313dff1c96f4e9c2994b10b491",
+          "path": "c4k.ps1"
         },
         {
-          "path": "main.ps1",
-          "sha256": "39270d49015211223a9cb641d457fd34056f887b2fa096f58dfbcfe8af15f282"
+          "sha256": "39270d49015211223a9cb641d457fd34056f887b2fa096f58dfbcfe8af15f282",
+          "path": "main.ps1"
         },
         {
-          "path": "plugin.json",
-          "sha256": "8bfdcedb6764dd54ad3723c797c2aa9993db03a9ae74ec1ebf65f79b5c607759"
+          "sha256": "8bfdcedb6764dd54ad3723c797c2aa9993db03a9ae74ec1ebf65f79b5c607759",
+          "path": "plugin.json"
         }
       ]
     },
@@ -159,16 +159,16 @@
       "path": "examples/plugins/folder-stats-python",
       "files": [
         {
-          "path": "c4k.py",
-          "sha256": "6ac48eebcd93659d898e449aeb04d010778fa7bc1e3a5dbdf8d23849c30ece3a"
+          "sha256": "483028cd0c6b69eaa5b92bb9b384fbbe3285314d32f48a991ba826e7b1f5e734",
+          "path": "c4k.py"
         },
         {
-          "path": "main.py",
-          "sha256": "3acfcbaf881350897f0d470e35266840cdc9423b9b3b9c53296b85f5c1119241"
+          "sha256": "d119eb06711b09a503fdd96884aa52cd90595adb7e05af483af0b38a7b2967ca",
+          "path": "main.py"
         },
         {
-          "path": "plugin.json",
-          "sha256": "2c7c16f34c4f5536be4e533f4aeed83aea3658e026a3c3c707957f0f040c2b08"
+          "sha256": "325c463edfd79f54846248bb8f32b24aeac14b2ca099a586edcc933bc4af4b35",
+          "path": "plugin.json"
         }
       ]
     },
@@ -192,16 +192,16 @@
       "path": "examples/plugins/site-check-node",
       "files": [
         {
-          "path": "c4k.js",
-          "sha256": "3e73b19cb896e9e1319ee26922cb3dc4abdfb81ba28e9a5cbd9a928fc95304e5"
+          "sha256": "b7326f200ea7ef07f8e82fdad0e7de1b3e95e5cefb3ac28b572b611e1b87a12e",
+          "path": "c4k.js"
         },
         {
-          "path": "main.js",
-          "sha256": "f0aea0ff2ba11363f35bc516e5a4efe4e2db117a54e849a55ae3c2a0d0e17014"
+          "sha256": "f0aea0ff2ba11363f35bc516e5a4efe4e2db117a54e849a55ae3c2a0d0e17014",
+          "path": "main.js"
         },
         {
-          "path": "plugin.json",
-          "sha256": "a29e0efd1197a62135eca97bb9629ac16c55b5f3cf81fc966c2b0ff0b64c35b3"
+          "sha256": "a29e0efd1197a62135eca97bb9629ac16c55b5f3cf81fc966c2b0ff0b64c35b3",
+          "path": "plugin.json"
         }
       ]
     },
@@ -228,16 +228,16 @@
       "path": "plugins-catalog/json-preview-python",
       "files": [
         {
-          "path": "c4k.py",
-          "sha256": "6ac48eebcd93659d898e449aeb04d010778fa7bc1e3a5dbdf8d23849c30ece3a"
+          "sha256": "483028cd0c6b69eaa5b92bb9b384fbbe3285314d32f48a991ba826e7b1f5e734",
+          "path": "c4k.py"
         },
         {
-          "path": "main.py",
-          "sha256": "c38cb6cffc7b22c9d73eb4c2b21df7f4244ede34a836a5bc6aa2f041b1da9d28"
+          "sha256": "c38cb6cffc7b22c9d73eb4c2b21df7f4244ede34a836a5bc6aa2f041b1da9d28",
+          "path": "main.py"
         },
         {
-          "path": "plugin.json",
-          "sha256": "92fe9102f4335324480db717c77521eecfb492484ed33241a31e4678ee7e50fd"
+          "sha256": "92fe9102f4335324480db717c77521eecfb492484ed33241a31e4678ee7e50fd",
+          "path": "plugin.json"
         }
       ]
     },
@@ -266,20 +266,20 @@
       "path": "plugins-catalog/openapi-preview-python",
       "files": [
         {
-          "path": "c4k.py",
-          "sha256": "6ac48eebcd93659d898e449aeb04d010778fa7bc1e3a5dbdf8d23849c30ece3a"
+          "sha256": "483028cd0c6b69eaa5b92bb9b384fbbe3285314d32f48a991ba826e7b1f5e734",
+          "path": "c4k.py"
         },
         {
-          "path": "main.py",
-          "sha256": "2685ed1ab5982a323c455c4857b82f877398fefc2bf6b21cb0852ed03083940e"
+          "sha256": "2685ed1ab5982a323c455c4857b82f877398fefc2bf6b21cb0852ed03083940e",
+          "path": "main.py"
         },
         {
-          "path": "plugin.json",
-          "sha256": "f4927f1cc4fc4514892a4d6354503ff9a86a6164e792b0c76d50930debbbddfa"
+          "sha256": "f4927f1cc4fc4514892a4d6354503ff9a86a6164e792b0c76d50930debbbddfa",
+          "path": "plugin.json"
         },
         {
-          "path": "yaml_lite.py",
-          "sha256": "b8debd0be51a33008d5ce6fdb105bcb9a5cca926e78798180d922ca9b9f39034"
+          "sha256": "b8debd0be51a33008d5ce6fdb105bcb9a5cca926e78798180d922ca9b9f39034",
+          "path": "yaml_lite.py"
         }
       ]
     },
@@ -308,16 +308,16 @@
       "path": "plugins-catalog/html-preview-python",
       "files": [
         {
-          "path": "c4k.py",
-          "sha256": "6ac48eebcd93659d898e449aeb04d010778fa7bc1e3a5dbdf8d23849c30ece3a"
+          "sha256": "483028cd0c6b69eaa5b92bb9b384fbbe3285314d32f48a991ba826e7b1f5e734",
+          "path": "c4k.py"
         },
         {
-          "path": "main.py",
-          "sha256": "a7bbd3dd093c96dc87dff0a31ec00c9db6432e08f35a119fb69e5e78eca103ab"
+          "sha256": "a7bbd3dd093c96dc87dff0a31ec00c9db6432e08f35a119fb69e5e78eca103ab",
+          "path": "main.py"
         },
         {
-          "path": "plugin.json",
-          "sha256": "d08d2ac414c587f60f60f16867162fff53b27fbb4c5ac35ed595ac033160adf3"
+          "sha256": "d08d2ac414c587f60f60f16867162fff53b27fbb4c5ac35ed595ac033160adf3",
+          "path": "plugin.json"
         }
       ]
     }

@@ -77,11 +77,36 @@ def action(params):
     return {"text": "\n".join(sorted(names))}
 
 
+def csv_files(folder):
+    return [e for e in c4k.list_dir(folder) if e["kind"] == "file" and e["name"].lower().endswith(".csv")]
+
+
+def tables(folder):
+    """The "tables" folder view: every CSV file of the folder with its row count."""
+    lines = [f"### Tabele CSV: {os.path.basename(folder.rstrip(os.sep))}", "", "| Plik | Wiersze | Rozmiar |", "|---|---:|---:|"]
+    for entry in sorted(csv_files(folder), key=lambda e: e["name"].lower()):
+        rows = c4k.read_text(entry["path"], max_bytes=512 * 1024).count("\n")
+        lines.append(f"| {entry['name']} | {rows} | {human(max(entry['size'], 0))} |")
+    return {"kind": "markdown", "content": "\n".join(lines), "editable": False}
+
+
+@c4k.handler("preview.suggest")
+def suggest(params):
+    """Asked only after the manifest rule matched (3+ CSV files, half of the folder): offer the tables view."""
+    if params["preview"] != "tables":
+        raise ValueError("no folder suggestions for " + params["preview"])
+    count = sum(1 for e in params["entries"] if e["kind"] == "file" and e["name"].lower().endswith(".csv"))
+    return c4k.folder_suggestion(0.8, f"{count} tabel CSV — pokazać jako tabele?")
+
+
 @c4k.handler("preview.render")
 def preview(params):
     """Quick view (Ctrl+Q) of .csv files as a Markdown table; the app renders the Markdown."""
     import csv
     import io
+
+    if params["preview"] == "tables":
+        return tables(params["entry"]["path"])
 
     text = c4k.read_text(params["entry"]["path"], max_bytes=512 * 1024)
     sample = text[:4096]

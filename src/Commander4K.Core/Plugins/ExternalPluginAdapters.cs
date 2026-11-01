@@ -134,9 +134,58 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
 }
 
 /// <summary>One <c>contributes.previews</c> entry: quick view rendered by the plugin (<c>preview.render</c>).</summary>
-public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewCardPlugin
+public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribution preview) : IPreviewCardPlugin, IFolderSuggestingPreview
 {
     private const int MaxCardImages = 4;
+
+    /// <summary>How long a <c>preview.suggest</c> answer may take, process start included.</summary>
+    public static readonly TimeSpan SuggestTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>The manifest rule decides alone; only with <c>ask</c> does a matching folder reach the plugin (<c>preview.suggest</c>).</summary>
+    public bool AsksPlugin => preview.Suggest?.Ask == true;
+
+    /// <remarks>
+    /// <c>preview.suggest</c> gets <c>{ preview, folder, entries, truncated, context }</c> and answers
+    /// <c>{ score, message, options? }</c> or <c>null</c>. Plugin errors and malformed answers mean "no suggestion".
+    /// </remarks>
+    public async Task<FolderSuggestion?> SuggestAsync(FolderSnapshot folder, IPluginHost host, CancellationToken cancellationToken)
+    {
+        if (preview.Suggest is not { } rule || Folders.FolderSuggestionRules.Match(rule, folder) is not { } count)
+        {
+            return null;
+        }
+
+        var view = new FolderSuggestionView(Plugin: plugin.Manifest.Id, Preview: preview.Id);
+        if (!rule.Ask)
+        {
+            return new FolderSuggestion(0.7, Folders.FolderSuggestionRules.MessageFor(rule, count, Loc.Language, preview.Title), view);
+        }
+
+        try
+        {
+            var result = await plugin.CallAsync("preview.suggest", new
+            {
+                preview = preview.Id,
+                folder = ExternalPlugin.EntryDto(folder.Folder),
+                entries = folder.Entries.Select(ExternalPlugin.EntryDto).ToArray(),
+                truncated = folder.Truncated,
+                context = ExternalPlugin.Context(host),
+            }, cancellationToken, SuggestTimeout).ConfigureAwait(false);
+            if (result.ValueKind != JsonValueKind.Object
+                || !result.TryGetProperty("score", out var score) || !score.TryGetDouble(out var value)
+                || CardString(result, "message") is not { Length: > 0 } message)
+            {
+                return null;
+            }
+
+            var options = result.TryGetProperty("options", out var o) && o.ValueKind == JsonValueKind.Object ? o.GetRawText() : null;
+            return new FolderSuggestion(Math.Clamp(value, 0, 1), message, view with { OptionsJson = options });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return null; // A failing plugin only loses its own suggestion.
+        }
+    }
 
     public string Id => $"{plugin.Manifest.Id}/{preview.Id}";
 

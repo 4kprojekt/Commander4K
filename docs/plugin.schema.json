@@ -86,7 +86,20 @@
               "extensions": { "type": "array", "items": { "type": "string" }, "description": "An extension with the dot (\".csv\"), a file name (\"package.json\"), a pattern with * or ? (\"*.openapi.json\"), or \"/\" for folders." },
               "priority": { "type": "integer", "default": 10, "description": "Highest wins; built-ins: markdown 50, images 40, folders 10, text 0. Folder views meant only for c4k.dir use a negative value." },
               "card": { "type": "boolean", "default": false, "description": "The plugin answers preview.card, so c4k.dir dashboards can show this preview as a live card." },
-              "webRoot": { "type": "string", "description": "Folder inside the plugin (relative, no ..) with the HTML/JS pages shown when preview.render returns kind \"web\". Required for that kind." }
+              "webRoot": { "type": "string", "description": "Folder inside the plugin (relative, no ..) with the HTML/JS pages shown when preview.render returns kind \"web\". Required for that kind." },
+              "suggest": {
+                "type": "object",
+                "description": "When the cursor rests on a folder that matches this rule, the app offers this preview as the folder's view (accepting writes c4k.dir). Checked by the app on the folder listing; the plugin is asked (preview.suggest) only with ask: true and only after the rule matched.",
+                "properties": {
+                  "files": { "type": "array", "items": { "type": "string" }, "description": "Patterns like extensions: \".jpg\", \"*.csv\", \"package.json\"." },
+                  "minCount": { "type": "integer", "minimum": 1, "default": 1, "description": "At least this many matching files." },
+                  "minShare": { "type": "number", "minimum": 0, "maximum": 1, "default": 0, "description": "Matching files among all files of the folder (folders not counted)." },
+                  "contains": { "type": "array", "items": { "type": "string" }, "description": "Entries (files or folders) that must all exist, e.g. \".obsidian\"." },
+                  "message": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Hint text per language code (\"pl\", \"en\"…); {count} = matching files. Default: the preview title." },
+                  "ask": { "type": "boolean", "default": false, "description": "After the rule matched, ask the plugin with preview.suggest (it decides the score and message)." }
+                },
+                "additionalProperties": false
+              }
             },
             "additionalProperties": false
           }

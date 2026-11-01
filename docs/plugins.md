@@ -146,6 +146,7 @@ Ask for the fewest permissions that do the job.
 | `panel.action` | `{ panel, action, rowIds, context }` | `{ text?: string }`. Text is shown in a viewer, and the panel reloads afterwards. |
 | `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }` or `{ kind: "web", page, state? }` (an HTML page from the preview's `webRoot`, see "Web previews"). A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). A preview may also return `{ kind: "chart", title, description?, chart }` (see `preview.card` for `chart`). |
 | `preview.card` | `{ preview, entry: { … } \| null, context, options, previous }` | Only for previews with `"card": true` in `contributes.previews`. The small form shown on a `c4k.dir` dashboard: `{ title?, subtitle?, icon?, status?: "ok"\|"warning"\|"error", items: [...], actions: [{ label, target }] }`. Items: `{ kind: "value", label, value, status? }`, `{ kind: "progress", label, fraction (0–1), text? }`, `{ kind: "text", text }`, `{ kind: "thumbnails", images: [path] }` (at most 4, read with your `fs.read`), `{ kind: "chart", chart: { kind: "line"\|"bar", unit?, min?, max?, series: [{ name, points: [{ x, y, label? }] }] } }`. `previous` is the card you returned last time (thumbnails as a count), so a card refreshed on a timer can add a point to its chart; keep at most 120 points. An action `target` is a path, a URL, or `c4k:refresh` (read the card again). Previews without `"card": true` get a plain card with their title and an Open button. |
+| `preview.suggest` | `{ preview, folder: { … }, entries: [{ … }], truncated, context }` | Only for previews whose `suggest` rule has `"ask": true`, and only after the rule matched the folder under the cursor. `{ score (0–1), message, options? }` or `null`. Answers below 0.5 are ignored, and the best answer across all previews becomes a hint ("switch to …?"); accepting writes `c4k.dir` with `{ "plugin": <id>, "preview": <preview>, "options": <options> }`. `entries` is the folder listing (at most 500, `truncated` when cut). 5 s limit, process start included; an error or timeout means no suggestion. See "Folder suggestions". |
 | `preview.message` | `{ preview, entry, method, params, context }` | Any JSON value. A web preview page called `c4k.request(method, params)`; answer it here (30 s limit). See "Web previews". |
 | `palette.items` | `{ palette, context }` | Legacy: the app no longer shows palettes, so it never sends the `palette.*` requests; `contributes.palettes` is still accepted but ignored. `{ items: [{ id, title, icon?, tooltip? }] }`. Asked again after every navigation and after every `palette.action`, so items may depend on `context.activePath`. |
 | `palette.invoke` | `{ palette, item, context }` | Same as `command.execute`. The user clicked an item. |
@@ -241,6 +242,7 @@ Every helper maps to one protocol method above:
 | `ui.search` | `search(query, engine=None)` | `search(query, engine)` | `Search-C4KWeb $Query $Engine` |
 | `ui.copyText` | `copy_text(text)` | `copyText(text)` | `Copy-C4KText $Text` |
 | — (result of `preview.render`) | `web_preview(page, state=None)` | `webPreview(page, state)` | `New-C4KWebPreview $Page [$State]` |
+| — (result of `preview.suggest`) | `folder_suggestion(score, message, options=None)` | `folderSuggestion(score, message, options)` | `New-C4KFolderSuggestion $Score $Message [$Options]` |
 | `storage.get` / `.set` | `storage_get(key, default)` / `storage_set(key, value)` | `storageGet(key, fallback)` / `storageSet(key, value)` | `Get-C4KStorage $Key $Default` / `Set-C4KStorage $Key $Value` |
 | `fs.list` | `list_dir(path)` | `listDir(path)` | `Get-C4KChildItem $Path` |
 | `fs.stat` | `stat(path)` | `stat(path)` | `Get-C4KItem $Path` |
@@ -352,6 +354,22 @@ A plugin that is not installed shows a tile that downloads it from the official 
 The official `official.git-repo` plugin works this way: `{ "preview": { "plugin": "official.git-repo" } }` in a repository shows its branch, changes, recent commits, branches, tags and remotes, read with `git` through `shell.run` (options `commits`, `files`, `branches`).
 
 To make a plugin for folders, contribute a preview with `"extensions": ["/"]` and a negative `priority`, so it only shows folders whose `c4k.dir` names it, and return `kind: "tiles"` or `markdown` from `preview.render`. Read `options` for your settings.
+
+### Folder suggestions
+
+When the cursor rests on a folder without `c4k.dir` (on a disk or a share), the app reads its listing once and asks every preview that can judge folders. The built-in gallery (5+ images, 60 % of the files) and notes (`.obsidian`, or 5+ Markdown files, 60 % of the files) do this, and so can yours. The best answer appears as a small hint in the panel. Accepting it (button or `Ctrl+Enter`) writes `c4k.dir` with your preview as `enter` and `preview`, and opens the view.
+
+Add a `suggest` rule to the preview contribution:
+
+```json
+{ "id": "tables", "title": "Tabele CSV w folderze", "extensions": ["/"], "priority": -1,
+  "suggest": { "files": [".csv"], "minCount": 3, "minShare": 0.5, "ask": true } }
+```
+
+- The app checks the rule itself, without starting your plugin: `files` patterns (like `extensions`), at least `minCount` matching files making at least `minShare` of all files (folders do not count), and every name in `contains`. For a folder with more than 500 entries, the rule is checked on the first 500.
+- Without `ask`, a match is a suggestion with score 0.7 and the text from `message` (`{ "pl": "…", "en": "… {count} …" }`, the preview title by default).
+- With `"ask": true`, a match sends `preview.suggest`, and your answer decides: `folder_suggestion(score, message, options)`, or `None`/`null` for "not for me".
+- Scores below 0.5 are ignored. On a tie, a plugin wins over the built-in views, then the higher `priority` wins. The example `folder-stats-python` has such a preview.
 
 ### Dashboard cards
 

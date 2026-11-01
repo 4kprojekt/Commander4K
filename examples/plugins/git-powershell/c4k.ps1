@@ -63,6 +63,7 @@ function Open-C4KUrl([string] $Url) { [void](Invoke-C4K 'ui.openUrl' @{ url = $U
 function Search-C4KWeb([string] $Query, [string] $Engine) { [void](Invoke-C4K 'ui.search' @{ query = $Query; engine = $(if ($Engine) { $Engine } else { $null }) }) }  # engine: assistant, google, chatgpt…
 function Copy-C4KText([string] $Text) { [void](Invoke-C4K 'ui.copyText' @{ text = $Text }) }                        # clipboard (write only)
 function New-C4KWebPreview([string] $Page, $State = $null) { @{ kind = 'web'; page = $Page; state = $State } }                    # result of preview.render: an HTML page from the preview's webRoot
+function New-C4KFolderSuggestion([double] $Score, [string] $Message, $Options = $null) { @{ score = $Score; message = $Message; options = $Options } }  # result of preview.suggest (score 0..1)
 function Get-C4KStorage([string] $Key, $Default = $null) {                                                           # the plugin's own settings/data (no permission)
     $value = Invoke-C4K 'storage.get' @{ key = $Key }
     if ($null -eq $value) { $Default } else { $value }
