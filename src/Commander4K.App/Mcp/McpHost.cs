@@ -54,6 +54,10 @@ public sealed class McpHost : IAsyncDisposable
 
     public string Url => $"http://127.0.0.1:{_host.Settings.Mcp.Port}/mcp";
 
+    /// <summary>Connection data for an explicitly requested client-configuration prompt.</summary>
+    internal (string Url, string? Token, bool IsRunning) ConnectionDetails =>
+        (Url, CurrentToken(), Status == McpStartResult.Started);
+
     public int Sessions => _server?.SessionCount ?? 0;
 
     public IReadOnlyList<McpCallRecord> Recent => _dispatcher.Recent;

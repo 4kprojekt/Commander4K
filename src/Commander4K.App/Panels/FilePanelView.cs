@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Commander4K.App.Composition;
 using Commander4K.App.Connections;
+using Commander4K.App.Preview;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
@@ -14,6 +15,8 @@ using Commander4K.PluginSdk;
 namespace Commander4K.App.Panels;
 
 public sealed record AuthenticationRequest(PanelTab Tab, VfsAuthenticationRequiredException Exception);
+
+public sealed record PanelModeRequest(FilePanelView Panel, bool Preview);
 
 /// <summary>One side of the dual-pane layout: tab strip, path bar, owner-drawn list and status line.</summary>
 public sealed class FilePanelView : ViewBase
@@ -32,6 +35,8 @@ public sealed class FilePanelView : ViewBase
     private StackPanel _tabStrip = null!;
     private Border _pathBorder = null!;
     private TextBox _pathBox = null!;
+    private Button _filesModeButton = null!;
+    private Button _previewModeButton = null!;
     private Border _statusBorder = null!;
     private Panel _content = null!;
     private TextBlock _status = null!;
@@ -101,6 +106,7 @@ public sealed class FilePanelView : ViewBase
         ShowSuggestion(null);
         CloseMode();
         AttachMode(view);
+        UpdateModeButtons();
     }
 
     private void AttachMode(IPanelModeView view)
@@ -114,6 +120,7 @@ public sealed class FilePanelView : ViewBase
         _statusBorder.IsVisible = false;
         _pathBox.Text = "⚙ " + view.Title;
         _pathBox.IsReadOnly = true;
+        UpdateModeButtons();
         if (view is ITitledModeView titled)
         {
             titled.TitleChanged += () =>
@@ -148,6 +155,7 @@ public sealed class FilePanelView : ViewBase
         _statusBorder.IsVisible = true;
         _pathBox.IsReadOnly = false;
         _pathBox.Text = ActiveTab.Path;
+        UpdateModeButtons();
     }
 
     private void DetachPluginTabMode()
@@ -163,6 +171,7 @@ public sealed class FilePanelView : ViewBase
         _statusBorder.IsVisible = true;
         _pathBox.IsReadOnly = false;
         _pathBox.Text = ActiveTab.Path;
+        UpdateModeButtons();
     }
 
     private void ActivatePluginTabMode(PanelTab tab, IPanelModeView mode)
@@ -259,6 +268,9 @@ public sealed class FilePanelView : ViewBase
     /// <summary>The ▾ button on the path bar: the window shows the location menu (drives, This PC, network, connections).</summary>
     public event Action<FilePanelView>? LocationMenuRequested;
 
+    /// <summary>One of the panel's Pliki/Podgląd controls was selected.</summary>
+    public event Action<PanelModeRequest>? ModeRequested;
+
     private Button _locationButton = null!;
 
     public event Action<AuthenticationRequest>? AuthenticationRequired;
@@ -292,12 +304,17 @@ public sealed class FilePanelView : ViewBase
                     new Border()
                         .Ref(out _pathBorder)
                         .Row(1)
-                        .Child(new Grid().Cols("Auto,*,Auto").Children(
+                        .Child(new Grid().Cols("Auto,*,Auto,Auto").Children(
                             new Border().Ref(out _accentEdge).Width(3).Col(0),
                             new TextBox().Ref(out _pathBox).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(7, 2)
                                 .VerticalContentAlignment(VerticalAlignment.Center),
+                            new StackPanel().Col(2).Orientation(Orientation.Horizontal).VerticalAlignment(VerticalAlignment.Center).Children(
+                                new Button().Ref(out _filesModeButton).Content(Loc.T("Pliki")).Height(24).Padding(8, 0)
+                                    .VerticalContentAlignment(VerticalAlignment.Center).OnClick(_ => ModeRequested?.Invoke(new(this, Preview: false))),
+                                new Button().Ref(out _previewModeButton).Content(Loc.T("Podgląd")).Height(24).Padding(8, 0)
+                                    .VerticalContentAlignment(VerticalAlignment.Center).OnClick(_ => ModeRequested?.Invoke(new(this, Preview: true)))),
                             // One click to switch this panel elsewhere: drives, This PC, network, saved and new connections.
-                            new Button().Ref(out _locationButton).Col(2).Content("▾").Padding(10, 0).MinWidth(32)
+                            new Button().Ref(out _locationButton).Col(3).Content("▾").Padding(10, 0).MinWidth(32)
                                 .VerticalAlignment(VerticalAlignment.Stretch).VerticalContentAlignment(VerticalAlignment.Center)
                                 .BorderThickness(new Thickness(0)).Background(Brushes.Transparent)
                                 .OnClick(click => LocationMenuRequested?.Invoke(this)))),
@@ -736,8 +753,35 @@ public sealed class FilePanelView : ViewBase
         _locationButton.Foreground = b.HeaderForeground;
         _locationButton.FontSize = b.FontSize;
         ToolTip.SetTip(_locationButton, Loc.T("Zmień lokalizację panelu: dyski, Ten komputer, sieć, połączenia SSH/FTP (Alt+F1 / Alt+F2)"));
+        foreach (var button in new[] { _filesModeButton, _previewModeButton })
+        {
+            button.FontFamily = b.FontFamily;
+            button.FontSize = modern ? Math.Max(11, b.FontSize - 1) : b.FontSize;
+        }
+
+        UpdateModeButtons();
         ApplyChrome();
         RebuildTabs();
+    }
+
+    private void UpdateModeButtons()
+    {
+        if (_filesModeButton is null || _previewModeButton is null)
+        {
+            return;
+        }
+
+        var brushes = _skins.Current;
+        StyleModeButton(_filesModeButton, Mode is null, brushes);
+        StyleModeButton(_previewModeButton, Mode is PreviewPanelView, brushes);
+    }
+
+    private static void StyleModeButton(Button button, bool selected, SkinBrushes brushes)
+    {
+        button.Background = selected ? brushes.ActiveHeaderBackground : Brushes.Transparent;
+        button.Foreground = selected ? brushes.ActiveHeaderForeground : brushes.HeaderForeground;
+        button.BorderBrush = selected ? brushes.PanelBorder : Brushes.Transparent;
+        button.BorderThickness = new Thickness(selected ? 1 : 0);
     }
 
     /// <summary>Active panel: modern skins tint the path bar and show the accent edge; retro skins use the cursor colours.</summary>

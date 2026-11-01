@@ -1,6 +1,6 @@
 #requires -Version 7.2
-# Refreshes "files" (path + SHA-256) and "version" of every plugin in catalog.json from its folder, so the catalog
-# always matches what raw.githubusercontent.com serves. Run after changing a catalog plugin, then commit both:
+# Refreshes "files" (path + SHA-256), "version" and preview extension patterns from every plugin manifest, so the
+# catalog always matches what raw.githubusercontent.com serves. Run after changing a catalog plugin, then commit both:
 #   pwsh ./plugins-catalog/Update-Catalog.ps1
 # The hash is over the UTF-8 text with CR removed (PluginCatalogService.ContentHash), so a CRLF checkout on Windows
 # and the LF file on GitHub give the same value. A test (PluginCatalogTests) fails when the catalog is out of date.
@@ -22,7 +22,16 @@ foreach ($plugin in $document.plugins) {
             sha256 = [Convert]::ToHexStringLower($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)))
         }
     })
-    $plugin.version = (Get-Content (Join-Path $folder 'plugin.json') -Raw | ConvertFrom-Json).version
+    $manifest = Get-Content (Join-Path $folder 'plugin.json') -Raw | ConvertFrom-Json -AsHashtable
+    $plugin.version = $manifest.version
+    $previewExtensions = @(
+        foreach ($preview in $manifest.contributes.previews) {
+            foreach ($extension in $preview.extensions) {
+                $extension
+            }
+        }
+    )
+    $plugin.previewExtensions = @($previewExtensions | Sort-Object -Unique)
 }
 
 $document.updated = (Get-Date).ToString('yyyy-MM-dd')

@@ -24,6 +24,16 @@ public sealed class ViewHistory<T>(int limit = 50)
         }
     }
 
+    public void ReplaceCurrent(T item)
+    {
+        if (_items.Count == 0)
+        {
+            throw new InvalidOperationException("The history is empty.");
+        }
+
+        _items[^1] = item;
+    }
+
     /// <returns>The new <see cref="Current"/>.</returns>
     public T Back()
     {

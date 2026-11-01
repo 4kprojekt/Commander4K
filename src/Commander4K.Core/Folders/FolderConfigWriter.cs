@@ -114,23 +114,55 @@ public static class FolderConfigWriter
     /// <summary>
     /// The file text with <paramref name="tile"/> added to its dashboard. A new file opens the dashboard on Enter and
     /// shows it as the preview. A file whose preview is something else needs <paramref name="replacePreview"/>: the
-    /// preview becomes the dashboard and the old preview moves to Enter when Enter was empty.
+    /// preview becomes the dashboard and the old preview moves to Enter when Enter was empty. When
+    /// <paramref name="preferPreview"/> is true, the dashboard shown in the preview is updated or created instead.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The file has no dashboard and <paramref name="replacePreview"/> is false.</exception>
-    public static string AppendTile(string? existing, JsonObject tile, bool replacePreview)
+    /// <param name="preferPreview">Prefer the preview dashboard over an Enter dashboard.</param>
+    /// <exception cref="InvalidOperationException">The selected dashboard is missing and replacement is disabled.</exception>
+    public static string AppendTile(string? existing, JsonObject tile, bool replacePreview, bool preferPreview = false)
     {
         var root = existing is null
             ? new JsonObject { ["$schema"] = FolderConfig.SchemaUrl }
             : JsonNode.Parse(existing, documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject
               ?? throw new InvalidOperationException("c4k.dir must contain a JSON object.");
 
-        if (Dashboard(root["enter"]) is { } enter)
+        if (preferPreview && Dashboard(root["preview"]) is { } preferredPreview)
         {
-            Tiles(enter).Add(tile);
+            Tiles(preferredPreview).Add(tile);
         }
-        else if (Dashboard(root["preview"]) is { } preview)
+        else if (preferPreview && IsDashboardName(root["preview"]))
         {
-            Tiles(preview).Add(tile);
+            var dashboard = Dashboard(root["enter"]) is { } enterDashboardForPreview
+                ? (JsonObject)enterDashboardForPreview.DeepClone()
+                : new JsonObject { ["view"] = FolderViewIds.Dashboard };
+            Tiles(dashboard).Add(tile);
+            root["preview"] = dashboard;
+            if (root["enter"] is null)
+            {
+                root["enter"] = dashboard.DeepClone();
+            }
+        }
+        else if (preferPreview && root["preview"] is null && Dashboard(root["enter"]) is { } enterDashboardForCopy)
+        {
+            var dashboard = (JsonObject)enterDashboardForCopy.DeepClone();
+            Tiles(dashboard).Add(tile);
+            root["preview"] = dashboard;
+        }
+        else if (preferPreview && root["preview"] is not null && replacePreview)
+        {
+            ReplacePreviewWithDashboard(root, tile);
+        }
+        else if (preferPreview && root["preview"] is not null)
+        {
+            throw new InvalidOperationException("The c4k.dir preview is not a dashboard.");
+        }
+        else if (Dashboard(root["enter"]) is { } defaultEnterDashboard)
+        {
+            Tiles(defaultEnterDashboard).Add(tile);
+        }
+        else if (Dashboard(root["preview"]) is { } defaultPreview)
+        {
+            Tiles(defaultPreview).Add(tile);
         }
         else if (root["enter"] is null && (root["preview"] is null || IsDashboardName(root["preview"])))
         {
@@ -139,13 +171,7 @@ public static class FolderConfigWriter
         }
         else if (replacePreview)
         {
-            var old = root["preview"];
-            root.Remove("preview");
-            root["preview"] = new JsonObject { ["view"] = FolderViewIds.Dashboard, ["tiles"] = new JsonArray(tile) };
-            if (root["enter"] is null && old is not null)
-            {
-                root["enter"] = old;
-            }
+            ReplacePreviewWithDashboard(root, tile);
         }
         else
         {
@@ -153,6 +179,17 @@ public static class FolderConfigWriter
         }
 
         return root.ToJsonString(Indented) + "\n";
+    }
+
+    private static void ReplacePreviewWithDashboard(JsonObject root, JsonObject tile)
+    {
+        var old = root["preview"];
+        root.Remove("preview");
+        root["preview"] = new JsonObject { ["view"] = FolderViewIds.Dashboard, ["tiles"] = new JsonArray(tile) };
+        if (root["enter"] is null && old is not null)
+        {
+            root["enter"] = old;
+        }
     }
 
     private static JsonObject? Dashboard(JsonNode? action) =>

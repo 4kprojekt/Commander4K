@@ -168,11 +168,17 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     public event Action? Activated;
 
-    /// <summary>"What format is this?" for a file no preview recognises (the window asks an AI assistant); hidden when null.</summary>
-    public Func<VfsEntry, Task>? AskAiAboutFile { get; init; }
+    /// <summary>Opens the catalog and AI prompt options for an entry no preview recognises.</summary>
+    public Func<VfsEntry, Task>? ShowUnknownPreviewOptions { get; init; }
 
-    /// <summary>Lets an AI assistant write a preview plugin for the unknown file's type; hidden when null.</summary>
-    public Func<VfsEntry, Task>? CreatePreviewPlugin { get; init; }
+    /// <summary>Installs a matching plugin from the official catalog through the normal permission flow.</summary>
+    public Func<string, Task>? InstallCatalogPreview { get; init; }
+
+    /// <summary>Opens the official plugin catalog.</summary>
+    public Func<Task>? OpenPluginCatalog { get; init; }
+
+    /// <summary>Configures a folder that does not yet have a <c>c4k.dir</c>.</summary>
+    public Func<string, Task>? ConfigureFolderView { get; init; }
 
     /// <summary>A tile was clicked; the folder is the one whose preview (or <c>c4k.dir</c>) produced it.</summary>
     public Func<PreviewTile, VfsEntry?, Task>? OpenTile { get; init; }
@@ -195,6 +201,27 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     /// <summary>A folder's own view, where another folder's view can open in place (<see cref="OpenPinnedAsync"/>).</summary>
     public bool IsPinnedFolder => _pinned is not null;
+
+    /// <summary>The folder currently shown by this preview, if it can hold a dashboard.</summary>
+    public VfsEntry? DashboardFolder => _pinned?.Folder ??
+        (_entry is { Kind: VfsEntryKind.Directory or VfsEntryKind.Drive or VfsEntryKind.Share } entry ? entry : null);
+
+    public async Task ReloadCurrentAsync()
+    {
+        if (_pinned is { } pinned)
+        {
+            var config = await Task.Run(() => _app.ReadFolderConfigAsync(pinned.Folder.Path, CancellationToken.None));
+            if (config is { Error: null } && (config.Preview ?? config.Enter) is { } action)
+            {
+                _history.ReplaceCurrent(pinned with { Config = config, Action = action });
+            }
+
+            await LoadAsync(_pinned.Folder);
+            return;
+        }
+
+        await LoadAsync(_entry);
+    }
 
     public bool IsActivePanel
     {
@@ -448,6 +475,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _loadedKey = key;
         var target = entry is { Kind: VfsEntryKind.ParentLink }
             ? new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory)
+            : entry is null && !tab.IsLoading && tab.Error is null
+                && tab.Entries.All(item => item.Kind is VfsEntryKind.ParentLink or VfsEntryKind.Action)
+                    ? new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory)
             : entry;
         await LoadAsync(target);
     }
@@ -738,13 +768,13 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
         var view = Render(content);
 
-        // A file nothing recognises (binary shown as hex, or no preview at all): offer to find out what it is and to
-        // have a preview plugin written for its type.
-        if (_entry is { IsContainer: false } file && (content is HexPreview || (_plugin is null && content is MessagePreview))
-            && (AskAiAboutFile is not null || CreatePreviewPlugin is not null) && view is not null)
+        // An entry nothing recognises (binary shown as hex, or no preview at all): offer official previews and AI prompts.
+        if (_entry is { Kind: not (VfsEntryKind.ParentLink or VfsEntryKind.Action) } targetEntry
+            && (content is HexPreview || (_plugin is null && content is MessagePreview))
+            && (ShowUnknownPreviewOptions is not null || InstallCatalogPreview is not null) && view is not null)
         {
             var dock = new DockPanel();
-            var banner = UnknownFileBanner(file);
+            var banner = UnknownFileBanner(targetEntry);
             DockPanel.SetDock(banner, Dock.Top);
             dock.Children.Add(banner);
             dock.Children.Add(view);
@@ -1188,15 +1218,43 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private Border UnknownFileBanner(VfsEntry file)
     {
         var extension = Path.GetExtension(file.Name) is { Length: > 0 } ext ? ext : file.Name;
-        var buttons = new WrapPanel();
-        if (AskAiAboutFile is { } ask)
+        var matches = _app.PluginCatalog.FindPreviewCandidates(file);
+        var content = new StackPanel { Spacing = 6 };
+        content.Children.Add(new TextBlock
         {
-            buttons.Children.Add(BannerButton(Loc.T("🔎 Co to za format? (AI)"), () => ask(file), primary: false));
+            Text = matches.Count > 0
+                ? Loc.T("Brak aktywnego podglądu dla „{0}”. Znaleziono pasujące wtyczki w oficjalnym katalogu.", extension)
+                : Loc.T("Brak aktywnego podglądu dla „{0}”. Oficjalny katalog został sprawdzony i nie zawiera pasującej wtyczki.", extension),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = _brushes.FileForeground,
+        });
+
+        if (matches.Count > 0)
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = Loc.T("Pasujące podglądy z oficjalnego katalogu:"),
+                FontWeight = FontWeight.SemiBold,
+                Foreground = _brushes.DirectoryForeground,
+            });
+            foreach (var match in matches)
+            {
+                var description = new TextBlock().Text($"{match.Name} — {match.LocalizedDescription}")
+                    .TextWrapping(TextWrapping.Wrap).VerticalAlignment(VerticalAlignment.Center)
+                    .Foreground(_brushes.MutedForeground);
+                content.Children.Add(InstallCatalogPreview is { } install
+                    ? new Grid().Cols("*,Auto").Children(description, BannerButton(Loc.T("Pobierz"), () => install(match.Id), primary: false).Col(1))
+                    : description);
+            }
+        }
+        if (OpenPluginCatalog is { } openCatalog)
+        {
+            content.Children.Add(BannerButton(Loc.T("Otwórz oficjalny katalog wtyczek"), openCatalog, primary: false));
         }
 
-        if (CreatePreviewPlugin is { } create)
+        if (ShowUnknownPreviewOptions is { } options)
         {
-            buttons.Children.Add(BannerButton(Loc.T("🧩 Utwórz podgląd dla {0} (AI)", extension), () => create(file), primary: true));
+            content.Children.Add(BannerButton(Loc.T("Przygotuj prompt dla asystenta AI"), () => options(file), primary: true));
         }
 
         return new Border
@@ -1205,20 +1263,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             BorderBrush = _brushes.PanelBorder,
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(12, 8),
-            Child = new StackPanel
-            {
-                Spacing = 6,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = Loc.T("Nieznany typ pliku „{0}” — żaden podgląd go nie rozpoznaje. AI może sprawdzić, co to za format, i napisać wtyczkę z podglądem (przez SDK, zainstalowaną dopiero po Twojej zgodzie).", extension),
-                        TextWrapping = TextWrapping.Wrap,
-                        Foreground = _brushes.FileForeground,
-                    },
-                    buttons,
-                },
-            },
+            Child = content,
         };
     }
 
@@ -1451,6 +1496,27 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         var pending = folder.Items.Count(i => i.Size is null);
 
         var list = new StackPanel { Spacing = 1, Margin = new Thickness(12, 4) };
+        if (folder.Complete && folder.Items.Count == 0 && _entry is { } emptyFolder
+            && VfsPath.GetScheme(emptyFolder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme
+            && ConfigureFolderView is { } configure)
+        {
+            list.Children.Add(new TextBlock
+            {
+                Text = Loc.T("Ten folder jest pusty. Wybierz, co ma pokazywać — ustawienia zostaną zapisane w pliku c4k.dir."),
+                Foreground = _brushes.MutedForeground,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+            });
+            var button = new Button
+            {
+                Content = Loc.T("Skonfiguruj"),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(12, 6),
+            };
+            button.Click += async (_, _) => await configure(emptyFolder.Path);
+            list.Children.Add(button);
+        }
+
         list.Children.Add(new TextBlock
         {
             Text = $"Razem: {FileViewportCanvas.FormatSize(known)}" + (folder.Complete ? string.Empty : Loc.T("  (liczenie… {0} folderów)", pending)) +

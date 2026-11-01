@@ -121,8 +121,6 @@ public static class SettingsCatalog
             SettingKind.Choice, s => s.AssistantEngine, (s, v) => s.AssistantEngine = (string)v!, ["ai", "chatgpt", "gemini", "claude", "perplexity", "asystent", "pomoc"])
         { Choices = () => [.. Web.SearchEngines.All.OrderBy(e => !e.IsAssistant).Select(e => new SettingChoice(e.Id, e.IsAssistant ? e.Name : e.Name + Loc.T(" (wyszukiwarka)")))] },
 
-        new("aiInApp", Ai, Loc.T("Odpowiedzi AI w aplikacji"), Loc.T("Pytania o plik i prośby o wtyczkę z podglądu odpowiadają w oknie czatu przez zalogowanych dostawców (OpenRouter, Groq, Cerebras…), przechodząc do następnego, gdy któryś wyczerpie limit. Wyłączone lub bez logowania: otwiera okno Claude Code (pytanie trafia do schowka)."),
-            SettingKind.Toggle, s => s.AiInApp, (s, v) => s.AiInApp = (bool)v!, ["ai", "czat", "chat", "openrouter", "groq", "cerebras", "gemini", "mistral", "dostawcy", "darmowe", "rotacja", "limit"]),
         new("aiCatalogUrl", Ai, Loc.T("Lista dostawców AI (adres)"), Loc.T("Plik ai-providers.json pobierany przy starcie z repozytorium projektu, więc nowe darmowe modele pojawiają się bez aktualizacji programu. Własne wpisy: config/ai/providers.json."),
             SettingKind.Text, s => s.AiCatalogUrl, (s, v) => s.AiCatalogUrl = NullIfEmpty(v) ?? AppSettings.DefaultAiCatalogUrl,
             ["ai", "dostawcy", "lista", "repozytorium", "modele", "providers"]),

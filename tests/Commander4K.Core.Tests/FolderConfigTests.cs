@@ -1,5 +1,6 @@
 using Commander4K.Core.Folders;
 using Commander4K.Core.Plugins;
+using Commander4K.PluginSdk;
 
 namespace Commander4K.Core.Tests;
 
@@ -256,6 +257,62 @@ public sealed class FolderConfigTests
     }
 
     [Fact]
+    public void Appending_multiple_tiles_creates_one_dashboard()
+    {
+        var json = FolderConfigWriter.AppendTile(null, new System.Text.Json.Nodes.JsonObject
+        {
+            ["title"] = "Readme",
+            ["open"] = @"C:\Notes\README.md",
+        }, replacePreview: false);
+        json = FolderConfigWriter.AppendTile(json, new System.Text.Json.Nodes.JsonObject
+        {
+            ["title"] = "Images",
+            ["open"] = @"C:\Notes\Images",
+        }, replacePreview: false);
+
+        var config = FolderConfig.Parse(@"C:\Notes", json);
+
+        Assert.Null(config.Error);
+        Assert.Equal(FolderViewIds.Dashboard, config.Preview!.View);
+        Assert.Equal(["Readme", "Images"], config.Preview.Tiles.Select(tile => tile.Title));
+    }
+
+    [Fact]
+    public void Appending_to_preview_creates_preview_dashboard_from_enter_dashboard()
+    {
+        var existing = """{ "enter": { "view": "dashboard", "tiles": [ { "title": "Existing", "open": "old" } ] } }""";
+
+        var json = FolderConfigWriter.AppendTile(existing, new System.Text.Json.Nodes.JsonObject
+        {
+            ["title"] = "New",
+            ["open"] = "new",
+        }, replacePreview: false, preferPreview: true);
+        var config = FolderConfig.Parse(@"C:\Notes", json);
+
+        Assert.Null(config.Error);
+        Assert.Equal(["Existing", "New"], config.Preview!.Tiles.Select(tile => tile.Title));
+        Assert.Equal(["Existing"], config.Enter!.Tiles.Select(tile => tile.Title));
+    }
+
+    [Fact]
+    public void Replacing_preview_keeps_the_old_preview_for_enter()
+    {
+        var existing = """{ "preview": "gallery" }""";
+
+        var json = FolderConfigWriter.AppendTile(existing, new System.Text.Json.Nodes.JsonObject
+        {
+            ["title"] = "Readme",
+            ["open"] = "README.md",
+        }, replacePreview: true, preferPreview: true);
+        var config = FolderConfig.Parse(@"C:\Notes", json);
+
+        Assert.Null(config.Error);
+        Assert.Equal(FolderViewIds.Dashboard, config.Preview!.View);
+        Assert.Equal(FolderViewIds.Gallery, config.Enter!.View);
+        Assert.Equal("Readme", Assert.Single(config.Preview.Tiles).Title);
+    }
+
+    [Fact]
     public void Api_view_parses_as_preview_action()
     {
         var config = FolderConfig.Parse(@"C:\Api", """{ "preview": { "view": "api", "api": { "url": "https://x/y", "method": "post", "body": "{}" } } }""");
@@ -300,6 +357,13 @@ public sealed class PluginCatalogTests
             Assert.Equal(plugin.Id, manifest.Manifest!.Id);
             Assert.True(plugin.Version == manifest.Manifest.Version, $"{plugin.Id}: version{hint}");
             Assert.Equal(plugin.Runtime, manifest.Manifest.Runtime.Type);
+            var previewExtensions = manifest.Manifest.Contributes?.Previews?
+                .SelectMany(preview => preview.Extensions)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray() ?? Array.Empty<string>();
+            Assert.Equal(
+                previewExtensions,
+                plugin.PreviewExtensions.Order(StringComparer.OrdinalIgnoreCase));
             Assert.Empty(PluginSourceCheck.ScanFolder(folder));
             if (plugin.Example is { } example)
             {
@@ -326,6 +390,23 @@ public sealed class PluginCatalogTests
 
         Assert.Equal(PluginCatalogService.DefaultBaseUrl + "plugins-catalog/my%20plugin/lib/a%23b.ps1",
             service.FileUrl(entry, new PluginCatalogFile { Path = "lib/a#b.ps1", Sha256 = "" }));
+    }
+
+    [Fact]
+    public void Preview_candidates_match_declared_file_patterns_and_service_names()
+    {
+        using var http = new HttpClient();
+        var service = new PluginCatalogService(http, Path.Combine(Path.GetTempPath(), "unused.json"));
+
+        var file = service.FindPreviewCandidates(new VfsEntry("api.openapi.yaml", @"C:\api.openapi.yaml", VfsEntryKind.File));
+        var serviceEntry = service.FindPreviewCandidates(new VfsEntry("MikroTik API", "net://router/api", VfsEntryKind.Service));
+        var unknown = service.FindPreviewCandidates(new VfsEntry("data.unknown-c4k", @"C:\data.unknown-c4k", VfsEntryKind.File));
+        var unrelatedFolder = service.FindPreviewCandidates(new VfsEntry("random-c4k-folder", @"C:\random-c4k-folder", VfsEntryKind.Directory));
+
+        Assert.Contains(file, plugin => plugin.Id == "official.openapi-preview");
+        Assert.Contains(serviceEntry, plugin => plugin.Id == "official.mikrotik-routeros");
+        Assert.Empty(unknown);
+        Assert.Empty(unrelatedFolder);
     }
 
     private static string RepositoryRoot()

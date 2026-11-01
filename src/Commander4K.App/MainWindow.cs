@@ -254,6 +254,7 @@ public sealed class MainWindow : Window
             p.NewTabRequested += () => _ = ChooseNewTabAsync(p);
             p.PluginTabSelected += tab => ShowPluginTab(p, tab);
             p.LocationMenuRequested += sender => _ = ShowDriveMenuAsync(sender).AsTask();
+            p.ModeRequested += request => SetPanelMode(request.Panel, request.Preview);
             p.AuthenticationRequired += request => _ = LoginAndRetryAsync(request);
             WatchForSuggestions(p);
             p.Canvas.ColumnWidthsChanged += () =>
@@ -358,6 +359,11 @@ public sealed class MainWindow : Window
         skins.Changed += ApplySkin;
         ApplySkin(skins.Current);
         SetActive(_left);
+        if (host.Settings.LeftPath is null && host.Settings.RightPath is null)
+        {
+            _right.ShowMode(CreatePreview(_left));
+        }
+
         ApplyColumns();
 
         _notification.PointerPressed += async (_, _) =>
@@ -736,8 +742,14 @@ public sealed class MainWindow : Window
     private PreviewPanelView CreatePreview(FilePanelView source, PreviewPanelView.PinnedFolder? pinned = null, VfsEntry? pinnedFile = null) =>
         new(_host!, source, _skins!.Current, Notify, pinned, pinnedFile)
         {
-            AskAiAboutFile = AskAiAboutFileAsync,
-            CreatePreviewPlugin = CreatePreviewPluginAsync,
+            ShowUnknownPreviewOptions = entry => ShowUnknownPreviewPromptsAsync(source, entry),
+            InstallCatalogPreview = InstallFromCatalogAsync,
+            OpenPluginCatalog = () =>
+            {
+                OpenBrowser("https://github.com/4kprojekt/Commander4K/tree/main/plugins-catalog");
+                return Task.CompletedTask;
+            },
+            ConfigureFolderView = folderPath => ConfigureFolderViewAsync(folderPath, source.ActiveTab),
             CreateBrowserPreview = url => new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut),
             ConfigureSftpConnection = path => ConfigureSftpConnectionAsync(source, path),
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
@@ -951,6 +963,11 @@ public sealed class MainWindow : Window
     {
         var tab = _active.ActiveTab;
         var folder = tab.CurrentEntry is { Kind: VfsEntryKind.Directory or VfsEntryKind.Drive or VfsEntryKind.Share } entry ? entry.Path : tab.Path;
+        await ConfigureFolderViewAsync(folder, tab);
+    }
+
+    private async Task ConfigureFolderViewAsync(string folder, PanelTab tab)
+    {
         if (VfsPath.GetScheme(folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme) || folder.Contains("://", StringComparison.Ordinal))
         {
             Notify(Loc.T("Plik c4k.dir można utworzyć na dysku albo w udziale sieciowym."), isError: true);
@@ -971,7 +988,8 @@ public sealed class MainWindow : Window
         items.AddRange(_host!.PluginCatalog.Plugins.Select(p => new PickerItem("🧩 " + p.Name, p.LocalizedDescription, "plugin:" + p.Id, string.Join(' ', p.Tags))));
         items.Add(new(Loc.T("✕ Zwykła lista plików"), Loc.T("usuwa c4k.dir"), "remove", "usuń delete"));
 
-        var choice = (await new PickerDialog(brushes, Loc.T("Widok folderu: {0}", folder), items, Loc.T("Co ma pokazywać ten folder?")).ShowAsync(this))?.Value;
+        var choice = (await new PickerDialog(brushes, Loc.T("Widok folderu: {0}", folder), items,
+            Loc.T("Co ma pokazywać ten folder? Ustawienia zostaną zapisane w pliku c4k.dir w tym folderze.")).ShowAsync(this))?.Value;
         if (choice is null)
         {
             return;
@@ -980,9 +998,22 @@ public sealed class MainWindow : Window
         var file = FolderConfig.ChildPath(folder, FolderConfig.FileName);
         if (choice == "remove")
         {
-            await Task.Run(() => File.Delete(file));
-            Notify(Loc.T("Usunięto {0}.", file));
-            await tab.RefreshAsync();
+            try
+            {
+                if (await _host!.Router.GetEntryAsync(file, CancellationToken.None) is not null)
+                {
+                    await _host.Router.DeleteAsync(file, recursive: false, CancellationToken.None);
+                }
+
+                Notify(Loc.T("Usunięto {0}.", file));
+                await tab.RefreshAsync();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
+                or VfsProviderNotFoundException or NotSupportedException or TimeoutException)
+            {
+                Notify(Loc.T("Nie można usunąć {0}: {1}", file, ex.Message), isError: true);
+            }
+
             return;
         }
 
@@ -1072,18 +1103,31 @@ public sealed class MainWindow : Window
             where = when;
         }
 
-        if (File.Exists(file) && !await new ConfirmDialog(brushes, Loc.T("Zastąpić c4k.dir?"), Loc.T("{0} już istnieje.", file), Loc.T("Zastąp")).ShowAsync(this))
+        string? existing;
+        try
+        {
+            existing = await Task.Run(() => ReadFolderConfigTextAsync(file, CancellationToken.None));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
+            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
+        {
+            Notify(Loc.T("Nie można odczytać {0}: {1}", file, ex.Message), isError: true);
+            return;
+        }
+
+        if (existing is not null && !await new ConfirmDialog(brushes, Loc.T("Zastąpić c4k.dir?"), Loc.T("{0} już istnieje.", file), Loc.T("Zastąp")).ShowAsync(this))
         {
             return;
         }
 
         try
         {
-            await File.WriteAllTextAsync(file, FolderConfigWriter.CreateForAction(action, where));
+            await WriteFolderConfigTextAsync(file, FolderConfigWriter.CreateForAction(action, where), CancellationToken.None);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
+            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
         {
-            Notify(ex.Message, isError: true);
+            Notify(Loc.T("Nie można zapisać {0}: {1}", file, ex.Message), isError: true);
             return;
         }
 
@@ -1439,55 +1483,49 @@ public sealed class MainWindow : Window
     }
 
 
-    /// <summary>
-    /// "What format is this?" for a file no preview recognises: name, size and its first bytes go to the AI chat when
-    /// a provider is signed in, otherwise to Claude Code (dialog with the prompt on the clipboard).
-    /// </summary>
-    private async Task AskAiAboutFileAsync(VfsEntry file)
+    /// <summary>Builds a full VFS target description off the UI thread and offers copyable prompts for an MCP client.</summary>
+    private async Task ShowUnknownPreviewPromptsAsync(FilePanelView source, VfsEntry entry)
     {
-        var sample = await Task.Run(() => AiAppContext.DescribeFileAsync(_host!, file));
-        var question = Loc.T("Co to za format pliku „{0}”? Jaki program go tworzy i otwiera, jak jest zbudowany (sygnatura, sekcje), czy ma publiczną specyfikację albo biblioteki w Pythonie/Node i jak można pokazać jego zawartość?", file.Name) +
-            "\n\n" + sample;
-        if (_host!.Settings.AiInApp && _host.Ai.IsConfigured)
+        var host = _host!;
+        var panelPath = source.ActiveTab.Path;
+        var parent = panelPath;
+        var cursor = source.ActiveTab.CurrentEntry;
+        string sample;
+        if (entry.Kind == VfsEntryKind.File)
         {
-            OpenAiChat();
-            _aiChat?.Ask(question);
-            return;
+            try
+            {
+                sample = await Task.Run(() => AiAppContext.DescribeFileAsync(host, entry));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsProviderNotFoundException
+                or VfsAuthenticationRequiredException or NotSupportedException or TimeoutException or OperationCanceledException)
+            {
+                sample = Loc.T("Nie można odczytać próbki pliku: {0}", ex.Message);
+            }
+        }
+        else
+        {
+            sample = "No file byte sample is available for this VFS node.";
         }
 
-        await UseClaudeCodeAsync(question);
-    }
-
-    /// <summary>AI outside the app goes through Claude Code: the prompt is copied and shown.</summary>
-    private Task UseClaudeCodeAsync(string prompt) =>
-        new Mcp.UseClaudeCodeDialog(_skins!.Current, prompt, _mcp?.StatusText() ?? string.Empty, OpenMcpConnect).ShowAsync(this);
-
-    /// <summary>
-    /// A preview plugin for the unknown file's type: the wish (editable) plus a sample of the file goes to the chat in
-    /// plugin mode, otherwise to Claude Code.
-    /// </summary>
-    private async Task CreatePreviewPluginAsync(VfsEntry file)
-    {
-        var extension = Path.GetExtension(file.Name) is { Length: > 0 } ext ? ext : file.Name;
-        var wish = await new InputDialog(_skins!.Current, Loc.T("Podgląd dla {0} (AI)", extension),
-            Loc.T("Co ma pokazywać podgląd? (AI dostanie też początek tego pliku)"),
-            Loc.T("Napisz wtyczkę z podglądem (Ctrl+Q) dla plików {0}: pokaż czytelnie ich zawartość i strukturę jako Markdown.", extension)).ShowAsync(this);
-        if (string.IsNullOrWhiteSpace(wish))
-        {
-            return;
-        }
-
-        var sample = await Task.Run(() => AiAppContext.DescribeFileAsync(_host!, file));
-        var request = wish + "\n\nThe preview must declare `contributes.previews` with \"extensions\": [\"" + extension +
-            "\"] and read the file only with the SDK (read_bytes / read_text). Sample file:\n\n" + sample;
-        if (_host!.Settings.AiInApp && _host.Ai.IsConfigured)
-        {
-            OpenAiChat();
-            _aiChat?.StartPlugin(request, preview: true, send: true);
-            return;
-        }
-
-        await UseClaudeCodeAsync(request + McpPrompts.PluginHint);
+        var context = new StringBuilder()
+            .AppendLine($"- Full VFS path: {entry.Path}")
+            .AppendLine($"- Parent path: {parent}")
+            .AppendLine($"- Name: {entry.Name}")
+            .AppendLine($"- Entry kind: {entry.Kind}")
+            .AppendLine($"- Is container: {entry.IsContainer}")
+            .AppendLine($"- Size: {(entry.Size >= 0 ? entry.Size.ToString("N0") + " bytes" : "unknown")}")
+            .AppendLine($"- Last modified: {(entry.LastWriteTime == default ? "unknown" : entry.LastWriteTime.ToString("O"))}")
+            .AppendLine($"- Flags: {entry.Flags}")
+            .AppendLine($"- Description: {entry.Description ?? "(none)"}")
+            .AppendLine($"- Source panel folder: {panelPath}")
+            .AppendLine($"- Source panel cursor: {(cursor is { } current ? current.Name + " (" + current.Path + ")" : "(none)")}")
+            .AppendLine()
+            .AppendLine("File sample (when the target is a readable file):")
+            .AppendLine(sample)
+            .ToString();
+        var connection = _mcp?.ConnectionDetails;
+        await new UnknownPreviewPromptsDialog(_skins!.Current, entry, context, connection, OpenMcpConnect).ShowAsync(this);
     }
 
     /// <summary>What the AI chat is told about the app.</summary>
@@ -2591,8 +2629,15 @@ public sealed class MainWindow : Window
                 return;
         }
 
-        var sources = _active.ActiveTab.MarkedOrCurrent();
+        var sourcePanel = _active;
+        var sources = sourcePanel.ActiveTab.MarkedOrCurrent();
         if (sources.Count == 0)
+        {
+            return;
+        }
+
+        if (mode == TransferMode.Copy && Other.Mode is PreviewPanelView preview && preview.DashboardFolder is { } dashboardFolder
+            && await AddDashboardShortcutsAsync(sourcePanel, preview, dashboardFolder, sources))
         {
             return;
         }
@@ -2607,6 +2652,151 @@ public sealed class MainWindow : Window
         var job = new VfsTransferJob(_host!.Router, sources, request.Target, mode, request.Overwrite);
         RunJob(job, request.Queue ? JobQueueManager.DefaultQueue : null, refreshBoth: true);
         _active.ActiveTab.Marked.Clear();
+    }
+
+    private async Task<bool> AddDashboardShortcutsAsync(FilePanelView source, PreviewPanelView preview, VfsEntry folder, IReadOnlyList<VfsEntry> sources)
+    {
+        if (VfsPath.GetScheme(folder.Path) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
+        {
+            Notify(Loc.T("Dashboard można zapisać tylko na dysku lub udziale sieciowym."), isError: true);
+            return true;
+        }
+
+        var entries = sources.Where(entry => entry.Kind is VfsEntryKind.File or VfsEntryKind.Directory or VfsEntryKind.Drive
+            or VfsEntryKind.Share or VfsEntryKind.Archive or VfsEntryKind.RegistryKey).ToList();
+        if (entries.Count == 0)
+        {
+            Notify(Loc.T("Wybierz plik lub folder, który można dodać do dashboardu."), isError: true);
+            return true;
+        }
+
+        var file = FolderConfig.ChildPath(folder.Path, FolderConfig.FileName);
+        string? existing;
+        try
+        {
+            existing = await Task.Run(() => ReadFolderConfigTextAsync(file, CancellationToken.None));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
+            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
+        {
+            Notify(Loc.T("Nie można odczytać {0}: {1}", file, ex.Message), isError: true);
+            return true;
+        }
+
+        if (existing is not null && FolderConfig.Parse(folder.Path, existing).Error is { } configError)
+        {
+            Notify(Loc.T("{0}: {1}", file, configError), isError: true);
+            return true;
+        }
+
+        if (existing is not null && FolderConfigWriter.HasComments(existing)
+            && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać c4k.dir?"),
+                Loc.T("{0} ma komentarze; zapis nowych skrótów je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
+        {
+            return true;
+        }
+
+        var wasTrusted = existing is null || await Task.Run(() => _host!.FolderTrust.IsTrusted(FolderConfig.Parse(folder.Path, existing)));
+        var tiles = entries.Select(entry => new System.Text.Json.Nodes.JsonObject
+        {
+            ["title"] = entry.Name,
+            ["open"] = entry.Path,
+        }).ToList();
+        var text = existing;
+        try
+        {
+            foreach (var tile in tiles)
+            {
+                text = FolderConfigWriter.AppendTile(text, (System.Text.Json.Nodes.JsonObject)tile.DeepClone(), replacePreview: false, preferPreview: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            if (!await new ConfirmDialog(_skins!.Current, Loc.T("Zamienić podgląd na dashboard?"),
+                    Loc.T("{0} pokazuje teraz coś innego. Podgląd stanie się dashboardem z tymi skrótami; dotychczasowy podgląd zostanie po wejściu do folderu, jeśli nic tam nie ustawiono.", file), Loc.T("Zamień")).ShowAsync(this))
+            {
+                return true;
+            }
+
+            text = existing;
+            foreach (var tile in tiles)
+            {
+                text = FolderConfigWriter.AppendTile(text, (System.Text.Json.Nodes.JsonObject)tile.DeepClone(), replacePreview: true, preferPreview: true);
+            }
+        }
+
+        try
+        {
+            await Task.Run(() => WriteFolderConfigTextAsync(file, text!, CancellationToken.None));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
+            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
+        {
+            Notify(Loc.T("Nie można zapisać {0}: {1}", file, ex.Message), isError: true);
+            return true;
+        }
+
+        if (wasTrusted)
+        {
+            await Task.Run(() => _host!.FolderTrust.Trust(FolderConfig.Parse(folder.Path, text!)));
+        }
+
+        source.ActiveTab.Marked.Clear();
+        if (preview.DashboardFolder?.Path == folder.Path)
+        {
+            await preview.ReloadCurrentAsync();
+        }
+
+        Notify(Loc.P(tiles.Count, "{0} skrót do dashboardu „{1}”.|{0} skróty do dashboardu „{1}”.|{0} skrótów do dashboardu „{1}”.", folder.Name));
+        return true;
+    }
+
+    private async Task<string?> ReadFolderConfigTextAsync(string file, CancellationToken cancellationToken)
+    {
+        var entry = await _host!.Router.GetEntryAsync(file, cancellationToken);
+        if (entry is null)
+        {
+            return null;
+        }
+
+        if (entry is not { Kind: VfsEntryKind.File } fileEntry || fileEntry.Size > 256 * 1024)
+        {
+            throw new IOException(Loc.T("Plik {0} nie jest prawidłowym plikiem c4k.dir.", file));
+        }
+
+        await using var stream = await _host.Router.OpenReadAsync(file, cancellationToken);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        var buffer = new char[4096];
+        var content = new StringBuilder();
+        while (true)
+        {
+            var read = await reader.ReadAsync(buffer, cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            if (content.Length + read > 256 * 1024)
+            {
+                throw new IOException(Loc.T("Plik {0} przekracza dozwolony rozmiar c4k.dir.", file));
+            }
+
+            content.Append(buffer, 0, read);
+        }
+
+        var text = content.ToString();
+        if (Encoding.UTF8.GetByteCount(text) > 256 * 1024)
+        {
+            throw new IOException(Loc.T("Plik {0} przekracza dozwolony rozmiar c4k.dir.", file));
+        }
+
+        return text;
+    }
+
+    private async Task WriteFolderConfigTextAsync(string file, string text, CancellationToken cancellationToken)
+    {
+        await using var stream = await _host!.Router.OpenWriteAsync(file, overwrite: true, cancellationToken);
+        await stream.WriteAsync(Encoding.UTF8.GetBytes(text), cancellationToken);
     }
 
     /// <summary>F5 onto a plugin panel: ask it for receivers, keep the ones that fit, let the user pick, run the job.</summary>
@@ -3218,6 +3408,24 @@ public sealed class MainWindow : Window
         }
 
         target.ShowMode(CreatePreview(source));
+        SetActive(source);
+    }
+
+    private void SetPanelMode(FilePanelView panel, bool preview)
+    {
+        if (!preview)
+        {
+            panel.CloseMode();
+            SetActive(panel);
+            return;
+        }
+
+        var source = panel == _left ? _right : _left;
+        if (panel.Mode is not PreviewPanelView)
+        {
+            panel.ShowMode(CreatePreview(source));
+        }
+
         SetActive(source);
     }
 

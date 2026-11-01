@@ -133,9 +133,6 @@ public sealed class AppSettings
 
     public const string DefaultAiCatalogUrl = "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/src/Commander4K.Core/Ai/ai-providers.json";
 
-    /// <summary>"Ask AI" answers in the app through the signed-in providers (with rotation) instead of opening the web assistant.</summary>
-    public bool AiInApp { get; set; } = true;
-
     public bool CheckForUpdates { get; set; } = true;
 
     public bool IncludePrereleases { get; set; }

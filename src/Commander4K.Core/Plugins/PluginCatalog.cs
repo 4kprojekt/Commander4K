@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Commander4K.Core.Localization;
+using Commander4K.PluginSdk;
 
 namespace Commander4K.Core.Plugins;
 
@@ -35,6 +36,9 @@ public sealed record PluginCatalogEntry
 
     /// <summary>Search words and what folders it suits (<c>steam</c>, <c>gallery</c>…).</summary>
     public IReadOnlyList<string> Tags { get; init => field = value ?? []; } = [];
+
+    /// <summary>Patterns declared by this plugin's <c>contributes.previews</c>.</summary>
+    public IReadOnlyList<string> PreviewExtensions { get; init => field = value ?? []; } = [];
 
     /// <summary>An example <c>c4k.dir</c> for a folder this plugin shows.</summary>
     public string? Example { get; init; }
@@ -92,6 +96,24 @@ public sealed class PluginCatalogService(HttpClient http, string cachePath)
     public event Action? Changed;
 
     public PluginCatalogEntry? Find(string id) => Plugins.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Returns catalog plugins whose declared preview patterns match this file or service entry.</summary>
+    public IReadOnlyList<PluginCatalogEntry> FindPreviewCandidates(VfsEntry entry, int limit = 5)
+    {
+        if (limit <= 0)
+        {
+            return [];
+        }
+
+        return Plugins
+            .Select(plugin => (Plugin: plugin, Score: PreviewMatchScore(plugin, entry)))
+            .Where(candidate => candidate.Score > 0)
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenBy(candidate => candidate.Plugin.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Take(limit)
+            .Select(candidate => candidate.Plugin)
+            .ToArray();
+    }
 
     /// <summary>Reads the cached copy (call off the UI thread).</summary>
     public void Load()
@@ -186,6 +208,31 @@ public sealed class PluginCatalogService(HttpClient http, string cachePath)
 
     public static PluginCatalogDocument Parse(string json) =>
         JsonSerializer.Deserialize(json, PluginCatalogJsonContext.Default.PluginCatalogDocument) ?? new PluginCatalogDocument();
+
+    private static int PreviewMatchScore(PluginCatalogEntry plugin, VfsEntry entry)
+    {
+        var best = 0;
+        foreach (var pattern in plugin.PreviewExtensions)
+        {
+            if (pattern == "/" && entry.IsContainer
+                && plugin.Tags.Any(tag => tag.Length >= 3 && entry.Name.Contains(tag, StringComparison.OrdinalIgnoreCase)))
+            {
+                best = Math.Max(best, 60);
+            }
+            else if (ExternalPreviewPlugin.Matches(pattern, entry.Name))
+            {
+                best = Math.Max(best, 100);
+            }
+            else if (entry.Kind == VfsEntryKind.Service && pattern.Length > 0 && !pattern.Contains('*') && !pattern.Contains('?')
+                && (entry.Name.Contains(pattern, StringComparison.OrdinalIgnoreCase)
+                    || entry.Description?.Contains(pattern, StringComparison.OrdinalIgnoreCase) == true))
+            {
+                best = Math.Max(best, 80);
+            }
+        }
+
+        return best;
+    }
 
     public static PluginCatalogDocument LoadBuiltIn()
     {

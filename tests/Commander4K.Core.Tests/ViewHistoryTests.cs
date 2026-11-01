@@ -36,6 +36,19 @@ public sealed class ViewHistoryTests
     }
 
     [Fact]
+    public void Replacing_current_keeps_previous_views()
+    {
+        var history = new ViewHistory<string>();
+        history.Push("A");
+        history.Push("B");
+
+        history.ReplaceCurrent("B refreshed");
+
+        Assert.Equal(["A", "B refreshed"], history.Trail);
+        Assert.Equal("A", history.Back());
+    }
+
+    [Fact]
     public void Limit_drops_oldest_at_50()
     {
         var history = new ViewHistory<int>();
