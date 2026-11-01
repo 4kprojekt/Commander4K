@@ -301,11 +301,6 @@ public static class McpAppTools
                 text.AppendLine("- previews: " + string.Join(", ", previews.Select(p => $"{m.Id}/{p.Id} ({string.Join(" ", p.Extensions)}, priority {p.Priority})")));
             }
 
-            if (contributes?.Palettes is { Count: > 0 } palettes)
-            {
-                text.AppendLine("- palettes: " + string.Join(", ", palettes.Select(p => $"{m.Id}/{p.Id} ({p.Title})")));
-            }
-
             text.AppendLine();
         }
 

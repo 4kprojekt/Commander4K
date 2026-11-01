@@ -53,24 +53,18 @@ c4k.on('panel.details', async ({ rowId }) => ({
   sections: [{ title: rowId, items: [['Szczegóły', 'Kliknij „Odśwież”, aby sprawdzić ponownie.']] }],
 }));
 
-// Palette: one button per site; clicking checks it, "+" adds a site, the context menu removes one.
-c4k.on('palette.items', async () => ({
-  items: (await loadSites()).map(url => ({ id: url, title: new URL(url).host, icon: '🌐', tooltip: url })),
-}));
-
-c4k.on('palette.invoke', async ({ item }) => {
-  const result = await check(item);
-  return { message: result.ok ? `${item}: OK, ${result.ms} ms — ${result.title}` : `${item}: ${result.error}` };
-});
-
-c4k.on('palette.action', async ({ action, item }) => {
+// Panel actions: "add" asks for an address, "remove" drops the selected rows (the row id is the address).
+c4k.on('panel.action', async ({ action, rowIds }) => {
   const sites = await loadSites();
   if (action === 'add') {
     const url = await c4k.prompt('Dodaj stronę', 'Adres (https://…):', 'https://');
     if (!url || !/^https?:\/\/\S+$/.test(url)) return null;
     sites.push(url);
-  } else if (action === 'remove' && item) {
-    sites.splice(sites.indexOf(item), 1);
+  } else if (action === 'remove') {
+    for (const id of rowIds ?? []) {
+      const index = sites.indexOf(id);
+      if (index >= 0) sites.splice(index, 1);
+    }
   } else {
     return null;
   }

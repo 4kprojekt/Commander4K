@@ -1811,35 +1811,6 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Node_plugin_palette_lists_adds_invokes_and_removes_items()
-    {
-        // The site list lives in the plugin's storage (storage.get/set), not in its folder.
-        await using var plugin = Start("site-check-node");
-        using var server = new LocalHttpServer("<html><title>Paleta C4K</title></html>");
-        var palette = new ExternalPalettePlugin(plugin, plugin.Manifest.Contributes!.Palettes![0]);
-        var host = HostFor(plugin);
-        Assert.Equal("examples.site-check/sites", palette.Id);
-        Assert.Equal(PaletteDock.Right, palette.DefaultDock);
-        Assert.Contains(palette.Actions, a => a.Id == "remove" && a.ForItem);
-
-        var before = await palette.GetItemsAsync(host, TestToken);
-        _ui.PromptAnswer = server.Url;
-        await palette.InvokeActionAsync("add", null, host, TestToken);
-        var added = Assert.Single(await palette.GetItemsAsync(host, TestToken), i => i.Id == server.Url);
-        Assert.Equal(before.Count + 1, (await palette.GetItemsAsync(host, TestToken)).Count);
-        Assert.StartsWith("127.0.0.1:", added.Title, StringComparison.Ordinal);
-
-        await palette.InvokeAsync(added.Id, host, TestToken);
-        Assert.Contains("OK", _ui.LastNotification, StringComparison.Ordinal);
-        Assert.Contains("Paleta C4K", _ui.LastNotification, StringComparison.Ordinal);
-
-        await palette.InvokeActionAsync("remove", added.Id, host, TestToken);
-        Assert.DoesNotContain(await palette.GetItemsAsync(host, TestToken), i => i.Id == server.Url);
-        Assert.DoesNotContain(server.Url, await File.ReadAllTextAsync(_storage.FileFor("examples.site-check"), TestToken), StringComparison.Ordinal);
-        Assert.Contains(_audit.Recent("examples.site-check"), e => e.Operation == "storage.set");
-    }
-
-    [Fact]
     public async Task Browser_calls_allow_only_http_and_are_audited()
     {
         var host = HostFor(new PluginManifest("acme.web", "Web", "1.0.0", "a", "d", []));

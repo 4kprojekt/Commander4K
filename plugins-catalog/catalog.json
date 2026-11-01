@@ -206,8 +206,8 @@
       "author": "4Kprojekt",
       "runtime": "node",
       "description": {
-        "pl": "Przykład wtyczki w Node.js: sprawdza, czy strony odpowiadają; paleta ulubionych adresów.",
-        "en": "Example Node.js plugin: checks whether sites respond; a palette of favourite addresses."
+        "pl": "Przykład wtyczki w Node.js: sprawdza, czy strony odpowiadają; lista adresów w panelu (Ctrl+N dodaje, F8 usuwa).",
+        "en": "Example Node.js plugin: checks whether sites respond; the address list in a panel (Ctrl+N adds, F8 removes)."
       },
       "tags": [
         "www",
@@ -224,11 +224,11 @@
         },
         {
           "path": "main.js",
-          "sha256": "f0aea0ff2ba11363f35bc516e5a4efe4e2db117a54e849a55ae3c2a0d0e17014"
+          "sha256": "258a03b7f017da5eda997996ba24bbdc9ee3e59052f570cd44a6037c6ec8fef3"
         },
         {
           "path": "plugin.json",
-          "sha256": "a29e0efd1197a62135eca97bb9629ac16c55b5f3cf81fc966c2b0ff0b64c35b3"
+          "sha256": "04972d44658331af93c7e77ac20a341fca73da4ea928039ba1f66ea8abf426a9"
         }
       ],
       "previewExtensions": []

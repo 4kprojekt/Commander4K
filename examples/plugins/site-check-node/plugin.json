@@ -12,16 +12,14 @@
       { "id": "check-url", "title": "Sprawdź adres URL", "category": "Przykłady", "description": "Pobiera stronę i pokazuje tytuł oraz rozmiar." }
     ],
     "panels": [
-      { "id": "sites", "title": "Stan stron", "description": "Strony z listy (paleta „Strony”: + dodaje, menu kontekstowe usuwa).", "refreshSeconds": 60 }
-    ],
-    "palettes": [
       {
         "id": "sites",
-        "title": "Strony",
-        "dock": "right",
+        "title": "Stan stron",
+        "description": "Strony z listy w danych wtyczki: Ctrl+N dodaje, F8 usuwa zaznaczone.",
+        "refreshSeconds": 60,
         "actions": [
-          { "id": "add", "title": "Dodaj stronę", "icon": "+" },
-          { "id": "remove", "title": "Usuń stronę", "icon": "✕", "forItem": true }
+          { "id": "add", "title": "Dodaj stronę", "shortcut": "Ctrl+N", "appliesToRows": false },
+          { "id": "remove", "title": "Usuń stronę", "shortcut": "F8", "confirm": true }
         ]
       }
     ]

@@ -174,8 +174,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                 var permissions = manifest.Permissions.Select(p => new KeyValuePair<string, string>(p, Loc.T(PluginPermissions.Describe(p)))).ToList();
                 var contributions = (manifest.Contributes?.Commands ?? []).Select(c => new KeyValuePair<string, string>(Loc.T("komenda"), $"{c.Category}: {c.Title}"))
                     .Concat((manifest.Contributes?.Panels ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("panel"), p.Title)))
-                    .Concat((manifest.Contributes?.Previews ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("podgląd"), $"{p.Title} ({string.Join(", ", p.Extensions)})")))
-                    .Concat((manifest.Contributes?.Palettes ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("paleta"), $"{p.Title} ({p.Dock})"))).ToList();
+                    .Concat((manifest.Contributes?.Previews ?? []).Select(p => new KeyValuePair<string, string>(Loc.T("podgląd"), $"{p.Title} ({string.Join(", ", p.Extensions)})"))).ToList();
                 return new PanelDetails(
                 [
                     new(Loc.T("Wtyczka"), info),

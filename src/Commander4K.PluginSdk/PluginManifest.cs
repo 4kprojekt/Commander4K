@@ -97,17 +97,11 @@ public sealed record PreviewSuggestRule(
     IReadOnlyDictionary<string, string>? Message = null,
     bool Ask = false);
 
-public sealed record PaletteActionContribution(string Id, string Title, string? Icon = null, bool ForItem = false);
-
-/// <param name="Dock">Default position: <c>bottom</c>, <c>left</c>, <c>right</c>, <c>between</c> or <c>hidden</c>.</param>
-public sealed record PaletteContribution(string Id, string Title, string Dock = "bottom", IReadOnlyList<PaletteActionContribution>? Actions = null);
-
 /// <summary>What a plugin adds to the application. In-process plugins describe it by implementing interfaces instead.</summary>
 public sealed record PluginContributions(
     IReadOnlyList<CommandContribution>? Commands = null,
     IReadOnlyList<PanelContribution>? Panels = null,
     IReadOnlyList<PreviewContribution>? Previews = null,
-    IReadOnlyList<PaletteContribution>? Palettes = null,
     BackgroundContribution? Background = null);
 
 /// <summary>
