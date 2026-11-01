@@ -1230,5 +1230,14 @@
   "Commander4K {0} — Administrator": "Commander4K {0} — Administrator",
   "Ten folder zawiera {0} zdjęcie. Przełączyć w widok galerii?|Ten folder zawiera {0} zdjęcia. Przełączyć w widok galerii?|Ten folder zawiera {0} zdjęć. Przełączyć w widok galerii?": "This folder has {0} picture. Switch to the gallery view?|This folder has {0} pictures. Switch to the gallery view?",
   "To jest vault Obsidiana. Pokazać jako notatki z powiązaniami?": "This is an Obsidian vault. Show it as linked notes?",
-  "Ten folder zawiera {0} notatkę Markdown. Pokazać jako notatki?|Ten folder zawiera {0} notatki Markdown. Pokazać jako notatki?|Ten folder zawiera {0} notatek Markdown. Pokazać jako notatki?": "This folder has {0} Markdown note. Show it as notes?|This folder has {0} Markdown notes. Show them as notes?"
+  "Ten folder zawiera {0} notatkę Markdown. Pokazać jako notatki?|Ten folder zawiera {0} notatki Markdown. Pokazać jako notatki?|Ten folder zawiera {0} notatek Markdown. Pokazać jako notatki?": "This folder has {0} Markdown note. Show it as notes?|This folder has {0} Markdown notes. Show them as notes?",
+  "Podpowiedzi widoku folderu": "Folder view suggestions",
+  "Gdy kursor zatrzyma się na folderze, którego zawartość pasuje do podglądu (np. zdjęcia → galeria), pokazuje propozycję przełączenia. Akceptacja zapisuje c4k.dir.": "When the cursor rests on a folder whose content suits a preview (e.g. pictures → gallery), suggests switching to it. Accepting writes c4k.dir.",
+  "Przełącz": "Switch",
+  "Nie teraz": "Not now",
+  "Nie pytaj o ten folder": "Don't ask about this folder",
+  "Nie będę proponować widoku dla tego folderu. Cofniesz to poleceniem „Wyczyść odrzucone podpowiedzi widoku folderu”.": "No more view suggestions for this folder. Undo it with \"Clear declined folder view suggestions\".",
+  "Przyjmij podpowiedź widoku folderu": "Accept the folder view suggestion",
+  "Wyczyść odrzucone podpowiedzi widoku folderu": "Clear declined folder view suggestions",
+  "Wyczyszczono odrzucone podpowiedzi.": "Declined suggestions cleared."
 }

@@ -144,6 +144,21 @@ public sealed class AppHost : IAsyncDisposable
     /// The API instance for one plugin: permission checks against its manifest and audit entries under its id. The only
     /// way the window hands a host to plugin code.
     /// </summary>
+    /// <summary>"Switch this folder to the gallery?": which preview suits the folder under the cursor.</summary>
+    public FolderSuggestionService FolderSuggestions
+    {
+        get => field ??= CreateFolderSuggestions(new FolderSuggestionMemory(null));
+        private set;
+    }
+
+    private FolderSuggestionService CreateFolderSuggestions(FolderSuggestionMemory memory) =>
+        new(() => PreviewPlugins, preview => HostFor(preview.Manifest), (path, ct) => Router.OpenListing(path, ct).ReadAllAsync(ct), memory);
+
+    /// <summary>Declines and the tour counter from <c>data/folder-suggestions.json</c> (start-up, off the UI thread).</summary>
+    public async Task LoadFolderSuggestionsAsync(CancellationToken cancellationToken) =>
+        FolderSuggestions = CreateFolderSuggestions(
+            await FolderSuggestionMemory.LoadAsync(Path.Combine(DataDirectory, "data", "folder-suggestions.json"), cancellationToken).ConfigureAwait(false));
+
     public IPluginHost HostFor(PluginManifest manifest)
     {
         lock (_hosts)
@@ -378,6 +393,7 @@ public sealed class AppHost : IAsyncDisposable
                 _ = host.Ai.States(); // Reads credentials and asks the GitHub CLI here, never later on the UI thread.
                 _ = Task.Run(() => host.AiCatalog.RefreshAsync(host.Settings.AiCatalogUrl), CancellationToken.None); // Live list; the cached one serves meanwhile.
                 await host.PowerShell.ReloadAsync(cancellationToken).ConfigureAwait(false);
+                await host.LoadFolderSuggestionsAsync(cancellationToken).ConfigureAwait(false);
                 host.Runtimes = await RuntimeCatalog.DetectAsync(cancellationToken).ConfigureAwait(false);
                 await host.ReloadExternalPluginsAsync().ConfigureAwait(false);
                 return host;

@@ -241,6 +241,7 @@ public sealed class MainWindow : Window
             p.AddConnectionRequested += sender => _ = ExecuteAsync(CommandIds.AddConnection);
             p.LocationMenuRequested += sender => _ = ShowDriveMenuAsync(sender).AsTask();
             p.AuthenticationRequired += request => _ = LoginAndRetryAsync(request);
+            WatchForSuggestions(p);
             p.Canvas.ColumnWidthsChanged += () =>
             {
                 // Both panels share the widths.
@@ -1573,10 +1574,186 @@ public sealed class MainWindow : Window
 
     private void SetActive(FilePanelView panel)
     {
+        var changed = _active != panel;
         _active = panel;
         _left.IsActive = panel == _left;
         _right.IsActive = panel == _right;
         UpdatePrompt();
+        if (changed)
+        {
+            CancelSuggestion();
+            OnSuggestionCursor(panel);
+        }
+    }
+
+    // ---- folder view suggestions: a hint when the cursor rests on a folder that suits a preview ----
+
+    private static readonly TimeSpan SuggestionDelay = TimeSpan.FromMilliseconds(700);
+    private DispatcherTimer? _suggestTimer;
+    private CancellationTokenSource? _suggestCancel;
+    private FilePanelView? _suggestPanel;
+    private string? _suggestFor;
+
+    /// <summary>Follows the cursor of <paramref name="panel"/>'s active tab (no polling): each move restarts the delay.</summary>
+    private void WatchForSuggestions(FilePanelView panel)
+    {
+        PanelTab? watched = null;
+        void OnChanged() => OnSuggestionCursor(panel);
+        void Rebind()
+        {
+            if (watched is not null)
+            {
+                watched.Changed -= OnChanged;
+            }
+
+            watched = panel.ActiveTab;
+            watched.Changed += OnChanged;
+            OnChanged();
+        }
+
+        panel.ActiveTabChanged += Rebind;
+        Rebind();
+    }
+
+    private void OnSuggestionCursor(FilePanelView panel)
+    {
+        if (panel != _active || _host is null)
+        {
+            return;
+        }
+
+        var entry = panel.Mode is null ? panel.ActiveTab.CurrentEntry : null;
+        if (entry is { } same && _suggestPanel == panel && string.Equals(same.Path, _suggestFor, StringComparison.OrdinalIgnoreCase))
+        {
+            return; // A refresh or size update on the same folder keeps the hint.
+        }
+
+        CancelSuggestion();
+        if (!_host.Settings.FolderSuggestions || entry is not { } folder || !FolderSuggestionService.IsEligible(folder))
+        {
+            return;
+        }
+
+        _suggestPanel = panel;
+        _suggestFor = folder.Path;
+        _suggestTimer ??= CreateSuggestionTimer();
+        _suggestTimer.Start();
+    }
+
+    private DispatcherTimer CreateSuggestionTimer()
+    {
+        var timer = new DispatcherTimer { Interval = SuggestionDelay };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (_suggestPanel is { Mode: null } panel && panel.ActiveTab.CurrentEntry is { } entry
+                && string.Equals(entry.Path, _suggestFor, StringComparison.OrdinalIgnoreCase))
+            {
+                _suggestCancel = new CancellationTokenSource();
+                _ = SuggestAsync(panel, entry, _suggestCancel.Token);
+            }
+        };
+        return timer;
+    }
+
+    private void CancelSuggestion()
+    {
+        _suggestTimer?.Stop();
+        _suggestCancel?.Cancel();
+        _suggestCancel?.Dispose();
+        _suggestCancel = null;
+        _suggestPanel = null;
+        _suggestFor = null;
+        _left?.ShowSuggestion(null);
+        _right?.ShowSuggestion(null);
+    }
+
+    private async Task SuggestAsync(FilePanelView panel, VfsEntry folder, CancellationToken cancellationToken)
+    {
+        var service = _host!.FolderSuggestions;
+        await Task.Run(async () =>
+        {
+            // SuggestAsync ends quietly on cancellation and swallows plugin failures.
+            await foreach (var suggestion in service.SuggestAsync(folder, cancellationToken).ConfigureAwait(false))
+            {
+                Dispatcher.UIThread.Post(() => ShowSuggestionCard(panel, suggestion, cancellationToken));
+            }
+        }, CancellationToken.None);
+    }
+
+    private void ShowSuggestionCard(FilePanelView panel, RankedSuggestion suggestion, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested || panel.Mode is not null
+            || !string.Equals(panel.ActiveTab.CurrentEntry?.Path, suggestion.Folder.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var card = new FolderSuggestionCard(_skins!.Current, suggestion);
+        card.Accepted += s => _ = AcceptFolderSuggestionAsync(panel, s);
+        card.Postponed += s =>
+        {
+            _host!.FolderSuggestions.Memory.MuteForSession(s.Folder.Path);
+            CancelSuggestion();
+        };
+        card.Declined += s =>
+        {
+            var memory = _host!.FolderSuggestions.Memory;
+            _ = Task.Run(() => memory.DeclineAsync(s.Folder.Path));
+            CancelSuggestion();
+            Notify(Loc.T("Nie będę proponować widoku dla tego folderu. Cofniesz to poleceniem „Wyczyść odrzucone podpowiedzi widoku folderu”."));
+        };
+        panel.ShowSuggestion(card);
+    }
+
+    /// <summary>cm_AcceptFolderSuggestion (Ctrl+Enter): the hint shown in the active panel, if any.</summary>
+    private void AcceptShownSuggestion()
+    {
+        if (_active.Suggestion is { } card)
+        {
+            _ = AcceptFolderSuggestionAsync(_active, card.Suggestion);
+        }
+    }
+
+    /// <summary>Writes the folder's c4k.dir and opens the view; when the write is refused the view still opens once.</summary>
+    private async Task AcceptFolderSuggestionAsync(FilePanelView panel, RankedSuggestion suggestion)
+    {
+        CancelSuggestion();
+        var folder = suggestion.Folder;
+        var json = FolderConfigWriter.CreateForAction(FolderConfigWriter.ActionFor(suggestion.Suggestion.View), "both");
+        var file = FolderConfig.ChildPath(folder.Path, FolderConfig.FileName);
+        var error = await Task.Run(async () =>
+        {
+            try
+            {
+                await File.WriteAllTextAsync(file, json);
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return ex.Message;
+            }
+        });
+        Notify(error ?? Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file), isError: error is not null);
+
+        var config = FolderConfig.Parse(folder.Path, json);
+        if (config.Enter is { } action)
+        {
+            await RunFolderActionAsync(panel, folder, config, action);
+            ShowBackToFilesTour(panel);
+        }
+    }
+
+    /// <summary>The spotlight on "📄 Pliki (Esc)" after a suggested view opened (Task 7).</summary>
+    private void ShowBackToFilesTour(FilePanelView panel)
+    {
+    }
+
+    private async ValueTask ResetFolderSuggestionsAsync(CommandInvocation invocation)
+    {
+        var memory = _host!.FolderSuggestions.Memory;
+        await Task.Run(memory.ClearAsync);
+        Notify(Loc.T("Wyczyszczono odrzucone podpowiedzi."));
     }
 
     private FilePanelView Other => _active == _left ? _right : _left;
@@ -1862,6 +2039,8 @@ public sealed class MainWindow : Window
          .Register(CommandIds.Open, Loc.T("Otwórz / wejdź"), OpenCurrent)
          .Register(CommandIds.EnterFolderPlain, Loc.T("Wejdź do folderu jako lista plików (pomija c4k.dir)"), EnterFolderPlain)
          .Register(CommandIds.FolderView, Loc.T("Widok folderu (c4k.dir): galeria, kafelki, wtyczka, SSH, skrypt"), ConfigureFolderViewAsync)
+         .Register(CommandIds.AcceptFolderSuggestion, Loc.T("Przyjmij podpowiedź widoku folderu"), AcceptShownSuggestion)
+         .Register(CommandIds.ResetFolderSuggestions, Loc.T("Wyczyść odrzucone podpowiedzi widoku folderu"), ResetFolderSuggestionsAsync)
          .Register(CommandIds.AddApiCard, Loc.T("Dodaj kartę API do dashboardu folderu (wybór pól z odpowiedzi)"), AddApiCardAsync)
          .Register(CommandIds.GoToParent, Loc.T("Katalog wyżej"), () => _active.GoToParent())
          .Register(CommandIds.Refresh, Loc.T("Odśwież"), () => _ = _active.ActiveTab.RefreshAsync())

@@ -140,6 +140,9 @@ public sealed class AppSettings
     /// <summary>Right click opens the Windows (Explorer) context menu; off = right click marks, as in Total Commander.</summary>
     public bool ShellContextMenu { get; set; } = true;
 
+    /// <summary>Hint "switch to the gallery?" when the cursor rests on a folder whose content suits a preview.</summary>
+    public bool FolderSuggestions { get; set; } = true;
+
     /// <summary>Animated splash screen while the app starts (also under "About").</summary>
     public bool SplashScreen { get; set; } = true;
 
