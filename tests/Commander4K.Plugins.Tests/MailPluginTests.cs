@@ -760,6 +760,136 @@ public sealed class MailPluginTests : IAsyncLifetime
         Assert.DoesNotContain("..", Path.GetFileName(saved), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Without_a_trash_folder_delete_is_neither_offered_nor_accepted()
+    {
+        var backend = new FakeMailServer();
+        var uid = backend.Inbox.Add();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var file = Assert.Single(Directory.GetFiles(InboxFolder(account), "*.eml"));
+
+        var content = await MessagePreview(plugin).LoadWithOptionsAsync(FileEntry(file), Host(plugin), null, pinned: false, Token);
+
+        var actions = Assert.IsType<ActionsPreview>(content).Actions;
+        Assert.DoesNotContain(actions, a => a.Target == "c4k:plugin/delete");
+        Assert.DoesNotContain(actions, a => a.Target == "c4k:plugin/archive");
+        await Assert.ThrowsAnyAsync<Exception>(() => ActAsync(plugin, file, "delete"));
+        Assert.True(File.Exists(file));
+        Assert.Empty(backend.Deleted);
+        Assert.True(backend.Inbox.Messages.ContainsKey(uid));
+    }
+
+    [Fact]
+    public async Task Form_edits_only_rewrite_drafts()
+    {
+        var backend = new FakeMailServer();
+        backend.Inbox.Add();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var file = Assert.Single(Directory.GetFiles(InboxFolder(account), "*.eml"));
+        var before = File.ReadAllBytes(file);
+
+        await MessagePreview(plugin).FormChangedAsync(FileEntry(file), null,
+            new Dictionary<string, string> { ["to"] = "x@example.org", ["subject"] = "Zmiana", ["body"] = "nadpisane" }, Host(plugin), Token);
+
+        Assert.Equal(before, File.ReadAllBytes(file));
+    }
+
+    [Fact]
+    public async Task Attach_selected_skips_folders()
+    {
+        var backend = new FakeMailServer();
+        backend.Inbox.Add();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var message = Assert.Single(Directory.GetFiles(InboxFolder(account), "*.eml"));
+        var replied = Assert.IsType<MovedPreview>(await ActAsync(plugin, message, "reply"));
+        var file = Path.Combine(_dir, "a.txt");
+        File.WriteAllText(file, "a");
+        var folder = Directory.CreateDirectory(Path.Combine(_dir, "Folder")).FullName;
+        _ui.Selection = [new VfsEntry("Folder", folder, VfsEntryKind.Directory), FileEntry(file)];
+
+        var form = Assert.IsType<FormPreview>(Inner(await ActAsync(plugin, replied.Entry.Path, "attachSelected", Values(Assert.IsType<FormPreview>(replied.Content)))));
+
+        Assert.Equal(["a.txt"], form.Files.Select(f => f.Name));
+    }
+
+    [Fact]
+    public async Task Archive_moves_the_message_and_unread_clears_seen()
+    {
+        var server = await MailboxAsync();
+        await server.CreateFolderAsync("Archive");
+        await server.SendAsync(["Archive me", "Unread me"]);
+        await server.WaitForCountAsync(2);
+        var plugin = Start(server.Service);
+        var account = WriteAccount("Test", server.ImapHostPort, server.User);
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var inbox = InboxFolder(account);
+        var archive = Path.Combine(account, "Archiwum");
+        Assert.True(Directory.Exists(archive));
+        var files = Directory.GetFiles(inbox, "*.eml");
+        var toArchive = files.Single(f => f.Contains("Archive me", StringComparison.Ordinal));
+        var toUnread = files.Single(f => f.Contains("Unread me", StringComparison.Ordinal));
+        var content = await MessagePreview(plugin).LoadWithOptionsAsync(FileEntry(toArchive), Host(plugin), null, pinned: false, Token);
+        Assert.Contains(Assert.IsType<ActionsPreview>(content).Actions, a => a.Target == "c4k:plugin/archive" && a.Shortcut == "A");
+
+        var moved = Assert.IsType<MovedPreview>(await ActAsync(plugin, toArchive, "archive"));
+
+        Assert.False(File.Exists(toArchive));
+        Assert.Equal(archive, Path.GetDirectoryName(moved.Entry.Path));
+        Assert.True(File.Exists(moved.Entry.Path));
+        var archived = Assert.Single(await server.UidsAsync("Archive"));
+        Assert.EndsWith($"[uid {archived}].eml", moved.Entry.Path, StringComparison.Ordinal);
+        Assert.Single(await server.UidsAsync());
+
+        // Opening marks it read; "unread" undoes it on the server and in the name.
+        var uid = (uint)await server.HighestUidAsync();
+        var opened = Assert.IsType<MovedPreview>(await MessagePreview(plugin).LoadWithOptionsAsync(FileEntry(toUnread), Host(plugin), null, pinned: true, Token));
+        Assert.True((await server.FlagsAsync(uid) & MessageFlags.Seen) != 0);
+        var unread = Assert.IsType<MovedPreview>(await ActAsync(plugin, opened.Entry.Path, "unread"));
+        Assert.Equal(MessageFlags.None, await server.FlagsAsync(uid) & MessageFlags.Seen);
+        Assert.StartsWith(Unread, Path.GetFileName(unread.Entry.Path), StringComparison.Ordinal);
+        Assert.True(File.Exists(unread.Entry.Path));
+        Assert.False(File.Exists(opened.Entry.Path));
+    }
+
+    [Fact]
+    public async Task Save_attachment_names_are_sanitised_exactly()
+    {
+        var backend = new FakeMailServer();
+        var plugin = Start(backend);
+        var account = WriteAccount("Firma", "imap.example.org:993", "anna@example.org");
+        await RenderAsync(plugin, account);
+        await TickUntilDoneAsync(plugin);
+        var inbox = InboxFolder(account);
+        var mail = new MimeMessage { Subject = "Trzy pliki" };
+        mail.From.Add(MailboxAddress.Parse("jan@example.org"));
+        var body = new BodyBuilder { TextBody = "x" };
+        body.Attachments.Add("..\\x", Encoding.UTF8.GetBytes("0"));
+        body.Attachments.Add("C:\\Windows\\evil.txt", Encoding.UTF8.GetBytes("1"));
+        body.Attachments.Add("CON.txt", Encoding.UTF8.GetBytes("2"));
+        mail.Body = body.ToMessageBody();
+        var file = Path.Combine(inbox, "2026-10-31 1200 Jan - Trzy pliki.eml");
+        mail.WriteTo(file, Token);
+        var target = Directory.CreateDirectory(Path.Combine(_dir, "Pobrane")).FullName;
+        _ui.Other = target;
+
+        for (var i = 0; i < 3; i++)
+        {
+            await ActAsync(plugin, file, "saveAttachment", args: new() { ["i"] = i.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        }
+
+        Assert.Equal(["evil.txt", "x", "zalacznik-2CON.txt"], Directory.GetFiles(target).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static ExternalPreviewPlugin MessagePreview(ExternalPlugin plugin) =>

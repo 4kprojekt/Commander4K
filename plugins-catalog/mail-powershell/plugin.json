@@ -4,7 +4,7 @@
   "name": "Poczta",
   "version": "1.0.0",
   "author": "4Kprojekt",
-  "description": "Oficjalna wtyczka: poczta IMAP/SMTP w folderach .eml. Folder konta z plikiem c4k.dir: { \"preview\": { \"plugin\": \"official.mail\", \"options\": { \"imap\": \"imap.example.com:993\", \"smtp\": \"smtp.example.com:465\", \"user\": \"ja@example.com\", \"refresh\": \"5m\", \"since\": \"3m\" } }, \"enter\": \"official.mail\" }. Hasło zna tylko aplikacja.",
+  "description": "Oficjalna wtyczka: poczta IMAP/SMTP w folderach .eml. Folder konta z plikiem c4k.dir: { \"preview\": { \"plugin\": \"official.mail\", \"options\": { \"imap\": \"imap.example.com:993\", \"smtp\": \"smtp.example.com:465\", \"user\": \"ja@example.com\", \"refresh\": \"5m\", \"since\": \"3m\" } }, \"enter\": \"official.mail\" }. Opcja from (adres nadawcy) jest opcjonalna: domyślnie user, a gdy user nie jest adresem, user@serwer-imap. Hasło zna tylko aplikacja.",
   "runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" },
   "permissions": ["mail", "fs.read", "fs.write", "background"],
   "contributes": {

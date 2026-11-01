@@ -262,10 +262,9 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
             : shown;
     }
 
-    /// <summary>A <c>path</c> in a result that is absolute (a drive/UNC path or a <c>scheme://</c> one) and not the entry being shown.</summary>
+    /// <summary>A <c>path</c> in a result that is not the entry being shown and passes <see cref="PreviewMoves.IsAcceptable"/>.</summary>
     private static bool IsOtherEntry(string path, VfsEntry entry) =>
-        path.Length > 0 && (Path.IsPathFullyQualified(path) || path.Contains("://", StringComparison.Ordinal))
-        && !string.Equals(path, entry.Path, StringComparison.OrdinalIgnoreCase);
+        !string.Equals(path, entry.Path, StringComparison.OrdinalIgnoreCase) && PreviewMoves.IsAcceptable(entry.Path, path);
 
     private static FormPreview ParseForm(JsonElement result, VfsEntry entry)
     {

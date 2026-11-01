@@ -626,7 +626,10 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         // The plugin renamed the entry (a message marked read) or switched to another file (a draft): follow it.
         while (content is MovedPreview moved)
         {
-            _entry = moved.Entry;
+            if (_entry is { } current && PreviewMoves.IsAcceptable(current.Path, moved.Entry.Path))
+            {
+                _entry = moved.Entry;
+            }
             content = moved.Content;
         }
 

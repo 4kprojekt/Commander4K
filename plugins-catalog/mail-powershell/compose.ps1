@@ -249,7 +249,7 @@ function Get-MailReplyLink([string] $DraftPath) {
 # reply | replyAll | forward of the message file: a new draft in Szkice and its form.
 function New-MailReplyDraft([string] $Path, [string] $Mode, $Ctx) {
     if ($null -eq $Ctx) { throw 'Ta wiadomość nie leży w folderze konta poczty (brak c4k.dir z wtyczką Poczta).' }
-    $self = if (([string] $Ctx.options['user']).Contains('@')) { [string] $Ctx.options['user'] } else { Get-MailFromAddress $Ctx.options }
+    $self = Get-MailFromAddress $Ctx.options
     $reply = New-C4KMailReply $Path $Mode $self
     $dir = Get-MailDraftsDir $Ctx
     $draftPath = Join-MailPath $dir (Get-MailFreeName $dir (Get-MailDraftName ([string] $reply.subject)))
@@ -295,7 +295,7 @@ function Remove-MailDraft([string] $DraftPath, $Ctx) {
 function Save-MailFormEdit([string] $DraftPath, $Values) {
     if ($Values -isnot [hashtable] -or $null -eq (Get-C4KItem $DraftPath)) { return }
     $ctx = Get-MailContext $DraftPath
-    if ($null -eq $ctx) { return }
+    if (-not (Test-MailIsDraftFile $ctx)) { return }  # only drafts are rewritten
     $draft = Read-MailDraft $DraftPath
     Write-MailDraftFile $DraftPath $ctx (Get-MailDraftFields $draft $Values) $draft (Get-MailAttachmentRefs $DraftPath $draft)
 }

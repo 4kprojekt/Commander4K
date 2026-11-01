@@ -138,7 +138,8 @@ function New-MailMessageActions($Ctx, $Mail, [bool] $Unread) {
     }
     if ($Ctx -and $Ctx.uid -and $Ctx.server) {
         if ($Ctx.special -ne 'archive' -and (Get-MailSpecialFolder $Ctx 'archive')) { $actions.Add(@{ label = 'Archiwizuj'; target = (Get-C4KActionTarget 'archive'); shortcut = 'A' }) }
-        $actions.Add(@{ label = 'Usuń'; target = (Get-C4KActionTarget 'delete'); shortcut = 'Delete' })
+        # Without a Trash folder the server would expunge: permanent removal is offered only inside Kosz.
+        if ($Ctx.special -eq 'trash' -or (Get-MailSpecialFolder $Ctx 'trash')) { $actions.Add(@{ label = 'Usuń'; target = (Get-C4KActionTarget 'delete'); shortcut = 'Delete' }) }
         if (-not $Unread) { $actions.Add(@{ label = 'Oznacz jako nieprzeczytaną'; target = (Get-C4KActionTarget 'unread'); shortcut = 'U' }) }
     }
     $shown = 0
@@ -247,6 +248,7 @@ function Invoke-MailMove($Ctx, [string] $Path, [string] $Kind) {
     if (-not $Ctx -or -not $Ctx.uid -or -not $Ctx.server) { throw 'Ta wiadomość nie pochodzi z synchronizacji konta.' }
     if ($null -eq $Ctx.state) { throw 'Nie można odczytać stanu konta (.mail\state.json).' }
     $name = Get-MailLeaf $Path
+    if ($Kind -eq 'delete' -and $Ctx.special -ne 'trash' -and -not (Get-MailSpecialFolder $Ctx 'trash')) { throw 'To konto nie ma folderu Kosz: usunięcie byłoby trwałe, więc nic nie zrobiono.' }
     if ($Kind -eq 'delete' -and $Ctx.special -eq 'trash') {
         Remove-C4KMail $Ctx.account $Ctx.server @($Ctx.uid)
         Remove-C4KItem $Path

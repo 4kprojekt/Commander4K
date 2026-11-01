@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-31",
+  "updated": "2026-11-01",
   "baseUrl": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/",
   "plugins": [
     {
@@ -348,15 +348,15 @@
         },
         {
           "path": "compose.ps1",
-          "sha256": "eed83547c1d9f37020ca2f0e5dbe8ce5fba13a1691ebbbef1a285a960d556109"
+          "sha256": "a2de22e20600855ee00f7f2ede898a30e50a8fe5de8a8f7d65df0f63c0c988f7"
         },
         {
           "path": "main.ps1",
-          "sha256": "a579b3cebd5a994dfa39cb9c240264f56ddf55417a1c4b343b8e2977f08f7e9e"
+          "sha256": "7a87ae01323c661e01441ef0256f902a9f9c82a4a11ce4ada5b1a8475646ab1a"
         },
         {
           "path": "plugin.json",
-          "sha256": "4a83b283ead1d5d91387e51cc6ad167e773d5f68dcbc0739aa641be17c5a1137"
+          "sha256": "97a2c15c67021bc43c9cc86a5e97436e04a11f83fa20bce64e361e108124315f"
         },
         {
           "path": "sync.ps1",
