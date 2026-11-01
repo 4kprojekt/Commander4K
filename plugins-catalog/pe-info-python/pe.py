@@ -15,11 +15,14 @@ import c4k
 PAGE = 65536
 MAX_THUNKS = 4096          # loop guard for import thunk / name walks
 MAX_DESCRIPTORS = 1024     # import descriptors
+MAX_IMPORT_NAMES = 20000   # function names kept across all import and delay-import tables of one image
 MAX_EXPORTS = 2000         # exports kept (the rest are only counted)
 MAX_TABLE = 65536          # export table entries read
 ENTROPY_BYTES = 256 * 1024
 
-_LOCAL = re.compile(r"^[A-Za-z]:\\")
+# Drive paths and UNC shares (\\server\share\...) are served as seekable FileStreams; \\?\ and \\.\ device paths and
+# scheme:// paths (sftp, ftp, zip/7z/tar, reg) are not.
+_LOCAL = re.compile(r"^(?:[A-Za-z]:\\|\\\\[^\\?.][^\\]*\\[^\\]+)")
 
 
 class ReadLimit(Exception):
@@ -37,8 +40,8 @@ class PeError(Exception):
 class RangeReader:
     """Page-cached random access over c4k.read_bytes with a budget.
 
-    The budget counts the bytes fetched; for paths that are not local drives (shares, SFTP, FTP, archives) the host may
-    stream through the file up to the offset, so a fetch costs offset + length there.
+    The budget counts the bytes fetched; for paths that are not local drives or UNC shares (SFTP, FTP, archives, device
+    paths) the host may stream through the file up to the offset, so a fetch costs offset + length there.
     """
 
     def __init__(self, path, size, budget=8 * 1024 * 1024, fetch=None):
@@ -119,6 +122,8 @@ class Import:
     dll: str
     functions: list = field(default_factory=list)
     delayed: bool = False
+    same_as: str = None    # the DLL whose name table this descriptor shares (its names are not repeated)
+    cut: bool = False      # not walked: MAX_IMPORT_NAMES was reached before this table
 
 
 @dataclass
@@ -150,6 +155,8 @@ class PeImage:
     overlay: tuple = None
     warnings: list = field(default_factory=list)
     file_size: int = 0
+    import_names: int = 0                                  # names kept so far, against MAX_IMPORT_NAMES
+    import_tables: dict = field(default_factory=dict)      # name-table RVA → DLL of the first descriptor using it
 
 
 _MACHINES = {0x14C: "x86", 0x8664: "x64", 0xAA64: "ARM64", 0xA641: "ARM64EC", 0xA64E: "ARM64X", 0x1C0: "ARM", 0x1C4: "ARM", 0x200: "IA-64"}
@@ -186,9 +193,10 @@ def _section_name(raw):
     return "".join(ch if ch.isprintable() else "?" for ch in text)
 
 
-def parse(reader, details=True, entropy=True):
+def parse(reader, details=True, entropy=True, names=True):
     """The image's headers, sections and imports; `details` adds exports, TLS and the overlay, `entropy` the section
-    entropy (callers that read resources first pass False and call add_entropy afterwards, so it cannot use up the budget)."""
+    entropy (callers that read resources first pass False and call add_entropy afterwards, so it cannot use up the budget),
+    `names` the imported function names (the dependency walk needs only the DLLs)."""
     size = reader.size
     try:
         dos = reader.read(0, min(64, size))
@@ -267,8 +275,8 @@ def parse(reader, details=True, entropy=True):
             image.warnings.append(text if text.startswith(label) else f"{label}: {text}")
 
     step("tabela sekcji", lambda: _sections(reader, image, e_lfanew + 24 + optsize, nsections))
-    step("tabela importów", lambda: _imports(reader, image, delayed=False))
-    step("tabela importów opóźnionych", lambda: _imports(reader, image, delayed=True))
+    step("tabela importów", lambda: _imports(reader, image, delayed=False, names=names))
+    step("tabela importów opóźnionych", lambda: _imports(reader, image, delayed=True, names=names))
     if details:
         step("tabela eksportów", lambda: _exports(reader, image))
         step("katalog TLS", lambda: _tls(reader, image))
@@ -300,8 +308,19 @@ def _sections(reader, image, table_at, count):
         image.sections.append(Section(_section_name(chunk[:8]), rva, vsize, raw_ptr, raw_size, flags))
 
 
+def _import_cap(image, label):
+    """True (and one warning per image) once MAX_IMPORT_NAMES names have been kept."""
+    if image.import_names < MAX_IMPORT_NAMES:
+        return False
+    if image.import_names == MAX_IMPORT_NAMES:
+        image.import_names += 1   # past the cap: warned
+        image.warnings.append(f"{label}: ponad {MAX_IMPORT_NAMES} nazw funkcji we wszystkich tabelach — lista importów przerwana")
+    return True
+
+
 def _thunk_names(reader, image, rva, functions, label):
-    """Walk an import name table (at most MAX_THUNKS entries), appending names / #ordinals to `functions`."""
+    """Walk an import name table (at most MAX_THUNKS entries, and while the image keeps fewer than MAX_IMPORT_NAMES
+    names), appending names / #ordinals to `functions`."""
     offset = _need(image, rva, label)
     width = 8 if image.pe32_plus else 4
     ordinal_flag = 1 << (width * 8 - 1)
@@ -319,9 +338,12 @@ def _thunk_names(reader, image, rva, functions, label):
                 done = True
                 break
             steps += 1
+            if _import_cap(image, label):
+                return
             if steps > MAX_THUNKS:
                 image.warnings.append(f"{label}: więcej niż {MAX_THUNKS} pozycji — przerwano (możliwa pętla)")
                 return
+            image.import_names += 1
             if value & ordinal_flag:
                 functions.append(f"#{value & 0xFFFF}")
                 continue
@@ -341,7 +363,7 @@ def _clean(text):
     return "".join(ch if ch.isprintable() else "?" for ch in text)
 
 
-def _imports(reader, image, delayed):
+def _imports(reader, image, delayed, names=True):
     label = "tabela importów opóźnionych" if delayed else "tabela importów"
     rva, size = image.data_dirs[DIR_DELAY if delayed else DIR_IMPORT]
     if rva == 0 or size == 0:
@@ -376,10 +398,19 @@ def _imports(reader, image, delayed):
             image.warnings.append(f"{label}: nazwa biblioteki #{index} poza obrazem — plik uszkodzony")
             continue
         entry.dll = _clean(reader.cstring(name_at, 260))
-        if thunk_rva == 0:
+        if thunk_rva == 0 or not names:
+            continue
+        if thunk_rva in image.import_tables:
+            entry.same_as = image.import_tables[thunk_rva]
+            continue
+        image.import_tables[thunk_rva] = entry.dll
+        if image.import_names >= MAX_IMPORT_NAMES:
+            entry.cut = True
+            _import_cap(image, label)
             continue
         try:
             _thunk_names(reader, image, thunk_rva, entry.functions, f"{label} ({entry.dll})")
+            entry.cut = image.import_names > MAX_IMPORT_NAMES   # the cap was reached inside this table
         except ReadLimit:
             raise
         except _RECOVERABLE as error:

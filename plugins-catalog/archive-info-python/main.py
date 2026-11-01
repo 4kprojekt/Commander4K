@@ -5,6 +5,8 @@ nothing is unpacked to disk. The walk is breadth-first and capped; package metad
 Nothing raises out of preview.render: a failed host call becomes a "⚠" line.
 """
 import posixpath
+import re
+import unicodedata
 from collections import deque
 
 import c4k
@@ -51,11 +53,12 @@ def _files(count):
 
 
 def _md(text):
-    """A file name as Markdown text: inline markup characters escaped, nothing that starts a block."""
-    text = str(text)
-    for char in "\\`*_[]|<":
+    """A file name as Markdown text: inline markup characters escaped, nothing that starts a block. CR/LF and other
+    control characters become spaces, so a name cannot put a heading, a fence or notes of its own on a new line."""
+    text = "".join(" " if unicodedata.category(ch) in ("Cc", "Zl", "Zp") else ch for ch in str(text))
+    for char in "\\`*_[]|<~":
         text = text.replace(char, "\\" + char)
-    return "\\" + text if text[:1] in "#+-" else text
+    return "\\" + text if text[:1] in "#+->" else text
 
 
 def archive_root(path):
@@ -216,6 +219,26 @@ def section_types(listing, entry):
     return lines + [""]
 
 
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def unclosed_fence(rows):
+    """The marker (``` or ~~~, of the opening length) that closes the code block left open after `rows`, or None.
+    CommonMark rules: a fence closes only with the same character, at least as long, followed by nothing but spaces."""
+    opened = None
+    for row in rows:
+        match = _FENCE.match(row)
+        if not match:
+            continue
+        marker = match.group(1)
+        if opened is None:
+            if not (marker[0] == "`" and "`" in row[match.end():]):   # a backtick fence's info string has no backticks
+                opened = marker
+        elif marker[0] == opened[0] and len(marker) >= len(opened) and not row[match.end():].strip():
+            opened = None
+    return opened
+
+
 def section_readme(listing, entry):
     candidates = [item for item in listing.files if "/" not in item["relative"] and item["relative"].lower().startswith("readme")]
     if not candidates:
@@ -232,8 +255,9 @@ def section_readme(listing, entry):
     lines = ["## README", "", f"*{_md(readme['relative'])}*", ""]
     if _extension(readme["relative"]) in (".md", ".markdown"):
         lines += rows
-        if sum(1 for row in rows if row.lstrip().startswith(("```", "~~~"))) % 2:
-            lines.append("```")  # the cut left a code block open
+        fence = unclosed_fence(rows)
+        if fence:
+            lines.append(fence)  # the cut left a code block open: close it with its own marker
     else:
         lines += ["```text"] + [row.replace("```", "ˋˋˋ") for row in rows] + ["```"]
     if cut:
@@ -339,8 +363,9 @@ def render(params):
         lines += [f"⚠ Nie udało się otworzyć archiwum: {listing.error}", "",
                   f"Rozmiar pliku: {_size(entry.get('size') or 0)}"]
         return {"kind": "markdown", "content": "\n".join(lines)}
-    builds = [section_summary, section_tree, section_largest, section_types, section_readme,
-              lambda listing, entry: section_package(root, listing, entry), section_notes]
+    # README (text from the archive) comes last, so a hostile one cannot swallow or fake the sections the plugin writes
+    builds = [section_summary, section_tree, section_largest, section_types,
+              lambda listing, entry: section_package(root, listing, entry), section_notes, section_readme]
     for build in builds:
         try:
             lines += build(listing, entry)
