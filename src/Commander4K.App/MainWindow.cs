@@ -1459,6 +1459,10 @@ public sealed class MainWindow : Window
             {
                 await OpenPluginManagerAsync();
             }
+            else if (target.StartsWith("c4k:setup/", StringComparison.Ordinal))
+            {
+                await ConfigureFolderPluginAsync(target["c4k:setup/".Length..], folder);
+            }
             else if (target.StartsWith("c4k:install/", StringComparison.Ordinal))
             {
                 await InstallFromCatalogAsync(target["c4k:install/".Length..]);
@@ -1622,6 +1626,72 @@ public sealed class MainWindow : Window
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// A folder whose <c>c4k.dir</c> names a plugin that is missing, disabled or not configured yet: installs it (the
+    /// installer's dialog is the consent), enables it, asks it for the folder's options (<c>preview.setup</c>) and writes
+    /// them into every action of the file that names the plugin. The preview reloads afterwards.
+    /// </summary>
+    private async Task ConfigureFolderPluginAsync(string pluginId, VfsEntry? folder)
+    {
+        if (!IsInstalled(pluginId))
+        {
+            await InstallFromCatalogAsync(pluginId);
+        }
+
+        if (!IsInstalled(pluginId) || !await EnsurePluginEnabledAsync(pluginId) || folder is not { } target)
+        {
+            return;
+        }
+
+        var file = FolderConfig.ChildPath(target.Path, FolderConfig.FileName);
+        string? existing;
+        try
+        {
+            existing = await Task.Run(() => ReadFolderConfigTextAsync(file, CancellationToken.None));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
+            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
+        {
+            Notify(Loc.T("Nie można odczytać {0}: {1}", file, ex.Message), isError: true);
+            return;
+        }
+
+        var config = existing is null ? null : FolderConfig.Parse(target.Path, existing);
+        if (existing is null || config!.Error is not null
+            || new[] { config.Preview, config.Enter }.Any(a => a?.Options is not null && string.Equals(a.Plugin, pluginId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return; // nothing to fill in (or already configured): the reload shows the plugin's view
+        }
+
+        if (await SetupFolderPluginAsync(pluginId, target.Path) is not { } options
+            || System.Text.Json.Nodes.JsonNode.Parse(options) is not System.Text.Json.Nodes.JsonObject { Count: > 0 })
+        {
+            return;
+        }
+
+        if (FolderConfigWriter.HasComments(existing)
+            && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać c4k.dir?"),
+                Loc.T("{0} ma komentarze; zapis ustawień wtyczki je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
+        {
+            return;
+        }
+
+        try
+        {
+            if (FolderConfigWriter.SetPluginOptions(existing, pluginId, options) is { } text)
+            {
+                await Task.Run(() => WriteFolderConfigTextAsync(file, text, CancellationToken.None));
+                Notify(Loc.T("Zapisano ustawienia wtyczki w {0}.", file));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
+            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException
+            or System.Text.Json.JsonException)
+        {
+            Notify(Loc.T("Nie można zapisać {0}: {1}", file, ex.Message), isError: true);
+        }
     }
 
     /// <summary>

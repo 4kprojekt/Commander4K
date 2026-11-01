@@ -90,6 +90,37 @@ public static class FolderConfigWriter
         return action;
     }
 
+    /// <summary>
+    /// The file text with <paramref name="options"/> (a JSON object) set on every action (<c>preview</c>, <c>enter</c>)
+    /// that names <paramref name="pluginId"/>; a shorthand <c>"official.mail"</c> becomes <c>{ "plugin": …, "options": … }</c>.
+    /// Other keys and actions are kept. Returns <c>null</c> when no action names the plugin.
+    /// </summary>
+    /// <exception cref="JsonException">The file is not JSON.</exception>
+    public static string? SetPluginOptions(string existing, string pluginId, string options)
+    {
+        var root = JsonNode.Parse(existing, documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject
+            ?? throw new JsonException("c4k.dir must contain a JSON object.");
+        var optionsNode = JsonNode.Parse(options) as JsonObject ?? new JsonObject();
+        var changed = false;
+        foreach (var section in new[] { "preview", "enter" })
+        {
+            switch (root[section])
+            {
+                case JsonValue value when value.TryGetValue<string>(out var id) && string.Equals(id, pluginId, StringComparison.OrdinalIgnoreCase):
+                    root[section] = new JsonObject { ["plugin"] = id, ["options"] = optionsNode.DeepClone() };
+                    changed = true;
+                    break;
+                case JsonObject action when action["plugin"] is JsonValue plugin && plugin.TryGetValue<string>(out var named)
+                    && string.Equals(named, pluginId, StringComparison.OrdinalIgnoreCase):
+                    action["options"] = optionsNode.DeepClone();
+                    changed = true;
+                    break;
+            }
+        }
+
+        return changed ? root.ToJsonString(Indented) + "\n" : null;
+    }
+
     /// <summary>Comments are dropped when the file is written again, so the wizard warns about them first.</summary>
     public static bool HasComments(string json)
     {

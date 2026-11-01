@@ -202,4 +202,22 @@ public sealed class FolderConfigWriterTests
         Assert.Equal("tables", config.Enter.Preview);
         Assert.Equal(5, JsonNode.Parse(config.Enter.Options!)!["limit"]!.GetValue<int>());
     }
+
+    [Fact]
+    public void Plugin_options_fill_both_sections_and_keep_the_rest()
+    {
+        const string existing = """
+            { "title": "Poczta", "preview": "official.mail", "enter": { "plugin": "official.mail", "preview": "account" } }
+            """;
+        var text = FolderConfigWriter.SetPluginOptions(existing, "official.mail", """{ "imap": "imap.example.com", "user": "me" }""");
+        var config = FolderConfig.Parse(@"C:\Poczta", text!);
+
+        Assert.Null(config.Error);
+        Assert.Equal("Poczta", config.Title);
+        Assert.Equal("official.mail", config.Preview!.Plugin);
+        Assert.Equal("account", config.Enter!.Preview);
+        Assert.Equal("me", JsonNode.Parse(config.Preview.Options!)!["user"]!.GetValue<string>());
+        Assert.Equal("imap.example.com", JsonNode.Parse(config.Enter.Options!)!["imap"]!.GetValue<string>());
+        Assert.Null(FolderConfigWriter.SetPluginOptions(existing, "other.plugin", "{}"));
+    }
 }

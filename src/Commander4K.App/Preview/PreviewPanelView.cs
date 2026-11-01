@@ -758,8 +758,19 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             .Where(p => string.Equals(p.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(p => action.Preview is { } id && p.Id.EndsWith("/" + id, StringComparison.OrdinalIgnoreCase))
             .FirstOrDefault();
+        var title = config.Title ?? folder.Name;
         if (external is not null)
         {
+            // Installed but the folder has no settings for it yet (a hand-written or copied c4k.dir): ask for them first.
+            if (action.Options is null && external.SupportsSetup && external.Contribution.Extensions.Contains("/"))
+            {
+                return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(new FolderPluginSetupPreview(
+                    Loc.T("Skonfiguruj „{0}”", external.Manifest.Name),
+                    Loc.T("Folder „{0}” ma być pokazywany przez wtyczkę „{1}”, ale c4k.dir nie ma jeszcze jej ustawień.", title, external.Manifest.Name),
+                    Loc.T("Skonfiguruj…"),
+                    "c4k:setup/" + pluginId)));
+            }
+
             _options = action.Options;
             var pinned = section == "enter";
             return (external, (host, _, ct) => external.LoadWithOptionsAsync(folder, host, action.Options, pinned, ct));
@@ -767,13 +778,44 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
         var installed = _app.DiscoveredPlugins.FirstOrDefault(p => string.Equals(p.Manifest?.Id, pluginId, StringComparison.OrdinalIgnoreCase));
         var entry = _app.PluginCatalog.Find(pluginId);
-        PreviewTile tile = installed is not null
-            ? new(Loc.T("Włącz wtyczkę „{0}”", installed.Manifest!.Name), _app.PluginBlocker(installed) ?? Loc.T("Wtyczka nie ma podglądu „{0}”.", action.Preview ?? string.Empty), "🧩", null, "c4k:plugins")
+        var setup = installed is not null
+            ? new FolderPluginSetupPreview(
+                Loc.T("Włącz „{0}”", installed.Manifest!.Name),
+                _app.PluginBlocker(installed) ?? Loc.T("Wtyczka nie ma podglądu „{0}”.", action.Preview ?? string.Empty),
+                Loc.T("Włącz i skonfiguruj…"),
+                "c4k:setup/" + pluginId)
             : entry is not null
-                ? new(Loc.T("Zainstaluj „{0}”", entry.Name), entry.LocalizedDescription, "⬇", null, "c4k:install/" + entry.Id)
-                : new(Loc.T("Nieznana wtyczka „{0}”", pluginId), Loc.T("Nie ma jej w katalogu oficjalnych wtyczek."), "❓", null, "c4k:plugins");
-        return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(new TilesPreview(config.Title ?? folder.Name, [tile],
-            Loc.T("Ten folder chce być pokazany przez wtyczkę „{0}” (c4k.dir).", pluginId), TileWidth: 340)));
+                ? new FolderPluginSetupPreview(
+                    Loc.T("Zainstaluj „{0}”", entry.Name),
+                    Loc.T("Folder „{0}” ma być pokazywany przez wtyczkę „{1}” (c4k.dir): {2}", title, entry.Name, entry.LocalizedDescription),
+                    Loc.T("Zainstaluj i skonfiguruj…"),
+                    "c4k:setup/" + pluginId)
+                : new FolderPluginSetupPreview(
+                    Loc.T("Nieznana wtyczka „{0}”", pluginId),
+                    Loc.T("c4k.dir tego folderu korzysta z wtyczki, której nie ma w katalogu oficjalnych wtyczek."),
+                    Loc.T("Menedżer wtyczek"),
+                    "c4k:plugins");
+        return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(setup));
+    }
+
+    /// <summary>The setup card: installing, enabling and configuring happen in <see cref="OpenTile"/>, then the folder is shown again.</summary>
+    private Control FolderPluginSetupView(FolderPluginSetupPreview setup)
+    {
+        var folder = _entry;
+        SetStatus(folder?.Path);
+        return Ds.EmptyState(_brushes, setup.Title, setup.Message, setup.ActionText, async () =>
+        {
+            if (OpenTile is not { } open)
+            {
+                return;
+            }
+
+            await open(new PreviewTile(setup.ActionText, Target: setup.Target), folder);
+            if (folder is { } shown && _entry?.Path == shown.Path && !_dirty)
+            {
+                await LoadAsync(_entry);
+            }
+        });
     }
 
     private void Show(PreviewContent content)
@@ -872,6 +914,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private Control? Render(PreviewContent content) => content switch
     {
         AppFolderViewPreview app => AppView(app),
+        FolderPluginSetupPreview setup => FolderPluginSetupView(setup),
         BrowserPagePreview browser => BrowserView(browser),
         SftpConnectionPreview sftp => SftpConnectionView(sftp),
         WebPreview web => WebView(web),
@@ -1910,3 +1953,6 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
 /// <summary>A folder whose <c>c4k.dir</c> names one of the app's own views (<see cref="FolderViewIds.AppViews"/>).</summary>
 public sealed record AppFolderViewPreview(string View) : PreviewContent;
+
+/// <summary>A folder's <c>c4k.dir</c> names a plugin that still needs installing, enabling or its settings.</summary>
+public sealed record FolderPluginSetupPreview(string Title, string Message, string ActionText, string Target) : PreviewContent;
