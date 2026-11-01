@@ -27,7 +27,22 @@ internal static class Program
             : BuiltInSkins.All.FirstOrDefault(s => s.Id == startup?.Skin) ?? BuiltInSkins.ModernDark;
         SplashWindow.StartupDensity = startup?.Density;
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+
+        // A language change asked for a restart: the new process starts once this one has saved its state and closed.
+        if (RestartRequested && Environment.ProcessPath is { } executable)
+        {
+            var restart = new System.Diagnostics.ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Environment.CurrentDirectory };
+            foreach (var argument in args)
+            {
+                restart.ArgumentList.Add(argument);
+            }
+
+            System.Diagnostics.Process.Start(restart);
+        }
     }
+
+    /// <summary>Set before the main window closes to start the app again (the UI language is loaded only at start-up).</summary>
+    internal static bool RestartRequested { get; set; }
 
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()

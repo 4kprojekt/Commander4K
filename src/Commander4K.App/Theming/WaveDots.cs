@@ -22,6 +22,8 @@ public sealed class WaveDots : Control
     public WaveDots()
     {
         IsHitTestVisible = false;
+        ClipToBounds = false;
+        DotSize = 4;
         _timer = new DispatcherTimer(FrameInterval, DispatcherPriority.Render, (_, _) => InvalidateVisual());
         PropertyChanged += (_, e) =>
         {
@@ -42,7 +44,23 @@ public sealed class WaveDots : Control
         }
     }
 
-    public double DotSize { get; set; } = 4;
+    /// <summary>Dot diameter; the control never gets less room than the dots need (they would be clipped).</summary>
+    public double DotSize
+    {
+        get => _dotSize;
+        set
+        {
+            _dotSize = value;
+            MinWidth = WidthFor(value);
+            MinHeight = HeightFor(value);
+            InvalidateMeasure();
+        }
+    }
+
+    private double _dotSize;
+
+    /// <summary>Height the wave needs: the dot plus its lift, with a margin above and below.</summary>
+    public static double HeightFor(double dotSize) => dotSize * 3;
 
     /// <summary>Width of the three dots for a given dot size.</summary>
     public static double WidthFor(double dotSize) => dotSize * 3 + dotSize * 1.2 * 2;
@@ -68,11 +86,11 @@ public sealed class WaveDots : Control
     {
         if (_foreground is { } brush)
         {
-            Draw(context, brush, (Bounds.Width - WidthFor(DotSize)) / 2, Bounds.Height / 2, DotSize);
+            Draw(context, brush, Math.Max(0, (Bounds.Width - WidthFor(DotSize)) / 2), Math.Max(HeightFor(DotSize), Bounds.Height) / 2, DotSize);
         }
     }
 
-    protected override Size MeasureOverride(Size availableSize) => new(WidthFor(DotSize), DotSize * 3);
+    protected override Size MeasureOverride(Size availableSize) => new(WidthFor(DotSize), HeightFor(DotSize));
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {

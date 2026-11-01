@@ -163,9 +163,17 @@ internal static class DesktopShell
         }
     }
 
-    internal static void OpenFolder(string path)
+    /// <summary>Creates the folder if needed and opens it in Explorer, off the UI thread (both touch the disk or start a process).</summary>
+    internal static void OpenFolder(string path) => _ = Task.Run(() =>
     {
-        Directory.CreateDirectory(path);
-        using var _ = Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { path }, UseShellExecute = false });
-    }
+        try
+        {
+            Directory.CreateDirectory(path);
+            using var _ = Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { path }, UseShellExecute = false });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            Trace.WriteLine($"Opening {path} failed: {ex.Message}");
+        }
+    });
 }

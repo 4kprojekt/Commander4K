@@ -421,13 +421,13 @@ public sealed class FilePanelView : ViewBase
                                 .VerticalContentAlignment(VerticalAlignment.Center),
                             new TextBlock().Ref(out _filesModeLabel).Col(2).Text(Loc.T("Pliki"))
                                 .VerticalAlignment(VerticalAlignment.Center).Margin(6, 0),
-                            new ToggleSwitch().Ref(out _modeSwitch).Col(3).Width(42).MinHeight(24)
+                            new ToggleSwitch().Focusable(false).Ref(out _modeSwitch).Col(3).Width(42).MinHeight(24)
                                 .HorizontalAlignment(HorizontalAlignment.Center)
                                 .VerticalAlignment(VerticalAlignment.Center),
                             new TextBlock().Ref(out _previewModeLabel).Col(4).Text(Loc.T("Podgląd"))
                                 .VerticalAlignment(VerticalAlignment.Center).Margin(6, 0),
                             // One click to switch this panel elsewhere: drives, This PC, network, saved and new connections.
-                            new Button().Ref(out _locationButton).Col(5).Content("▾").Padding(10, 0).MinWidth(32)
+                            new Button().Focusable(false).Ref(out _locationButton).Col(5).Content("▾").Padding(10, 0).MinWidth(32)
                                 .VerticalAlignment(VerticalAlignment.Stretch).VerticalContentAlignment(VerticalAlignment.Center)
                                 .BorderThickness(new Thickness(0)).Background(Brushes.Transparent)
                                 .OnClick(click => LocationMenuRequested?.Invoke(this)))),
@@ -801,7 +801,7 @@ public sealed class FilePanelView : ViewBase
         {
             var index = i;
             var selected = i == _activeIndex;
-            _tabStrip.Children.Add(new Button()
+            _tabStrip.Children.Add(new Button().Focusable(false)
                 .Content(TabTitle(_tabs[i]))
                 .Padding(10, 2)
                 .Margin(0, 0, 2, 0)
@@ -813,7 +813,7 @@ public sealed class FilePanelView : ViewBase
                 .OnClick(_ => SelectTab(index)));
         }
 
-        _tabStrip.Children.Add(new Button().Content("+").Width(24).Height(24).Padding(0).FontSize(14)
+        _tabStrip.Children.Add(new Button().Focusable(false).Content("+").Width(24).Height(24).Padding(0).FontSize(14)
             .HorizontalContentAlignment(HorizontalAlignment.Center).VerticalContentAlignment(VerticalAlignment.Center)
             .Background(Brushes.Transparent).BorderThickness(new Thickness(0)).Foreground(b.MutedForeground)
             .OnClick(_ => NewTabRequested?.Invoke()));
@@ -836,13 +836,13 @@ public sealed class FilePanelView : ViewBase
                 title);
             if (selected && _tabs.Count > 1)
             {
-                var close = new Button().Content("✕").Padding(3, 0).MinHeight(0).FontSize(10).Background(Brushes.Transparent).BorderThickness(new Thickness(0))
+                var close = new Button().Focusable(false).Content("✕").Padding(3, 0).MinHeight(0).FontSize(10).Background(Brushes.Transparent).BorderThickness(new Thickness(0))
                     .Foreground(b.MutedForeground).VerticalAlignment(VerticalAlignment.Center).OnClick(_ => CloseActiveTab());
                 ToolTip.SetTip(close, Loc.T("Zamknij zakładkę (Ctrl+W)"));
                 content.Children.Add(close);
             }
 
-            _tabStrip.Children.Add(new Button()
+            _tabStrip.Children.Add(new Button().Focusable(false)
                 .Content(content)
                 .Height(24)
                 .Padding(8, 0)
@@ -853,7 +853,7 @@ public sealed class FilePanelView : ViewBase
                 .OnClick(_ => SelectTab(index)));
         }
 
-        var add = new Button().Content("+").Width(24).Height(24).Padding(0).FontSize(14).HorizontalContentAlignment(HorizontalAlignment.Center)
+        var add = new Button().Focusable(false).Content("+").Width(24).Height(24).Padding(0).FontSize(14).HorizontalContentAlignment(HorizontalAlignment.Center)
             .VerticalContentAlignment(VerticalAlignment.Center).Background(Brushes.Transparent).BorderThickness(new Thickness(0))
             .Foreground(b.MutedForeground).OnClick(_ => NewTabRequested?.Invoke());
         ToolTip.SetTip(add, Loc.T("Nowa zakładka (Ctrl+T)"));

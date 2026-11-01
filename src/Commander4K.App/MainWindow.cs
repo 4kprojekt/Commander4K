@@ -178,6 +178,7 @@ public sealed class MainWindow : Window
         };
 
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
         AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         Opened += async (_, _) => await StartAsync();
         Closing += (_, _) =>
@@ -536,6 +537,9 @@ public sealed class MainWindow : Window
             case "density":
                 _skins!.Refresh();
                 break;
+            case "language":
+                _ = OfferRestartForLanguageAsync();
+                break;
             case "columnWidths":
                 _left.Canvas.InvalidateVisual();
                 _right.Canvas.InvalidateVisual();
@@ -552,6 +556,21 @@ public sealed class MainWindow : Window
                 _ = ApplyMcpAsync();
                 break;
         }
+    }
+
+    /// <summary>The UI language is loaded before the first window, so a change takes a restart; offer it at once.</summary>
+    private async Task OfferRestartForLanguageAsync()
+    {
+        if (!await new ConfirmDialog(_skins!.Current, Loc.T("Zmienić język?"),
+                Loc.T("Nowy język interfejsu obowiązuje po ponownym uruchomieniu. Uruchomić Commander4K ponownie teraz? Otwarte foldery zostaną zapamiętane."),
+                Loc.T("Uruchom ponownie")).ShowAsync(this))
+        {
+            Notify(Loc.T("Język zmieni się przy następnym uruchomieniu."));
+            return;
+        }
+
+        Program.RestartRequested = true;
+        Close();
     }
 
     private const string McpSettingPrefix = "mcp:";
@@ -2109,7 +2128,31 @@ public sealed class MainWindow : Window
         }
     }
 
+    /// <summary>Keys whose KeyDown ran a command: their KeyUp must not reach the focused control too.</summary>
+    private readonly HashSet<Key> _consumedKeys = [];
+
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
+    {
+        HandlePreviewKeyDown(e);
+        if (e.Handled)
+        {
+            _consumedKeys.Add(e.Key);
+        }
+    }
+
+    /// <summary>
+    /// Buttons and switches act on KeyUp (Space, Enter). Without this a Space that marked a folder also toggled the
+    /// Pliki/Podgląd switch that kept the focus after a click, and the folder's view (settings) came back.
+    /// </summary>
+    private void OnPreviewKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (_consumedKeys.Remove(e.Key))
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void HandlePreviewKeyDown(KeyEventArgs e)
     {
         if (_host is null || _active is null)
         {

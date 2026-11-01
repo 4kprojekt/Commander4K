@@ -1312,5 +1312,11 @@
   "Włącz „{0}”": "Enable “{0}”",
   "Włącz i skonfiguruj…": "Enable and configure…",
   "Zainstaluj i skonfiguruj…": "Install and configure…",
-  "Zapisano ustawienia wtyczki w {0}.": "Saved the plugin settings in {0}."
+  "Zapisano ustawienia wtyczki w {0}.": "Saved the plugin settings in {0}.",
+  "Język zmieni się przy następnym uruchomieniu.": "The language will change on the next start.",
+  "Kliknij, aby zmienić skróty": "Click to change the shortcuts",
+  "Nie zapisano ustawień: {0}": "Settings were not saved: {0}",
+  "Nowy język interfejsu obowiązuje po ponownym uruchomieniu. Uruchomić Commander4K ponownie teraz? Otwarte foldery zostaną zapamiętane.": "The new interface language takes effect after a restart. Restart Commander4K now? Open folders are remembered.",
+  "Uruchom ponownie": "Restart",
+  "Zmienić język?": "Change the language?"
 }

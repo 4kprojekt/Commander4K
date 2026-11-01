@@ -77,8 +77,9 @@ public sealed class SettingsView : FolderModeView
         _search = new TextBox().Text(query ?? string.Empty)
             .PlaceholderText(Loc.T("Szukaj ustawień, skrótów, plików… (np. „ukryte”, „F5”, „aktualizacje”)"));
         var searchField = Ds.SearchField(brushes, _search).MaxWidth(560).MinWidth(420);
-        _search.TextChanged += (_, _) => Rebuild();
-        _content = new StackPanel().Spacing(22).Margin(24, 20, 24, 24);
+        _search.TextChanged += (_, _) => ScheduleRebuild();
+        _content = new StackPanel().Spacing(22).Margin(24, 20, 24, 0);
+        _loading = new WaveDots { Foreground = brushes.MutedForeground, DotSize = 6, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(24, 12, 24, 24) };
         _nav = new StackPanel().Spacing(2);
         _keyStatus = new TextBlock().TextWrapping(TextWrapping.Wrap).Foreground(brushes.Error).IsVisible(false).Margin(24, 10, 24, 0);
 
@@ -110,7 +111,7 @@ public sealed class SettingsView : FolderModeView
         DockPanel.SetDock(footer, Dock.Bottom);
         DockPanel.SetDock(nav, Dock.Left);
         DockPanel.SetDock(_keyStatus, Dock.Top);
-        var content = new DockPanel().Children(top, footer, nav, _keyStatus, _scroll = Scroll(_content));
+        var content = new DockPanel().Children(top, footer, nav, _keyStatus, _scroll = Scroll(new StackPanel().Children(_content, _loading)));
         _scroll.ScrollChanged += (_, _) => FollowScroll();
         Rebuild();
         return content;
@@ -121,6 +122,12 @@ public sealed class SettingsView : FolderModeView
         if (e.Key != Key.Escape)
         {
             return false;
+        }
+
+        if (_cancelBindingEdit is { } cancel)
+        {
+            cancel();
+            return true;
         }
 
         if (!string.IsNullOrEmpty(_search.Text))
@@ -141,64 +148,151 @@ public sealed class SettingsView : FolderModeView
         FocusSearch();
     }
 
+    private WaveDots _loading = null!;
+    private IDisposable? _searchTimer;
+    private int _generation;
+    private Action? _cancelBindingEdit;
+
+    /// <summary>Typing in the search box rebuilds the page 150 ms after the last key, not on every key.</summary>
+    private void ScheduleRebuild()
+    {
+        _searchTimer?.Dispose();
+        _searchTimer = DispatcherTimer.RunOnce(Rebuild, TimeSpan.FromMilliseconds(150));
+    }
+
+    private sealed record SettingPlan(SettingDescriptor Setting, IReadOnlyList<SettingChoice>? Choices);
+
+    private sealed record CommandPlan(string Id, string Description, string Bindings);
+
+    private sealed record PagePlan(
+        IReadOnlyList<IGrouping<string, SettingPlan>> Settings, IReadOnlyList<CommandPlan> Commands, bool ShowFiles, Dictionary<string, string> Bindings);
+
+    /// <summary>
+    /// Everything that is not a control is worked out on the thread pool (search, the key bindings, the language list
+    /// read from <c>config/i18n</c>); the UI thread only adds controls, a few rows per dispatcher turn, with the wave
+    /// dots below until the last row is in.
+    /// </summary>
     private void Rebuild()
     {
+        _searchTimer?.Dispose();
+        _searchTimer = null;
+        var generation = ++_generation;
         var query = _search.Text;
         _content.Children.Clear();
         _nav.Children.Clear();
         _navItems.Clear();
         _activeNav = null;
+        _cancelBindingEdit = null;
+        _loading.IsVisible = true;
+        _ = BuildPageAsync(generation, query);
+    }
 
-        foreach (var group in SettingsCatalog.Search(_host.SettingsCatalog, query).GroupBy(s => s.Category))
+    private async Task BuildPageAsync(int generation, string? query)
+    {
+        PagePlan plan;
+        try
         {
-            Section(group.Key, [.. group.Select(setting =>
-                Row(setting.Title, setting.Description + (setting.RequiresRestart ? Loc.T(" (wymaga ponownego uruchomienia)") : ""), Editor(setting)))]);
+            plan = await Task.Run(() => Plan(query));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            if (generation == _generation)
+            {
+                _loading.IsVisible = false;
+                _content.Children.Add(Ds.Notice(Brushes, ex.Message, NoticeKind.Error));
+            }
+
+            return;
         }
 
-        var commands = SettingsCatalog.Search(
-            _host.ListCommands().OrderBy(c => c.Description, StringComparer.CurrentCulture).ToList(),
-            query,
-            c => c.Description,
-            c => [KeysCategory, Loc.T("skrót klawisz"), c.Id, BindingsText(c.Id)]);
-        if (commands.Count > 0)
+        if (generation != _generation)
         {
-            Section(KeysCategory, [.. commands.Select(command => Row(command.Description, command.Id, BindingEditor(command.Id)))],
-                Loc.T("Kilka skrótów oddziel średnikiem, akord spacją (np. „F5; Ctrl+K Ctrl+C”). Pusty = brak skrótu."));
+            return;
         }
 
-        if (SettingsCatalog.Search([FilesCategory], query, s => s, _ => ["json", "folder", "konfiguracja", "keymap", "tools", Loc.T("narzędzia"), Loc.T("skórki"), "plik"]).Count > 0)
+        var rows = new List<(StackPanel Card, Func<Control> Create)>();
+        foreach (var group in plan.Settings)
         {
-            Section(FilesCategory, [new Border().Padding(16, 12).Child(new WrapPanel().Children(
+            var card = Section(group.Key);
+            rows.AddRange(group.Select(item => (card, (Func<Control>)(() => Row(item.Setting.Title,
+                item.Setting.Description + (item.Setting.RequiresRestart ? Loc.T(" (wymaga ponownego uruchomienia)") : ""), Editor(item))))));
+        }
+
+        if (plan.Commands.Count > 0)
+        {
+            var card = Section(KeysCategory, Loc.T("Kilka skrótów oddziel średnikiem, akord spacją (np. „F5; Ctrl+K Ctrl+C”). Pusty = brak skrótu."));
+            rows.AddRange(plan.Commands.Select(command => (card, (Func<Control>)(() => Row(command.Description, command.Id, BindingEditor(command.Id, command.Bindings))))));
+        }
+
+        if (plan.ShowFiles)
+        {
+            var card = Section(FilesCategory);
+            rows.Add((card, () => new Border().Padding(16, 12).Child(new WrapPanel().Children(
                 FileButton(Loc.T("📂 Folder konfiguracji"), () => DesktopShell.OpenFolder(_host.Config.ConfigDirectory)),
                 FileButton("⌨ keymap.json", () => _ = _host.Tools.EditAsync(_host.Config.KeymapPath)),
                 FileButton(Loc.T("🛠 tools.json (edytor, diff, terminal)"), () => _ = _host.Tools.EditAsync(_host.Config.ToolsPath)),
-                FileButton(Loc.T("🎨 Folder skórek"), () => DesktopShell.OpenFolder(_host.Config.SkinsDirectory))))]);
+                FileButton(Loc.T("🎨 Folder skórek"), () => DesktopShell.OpenFolder(_host.Config.SkinsDirectory))))));
         }
 
         if (_content.Children.Count == 0)
         {
             _content.Children.Add(new TextBlock().Text(Loc.T("Nic nie pasuje do wyszukiwania.")).Foreground(Brushes.MutedForeground).Margin(0, 20));
         }
+
+        // A dozen rows per turn at background priority: keys, scrolling and the dots keep running between batches.
+        const int Batch = 12;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (i > 0 && i % Batch == 0)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                if (generation != _generation)
+                {
+                    return;
+                }
+            }
+
+            var (card, create) = rows[i];
+            var row = create();
+            if (card.Children.Count > 0 && row is Border border)
+            {
+                border.BorderBrush = Brushes.PanelBorder;
+                border.BorderThickness = new Thickness(0, 1, 0, 0);
+            }
+
+            card.Children.Add(row);
+        }
+
+        _loading.IsVisible = false;
+    }
+
+    private PagePlan Plan(string? query)
+    {
+        var bindings = _host.KeyBindings
+            .GroupBy(b => b.Value, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => string.Join("; ", g.Select(b => b.Key)), StringComparer.OrdinalIgnoreCase);
+        var settings = SettingsCatalog.Search(_host.SettingsCatalog, query)
+            .Select(s => new SettingPlan(s, s.Kind == SettingKind.Choice ? s.Choices?.Invoke() ?? [] : null))
+            .GroupBy(p => p.Setting.Category)
+            .ToList();
+        var commands = SettingsCatalog.Search(
+                _host.ListCommands().OrderBy(c => c.Description, StringComparer.CurrentCulture).ToList(),
+                query,
+                c => c.Description,
+                c => [KeysCategory, Loc.T("skrót klawisz"), c.Id, bindings.GetValueOrDefault(c.Id) ?? string.Empty])
+            .Select(c => new CommandPlan(c.Id, c.Description, bindings.GetValueOrDefault(c.Id) ?? string.Empty))
+            .ToList();
+        var showFiles = SettingsCatalog.Search([FilesCategory], query, s => s, _ => ["json", "folder", "konfiguracja", "keymap", "tools", Loc.T("narzędzia"), Loc.T("skórki"), "plik"]).Count > 0;
+        return new PagePlan(settings, commands, showFiles, bindings);
     }
 
     /// <summary>
-    /// One section: an 11 px uppercase accent heading and a card (6 px corners) whose rows are separated by rules; plus
-    /// an entry in the section list on the left that scrolls to it.
+    /// One section: an 11 px uppercase accent heading and a card (6 px corners) whose rows, added later, are separated
+    /// by rules; plus an entry in the section list on the left that scrolls to it. Returns the card.
     /// </summary>
-    private void Section(string title, IReadOnlyList<Control> rows, string? note = null)
+    private StackPanel Section(string title, string? note = null)
     {
         var card = new StackPanel();
-        for (var i = 0; i < rows.Count; i++)
-        {
-            if (i > 0 && rows[i] is Border row)
-            {
-                row.BorderBrush = Brushes.PanelBorder;
-                row.BorderThickness = new Thickness(0, 1, 0, 0);
-            }
-
-            card.Children.Add(rows[i]);
-        }
-
         var heading = Ds.SectionHeading(Brushes, title)
             .Margin(0, 0, 0, 8);
         var section = new StackPanel().Children(heading);
@@ -230,6 +324,8 @@ public sealed class SettingsView : FolderModeView
         {
             SetActive(item);
         }
+
+        return card;
     }
 
     private sealed record NavItem(Button Button, Border Bar, TextBlock Label, Control Section);
@@ -301,8 +397,9 @@ public sealed class SettingsView : FolderModeView
                     new TextBlock().Text(description).FontSize(12).Foreground(Brushes.MutedForeground).TextWrapping(TextWrapping.Wrap).Margin(0, 2, 0, 0)),
                 editor.Col(1).Margin(16, 0, 0, 0).VerticalAlignment(VerticalAlignment.Center)));
 
-    private Control Editor(SettingDescriptor setting)
+    private Control Editor(SettingPlan plan)
     {
+        var setting = plan.Setting;
         switch (setting.Kind)
         {
             case SettingKind.Toggle:
@@ -311,7 +408,7 @@ public sealed class SettingsView : FolderModeView
                 return toggle;
 
             case SettingKind.Choice:
-                var choices = setting.Choices?.Invoke() ?? [];
+                var choices = plan.Choices ?? [];
                 if (choices.Count is 2 or 3 && choices.All(c => c.Label.Length <= 14))
                 {
                     // Few short choices: a segmented control, as in the design (Gęstość).
@@ -387,69 +484,141 @@ public sealed class SettingsView : FolderModeView
         }
 
         setting.Set(_host.Settings, value);
-        _host.ApplySettings();
-        _ = _host.SaveSettingsAsync();
-        _onChanged(setting.Key);
+        _ = ApplyAndSaveAsync(setting.Key);
+    }
+
+    /// <summary>Applying (logins are decrypted) and writing settings.json happen on the thread pool; then the window reacts.</summary>
+    private async Task ApplyAndSaveAsync(string key)
+    {
+        var error = await Task.Run(async () =>
+        {
+            try
+            {
+                _host.ApplySettings();
+                await _host.SaveSettingsAsync();
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+            {
+                return ex.Message;
+            }
+        });
+        _keyStatus.IsVisible = error is not null;
+        _keyStatus.Foreground = Brushes.Error;
+        _keyStatus.Text = error is null ? string.Empty : Loc.T("Nie zapisano ustawień: {0}", error);
+        _onChanged(key);
     }
 
     private string BindingsText(string commandId) =>
         string.Join("; ", _host.KeyBindings.Where(b => string.Equals(b.Value, commandId, StringComparison.OrdinalIgnoreCase)).Select(b => b.Key));
 
-    private TextBox BindingEditor(string commandId)
+    /// <summary>
+    /// The shortcuts of a command as a flat button (hundreds of text boxes made the page slow to build); a click turns
+    /// it into a text box, Enter or leaving it saves, Esc cancels.
+    /// </summary>
+    private Decorator BindingEditor(string commandId, string bindings)
     {
-        var box = new TextBox().Width(220).Text(BindingsText(commandId)).FontFamily(Brushes.MonospaceFamily);
-        async Task CommitAsync()
+        var host = new Decorator();
+        Button Display(string text)
         {
-            var requested = (box.Text ?? string.Empty)
-                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList();
-            if (string.Join("; ", requested) == BindingsText(commandId))
-            {
-                return;
-            }
-
-            var bindings = _host.KeyBindings
-                .Where(b => !string.Equals(b.Value, commandId, StringComparison.OrdinalIgnoreCase))
-                .ToDictionary(b => b.Key, b => b.Value, StringComparer.OrdinalIgnoreCase);
-            var conflicts = new List<string>();
-            try
-            {
-                foreach (var sequence in requested)
-                {
-                    var canonical = string.Join(' ', sequence.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(s => KeyStroke.Parse(s).ToString()));
-                    foreach (var clash in bindings.Where(b => string.Equals(Canonical(b.Key), canonical, StringComparison.Ordinal)).ToList())
-                    {
-                        conflicts.Add(Loc.T("{0} był przypisany do „{1}”", canonical, clash.Value));
-                        bindings.Remove(clash.Key);
-                    }
-
-                    bindings[canonical] = commandId;
-                }
-
-                await _host.SaveKeyBindingsAsync(bindings);
-                _keyStatus.IsVisible = conflicts.Count > 0;
-                _keyStatus.Foreground = Brushes.SelectedForeground;
-                _keyStatus.Text = conflicts.Count > 0 ? Loc.T("Przeniesiono skróty: ") + string.Join("; ", conflicts) + "." : string.Empty;
-                box.Text = BindingsText(commandId);
-            }
-            catch (FormatException ex)
-            {
-                _keyStatus.IsVisible = true;
-                _keyStatus.Foreground = Brushes.Error;
-                _keyStatus.Text = Loc.T("Niepoprawny skrót: {0}", ex.Message);
-            }
+            var button = Ds.Button(Brushes, text.Length > 0 ? text : "—", Edit, ButtonKind.Toolbar);
+            button.Width = 220;
+            button.Height = 30;
+            button.FontFamily = Brushes.MonospaceFamily;
+            button.HorizontalContentAlignment = HorizontalAlignment.Left;
+            ToolTip.SetTip(button, Loc.T("Kliknij, aby zmienić skróty"));
+            return button;
         }
 
-        box.LostFocus += async (_, _) => await CommitAsync();
-        box.KeyDown += async (_, e) =>
+        void Edit()
         {
-            if (e.Key == Key.Enter)
+            var box = new TextBox().Width(220).Height(30).Text(BindingsText(commandId)).FontFamily(Brushes.MonospaceFamily);
+            var done = false;
+            void Finish()
             {
-                e.Handled = true;
-                await CommitAsync();
+                done = true;
+                _cancelBindingEdit = null;
+                host.Child = Display(BindingsText(commandId));
             }
-        };
-        return box;
+
+            async Task SaveAsync()
+            {
+                if (done)
+                {
+                    return;
+                }
+
+                await CommitBindingsAsync(commandId, box.Text);
+                Finish();
+            }
+
+            box.LostFocus += async (_, _) => await SaveAsync();
+            box.KeyDown += async (_, e) =>
+            {
+                if (e.Key == Key.Enter)
+                {
+                    e.Handled = true;
+                    await SaveAsync();
+                }
+            };
+            _cancelBindingEdit = Finish;
+            host.Child = box;
+            Dispatcher.UIThread.Post(() =>
+            {
+                box.Focus();
+                box.SelectAll();
+            }, DispatcherPriority.Loaded);
+        }
+
+        host.Child = Display(bindings);
+        return host;
+    }
+
+    private async Task CommitBindingsAsync(string commandId, string? text)
+    {
+        var requested = (text ?? string.Empty)
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+        if (string.Join("; ", requested) == BindingsText(commandId))
+        {
+            return;
+        }
+
+        var bindings = _host.KeyBindings
+            .Where(b => !string.Equals(b.Value, commandId, StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(b => b.Key, b => b.Value, StringComparer.OrdinalIgnoreCase);
+        var conflicts = new List<string>();
+        try
+        {
+            foreach (var sequence in requested)
+            {
+                var canonical = string.Join(' ', sequence.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(s => KeyStroke.Parse(s).ToString()));
+                foreach (var clash in bindings.Where(b => string.Equals(Canonical(b.Key), canonical, StringComparison.Ordinal)).ToList())
+                {
+                    conflicts.Add(Loc.T("{0} był przypisany do „{1}”", canonical, clash.Value));
+                    bindings.Remove(clash.Key);
+                }
+
+                bindings[canonical] = commandId;
+            }
+
+            await Task.Run(() => _host.SaveKeyBindingsAsync(bindings));
+            _keyStatus.IsVisible = conflicts.Count > 0;
+            _keyStatus.Foreground = Brushes.SelectedForeground;
+            _keyStatus.Text = conflicts.Count > 0 ? Loc.T("Przeniesiono skróty: ") + string.Join("; ", conflicts) + "." : string.Empty;
+        }
+        catch (FormatException ex)
+        {
+            _keyStatus.IsVisible = true;
+            _keyStatus.Foreground = Brushes.Error;
+            _keyStatus.Text = Loc.T("Niepoprawny skrót: {0}", ex.Message);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _keyStatus.IsVisible = true;
+            _keyStatus.Foreground = Brushes.Error;
+            _keyStatus.Text = Loc.T("Nie zapisano ustawień: {0}", ex.Message);
+        }
     }
 
     private static string Canonical(string sequence)
