@@ -34,6 +34,9 @@ public interface IPluginUi
 
     Task OpenUrlAsync(string url);
 
+    /// <summary>Asks the user where to open a folder (Explorer or the active panel). Default: nothing happens.</summary>
+    Task OpenFolderAsync(string path) => Task.CompletedTask;
+
     Task SearchWebAsync(string query, string? engine);
 
     Task CopyTextAsync(string text);
@@ -107,6 +110,18 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
     {
         audit.Record(Manifest.Id, "ui.search", $"{engine ?? "default"}: {query}", AuditOutcome.Info);
         return ui.SearchWebAsync(query, engine);
+    }
+
+    /// <remarks>Not gated: the user is always asked where to open the folder (the app's standard dialog) and nothing is created.</remarks>
+    public Task OpenFolderAsync(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException(Loc.T("Podaj ścieżkę folderu."), nameof(path));
+        }
+
+        audit.Record(Manifest.Id, "ui.openFolder", path, AuditOutcome.Info);
+        return ui.OpenFolderAsync(path);
     }
 
     public void Log(string message) => audit.Record(Manifest.Id, "log", message, AuditOutcome.Info);

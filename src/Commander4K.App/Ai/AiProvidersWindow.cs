@@ -75,8 +75,8 @@ public sealed class AiProvidersWindow : Window
                 Loc.T("Zaloguj się do kilku darmowych usług — gdy jedna wyczerpie limit albo zablokuje dostęp, odpowiada następna w kolejności. Klucze są zapisywane w config/ai/credentials.json, zaszyfrowane dla bieżącego konta Windows."))));
         var buttons = new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Children(
             new Button().Content(Loc.T("Odśwież listę")).Height(30).OnClick(async _ => await RefreshCatalogAsync()),
-            new Button().Content(Loc.T("📂 Folder config/ai")).Height(30).OnClick(_ =>
-                SkinPickerDialog.OpenFolder(Path.GetDirectoryName(_host.AiCredentials.FilePath)!)),
+            new Button().Content(Loc.T("📂 Folder config/ai")).Height(30).OnClick(async _ =>
+                await FolderOpener.OpenAsync(this, b, Path.GetDirectoryName(_host.AiCredentials.FilePath)!)),
             WindowSkin.ApplyAccent(new Button().Content(Loc.T("Zamknij")).Height(30), b).OnClick(_ => Close()));
         DockPanel.SetDock(buttons, Dock.Right);
         var footer = new Border().Background(b.HeaderBackground).BorderBrush(b.PanelBorder).BorderThickness(new Thickness(0, 1, 0, 0))

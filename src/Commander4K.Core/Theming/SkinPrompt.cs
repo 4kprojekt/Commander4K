@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Commander4K.Core.Configuration;
 
 namespace Commander4K.Core.Theming;
@@ -77,6 +78,63 @@ public static class SkinPrompt
         builder.AppendLine("If you can produce files (for example in Claude Design), also offer it as a downloadable <id>.json file.");
         builder.AppendLine("The user will paste it into Commander4K's skin editor, which validates it, or save it into the config/skins folder.");
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// Prompt for "create with AI" in any chat assistant (Gemini, ChatGPT, Claude…): the user's idea first, then the
+    /// brief, the schema, an example, and an insistent "JSON only" output contract so the reply can be pasted back as is.
+    /// </summary>
+    public static string ForJsonOnly(string? description)
+    {
+        var idea = string.IsNullOrWhiteSpace(description) ? "any attractive, readable skin of your choice" : description.Trim();
+        var builder = new StringBuilder();
+        builder.AppendLine("You are generating a configuration file, not a chat answer. Your entire reply will be parsed by a program.");
+        builder.AppendLine("OUTPUT CONTRACT: reply with exactly ONE valid JSON object and NOTHING else: no greeting, no explanation,");
+        builder.AppendLine("no markdown, no code fence, no comments, no trailing commas. The first character of the reply is { and the last is }.");
+        builder.AppendLine();
+        builder.AppendLine($"Skin idea from the user: \"{idea}\"");
+        builder.AppendLine();
+        builder.AppendLine(DesignBrief);
+        builder.AppendLine();
+        builder.AppendLine("The JSON must validate against this JSON Schema (draft 2020-12):");
+        builder.AppendLine(SkinSchema.CreateJson());
+        builder.AppendLine();
+        builder.AppendLine("""
+            Hard requirements (the program rejects the reply otherwise):
+            - Property names exactly as in the schema (camelCase); every property listed under "required" is present.
+            - Every colour is a string "#RRGGBB" (or "#AARRGGBB"); no colour names, no rgb(), no null.
+            - id is lower-case letters, digits and hyphens only (max 64 characters), e.g. "cyber-neon".
+            - Optional palette tokens may be omitted; do not write null for them.
+            """);
+        builder.AppendLine();
+        builder.AppendLine("Example of the expected shape (the Norton Commander skin; make yours different and fit the idea):");
+        builder.AppendLine(WithoutNulls(BuiltInSkins.NortonCommander));
+        builder.AppendLine();
+        builder.AppendLine("REMINDER: output only the JSON object for the idea above. Any other character breaks the import.");
+        return builder.ToString();
+    }
+
+    private static string WithoutNulls(Skin skin)
+    {
+        static void Prune(JsonNode? node)
+        {
+            if (node is JsonObject obj)
+            {
+                foreach (var name in obj.Where(p => p.Value is null).Select(p => p.Key).ToList())
+                {
+                    obj.Remove(name);
+                }
+
+                foreach (var (_, child) in obj)
+                {
+                    Prune(child);
+                }
+            }
+        }
+
+        var root = JsonNode.Parse(SkinJson.Serialize(skin))!;
+        Prune(root);
+        return root.ToJsonString();
     }
 
     /// <summary>User message for the in-app generator; the brief goes into the system prompt.</summary>

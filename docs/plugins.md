@@ -184,6 +184,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `ui.prompt` | `{ title, message, initial? }` | string or `null` | — |
 | `ui.navigate` | `{ path, focus? }` | `null` | — |
 | `ui.openUrl` | `{ url }` | `null` | — (http/https only; opens the app's built-in browser panel, audited) |
+| `ui.openFolder` | `{ path }` | `null` | — (the user is asked where to open it: Explorer or the active panel; nothing is created; audited) |
 | `ui.search` | `{ query, engine? }` | `null` | — (`engine`: omitted = the user's search engine, `"assistant"` = the user's AI assistant, or `google`, `bing`, `duckduckgo`, `chatgpt`, `claude`, `perplexity`, `gemini`; use it e.g. to let the user look up an error) |
 | `ui.copyText` | `{ text }` | `null` | — (clipboard, write only) |
 | `storage.get` | `{ key }` | any JSON value or `null` | — (the plugin's own data) |
@@ -338,6 +339,7 @@ Every helper maps to one protocol method above:
 | `ui.prompt` | `prompt(title, message, initial="")` | `prompt(title, message, initial)` | `Read-C4KInput $Title $Message $Initial` |
 | `ui.navigate` | `navigate(path, focus=None)` | `navigate(path, focus)` | — (`Invoke-C4K 'ui.navigate' @{ path = … }`) |
 | `ui.openUrl` | `open_url(url)` | `openUrl(url)` | `Open-C4KUrl $Url` |
+| `ui.openFolder` | `open_folder(path)` | `openFolder(path)` | `Open-C4KFolder $Path` |
 | `ui.search` | `search(query, engine=None)` | `search(query, engine)` | `Search-C4KWeb $Query $Engine` |
 | `ui.copyText` | `copy_text(text)` | `copyText(text)` | `Copy-C4KText $Text` |
 | — (`c4k:plugin/…` target for `preview.action`) | `action_target(action, **args)` | `actionTarget(action, args)` | `Get-C4KActionTarget $Action @{ k = v }` |

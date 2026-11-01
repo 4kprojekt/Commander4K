@@ -69,6 +69,11 @@ public sealed class SkinCatalog
 
                 foreach (var file in Directory.EnumerateFiles(skinsDirectory, "*.json"))
                 {
+                    if (string.Equals(Path.GetFileName(file), SkinSchema.FileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
                     try
                     {
                         await using var stream = File.OpenRead(file);

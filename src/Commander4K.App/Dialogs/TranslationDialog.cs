@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
@@ -40,11 +40,7 @@ public sealed class TranslationDialog : DialogWindow<bool>
                 _languageName),
             new WrapPanel().Children(
                 Action(Loc.T("📋 Kopiuj prompt dla AI"), CopyPromptAsync),
-                Action(Loc.T("📂 Folder tłumaczeń"), () =>
-                {
-                    SkinPickerDialog.OpenFolder(Folder);
-                    return Task.CompletedTask;
-                }),
+                Action(Loc.T("📂 Folder tłumaczeń"), () => FolderOpener.OpenAsync(this, Brushes, Folder)),
                 Action(Loc.T("✔ Sprawdź pliki"), () =>
                 {
                     _report.Text = TranslationKit.Report(_host.Config.ConfigDirectory);

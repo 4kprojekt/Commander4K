@@ -34,8 +34,8 @@ public sealed class ViewerWindow : Window
         WindowSkin.Apply(this, brushes, panelSurface: true);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        _status = new TextBlock().Text(Loc.T("Wczytywanie…")).Margin(8, 4).Foreground(brushes.StatusForeground);
-        _busy = new WaveDots { Foreground = brushes.StatusForeground, Margin = new Avalonia.Thickness(8, 0, 0, 0) };
+        _status = new TextBlock().Text(Loc.T("Wczytywanie…")).Margin(10, 0).VerticalAlignment(VerticalAlignment.Center).Foreground(brushes.StatusForeground);
+        _busy = new WaveDots { Foreground = brushes.StatusForeground, Margin = new Avalonia.Thickness(10, 0, 0, 0) };
         _text = new TextBox()
             .IsReadOnly(true)
             .AcceptsReturn(true)
@@ -43,9 +43,11 @@ public sealed class ViewerWindow : Window
             .FontFamily(brushes.MonospaceFamily)
             .Background(brushes.CodeBackground)
             .Foreground(brushes.FileForeground)
+            .Padding(12, 8)
             .BorderThickness(new Avalonia.Thickness(0));
         _statusBar = new Border().Background(brushes.StatusBackground)
             .Child(new Grid().Cols("Auto,*").Children(_busy, _status.Col(1)));
+        StyleStatusBar(brushes);
         Content = new Grid().Rows("*,Auto").Children(
             new ScrollViewer().Row(0).HorizontalScrollBarVisibility(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto).Content(_text),
             _statusBar.Row(1));
@@ -64,7 +66,7 @@ public sealed class ViewerWindow : Window
 
                 (_text.Text, _status.Text) = content switch
                 {
-                    TextViewerContent t => (t.Text, $"Tekst · {FileViewportCanvas.FormatSize(entry.Size)}"),
+                    TextViewerContent t => (t.Text, Loc.T("Tekst · {0}", FileViewportCanvas.FormatSize(entry.Size))),
                     HexViewerContent h => (await Task.Run(() => TextHexViewerPlugin.FormatHex(h.Data.Span), token),
                         Loc.T("Hex · pokazano {0} z {1}", FileViewportCanvas.FormatSize(h.Data.Length), FileViewportCanvas.FormatSize(h.TotalLength))),
                     _ => (string.Empty, Loc.T("Nieobsługiwany typ podglądu")),
@@ -93,6 +95,16 @@ public sealed class ViewerWindow : Window
         _statusBar.Background = brushes.StatusBackground;
         _status.Foreground = brushes.StatusForeground;
         _busy.Foreground = brushes.StatusForeground;
+        _brushes = brushes;
+        StyleStatusBar(brushes);
+    }
+
+    private void StyleStatusBar(SkinBrushes b)
+    {
+        _statusBar.MinHeight = b.IsModern ? 26 : 0;
+        _statusBar.BorderBrush = b.PanelBorder;
+        _statusBar.BorderThickness = b.IsModern ? new Avalonia.Thickness(0, 1, 0, 0) : default;
+        _status.FontSize = b.IsModern ? 11 : b.FontSize;
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -112,6 +124,10 @@ public sealed class TextWindow : Window
 {
     private readonly string _text;
     private readonly TextBox _box;
+    private readonly Border _card = new();
+    private readonly Border _footer = new();
+    private readonly Button _copy;
+    private readonly Button _close;
 
     public TextWindow(SkinBrushes brushes, string title, string text)
     {
@@ -127,21 +143,46 @@ public sealed class TextWindow : Window
             .AcceptsReturn(true)
             .TextWrapping(TextWrapping.NoWrap)
             .FontFamily(brushes.MonospaceFamily)
-            .Background(brushes.CodeBackground)
+            .Background(Brushes.Transparent)
             .Foreground(brushes.FileForeground)
+            .Padding(12, 8)
             .BorderThickness(new Avalonia.Thickness(0));
-        Content = new Grid().Rows("*,Auto").Children(
-            new ScrollViewer().Row(0).HorizontalScrollBarVisibility(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto).Content(_box),
-            new StackPanel().Row(1).Orientation(Orientation.Horizontal).HorizontalAlignment(HorizontalAlignment.Right).Spacing(8).Margin(8).Children(
-                new Button().Content(Loc.T("Kopiuj")).OnClick(async _ => await SkinPickerDialog.CopyToClipboardAsync(this, _text)),
-                new Button().Content(Loc.T("Zamknij")).OnClick(_ => Close())));
+        _copy = new Button().Content(Loc.T("Kopiuj")).OnClick(async _ => await SkinPickerDialog.CopyToClipboardAsync(this, _text));
+        _close = new Button().Content(Loc.T("Zamknij")).OnClick(_ => Close());
+        _card.Child = new ScrollViewer().HorizontalScrollBarVisibility(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto).Content(_box);
+        _footer.Child = new StackPanel().Orientation(Orientation.Horizontal).HorizontalAlignment(HorizontalAlignment.Right).Spacing(8).Children(_copy, _close);
+        Content = new Grid().Rows("*,Auto").Children(_card.Row(0), _footer.Row(1));
+        StyleParts(brushes);
     }
 
     public void ApplySkin(SkinBrushes brushes)
     {
         WindowSkin.Apply(this, brushes, panelSurface: true);
-        _box.Background = brushes.CodeBackground;
         _box.Foreground = brushes.FileForeground;
+        StyleParts(brushes);
+    }
+
+    private void StyleParts(SkinBrushes b)
+    {
+        var modern = b.IsModern;
+        _card.Background = b.CodeBackground;
+        _card.BorderBrush = b.PanelBorder;
+        _card.BorderThickness = new Avalonia.Thickness(modern ? 1 : 0);
+        _card.CornerRadius = new Avalonia.CornerRadius(modern ? 6 : 0);
+        _card.Margin = modern ? new Avalonia.Thickness(12, 12, 12, 0) : default;
+        _card.ClipToBounds = true;
+        _footer.Background = b.HeaderBackground;
+        _footer.BorderBrush = b.PanelBorder;
+        _footer.BorderThickness = new Avalonia.Thickness(0, 1, 0, 0);
+        _footer.Padding = new Avalonia.Thickness(12, 10);
+        _footer.Margin = new Avalonia.Thickness(0, modern ? 12 : 0, 0, 0);
+        foreach (var button in new[] { _copy, _close })
+        {
+            button.MinWidth = 88;
+            button.Height = 30;
+        }
+
+        WindowSkin.ApplyAccent(_close, b);
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -169,6 +210,9 @@ public sealed class SearchWindow : Window
     private readonly TextBlock _status;
     private readonly ObservableCollection<SearchResultItem> _results = [];
     private readonly ListBox _list;
+    private readonly Border _form = new();
+    private readonly Border _listCard = new();
+    private readonly Border _footer = new();
     private CancellationTokenSource? _running;
 
     public SearchWindow(AppHost host, SkinBrushes brushes, string rootPath, Action<VfsEntry> goTo)
@@ -183,31 +227,56 @@ public sealed class SearchWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         _root = new TextBox().Text(rootPath);
-        _pattern = new TextBox().Text("*").PlaceholderText("Nazwa, np. *.log");
+        _pattern = new TextBox().Text("*").PlaceholderText(Loc.T("Nazwa, np. *.log"));
         _text = new TextBox().PlaceholderText(Loc.T("Zawiera tekst (opcjonalnie)"));
         _caseSensitive = new CheckBox().Content(Loc.T("Rozróżniaj wielkość liter"));
         _start = new Button().Content(Loc.T("Szukaj")).IsDefault(true).OnClick(async _ => await ToggleAsync());
-        _status = new TextBlock().Margin(0, 6).Foreground(brushes.StatusForeground);
+        _status = new TextBlock().VerticalAlignment(VerticalAlignment.Center).Foreground(brushes.MutedForeground);
         _list = new ListBox().ItemsSource(_results);
         _list.DoubleTapped += (_, _) => GoToSelected();
-
-        Content = new Grid().Rows("Auto,Auto,Auto,Auto,*").Margin(14).Children(
-            Row(0, "W:", _root),
-            Row(1, Loc.T("Nazwa:"), _pattern),
-            Row(2, Loc.T("Tekst:"), _text),
-            new StackPanel().Row(3).Orientation(Orientation.Horizontal).Spacing(12).Children(_caseSensitive, _start, _status),
-            _list.Row(4).Margin(0, 8, 0, 0));
+        _listCard.Child = _list;
+        _form.Child = new Grid().Rows("Auto,Auto,Auto").Children(
+            Row(0, Loc.T("W:"), _root),
+            Row(1, Loc.T("Nazwa:"), Ds.SearchField(brushes, _pattern)),
+            Row(2, Loc.T("Tekst:"), _text));
+        _footer.Child = new Grid().Cols("*,Auto,Auto").Children(
+            _status,
+            _caseSensitive.Col(1).Margin(0, 0, 16, 0),
+            _start.Col(2));
+        Content = new Grid().Rows("Auto,*,Auto").Children(_form.Row(0), _listCard.Row(1), _footer.Row(2));
+        StyleParts(brushes);
         Opened += (_, _) => _pattern.Focus();
         Closed += (_, _) => _running?.Cancel();
+    }
+
+    private void StyleParts(SkinBrushes b)
+    {
+        var modern = b.IsModern;
+        _form.Padding = new Avalonia.Thickness(14, 14, 14, 8);
+        _listCard.Background = b.PanelBackground;
+        _listCard.BorderBrush = b.PanelBorder;
+        _listCard.BorderThickness = new Avalonia.Thickness(1);
+        _listCard.CornerRadius = new Avalonia.CornerRadius(modern ? 6 : 0);
+        _listCard.Margin = new Avalonia.Thickness(14, 0);
+        _listCard.ClipToBounds = true;
+        _list.Background = Brushes.Transparent;
+        _list.BorderThickness = default;
+        _footer.Background = b.HeaderBackground;
+        _footer.BorderBrush = b.PanelBorder;
+        _footer.BorderThickness = new Avalonia.Thickness(0, 1, 0, 0);
+        _footer.Padding = new Avalonia.Thickness(14, 10);
+        _footer.Margin = new Avalonia.Thickness(0, 14, 0, 0);
+        _start.MinWidth = 96;
+        _start.Height = 30;
+        _status.Foreground = b.MutedForeground;
+        WindowSkin.ApplyAccent(_start, b);
     }
 
     public void ApplySkin(SkinBrushes brushes)
     {
         _brushes = brushes;
         WindowSkin.Apply(this, brushes);
-        _status.Foreground = brushes.StatusForeground;
-        _list.Background = brushes.PanelBackground;
-        _list.BorderBrush = brushes.PanelBorder;
+        StyleParts(brushes);
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -234,8 +303,8 @@ public sealed class SearchWindow : Window
     }
 
     private static Grid Row(int row, string label, Control input) =>
-        new Grid().Row(row).Cols("70,*").Margin(0, 0, 0, 6).Children(
-            new TextBlock().Text(label).VerticalAlignment(VerticalAlignment.Center),
+        new Grid().Row(row).Cols("70,*").Margin(0, 0, 0, 8).Children(
+            new TextBlock().Text(label).FontSize(12).VerticalAlignment(VerticalAlignment.Center).Opacity(0.75),
             input.Col(1));
 
     private async Task ToggleAsync()
@@ -261,6 +330,7 @@ public sealed class SearchWindow : Window
             _caseSensitive.IsChecked == true);
 
         _results.Clear();
+        _status.Foreground = _brushes.MutedForeground;
         _running = new CancellationTokenSource();
         var token = _running.Token;
         _start.Content = Loc.T("Stop (Esc)");

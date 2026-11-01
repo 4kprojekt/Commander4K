@@ -45,7 +45,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private readonly Button _saveButton;
     private readonly ContentControl _content = new();
     private readonly TextBlock _status;
-    private readonly WaveDots _busy = new() { IsVisible = false, Margin = new Thickness(8, 0, 0, 0) };
+    private readonly Border _statusBar;
+    private readonly WaveDots _busy = new() { IsVisible = false, Margin = new Thickness(0, 0, 8, 0) };
     private SkinBrushes _brushes;
     private string? _loadedKey;
     private CancellationTokenSource? _loading;
@@ -137,12 +138,13 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             _editButton.Col(2),
             _saveButton.Col(3),
             FilesButton = new Button().Col(4).Content(pinned is null && _pinnedFile is null ? Loc.T("Zamknij (Esc)") : Loc.T("📄 Pliki (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
-        _status = new TextBlock().Margin(8, 2).TextTrimming(TextTrimming.CharacterEllipsis);
+        _status = new TextBlock().VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
+        _statusBar = new Border().Row(2).Child(new Grid().Cols("Auto,*").Children(_busy.VerticalAlignment(VerticalAlignment.Center), _status.Col(1)));
 
         RowDefinitions = new RowDefinitions("Auto,*,Auto");
         Children.Add(_header);
         Children.Add(_content.Row(1));
-        Children.Add(new Grid().Row(2).Cols("Auto,*").Children(_busy, _status.Col(1)));
+        Children.Add(_statusBar);
         PointerPressed += (_, _) => Activated?.Invoke();
 
         ApplySkin(brushes);
@@ -297,10 +299,33 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     public void ApplySkin(SkinBrushes brushes)
     {
         _brushes = brushes;
+        var modern = brushes.IsModern;
         Background = brushes.PanelBackground;
+
+        // Design system: header like the path bar (header colour, rule below), flat 26 px buttons; status line 26 px with a rule above.
         _header.Background = brushes.HeaderBackground;
+        _header.BorderBrush = brushes.PanelBorder;
+        _header.BorderThickness = new Thickness(0, 0, 0, modern ? 1 : 0);
+        _header.Padding = modern ? new Thickness(8, 3) : new Thickness(8, 4);
+        _header.MinHeight = modern ? 32 : 0;
         _title.Foreground = brushes.HeaderForeground;
+        _title.FontFamily = brushes.FontFamily;
+        _title.FontSize = brushes.FontSize;
+        foreach (var button in new[] { _backButton, _editButton, _saveButton, FilesButton })
+        {
+            Ds.StyleToolButton(button, brushes);
+            button.FontSize = Math.Max(12, brushes.FontSize - 1);
+            button.VerticalAlignment = VerticalAlignment.Center;
+        }
+
+        _statusBar.Background = brushes.StatusBackground;
+        _statusBar.BorderBrush = brushes.PanelBorder;
+        _statusBar.BorderThickness = new Thickness(0, modern ? 1 : 0, 0, 0);
+        _statusBar.Height = modern ? 26 : double.NaN;
+        _statusBar.Padding = modern ? new Thickness(12, 0) : new Thickness(8, 2);
         _status.Foreground = brushes.StatusForeground;
+        _status.FontFamily = brushes.FontFamily;
+        _status.FontSize = modern ? Math.Max(11, brushes.FontSize - 1) : brushes.FontSize - 1;
         _busy.Foreground = brushes.StatusForeground;
         if (_history.Trail.Count > 0)
         {
@@ -613,7 +638,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             return;
         }
 
-        SetStatus($"{plugin.DisplayName}: wczytywanie…", busy: true);
+        SetStatus(Loc.T("{0}: wczytywanie…", plugin.DisplayName), busy: true);
         var host = _app.HostFor(plugin.Manifest);
         var progress = new CallbackProgress<PreviewContent>(partial => QueuePreviewProgress(cts, partial));
         try
@@ -802,7 +827,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         TilesPreview tiles => TilesView(tiles),
         Plugins.BuiltIn.Dashboard.DashboardPreview dashboard => DashboardView(dashboard),
         ChartPreview chart => ChartView(chart),
-        MessagePreview message => new TextBlock { Text = message.Message, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap },
+        MessagePreview message => new TextBlock { Text = message.Message, Foreground = message.Message.StartsWith('⚠') ? _brushes.Error : _brushes.MutedForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap },
         _ => null,
     };
 
@@ -1348,7 +1373,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             _liveDelay.Start();
         };
 
-        var grid = new Grid().Cols("*,4,*");
+        var grid = new Grid().Cols("*,2,*");
         grid.Children.Add(editor);
         grid.Children.Add(new GridSplitter().Col(1).Background(_brushes.PanelBorder));
         grid.Children.Add(_livePreview.Col(2));
@@ -1424,10 +1449,10 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             TextWrapping = TextWrapping.Wrap,
             FontFamily = _brushes.MonospaceFamily,
             FontSize = _brushes.FontSize,
-            Background = _brushes.PanelBackground,
+            Background = _brushes.CodeBackground,
             Foreground = _brushes.FileForeground,
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(10),
+            Padding = new Thickness(12, 8),
         };
         // Dirty means "differs from what was loaded or last saved", not "a TextChanged happened" (Avalonia raises
         // it when the text is first assigned).
@@ -1463,16 +1488,16 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             TextWrapping = TextWrapping.NoWrap,
             FontFamily = _brushes.MonospaceFamily,
             FontSize = _brushes.FontSize - 1,
-            Background = _brushes.PanelBackground,
+            Background = _brushes.CodeBackground,
             Foreground = _brushes.FileForeground,
-            Padding = new Thickness(4, 2),
+            Padding = new Thickness(12, 8),
         };
         if (note is not null)
         {
             SetStatus(note);
         }
 
-        return new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto, Content = box };
+        return new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto, Background = _brushes.CodeBackground, Content = box };
     }
 
     private Control ImageView(ImagePreview image)
@@ -1481,12 +1506,33 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             using var stream = new MemoryStream(image.EncodedImage.ToArray());
             var bitmap = new Bitmap(stream);
-            SetStatus($"{bitmap.PixelSize.Width} × {bitmap.PixelSize.Height} px · {_entry?.Path}");
-            return new Image { Source = bitmap, Stretch = Stretch.Uniform, Margin = new Thickness(8) };
+            SetStatus(Loc.T("{0} × {1} px · {2}", bitmap.PixelSize.Width, bitmap.PixelSize.Height, _entry?.Path ?? string.Empty));
+            var frame = new Border
+            {
+                Child = new Image { Source = bitmap, Stretch = Stretch.Uniform },
+                BorderBrush = _brushes.PanelBorder,
+                BorderThickness = new Thickness(_brushes.IsModern ? 1 : 0),
+                CornerRadius = new CornerRadius(_brushes.IsModern ? 4 : 0),
+                ClipToBounds = true,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(16),
+            };
+            return new Border { Background = _brushes.CodeBackground, Child = frame };
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException)
         {
-            return new TextBlock { Text = Loc.T("Nie można odczytać obrazu: ") + ex.Message, Foreground = _brushes.Error, Margin = new Thickness(16) };
+            return new Border
+            {
+                Background = _brushes.ErrorBackground,
+                BorderBrush = _brushes.Error,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(_brushes.IsModern ? 6 : 0),
+                Padding = new Thickness(12, 8),
+                Margin = new Thickness(16),
+                VerticalAlignment = VerticalAlignment.Top,
+                Child = new TextBlock { Text = Loc.T("Nie można odczytać obrazu: ") + ex.Message, Foreground = _brushes.FileForeground, TextWrapping = TextWrapping.Wrap },
+            };
         }
     }
 
@@ -1539,7 +1585,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         var list = new StackPanel { Spacing = 1, Margin = new Thickness(12, 4) };
         list.Children.Add(new TextBlock
         {
-            Text = $"Razem: {FileViewportCanvas.FormatSize(known)}" + (folder.Complete ? string.Empty : Loc.T("  (liczenie… {0} folderów)", pending)) +
+            Text = Loc.T("Razem: {0}", FileViewportCanvas.FormatSize(known)) + (folder.Complete ? string.Empty : Loc.T("  (liczenie… {0} folderów)", pending)) +
                 "   ·   " + Loc.P(folder.Files, "{0:N0} plik|{0:N0} pliki|{0:N0} plików") + ", " + Loc.P(folder.Folders, "{0:N0} folder|{0:N0} foldery|{0:N0} folderów"),
             FontSize = _brushes.FontSize + 2,
             FontWeight = FontWeight.Bold,
@@ -1586,7 +1632,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
         if (ordered.Count > MaxFolderRows)
         {
-            list.Children.Add(new TextBlock { Text = $"… i {ordered.Count - MaxFolderRows} mniejszych", Foreground = _brushes.HiddenForeground, Margin = new Thickness(0, 6) });
+            list.Children.Add(new TextBlock { Text = Loc.T("… i {0} mniejszych", ordered.Count - MaxFolderRows), Foreground = _brushes.HiddenForeground, Margin = new Thickness(0, 6) });
         }
 
         SetStatus(folder.Complete ? Loc.T("Gotowe · {0}", folder.Path) : Loc.T("Liczenie rozmiarów… · {0}", folder.Path), busy: !folder.Complete);

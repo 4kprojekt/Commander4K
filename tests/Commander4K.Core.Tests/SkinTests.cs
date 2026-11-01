@@ -57,6 +57,7 @@ public sealed class SkinTests : IDisposable
         };
         await SkinCatalog.ExportAsync(custom, Path.Combine(_directory, "my-nc.json"), TestToken);
         await SkinCatalog.ExportAsync(overrideBuiltIn, Path.Combine(_directory, "mc.json"), TestToken);
+        await File.WriteAllTextAsync(Path.Combine(_directory, SkinSchema.FileName), SkinSchema.CreateJson(), TestToken);
         await File.WriteAllTextAsync(Path.Combine(_directory, "broken.json"), "{ not json", TestToken);
 
         var catalog = await SkinCatalog.LoadAsync(_directory, TestToken);

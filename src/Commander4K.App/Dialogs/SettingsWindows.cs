@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
@@ -32,6 +32,7 @@ public sealed class SettingsWindow : Window
     private readonly AppHost _host;
     private readonly Action<string> _onChanged;
     private readonly Func<Task> _checkForUpdates;
+    private readonly Action<string> _openInPanel;
     private SkinBrushes _brushes;
     private TextBox _search = null!;
     private StackPanel _content = null!;
@@ -39,12 +40,13 @@ public sealed class SettingsWindow : Window
     private ScrollViewer _scroll = null!;
     private TextBlock _keyStatus = null!;
 
-    public SettingsWindow(AppHost host, SkinBrushes brushes, Action<string> onChanged, Func<Task> checkForUpdates, string? query = null)
+    public SettingsWindow(AppHost host, SkinBrushes brushes, Action<string> onChanged, Func<Task> checkForUpdates, Action<string> openInPanel, string? query = null)
     {
         _host = host;
         _brushes = brushes;
         _onChanged = onChanged;
         _checkForUpdates = checkForUpdates;
+        _openInPanel = openInPanel;
         Title = Loc.T("Ustawienia — Commander4K");
         Height = 700;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -78,9 +80,9 @@ public sealed class SettingsWindow : Window
         var brushes = _brushes;
         WindowSkin.Apply(this, brushes, panelSurface: true);
 
-        _search = new TextBox().Text(query ?? string.Empty).Height(34).MaxWidth(560).Padding(10, 0).CornerRadius(new CornerRadius(6))
-            .VerticalContentAlignment(VerticalAlignment.Center)
+        _search = new TextBox().Text(query ?? string.Empty)
             .PlaceholderText(Loc.T("Szukaj ustawień, skrótów, plików… (np. „ukryte”, „F5”, „aktualizacje”)"));
+        var searchField = Ds.SearchField(brushes, _search).MaxWidth(560).MinWidth(420);
         _search.TextChanged += (_, _) => Rebuild();
         _content = new StackPanel().Spacing(22).Margin(24, 20, 24, 24);
         _nav = new StackPanel().Spacing(2);
@@ -92,7 +94,7 @@ public sealed class SettingsWindow : Window
             new Grid().Cols("Auto,*").Children(
                 new TextBlock().Text(Loc.T("Ustawienia")).FontSize(18).FontWeight(FontWeight.SemiBold).Foreground(brushes.FileForeground)
                     .VerticalAlignment(VerticalAlignment.Center).Margin(0, 0, 24, 0).MinWidth(160),
-                _search.Col(1).HorizontalAlignment(HorizontalAlignment.Left)));
+                searchField.Col(1).HorizontalAlignment(HorizontalAlignment.Left)));
         var version = new TextBlock().Text(Loc.T("Wersja {0} · zmiany zapisywane od razu w config/settings.json", AppVersion.Display)).FontSize(11)
             .Foreground(brushes.MutedForeground).TextWrapping(TextWrapping.Wrap).Margin(10, 8, 10, 0);
         DockPanel.SetDock(version, Dock.Bottom);
@@ -162,10 +164,10 @@ public sealed class SettingsWindow : Window
         if (SettingsCatalog.Search([FilesCategory], query, s => s, _ => ["json", "folder", "konfiguracja", "keymap", "tools", Loc.T("narzędzia"), Loc.T("skórki"), "plik"]).Count > 0)
         {
             Section(FilesCategory, [new Border().Padding(16, 12).Child(new WrapPanel().Children(
-                FileButton(Loc.T("📂 Folder konfiguracji"), () => SkinPickerDialog.OpenFolder(_host.Config.ConfigDirectory)),
+                FileButton(Loc.T("📂 Folder konfiguracji"), () => _ = FolderOpener.OpenAsync(this, _brushes, _host.Config.ConfigDirectory)),
                 FileButton("⌨ keymap.json", () => _ = _host.Tools.EditAsync(_host.Config.KeymapPath)),
                 FileButton(Loc.T("🛠 tools.json (edytor, diff, terminal)"), () => _ = _host.Tools.EditAsync(_host.Config.ToolsPath)),
-                FileButton(Loc.T("🎨 Folder skórek"), () => SkinPickerDialog.OpenFolder(_host.Config.SkinsDirectory))))]);
+                FileButton(Loc.T("🎨 Folder skórek"), () => _ = FolderOpener.OpenAsync(this, _brushes, _host.Config.SkinsDirectory))))]);
         }
 
         if (_content.Children.Count == 0)
@@ -208,8 +210,19 @@ public sealed class SettingsWindow : Window
             .HorizontalContentAlignment(HorizontalAlignment.Left).VerticalContentAlignment(VerticalAlignment.Center)
             .Background(Avalonia.Media.Brushes.Transparent).BorderThickness(new Thickness(0))
             .Foreground(_brushes.WindowForeground).Content(new TextBlock().Text(title).TextTrimming(TextTrimming.CharacterEllipsis))
-            .OnClick(_ => section.BringIntoView());
+            .OnClick(_ => ScrollToSection(section));
         _nav.Children.Add(navButton);
+    }
+
+    private void ScrollToSection(Control section)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (section.TranslatePoint(default, _content) is { } origin)
+            {
+                _scroll.Offset = new Vector(_scroll.Offset.X, Math.Max(0, origin.Y - 16));
+            }
+        }, DispatcherPriority.Loaded);
     }
 
     /// <summary>Design system: min. 60 px, 10/16 px padding, semibold title, muted description, the control on the right.</summary>
@@ -256,7 +269,35 @@ public sealed class SettingsWindow : Window
                         e.Handled = true;
                     }
                 };
+                if (setting.Key.Equals("pluginCatalogUrl", StringComparison.OrdinalIgnoreCase))
+                {
+                    var open = new Button().Width(34).Height(30).Content("↗")
+                        .OnClick(async _ => await OpenCatalogUrlAsync(text.Text));
+                    ToolTip.SetTip(open, Loc.T("Otwórz w przeglądarce systemowej"));
+                    open.IsEnabled = Core.Ai.AiInstallInfo.IsWebUrl(text.Text);
+                    text.TextChanged += (_, _) => open.IsEnabled = Core.Ai.AiInstallInfo.IsWebUrl(text.Text);
+                    return new Grid().Cols("*,Auto").Children(text, open.Col(1).Margin(6, 0, 0, 0));
+                }
+
                 return text;
+        }
+    }
+
+    private async Task OpenCatalogUrlAsync(string? url)
+    {
+        if (!Core.Ai.AiInstallInfo.IsWebUrl(url))
+        {
+            return;
+        }
+
+        var target = await new LinkOpenDialog(_brushes, url!).ShowAsync(this);
+        if (target == LinkOpenTarget.SystemBrowser)
+        {
+            AboutDialog.OpenUrl(url!);
+        }
+        else if (target == LinkOpenTarget.ActivePanel)
+        {
+            _openInPanel(url!);
         }
     }
 

@@ -31,7 +31,13 @@ public static class SkinSchema
             TreatNullObliviousAsNonNullable = true,
             TransformSchemaNode = (context, node) =>
             {
-                if (context.TypeInfo.Type == typeof(RgbColor))
+                if (context.PropertyInfo is { Name: "themeVariant" } && node is JsonObject theme)
+                {
+                    theme["enum"] = new JsonArray("Dark", "Light");
+                    return theme;
+                }
+
+                if (context.TypeInfo.Type == typeof(RgbColor) || context.TypeInfo.Type == typeof(RgbColor?))
                 {
                     var color = new JsonObject { ["type"] = "string", ["description"] = ColorDescription };
                     if (!strictForApi)

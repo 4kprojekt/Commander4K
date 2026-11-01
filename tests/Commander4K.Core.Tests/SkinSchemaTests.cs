@@ -68,6 +68,30 @@ public sealed class SkinSchemaTests
     }
 
     [Fact]
+    public void TryRead_finds_the_skin_in_noisy_text_and_repairs_the_id()
+    {
+        var json = SkinJson.Serialize(BuiltInSkins.NortonCommander with { Id = "Mój Skin!" });
+        var noisy = $"Sure {{not json}} here you go:\n```json\n{json}\n```\nBye {{";
+
+        Assert.True(SkinJson.TryRead(noisy, fixId: true, out var skin, out _));
+        Assert.Equal("moj-skin", skin.Id);
+        Assert.False(SkinJson.TryRead(noisy, fixId: false, out _, out var error));
+        Assert.NotEmpty(error);
+        Assert.False(SkinJson.TryRead("no json at all", fixId: true, out _, out _));
+    }
+
+    [Fact]
+    public void Json_only_prompt_carries_the_idea_the_schema_and_the_output_contract()
+    {
+        var prompt = SkinPrompt.ForJsonOnly("neon pink");
+
+        Assert.Contains("neon pink", prompt);
+        Assert.Contains("\"palette\"", prompt);
+        Assert.Contains("ONE valid JSON object", prompt);
+        Assert.DoesNotContain(": null", prompt);
+    }
+
+    [Fact]
     public void Serialized_skin_round_trips_with_string_enums()
     {
         var json = SkinJson.Serialize(BuiltInSkins.NortonCommander);

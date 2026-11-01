@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
@@ -64,6 +65,10 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
     private readonly ComboBox _engine;
     private readonly Button _back;
     private readonly Button _forward;
+    private readonly Button _reload;
+    private readonly Button _external;
+    private readonly Button _close;
+    private readonly Border _statusBar;
     private readonly Border _toolbar;
     private readonly Border _message;
     private readonly TextBlock _messageText;
@@ -79,9 +84,12 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         _runShortcut = runShortcut;
         _pending = url ?? "https://www.google.com/";
 
-        _back = ToolButton("←", "Wstecz (Alt+←)", () => Core?.GoBack());
-        _forward = ToolButton("→", "Dalej (Alt+→)", () => Core?.GoForward());
-        _address = new TextBox().PlaceholderText(Loc.T("Adres albo szukane słowa (Ctrl+L)")).Padding(6, 2).MinHeight(24).VerticalContentAlignment(VerticalAlignment.Center);
+        _back = Ds.ToolButton(brushes, "←", Loc.T("Wstecz (Alt+←)"), () => Core?.GoBack());
+        _forward = Ds.ToolButton(brushes, "→", Loc.T("Dalej (Alt+→)"), () => Core?.GoForward());
+        _reload = Ds.ToolButton(brushes, "⟳", Loc.T("Odśwież (F5)"), () => Core?.Reload());
+        _external = Ds.ToolButton(brushes, "↗", Loc.T("Otwórz w przeglądarce systemowej"), OpenExternally);
+        _close = Ds.ToolButton(brushes, "✕", Loc.T("Zamknij przeglądarkę (Esc)"), () => CloseRequested?.Invoke());
+        _address = new TextBox().PlaceholderText(Loc.T("Adres albo szukane słowa (Ctrl+L)")).Padding(10, 0).MinHeight(26).Height(26).VerticalContentAlignment(VerticalAlignment.Center);
         _address.KeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter)
@@ -90,7 +98,7 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
                 e.Handled = true;
             }
         };
-        _engine = new ComboBox().Width(130).Margin(4, 0, 0, 0).ItemsSource(SearchEngines.All.Select(e => e.Name).ToList());
+        _engine = new ComboBox().Width(130).Height(26).Margin(6, 0, 0, 0).VerticalContentAlignment(VerticalAlignment.Center).ItemsSource(SearchEngines.All.Select(e => e.Name).ToList());
         _engine.SelectedIndex = IndexOf(app.Settings.SearchEngine);
         _engine.SelectionChanged += async (_, _) =>
         {
@@ -105,15 +113,22 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         var toolbar = new Grid().Cols("Auto,Auto,Auto,*,Auto,Auto,Auto").Children(
             _back.Col(0),
             _forward.Col(1),
-            ToolButton("⟳", Loc.T("Odśwież (F5)"), () => Core?.Reload()).Col(2),
-            _address.Col(3).Margin(4, 0, 0, 0),
+            _reload.Col(2),
+            _address.Col(3).Margin(6, 0, 0, 0),
             _engine.Col(4),
-            ToolButton("↗", Loc.T("Otwórz w przeglądarce systemowej"), OpenExternally).Col(5).Margin(4, 0, 0, 0),
-            ToolButton("✕", Loc.T("Zamknij przeglądarkę (Esc)"), () => CloseRequested?.Invoke()).Col(6).Margin(4, 0, 0, 0));
-        _toolbar = new Border().Padding(4).Child(toolbar);
+            _external.Col(5).Margin(6, 0, 0, 0),
+            _close.Col(6).Margin(2, 0, 0, 0));
+        foreach (var button in new[] { _back, _forward, _reload }.Concat([_external, _close]))
+        {
+            button.VerticalAlignment = VerticalAlignment.Center;
+        }
+
+        _address.VerticalAlignment = _engine.VerticalAlignment = VerticalAlignment.Center;
+        _toolbar = new Border().Child(toolbar);
         _toolbar.PointerPressed += (_, _) => Activated?.Invoke();
 
-        _status = new TextBlock().FontSize(11).Margin(6, 2).TextTrimming(TextTrimming.CharacterEllipsis);
+        _status = new TextBlock().FontSize(11).VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
+        _statusBar = new Border().Child(_status);
         _messageText = new TextBlock().TextWrapping(TextWrapping.Wrap).MaxWidth(520);
         _message = new Border().IsVisible(false).Padding(24).Child(new StackPanel().Spacing(12).VerticalAlignment(VerticalAlignment.Center).Children(
             _messageText,
@@ -124,9 +139,9 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         _web.Failed += OnFailed;
 
         SetDock(_toolbar, Avalonia.Controls.Dock.Top);
-        SetDock(_status, Avalonia.Controls.Dock.Bottom);
+        SetDock(_statusBar, Avalonia.Controls.Dock.Bottom);
         Children.Add(_toolbar);
-        Children.Add(_status);
+        Children.Add(_statusBar);
         Children.Add(new Grid().Children(_web, _message));
 
         if (WebView2Host.RuntimeVersion() is null)
@@ -210,11 +225,39 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
     public void ApplySkin(SkinBrushes brushes)
     {
         _brushes = brushes;
+        var modern = brushes.IsModern;
         Background = brushes.PanelBackground;
-        _toolbar.Background = brushes.StatusBackground;
+
+        // Design system: toolbar like the path bar (32 px, header colour, rule below), status line like the panel status (26 px, rule above).
+        _toolbar.Background = modern ? brushes.HeaderBackground : brushes.StatusBackground;
+        _toolbar.BorderBrush = brushes.PanelBorder;
+        _toolbar.BorderThickness = new Thickness(0, 0, 0, modern ? 1 : 0);
+        _toolbar.Padding = new Thickness(modern ? 8 : 4, modern ? 4 : 4);
+        _toolbar.MinHeight = modern ? 36 : 0;
+        foreach (var button in new[] { _back, _forward, _reload, _external, _close })
+        {
+            Ds.StyleToolButton(button, brushes);
+        }
+
+        _address.CornerRadius = new CornerRadius(modern ? 6 : 0);
+        _address.Background = brushes.PanelBackground;
+        _address.FontFamily = brushes.FontFamily;
+        _address.FontSize = brushes.FontSize;
+        _engine.CornerRadius = new CornerRadius(modern ? 6 : 0);
+        _engine.FontSize = Math.Max(12, brushes.FontSize - 1);
+
+        _statusBar.Background = brushes.StatusBackground;
+        _statusBar.BorderBrush = brushes.PanelBorder;
+        _statusBar.BorderThickness = new Thickness(0, modern ? 1 : 0, 0, 0);
+        _statusBar.Height = modern ? 26 : double.NaN;
+        _statusBar.Padding = modern ? new Thickness(12, 0) : new Thickness(6, 2);
         _status.Foreground = brushes.StatusForeground;
+        _status.FontFamily = brushes.FontFamily;
+        _status.FontSize = modern ? Math.Max(11, brushes.FontSize - 1) : 11;
+
         _message.Background = brushes.PanelBackground;
-        _messageText.Foreground = brushes.FileForeground;
+        _messageText.Foreground = brushes.MutedForeground;
+        _messageText.FontSize = brushes.FontSize;
     }
 
     public bool HandleKey(KeyEventArgs e)
@@ -398,11 +441,4 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
 
     private static int IndexOf(string id) =>
         Math.Max(0, SearchEngines.All.ToList().FindIndex(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)));
-
-    private static Button ToolButton(string text, string tip, Action click)
-    {
-        var button = new Button().Content(text).Padding(8, 2).MinHeight(24).OnClick(_ => click());
-        ToolTip.SetTip(button, tip);
-        return button;
-    }
 }

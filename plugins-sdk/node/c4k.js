@@ -89,6 +89,7 @@ module.exports = {
   prompt: (title, message, initial = '') => call('ui.prompt', { title, message, initial }), // string or null
   navigate: (path, focus = null) => call('ui.navigate', { path, focus }),
   openUrl: url => call('ui.openUrl', { url }),                                   // internal browser, http(s) only
+  openFolder: path => call('ui.openFolder', { path }),                           // the user chooses: Explorer or the active panel
   search: (query, engine = null) => call('ui.search', { query, engine }),        // engine: null, 'assistant', 'google', 'chatgpt'…
   copyText: text => call('ui.copyText', { text }),                               // clipboard (write only)
   actionTarget: (action, args = {}) => 'c4k:plugin/' + encodeURIComponent(action) + // preview button target "c4k:plugin/<action>?k=v" -> comes back as preview.action

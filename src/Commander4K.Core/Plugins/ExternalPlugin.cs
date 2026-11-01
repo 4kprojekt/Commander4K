@@ -229,6 +229,9 @@ public sealed class ExternalPlugin : IAsyncDisposable
             case "ui.openUrl":
                 await _host.OpenUrlAsync(Str("url")).ConfigureAwait(false);
                 return null;
+            case "ui.openFolder":
+                await _host.OpenFolderAsync(Str("path")).ConfigureAwait(false);
+                return null;
             case "ui.search":
                 await _host.SearchWebAsync(Str("query"), OptStr("engine")).ConfigureAwait(false);
                 return null;

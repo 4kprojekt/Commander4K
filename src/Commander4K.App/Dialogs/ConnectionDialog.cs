@@ -59,30 +59,30 @@ public sealed class ConnectionDialog : DialogWindow<ConnectionDialogResult?>
         _passphrase = new TextBox().PasswordChar('•').PlaceholderText(Loc.T("hasło klucza (jeśli jest)"));
         _remember = new CheckBox().Content(Loc.T("Zapamiętaj hasło (zaszyfrowane dla tego konta Windows)")).IsChecked(true);
         _status = new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12);
-        _hostLabel = Label(Loc.T("Serwer:"));
+        _hostLabel = Ds.Caption(Brushes, Loc.T("Serwer:"));
 
         _hostRow = new StackPanel().Children(_hostLabel, new Grid().Cols("*,Auto").Children(
             _host,
             _portRow = new StackPanel().Col(1).Orientation(Orientation.Horizontal).Margin(8, 0, 0, 0).Children(
-                new TextBlock().Text(Loc.T("Port:")).VerticalAlignment(VerticalAlignment.Center).Margin(0, 0, 6, 0), _port)));
+                new TextBlock().Text(Loc.T("Port:")).VerticalAlignment(VerticalAlignment.Center).Foreground(Brushes.MutedForeground).Margin(0, 0, 6, 0), _port)));
         _keyRow = new StackPanel().Spacing(4).Children(
-            Label(Loc.T("Plik klucza prywatnego:")),
+            Ds.Caption(Brushes, Loc.T("Plik klucza prywatnego:")),
             new Grid().Cols("*,Auto").Children(_keyFile, new Button().Col(1).Content(Loc.T("Wybierz…")).Margin(6, 0, 0, 0).OnClick(async click => await BrowseKeyAsync())),
             _passphrase);
 
         _type.SelectionChanged += (_, _) => UpdateFields(typeChanged: true);
         _auth.SelectionChanged += (_, _) => UpdateFields(typeChanged: false);
         SetBody(
-            Label(Loc.T("Rodzaj:")), _type,
-            Label(Loc.T("Nazwa na liście:")).Margin(0, 8, 0, 6), _name,
-            _hostRow.Margin(0, 8, 0, 0),
-            Label(Loc.T("Użytkownik:")).Margin(0, 8, 0, 6), _user,
-            Label(Loc.T("Logowanie:")).Margin(0, 8, 0, 6), _auth,
+            Ds.Caption(Brushes, Loc.T("Rodzaj:")), _type,
+            Ds.Caption(Brushes, Loc.T("Nazwa na liście:")).Margin(0, 10, 0, 4), _name,
+            _hostRow.Margin(0, 10, 0, 0),
+            Ds.Caption(Brushes, Loc.T("Użytkownik:")).Margin(0, 10, 0, 4), _user,
+            Ds.Caption(Brushes, Loc.T("Logowanie:")).Margin(0, 10, 0, 4), _auth,
             _password.Margin(0, 6, 0, 0),
             _keyRow.Margin(0, 6, 0, 0),
             _remember.Margin(0, 6, 0, 0),
-            Label(Loc.T("Folder startowy:")).Margin(0, 8, 0, 6), _folder,
-            _status.Margin(0, 8, 0, 0),
+            Ds.Caption(Brushes, Loc.T("Folder startowy:")).Margin(0, 10, 0, 4), _folder,
+            _status.Margin(0, 10, 0, 0),
             ButtonRow(
                 (Loc.T("Zapisz i otwórz"), Accept, true),
                 (Loc.T("Testuj"), () => _ = TestAsync(), false),

@@ -25,7 +25,7 @@ public static class MarkdownRenderer
     public static Control Render(string markdown, SkinBrushes brushes)
     {
         var document = Markdig.Markdown.Parse(markdown, Pipeline);
-        var root = new StackPanel { Spacing = 8, Margin = new Thickness(16, 12) };
+        var root = new StackPanel { Spacing = 10, Margin = new Thickness(20, 16), MaxWidth = 900, HorizontalAlignment = HorizontalAlignment.Left };
         foreach (var block in document)
         {
             root.Children.Add(RenderBlock(block, brushes));
@@ -54,7 +54,7 @@ public static class MarkdownRenderer
             BorderBrush = b.Accent,
             Background = b.HighlightBackground,
             BorderThickness = new Thickness(3, 0, 0, 0),
-            CornerRadius = new CornerRadius(0, 3, 3, 0),
+            CornerRadius = new CornerRadius(0, b.IsModern ? 4 : 0, b.IsModern ? 4 : 0, 0),
             Padding = new Thickness(12, 6, 10, 6),
             Child = Container(quote, b, foreground: b.MutedForeground),
         },
@@ -65,7 +65,7 @@ public static class MarkdownRenderer
             Background = b.CodeBackground,
             BorderBrush = b.PanelBorder,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(5),
+            CornerRadius = new CornerRadius(b.IsModern ? 6 : 0),
             Padding = new Thickness(12, 10),
             Child = new SelectableTextBlock
             {
@@ -144,7 +144,7 @@ public static class MarkdownRenderer
                     Background = b.CodeBackground,
                     BorderBrush = b.PanelBorder,
                     BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(5),
+                    CornerRadius = new CornerRadius(b.IsModern ? 6 : 0),
                     Padding = new Thickness(12, 10),
                     Child = new SelectableTextBlock { Text = code, FontFamily = b.MonospaceFamily, FontSize = b.FontSize - 1, Foreground = b.FileForeground, TextWrapping = TextWrapping.Wrap },
                 },
@@ -189,8 +189,11 @@ public static class MarkdownRenderer
 
     private static Border RenderTable(MdTable table, SkinBrushes b)
     {
+        var modern = b.IsModern;
+        var radius = new CornerRadius(modern ? 6 : 0);
         var grid = new Grid();
         var columns = table.OfType<TableRow>().Select(r => r.Count).DefaultIfEmpty(0).Max();
+        var rows = table.OfType<TableRow>().Count();
         for (var c = 0; c < columns; c++)
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
@@ -204,12 +207,12 @@ public static class MarkdownRenderer
             foreach (var cell in row.OfType<TableCell>())
             {
                 var inline = cell.OfType<ParagraphBlock>().FirstOrDefault()?.Inline;
-                var text = Text(inline, b, weight: row.IsHeader ? FontWeight.Bold : FontWeight.Normal);
+                var text = Text(inline, b, weight: row.IsHeader ? FontWeight.SemiBold : FontWeight.Normal, foreground: row.IsHeader ? b.HeaderForeground : null);
                 var border = new Border
                 {
                     BorderBrush = b.PanelBorder,
-                    BorderThickness = new Thickness(0, 0, 1, 1),
-                    Padding = new Thickness(8, 4),
+                    BorderThickness = new Thickness(0, 0, col == columns - 1 ? 0 : 1, rowIndex == rows - 1 ? 0 : 1),
+                    Padding = new Thickness(10, 5),
                     Background = row.IsHeader ? b.HeaderBackground : null,
                     Child = text,
                 };
@@ -224,7 +227,9 @@ public static class MarkdownRenderer
         return new Border
         {
             BorderBrush = b.PanelBorder,
-            BorderThickness = new Thickness(1, 1, 0, 0),
+            BorderThickness = new Thickness(1),
+            CornerRadius = radius,
+            ClipToBounds = true,
             HorizontalAlignment = HorizontalAlignment.Left,
             Child = grid,
         };
@@ -285,7 +290,7 @@ public static class MarkdownRenderer
                 target.Add(new Run(code.Content) { FontFamily = b.MonospaceFamily, Background = b.CodeBackground, Foreground = b.FileForeground });
                 break;
             case LinkInline { IsImage: true } image:
-                target.Add(new Run($"[obraz: {image.Url}]") { Foreground = b.HiddenForeground, FontStyle = FontStyle.Italic });
+                target.Add(new Run(Loc.T("[obraz: {0}]", image.Url ?? string.Empty)) { Foreground = b.MutedForeground, FontStyle = FontStyle.Italic });
                 break;
             case LinkInline link:
                 var linkSpan = new Span { Foreground = b.Accent, TextDecorations = TextDecorations.Underline };

@@ -107,6 +107,11 @@ public interface IPluginHost
     Task OpenUrlAsync(string url);
 
     /// <summary>
+    /// Asks the user where to open a folder — in Windows Explorer or in the active file panel — with the same dialog
+    /// the app uses everywhere. The plugin does not choose and learns nothing about the answer.
+    /// </summary>
+    Task OpenFolderAsync(string path);
+    /// <summary>
     /// Searches the web or asks an AI assistant in the internal browser. <paramref name="engine"/>: <c>null</c> = the
     /// user's search engine, <c>"assistant"</c> = the user's AI assistant, or an id (<c>google</c>, <c>chatgpt</c>,
     /// <c>gemini</c>, <c>claude</c>, <c>perplexity</c>, <c>bing</c>, <c>duckduckgo</c>).

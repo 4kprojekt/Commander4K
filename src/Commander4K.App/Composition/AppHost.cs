@@ -59,6 +59,8 @@ public sealed class PluginUiProxy : IPluginUi
 
     public Task OpenUrlAsync(string url) => Target?.OpenUrlAsync(url) ?? Task.CompletedTask;
 
+    public Task OpenFolderAsync(string path) => Target?.OpenFolderAsync(path) ?? Task.CompletedTask;
+
     public Task SearchWebAsync(string query, string? engine) => Target?.SearchWebAsync(query, engine) ?? Task.CompletedTask;
 
     public Task CopyTextAsync(string text) => Target?.CopyTextAsync(text) ?? Task.CompletedTask;

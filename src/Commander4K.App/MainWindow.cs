@@ -1,4 +1,4 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -191,6 +191,7 @@ public sealed class MainWindow : Window
     public void Attach(AppHost host)
     {
         _host = host;
+        FolderOpener.OpenInPanel = path => _ = _active.NavigateAsync(path);
         _skins = new SkinManager(host, host.Skins.Get(host.Settings.Skin));
         BuildShell();
         _started.TrySetResult();
@@ -285,8 +286,8 @@ public sealed class MainWindow : Window
                 OpenBrowser(url);
                 return Task.CompletedTask;
             },
+            path => FolderOpener.OpenAsync(this, _skins!.Current, path, createIfMissing: false),
             SearchWebAsync);
-        host.PluginUi.Target = _pluginHost;
         host.InstallFromCatalog = InstallFromCatalogAsync;
         host.PowerShell.CommandsChanged += () => Dispatcher.UIThread.Post(RebuildMenu);
         host.PluginsChanged += () => Dispatcher.UIThread.Post(() =>
@@ -442,7 +443,7 @@ public sealed class MainWindow : Window
 
     private void OpenSettings(string? query = null)
     {
-        var window = new SettingsWindow(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, query);
+        var window = new SettingsWindow(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, url => OpenBrowser(url, _active), query);
         FollowSkin(window, window.ApplySkin);
         window.Closed += (_, _) => RebuildMenu(); // Key bindings shown in the menu may have changed.
         window.Show(this);

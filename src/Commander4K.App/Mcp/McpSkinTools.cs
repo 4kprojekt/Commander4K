@@ -11,7 +11,7 @@ namespace Commander4K.App.Mcp;
 /// <summary>
 /// <c>save_skin</c>: the one configuration tool that needs the window. The skin is shown live while the user decides
 /// (the dialog itself is drawn with it), so the confirmation is the preview; "No", Esc or a cancelled call put the
-/// previous skin back. Saving works like <see cref="AiSkinDialog"/>: a built-in id gets <c>-ai</c>, the file is
+/// previous skin back. Saving works like the skin editor: a built-in id gets <c>-ai</c>, the file is
 /// <c>config/skins/&lt;id&gt;.json</c>.
 /// </summary>
 public static class McpSkinTools

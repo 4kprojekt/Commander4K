@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -131,6 +132,56 @@ public sealed class ConfirmDialog : DialogWindow<bool>
     public Button CancelButton { get; }
 }
 
+public enum LinkOpenTarget : byte
+{
+    SystemBrowser,
+    ActivePanel,
+}
+
+/// <summary>Asks where to open an address or a folder: the system (browser / Explorer) or the active panel.</summary>
+public sealed class LinkOpenDialog : DialogWindow<LinkOpenTarget?>
+{
+    public LinkOpenDialog(SkinBrushes brushes, string url, bool folder = false)
+        : base(folder ? Loc.T("Otwórz folder") : Loc.T("Otwórz adres"), brushes)
+    {
+        SetBody(
+            Label(folder ? Loc.T("Gdzie otworzyć ten folder?") : Loc.T("Gdzie otworzyć ten adres?")),
+            Label(url),
+            ButtonRow(
+                (folder ? Loc.T("Eksplorator Windows") : Loc.T("Przeglądarka systemowa"), () => Complete(LinkOpenTarget.SystemBrowser), false),
+                (Loc.T("Aktywny panel"), () => Complete(LinkOpenTarget.ActivePanel), true),
+                (Loc.T("Anuluj"), () => Complete(null), false)));
+    }
+}
+
+/// <summary>The one way the app opens a folder: always the same question, then Explorer or the active panel.</summary>
+public static class FolderOpener
+{
+    /// <summary>Set by the main window: navigates its active panel to a path.</summary>
+    public static Action<string>? OpenInPanel { get; set; }
+
+    public static async Task OpenAsync(Window owner, SkinBrushes brushes, string path, bool createIfMissing = true)
+    {
+        if (createIfMissing)
+        {
+            Directory.CreateDirectory(path);
+        }
+
+        switch (await new LinkOpenDialog(brushes, path, folder: true).ShowAsync(owner))
+        {
+            case LinkOpenTarget.SystemBrowser when Directory.Exists(path):
+                using (Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { path }, UseShellExecute = false }))
+                {
+                }
+
+                break;
+            case LinkOpenTarget.ActivePanel:
+                OpenInPanel?.Invoke(path);
+                break;
+        }
+    }
+}
+
 public sealed class MessageDialog : DialogWindow<bool>
 {
     public MessageDialog(SkinBrushes brushes, string title, string message, bool monospace = false) : base(title, brushes, monospace ? 640 : 480)
@@ -237,7 +288,7 @@ public sealed class LoginDialog : DialogWindow<LoginResult?>
 public sealed class HostKeyDialog : DialogWindow<bool>
 {
     public HostKeyDialog(SkinBrushes brushes, string host, int port, string fingerprint, bool mismatch)
-        : base(mismatch ? "UWAGA: zmieniony klucz hosta" : Loc.T("Nieznany host SSH"), brushes, 560)
+        : base(mismatch ? Loc.T("UWAGA: zmieniony klucz hosta") : Loc.T("Nieznany host SSH"), brushes, 560)
     {
         var message = mismatch
             ? Loc.T("Serwer {0}:{1} przedstawił INNY klucz niż poprzednio. Może to oznaczać atak typu man-in-the-middle ", host, port) +
@@ -269,12 +320,22 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
         _items = items;
         _filter = new TextBox().PlaceholderText(Loc.T("Filtruj…"));
         _filter.TextChanged += (_, _) => ApplyFilter();
-        _list = new ListBox().MaxHeight(420).Margin(0, 6, 0, 0);
+        _list = new ListBox().MaxHeight(420).Background(Brushes.PanelBackground).BorderThickness(new Thickness(0));
         _list.DoubleTapped += (_, _) => Accept();
+        var listCard = new Border
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            Background = Brushes.PanelBackground,
+            BorderBrush = Brushes.PanelBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(Brushes.IsModern ? 6 : 0),
+            ClipToBounds = true,
+            Child = _list,
+        };
         SetBody(
             hint is null ? new Panel() : Label(hint),
-            _filter,
-            _list,
+            Ds.SearchField(Brushes, _filter),
+            listCard,
             ButtonRow(("OK", Accept, true), (Loc.T("Anuluj"), () => Complete(null), false)));
         ApplyFilter();
         Opened += (_, _) => _filter.Focus();
@@ -345,7 +406,7 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
             Height = i.IsSeparator ? 9 : double.NaN,
             Content = i.IsSeparator ? new Separator().Margin(4, 3) : new StackPanel().Children(
                 new TextBlock().Text(i.Label).FontWeight(FontWeight.SemiBold),
-                new TextBlock().Text(i.Detail ?? string.Empty).FontSize(11).Opacity(0.7).IsVisible(i.Detail is not null)),
+                new TextBlock().Text(i.Detail ?? string.Empty).FontSize(11).Foreground(Brushes.MutedForeground).IsVisible(i.Detail is not null)),
         }).ToList();
         _list.SelectedIndex = visible.FindIndex(item => !item.IsSeparator);
     }

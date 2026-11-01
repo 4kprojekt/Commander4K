@@ -82,6 +82,7 @@ def confirm(title, message):         return call("ui.confirm", title=title, mess
 def prompt(title, message, initial=""): return call("ui.prompt", title=title, message=message, initial=initial)  # str or None
 def navigate(path, focus=None):      call("ui.navigate", path=path, focus=focus)
 def open_url(url):                   call("ui.openUrl", url=url)                              # internal browser, http(s) only
+def open_folder(path):               call("ui.openFolder", path=path)                         # the user chooses: Explorer or the active panel
 def search(query, engine=None):      call("ui.search", query=query, engine=engine)            # engine: None, "assistant", "google", "chatgpt"…
 def copy_text(text):                 call("ui.copyText", text=text)                           # clipboard (write only)
 def action_target(action, **args):                                                              # preview button target "c4k:plugin/<action>?k=v" -> comes back as preview.action
