@@ -45,6 +45,46 @@ public sealed class FolderConfigWriterTests
     }
 
     [Fact]
+    public void Remove_tile_updates_the_selected_dashboard_and_its_mirrored_view()
+    {
+        const string Existing = """{ "enter": { "view": "dashboard", "tiles": [ { "title": "A", "open": "a" }, { "title": "B", "open": "b" } ] }, "preview": "dashboard" }""";
+
+        var config = FolderConfig.Parse(@"C:\Dom", FolderConfigWriter.RemoveTile(Existing, "preview", 0));
+
+        Assert.Equal(["B"], config.Preview!.Tiles.Select(tile => tile.Title));
+        Assert.Equal(["B"], config.Enter!.Tiles.Select(tile => tile.Title));
+    }
+
+    [Fact]
+    public void Move_tile_preserves_dashboard_order_in_both_matching_sections()
+    {
+        const string Existing = """{ "preview": { "view": "dashboard", "tiles": [ { "title": "A", "open": "a" }, { "title": "B", "open": "b" } ] }, "enter": { "view": "dashboard", "tiles": [ { "title": "A", "open": "a" }, { "title": "B", "open": "b" } ] } }""";
+
+        var config = FolderConfig.Parse(@"C:\Dom", FolderConfigWriter.MoveTile(Existing, "preview", 1, -1));
+
+        Assert.Equal(["B", "A"], config.Preview!.Tiles.Select(tile => tile.Title));
+        Assert.Equal(["B", "A"], config.Enter!.Tiles.Select(tile => tile.Title));
+    }
+
+    [Fact]
+    public void Move_tile_rejects_moving_past_dashboard_edges()
+    {
+        const string Existing = """{ "preview": { "view": "dashboard", "tiles": [ { "title": "A", "open": "a" } ] } }""";
+
+        Assert.Throws<InvalidOperationException>(() => FolderConfigWriter.MoveTile(Existing, "preview", 0, -1));
+    }
+
+    [Fact]
+    public void Move_tile_resolves_stale_index_by_expected_title()
+    {
+        const string Existing = """{ "preview": { "view": "dashboard", "tiles": [ { "title": "A", "open": "a" }, { "title": "B", "open": "b" } ] } }""";
+
+        var config = FolderConfig.Parse(@"C:\Dom", FolderConfigWriter.MoveTile(Existing, "preview", 1, 1, expectedTitle: "A"));
+
+        Assert.Equal(["B", "A"], config.Preview!.Tiles.Select(tile => tile.Title));
+    }
+
+    [Fact]
     public void Replace_preview_moves_old_preview_to_empty_enter()
     {
         const string Existing = """{ "preview": "gallery" }""";

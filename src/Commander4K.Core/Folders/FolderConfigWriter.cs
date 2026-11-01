@@ -11,7 +11,7 @@ public enum FolderConfigWrite
     Failed,
 }
 
-/// <summary>Adds dashboard tiles to a <c>c4k.dir</c> text (the "add API card" wizard); the rest of the file is kept.</summary>
+/// <summary>Edits dashboard tiles in a <c>c4k.dir</c> file.</summary>
 public static class FolderConfigWriter
 {
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -179,6 +179,158 @@ public static class FolderConfigWriter
         }
 
         return root.ToJsonString(Indented) + "\n";
+    }
+
+    /// <summary>Removes the tile at <paramref name="index"/> from the dashboard in the selected section.</summary>
+    public static string RemoveTile(string existing, string section, int index, string? expectedTitle = null) =>
+        EditTile(existing, section, index, expectedTitle, remove: true, moveBy: 0);
+
+    /// <summary>Moves the tile at <paramref name="index"/> one place in the selected dashboard.</summary>
+    public static string MoveTile(string existing, string section, int index, int moveBy, string? expectedTitle = null)
+    {
+        if (moveBy is not (-1 or 1))
+        {
+            throw new ArgumentOutOfRangeException(nameof(moveBy), "A tile can only move one place up or down.");
+        }
+
+        return EditTile(existing, section, index, expectedTitle, remove: false, moveBy);
+    }
+
+    private static string EditTile(string existing, string section, int index, string? expectedTitle, bool remove, int moveBy)
+    {
+        var root = JsonNode.Parse(existing, documentOptions: new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        }) as JsonObject ?? throw new InvalidOperationException("c4k.dir must contain a JSON object.");
+        if (section is not ("preview" or "enter"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(section), "Dashboard section must be preview or enter.");
+        }
+
+        var otherSection = section == "preview" ? "enter" : "preview";
+        var otherNode = root[otherSection];
+        var otherTiles = otherNode is JsonObject otherObject && IsDashboard(otherObject)
+            ? otherObject["tiles"] as JsonArray
+            : null;
+        var action = root[section];
+        JsonArray targetTiles;
+        if (action is JsonObject dashboard && IsDashboard(dashboard))
+        {
+            if (dashboard["tiles"] is JsonArray configuredTiles && !(configuredTiles.Count == 0 && otherTiles is { Count: > 0 }))
+            {
+                targetTiles = configuredTiles;
+            }
+            else if (otherTiles is not null)
+            {
+                targetTiles = otherTiles;
+            }
+            else
+            {
+                targetTiles = new JsonArray();
+                dashboard["tiles"] = targetTiles;
+            }
+        }
+        else if (IsDashboardName(action))
+        {
+            if (otherTiles is not null)
+            {
+                targetTiles = otherTiles;
+            }
+            else
+            {
+                var dashboardObject = new JsonObject { ["view"] = FolderViewIds.Dashboard, ["tiles"] = new JsonArray() };
+                root[section] = dashboardObject;
+                targetTiles = (JsonArray)dashboardObject["tiles"]!;
+            }
+        }
+        else
+        {
+            throw new InvalidOperationException($"The {section} section is not a dashboard.");
+        }
+
+        if ((uint)index >= (uint)targetTiles.Count && otherTiles is not null && (uint)index < (uint)otherTiles.Count)
+        {
+            targetTiles = otherTiles;
+        }
+
+        if (expectedTitle is not null && !HasTitleAt(targetTiles, index, expectedTitle))
+        {
+            var matchingIndex = FindTitle(targetTiles, expectedTitle);
+            if (matchingIndex < 0 && otherTiles is not null)
+            {
+                var matchingOtherIndex = FindTitle(otherTiles, expectedTitle);
+                if (matchingOtherIndex >= 0)
+                {
+                    targetTiles = otherTiles;
+                    matchingIndex = matchingOtherIndex;
+                }
+            }
+
+            if (matchingIndex >= 0)
+            {
+                index = matchingIndex;
+            }
+        }
+
+        var mirror = otherTiles is not null && !ReferenceEquals(targetTiles, otherTiles) && JsonNode.DeepEquals(targetTiles, otherTiles)
+            ? otherTiles
+            : null;
+        Edit(targetTiles, index, remove, moveBy);
+        if (mirror is not null)
+        {
+            Edit(mirror, index, remove, moveBy);
+        }
+
+        return root.ToJsonString(Indented) + "\n";
+    }
+
+    private static bool IsDashboard(JsonObject action) =>
+        action["view"] is JsonValue value && value.TryGetValue<string>(out var name)
+        && string.Equals(name, FolderViewIds.Dashboard, StringComparison.OrdinalIgnoreCase);
+
+    private static void Edit(JsonArray tiles, int index, bool remove, int moveBy)
+    {
+        if ((uint)index >= (uint)tiles.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index), "The dashboard tile does not exist.");
+        }
+
+        if (remove)
+        {
+            tiles.RemoveAt(index);
+            return;
+        }
+
+        var destination = index + moveBy;
+        if ((uint)destination >= (uint)tiles.Count)
+        {
+            throw new InvalidOperationException("The tile is already at the edge of the dashboard.");
+        }
+
+        var tile = tiles[index];
+        tiles.RemoveAt(index);
+        tiles.Insert(destination, tile);
+    }
+
+    private static bool HasTitleAt(JsonArray tiles, int index, string title) =>
+        (uint)index < (uint)tiles.Count
+        && tiles[index] is JsonObject tile
+        && tile["title"] is JsonValue value
+        && value.TryGetValue<string>(out var actual)
+        && string.Equals(actual, title, StringComparison.Ordinal);
+
+    private static int FindTitle(JsonArray tiles, string title)
+    {
+        for (var index = 0; index < tiles.Count; index++)
+        {
+            if (HasTitleAt(tiles, index, title))
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private static void ReplacePreviewWithDashboard(JsonObject root, JsonObject tile)

@@ -255,6 +255,11 @@ public sealed class MainWindow : Window
             p.PluginTabSelected += tab => ShowPluginTab(p, tab);
             p.LocationMenuRequested += sender => _ = ShowDriveMenuAsync(sender).AsTask();
             p.ModeRequested += request => SetPanelMode(request.Panel, request.Preview);
+            p.ConfigureEmptyFolderRequested += folderPath =>
+            {
+                SetActive(p);
+                _ = ConfigureFolderViewAsync(folderPath, p);
+            };
             p.AuthenticationRequired += request => _ = LoginAndRetryAsync(request);
             WatchForSuggestions(p);
             p.Canvas.ColumnWidthsChanged += () =>
@@ -749,12 +754,13 @@ public sealed class MainWindow : Window
                 OpenBrowser("https://github.com/4kprojekt/Commander4K/tree/main/plugins-catalog");
                 return Task.CompletedTask;
             },
-            ConfigureFolderView = folderPath => ConfigureFolderViewAsync(folderPath, source.ActiveTab),
+            ConfigureFolderView = folderPath => ConfigureFolderViewAsync(folderPath, source),
             CreateBrowserPreview = url => new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut),
             ConfigureSftpConnection = path => ConfigureSftpConnectionAsync(source, path),
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
             RunShortcut = RunShortcut,
             AskFolderTrust = AskFolderTrustAsync,
+            EditDashboardTile = (dashboard, index, edit) => EditDashboardTileAsync(dashboard, index, edit),
         };
 
     /// <summary>
@@ -961,13 +967,15 @@ public sealed class MainWindow : Window
 
     private async ValueTask ConfigureFolderViewAsync(CommandInvocation _)
     {
-        var tab = _active.ActiveTab;
+        var panel = _active;
+        var tab = panel.ActiveTab;
         var folder = tab.CurrentEntry is { Kind: VfsEntryKind.Directory or VfsEntryKind.Drive or VfsEntryKind.Share } entry ? entry.Path : tab.Path;
-        await ConfigureFolderViewAsync(folder, tab);
+        await ConfigureFolderViewAsync(folder, panel);
     }
 
-    private async Task ConfigureFolderViewAsync(string folder, PanelTab tab)
+    private async Task ConfigureFolderViewAsync(string folder, FilePanelView panel)
     {
+        var tab = panel.ActiveTab;
         if (VfsPath.GetScheme(folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme) || folder.Contains("://", StringComparison.Ordinal))
         {
             Notify(Loc.T("Plik c4k.dir można utworzyć na dysku albo w udziale sieciowym."), isError: true);
@@ -1120,9 +1128,10 @@ public sealed class MainWindow : Window
             return;
         }
 
+        var text = FolderConfigWriter.CreateForAction(action, where);
         try
         {
-            await WriteFolderConfigTextAsync(file, FolderConfigWriter.CreateForAction(action, where), CancellationToken.None);
+            await WriteFolderConfigTextAsync(file, text, CancellationToken.None);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
             or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
@@ -1133,7 +1142,17 @@ public sealed class MainWindow : Window
 
         _host.FolderSuggestions.Forget(folder);
         Notify(Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file));
-        await tab.RefreshAsync();
+        var config = FolderConfig.Parse(folder, text);
+        var configuredAction = where is "both" or "preview" ? config.Preview : config.Enter;
+        if (configuredAction is { IsPlainFiles: false })
+        {
+            var folderEntry = new VfsEntry(Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), folder, VfsEntryKind.Directory);
+            await RunFolderActionAsync(panel, folderEntry, config, configuredAction);
+        }
+        else
+        {
+            await tab.RefreshAsync();
+        }
     }
 
     /// <summary>Shift+Enter: the folder's files, whatever its <c>c4k.dir</c> says; a file opens with Windows even when a preview claims Enter.</summary>
@@ -2662,11 +2681,30 @@ public sealed class MainWindow : Window
             return true;
         }
 
-        var entries = sources.Where(entry => entry.Kind is VfsEntryKind.File or VfsEntryKind.Directory or VfsEntryKind.Drive
-            or VfsEntryKind.Share or VfsEntryKind.Archive or VfsEntryKind.RegistryKey).ToList();
+        var entries = sources.Where(CanCreateDashboardTile).ToList();
         if (entries.Count == 0)
         {
-            Notify(Loc.T("Wybierz plik lub folder, który można dodać do dashboardu."), isError: true);
+            Notify(Loc.T("Nie można dodać zaznaczonych elementów jako kafelków dashboardu."), isError: true);
+            return true;
+        }
+
+        var previewList = string.Join("\n", entries.Take(10).Select(entry => "• " + entry.Name));
+        if (entries.Count > 10)
+        {
+            previewList += "\n" + Loc.P(entries.Count - 10, "… i {0} kolejny element|… i {0} kolejne elementy|… i {0} kolejnych elementów");
+        }
+
+        var skippedEntries = sources.Count - entries.Count;
+        if (skippedEntries > 0)
+        {
+            previewList += "\n\n" + Loc.P(skippedEntries, "Pominięty zostanie {0} element, którego nie można otworzyć jako kafelka.|Pominięte zostaną {0} elementy, których nie można otworzyć jako kafelki.|Pominiętych zostanie {0} elementów, których nie można otworzyć jako kafelków.");
+        }
+
+        var confirmation = Loc.P(entries.Count,
+            "Dodać {0} kafelek do dashboardu „{1}”?\n\n{2}|Dodać {0} kafelki do dashboardu „{1}”?\n\n{2}|Dodać {0} kafelków do dashboardu „{1}”?\n\n{2}",
+            folder.Name, previewList);
+        if (!await new ConfirmDialog(_skins!.Current, Loc.T("Dodaj kafelki do dashboardu?"), confirmation, Loc.T("Dodaj")).ShowAsync(this))
+        {
             return true;
         }
 
@@ -2697,10 +2735,16 @@ public sealed class MainWindow : Window
         }
 
         var wasTrusted = existing is null || await Task.Run(() => _host!.FolderTrust.IsTrusted(FolderConfig.Parse(folder.Path, existing)));
-        var tiles = entries.Select(entry => new System.Text.Json.Nodes.JsonObject
+        var tiles = entries.Select(entry =>
         {
-            ["title"] = entry.Name,
-            ["open"] = entry.Path,
+            var tile = new System.Text.Json.Nodes.JsonObject { ["title"] = entry.Name };
+            tile[Core.Ai.AiInstallInfo.IsWebUrl(entry.Path) ? "url" : "open"] = entry.Path;
+            if (ManifestPreviewCardId(entry) is { } previewCardId)
+            {
+                tile["card"] = previewCardId;
+            }
+
+            return tile;
         }).ToList();
         var text = existing;
         try
@@ -2747,9 +2791,97 @@ public sealed class MainWindow : Window
             await preview.ReloadCurrentAsync();
         }
 
-        Notify(Loc.P(tiles.Count, "{0} skrót do dashboardu „{1}”.|{0} skróty do dashboardu „{1}”.|{0} skrótów do dashboardu „{1}”.", folder.Name));
+        var message = Loc.P(tiles.Count, "{0} skrót do dashboardu „{1}”.|{0} skróty do dashboardu „{1}”.|{0} skrótów do dashboardu „{1}”.", folder.Name);
+        var skipped = sources.Count - entries.Count;
+        if (skipped > 0)
+        {
+            message += " " + Loc.P(skipped, "Pominięto {0} element, którego nie można otworzyć jako kafelka.|Pominięto {0} elementy, których nie można otworzyć jako kafelka.|Pominięto {0} elementów, których nie można otworzyć jako kafelka.");
+        }
+
+        Notify(message);
         return true;
     }
+
+    private string? ManifestPreviewCardId(VfsEntry entry)
+    {
+        return _host!.PreviewPlugins.OfType<Core.Plugins.ExternalPreviewPlugin>()
+            .Where(plugin => plugin.CanPreview(entry)
+                && plugin.Manifest.Contributes?.Previews?.Any(preview =>
+                    preview.Card && string.Equals(plugin.Id, plugin.Manifest.Id + "/" + preview.Id, StringComparison.OrdinalIgnoreCase)) == true)
+            .OrderByDescending(plugin => plugin.Priority)
+            .Select(plugin => plugin.Id)
+            .FirstOrDefault();
+    }
+
+    private async Task EditDashboardTileAsync(
+        Commander4K.Plugins.BuiltIn.Dashboard.DashboardPreview dashboard, int index, DashboardTileEdit edit)
+    {
+        if ((uint)index >= (uint)dashboard.Slots.Count)
+        {
+            Notify(Loc.T("Nie znaleziono kafelka dashboardu."), isError: true);
+            return;
+        }
+
+        var tile = dashboard.Slots[index].Tile;
+        if (edit == DashboardTileEdit.Remove
+            && !await new ConfirmDialog(_skins!.Current, Loc.T("Usuń kafelek?"),
+                Loc.T("Usunąć kafelek „{0}” z dashboardu?", tile.Title), Loc.T("Usuń")).ShowAsync(this))
+        {
+            return;
+        }
+
+        var file = FolderConfig.ChildPath(dashboard.Config.Folder, FolderConfig.FileName);
+        try
+        {
+            var existing = await Task.Run(() => ReadFolderConfigTextAsync(file, CancellationToken.None));
+            if (existing is null)
+            {
+                Notify(Loc.T("Nie znaleziono pliku {0}.", file), isError: true);
+                return;
+            }
+
+            var parsed = FolderConfig.Parse(dashboard.Config.Folder, existing);
+            if (parsed.Error is { } configError)
+            {
+                Notify(Loc.T("{0}: {1}", file, configError), isError: true);
+                return;
+            }
+
+            if (FolderConfigWriter.HasComments(existing)
+                && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać c4k.dir?"),
+                    Loc.T("{0} ma komentarze; zapis zmian kafelka je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
+            {
+                return;
+            }
+
+            var wasTrusted = await Task.Run(() => _host!.FolderTrust.IsTrusted(parsed));
+            var updated = edit switch
+            {
+                DashboardTileEdit.Remove => FolderConfigWriter.RemoveTile(existing, dashboard.Section, index, tile.Title),
+                DashboardTileEdit.MoveUp => FolderConfigWriter.MoveTile(existing, dashboard.Section, index, -1, tile.Title),
+                DashboardTileEdit.MoveDown => FolderConfigWriter.MoveTile(existing, dashboard.Section, index, 1, tile.Title),
+                _ => throw new ArgumentOutOfRangeException(nameof(edit)),
+            };
+            await Task.Run(() => WriteFolderConfigTextAsync(file, updated, CancellationToken.None));
+            if (wasTrusted)
+            {
+                await Task.Run(() => _host!.FolderTrust.Trust(FolderConfig.Parse(dashboard.Config.Folder, updated)));
+            }
+
+            _host!.FolderSuggestions.Forget(dashboard.Config.Folder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
+            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException
+            or InvalidOperationException or ArgumentException)
+        {
+            Notify(Loc.T("Nie można zmienić kafelka: {0}", ex.Message), isError: true);
+        }
+    }
+
+    private bool CanCreateDashboardTile(VfsEntry entry) =>
+        entry.Kind is not (VfsEntryKind.ParentLink or VfsEntryKind.Action)
+        && (Core.Ai.AiInstallInfo.IsWebUrl(entry.Path)
+            || entry.Kind is not VfsEntryKind.Service && _host!.Router.TryResolve(entry.Path, out _));
 
     private async Task<string?> ReadFolderConfigTextAsync(string file, CancellationToken cancellationToken)
     {

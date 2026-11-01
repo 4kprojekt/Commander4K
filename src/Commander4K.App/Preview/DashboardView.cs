@@ -16,6 +16,13 @@ using Commander4K.Plugins.BuiltIn.Previews;
 
 namespace Commander4K.App.Preview;
 
+public enum DashboardTileEdit
+{
+    Remove,
+    MoveUp,
+    MoveDown,
+}
+
 /// <summary>
 /// A <c>c4k.dir</c> dashboard: plain tiles look as before, card tiles become live cards read by a
 /// <see cref="CardRefreshLoop"/> while the view is shown. Cards that sign in or change something wait for the user's
@@ -24,17 +31,20 @@ namespace Commander4K.App.Preview;
 public sealed class DashboardView : ScrollViewer
 {
     private const double SmallWidth = 260;
-    private const double WideWidth = 532;
+    private const double TileGap = 12;
+    private const double MinimumTileWidth = 220;
 
     private readonly AppHost _app;
     private readonly DashboardPreview _dashboard;
     private readonly Func<PreviewTile, Task> _open;
     private readonly Func<PreviewTile, double, Control> _shortcut;
+    private readonly Func<int, DashboardTileEdit, Task>? _editTile;
     private readonly Func<FolderConfig, Task<bool>>? _askTrust;
     private readonly Action<string, bool> _notify;
     private readonly ConcurrentDictionary<int, CardSource> _sources = new();
     private readonly Dictionary<int, CardView> _cards = [];
     private readonly Dictionary<int, string> _targets = [];
+    private readonly List<TileLayout> _tileLayouts = [];
     private readonly Dictionary<string, Bitmap?> _thumbnails = new(StringComparer.Ordinal);
     private readonly FolderSizeCache? _sizes;
     private CardRefreshLoop? _loop;
@@ -46,7 +56,8 @@ public sealed class DashboardView : ScrollViewer
     /// <param name="askTrust">Asks the user to trust the <c>c4k.dir</c>; <c>null</c> = such cards stay locked.</param>
     /// <param name="notify">Status-bar message (text, is error) for card actions that fail.</param>
     public DashboardView(AppHost app, DashboardPreview dashboard, SkinBrushes brushes, Func<PreviewTile, Task> open,
-        Func<PreviewTile, double, Control> shortcut, Func<FolderConfig, Task<bool>>? askTrust, Action<string, bool> notify)
+        Func<PreviewTile, double, Control> shortcut, Func<FolderConfig, Task<bool>>? askTrust,
+        Action<string, bool> notify, Func<int, DashboardTileEdit, Task>? editTile = null)
     {
         _notify = notify;
         _app = app;
@@ -54,9 +65,11 @@ public sealed class DashboardView : ScrollViewer
         _brushes = brushes;
         _open = open;
         _shortcut = shortcut;
+        _editTile = editTile;
         _askTrust = askTrust;
         _sizes = app.BuiltInPreviews.OfType<FolderPreviewPlugin>().FirstOrDefault()?.Sizes;
         HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+        SizeChanged += (_, _) => UpdateTileWidths();
         foreach (var slot in dashboard.Slots.Where(s => s.Tile.Card is not null))
         {
             _cards[slot.Index] = new CardView(this, slot);
@@ -123,14 +136,89 @@ public sealed class DashboardView : ScrollViewer
         }
 
         var wrap = new WrapPanel { Margin = new Thickness(-6, 4, 0, 0) };
+        _tileLayouts.Clear();
         foreach (var slot in _dashboard.Slots)
         {
-            wrap.Children.Add(_cards.TryGetValue(slot.Index, out var card) ? card.Render() : _shortcut(slot.Shortcut, SmallWidth));
+            var wide = slot.Tile.Size == TileSize.Wide;
+            var width = SmallWidth * (wide ? 2 : 1);
+            var hasCard = _cards.TryGetValue(slot.Index, out var card);
+            var tile = hasCard ? card!.Render(width - TileGap) : _shortcut(slot.Shortcut, width - TileGap);
+            var commands = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Spacing = 1,
+            };
+            commands.Children.Add(EditButton("↑", Loc.T("Przesuń kafelek w górę"), slot.Index > 0, slot.Index, DashboardTileEdit.MoveUp));
+            commands.Children.Add(EditButton("↓", Loc.T("Przesuń kafelek w dół"), slot.Index < _dashboard.Slots.Count - 1, slot.Index, DashboardTileEdit.MoveDown));
+            commands.Children.Add(EditButton("×", Loc.T("Usuń kafelek"), true, slot.Index, DashboardTileEdit.Remove));
+            var item = new StackPanel { Width = width, Spacing = 1 };
+            item.Children.Add(commands);
+            item.Children.Add(tile);
+            wrap.Children.Add(item);
+            _tileLayouts.Add(new TileLayout(item, tile, wide, card));
         }
 
         stack.Children.Add(wrap);
         Content = stack;
+        UpdateTileWidths();
     }
+
+    private void UpdateTileWidths()
+    {
+        if (_tileLayouts.Count == 0 || Bounds.Width <= 0)
+        {
+            return;
+        }
+
+        var available = Math.Max(MinimumTileWidth, Bounds.Width - 36);
+        var totalUnits = Math.Max(1, (int)Math.Floor((available + TileGap) / (SmallWidth + TileGap)));
+        var unitWidth = Math.Max(MinimumTileWidth, (available - TileGap * (totalUnits - 1)) / totalUnits);
+        foreach (var layout in _tileLayouts)
+        {
+            var span = Math.Min(layout.Wide ? 2 : 1, totalUnits);
+            var itemWidth = unitWidth * span + TileGap * (span - 1);
+            var contentWidth = Math.Max(160, itemWidth - TileGap);
+            layout.Container.Width = itemWidth;
+            if (layout.Card is not null)
+            {
+                layout.Card.SetWidth(contentWidth);
+            }
+            else if (layout.Tile is Button button)
+            {
+                button.Width = contentWidth;
+            }
+        }
+    }
+
+    private Button EditButton(string label, string description, bool enabled, int index, DashboardTileEdit edit)
+    {
+        var button = new Button
+        {
+            Content = label,
+            Padding = new Thickness(0),
+            Width = 20,
+            Height = 20,
+            MinWidth = 20,
+            IsEnabled = enabled && _editTile is not null,
+            Background = _brushes.Surface2,
+            Foreground = _brushes.HeaderForeground,
+            BorderBrush = _brushes.PanelBorder,
+            FontSize = Math.Max(10, _brushes.FontSize - 1),
+        };
+        ToolTip.SetTip(button, description);
+        button.Click += async (_, args) =>
+        {
+            args.Handled = true;
+            if (_editTile is not null)
+            {
+                await _editTile(index, edit);
+            }
+        };
+        return button;
+    }
+
+    private sealed record TileLayout(StackPanel Container, Control Tile, bool Wide, CardView? Card);
 
     /// <summary>
     /// Every card resolves its tile inside its own read: the cards resolve side by side, each within the loop's time
@@ -288,7 +376,7 @@ public sealed class DashboardView : ScrollViewer
         private readonly Border _frame = new();
         private CardState _state = new(slot.Index, null, true, null);
 
-        public Control Render()
+        public Control Render(double width)
         {
             // The frame outlives a rebuild (a skin change): take it out of the old grid before it joins the new one.
             if (_frame.Parent is Panel old)
@@ -297,7 +385,7 @@ public sealed class DashboardView : ScrollViewer
             }
 
             var brushes = owner._brushes;
-            _frame.Width = slot.Tile.Size == TileSize.Wide ? WideWidth : SmallWidth;
+            _frame.Width = width;
             _frame.Margin = new Thickness(6);
             _frame.Background = brushes.PanelBackground;
             _frame.BorderBrush = brushes.PanelBorder;
@@ -307,6 +395,8 @@ public sealed class DashboardView : ScrollViewer
             _frame.Child = Content(brushes);
             return _frame;
         }
+
+        public void SetWidth(double width) => _frame.Width = width;
 
         public void Update(CardState state)
         {

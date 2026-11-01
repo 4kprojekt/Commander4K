@@ -10,6 +10,7 @@ using Commander4K.App.Connections;
 using Commander4K.App.Preview;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
+using Commander4K.Core.Vfs;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.App.Panels;
@@ -30,14 +31,19 @@ public sealed class FilePanelView : ViewBase
     private bool _isActive;
     private string? _tabsKey;
     private bool _statusScheduled;
+    private bool _updatingModeSwitch;
 
     private Border _tabBorder = null!;
     private StackPanel _tabStrip = null!;
     private Border _pathBorder = null!;
     private TextBox _pathBox = null!;
-    private Button _filesModeButton = null!;
-    private Button _previewModeButton = null!;
+    private TextBlock _filesModeLabel = null!;
+    private ToggleSwitch _modeSwitch = null!;
+    private TextBlock _previewModeLabel = null!;
     private Border _statusBorder = null!;
+    private Border _emptyFolderSetup = null!;
+    private TextBlock _emptyFolderMessage = null!;
+    private Button _emptyFolderConfigure = null!;
     private Panel _content = null!;
     private TextBlock _status = null!;
     private TextBlock _statusMarked = null!;
@@ -268,8 +274,11 @@ public sealed class FilePanelView : ViewBase
     /// <summary>The ▾ button on the path bar: the window shows the location menu (drives, This PC, network, connections).</summary>
     public event Action<FilePanelView>? LocationMenuRequested;
 
-    /// <summary>One of the panel's Pliki/Podgląd controls was selected.</summary>
+    /// <summary>The panel's files/preview switch was toggled.</summary>
     public event Action<PanelModeRequest>? ModeRequested;
+
+    /// <summary>Configure the current empty folder as a special folder.</summary>
+    public event Action<string>? ConfigureEmptyFolderRequested;
 
     private Button _locationButton = null!;
 
@@ -280,6 +289,13 @@ public sealed class FilePanelView : ViewBase
         var root = CreateLayout();
         _pathBox.KeyDown += OnPathKeyDown;
         _pathBox.GotFocus += (_, _) => Activated?.Invoke(this);
+        _modeSwitch.IsCheckedChanged += (_, _) =>
+        {
+            if (!_updatingModeSwitch)
+            {
+                ModeRequested?.Invoke(new(this, Preview: _modeSwitch.IsChecked == true));
+            }
+        };
         ApplySkin(_skins.Current);
         RebuildTabs();
         OnTabChanged();
@@ -304,21 +320,35 @@ public sealed class FilePanelView : ViewBase
                     new Border()
                         .Ref(out _pathBorder)
                         .Row(1)
-                        .Child(new Grid().Cols("Auto,*,Auto,Auto").Children(
+                        .Child(new Grid().Cols("Auto,*,Auto,Auto,Auto,Auto").Children(
                             new Border().Ref(out _accentEdge).Width(3).Col(0),
                             new TextBox().Ref(out _pathBox).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(7, 2)
                                 .VerticalContentAlignment(VerticalAlignment.Center),
-                            new StackPanel().Col(2).Orientation(Orientation.Horizontal).VerticalAlignment(VerticalAlignment.Center).Children(
-                                new Button().Ref(out _filesModeButton).Content(Loc.T("Pliki")).Height(24).Padding(8, 0)
-                                    .VerticalContentAlignment(VerticalAlignment.Center).OnClick(_ => ModeRequested?.Invoke(new(this, Preview: false))),
-                                new Button().Ref(out _previewModeButton).Content(Loc.T("Podgląd")).Height(24).Padding(8, 0)
-                                    .VerticalContentAlignment(VerticalAlignment.Center).OnClick(_ => ModeRequested?.Invoke(new(this, Preview: true)))),
+                            new TextBlock().Ref(out _filesModeLabel).Col(2).Text(Loc.T("Pliki"))
+                                .VerticalAlignment(VerticalAlignment.Center).Margin(6, 0),
+                            new ToggleSwitch().Ref(out _modeSwitch).Col(3).Width(42).MinHeight(24)
+                                .HorizontalAlignment(HorizontalAlignment.Center)
+                                .VerticalAlignment(VerticalAlignment.Center),
+                            new TextBlock().Ref(out _previewModeLabel).Col(4).Text(Loc.T("Podgląd"))
+                                .VerticalAlignment(VerticalAlignment.Center).Margin(6, 0),
                             // One click to switch this panel elsewhere: drives, This PC, network, saved and new connections.
-                            new Button().Ref(out _locationButton).Col(3).Content("▾").Padding(10, 0).MinWidth(32)
+                            new Button().Ref(out _locationButton).Col(5).Content("▾").Padding(10, 0).MinWidth(32)
                                 .VerticalAlignment(VerticalAlignment.Stretch).VerticalContentAlignment(VerticalAlignment.Center)
                                 .BorderThickness(new Thickness(0)).Background(Brushes.Transparent)
                                 .OnClick(click => LocationMenuRequested?.Invoke(this)))),
-                    new Panel().Ref(out _content).Row(2).Children(Canvas),
+                    new Panel().Ref(out _content).Row(2).Children(
+                        Canvas,
+                        new Border().Ref(out _emptyFolderSetup).IsVisible(false)
+                            .HorizontalAlignment(HorizontalAlignment.Center).VerticalAlignment(VerticalAlignment.Center)
+                            .MaxWidth(480).Margin(24).Padding(24)
+                            .Background(_skins.Current.PanelBackground).BorderBrush(_skins.Current.PanelBorder)
+                            .BorderThickness(1).CornerRadius(new CornerRadius(_skins.Current.IsModern ? 8 : 0))
+                            .Child(new StackPanel().Spacing(14).Children(
+                                new TextBlock().Ref(out _emptyFolderMessage).TextWrapping(TextWrapping.Wrap)
+                                    .TextAlignment(TextAlignment.Center).HorizontalAlignment(HorizontalAlignment.Stretch),
+                                new Button().Ref(out _emptyFolderConfigure).Content(Loc.T("Skonfiguruj jako specjalny folder"))
+                                    .HorizontalAlignment(HorizontalAlignment.Center).Padding(16, 8)
+                                    .OnClick(_ => ConfigureEmptyFolderRequested?.Invoke(ActiveTab.Path))))),
                     new Border()
                         .Ref(out _statusBorder)
                         .Row(3)
@@ -528,12 +558,36 @@ public sealed class FilePanelView : ViewBase
             _pathBox.Text = tab.Path;
         }
 
+        UpdateEmptyFolderSetup();
         UpdateStatus();
         // Changed fires on every cursor move and streamed batch: rebuild the tab buttons only when they would differ.
         if (_tabStrip.Children.Count > 0 && TabsKey() != _tabsKey)
         {
             RebuildTabs();
         }
+    }
+
+    private void UpdateEmptyFolderSetup()
+    {
+        if (_emptyFolderSetup is null)
+        {
+            return;
+        }
+
+        var tab = ActiveTab;
+        var isDiskOrShare = VfsPath.GetScheme(tab.Path) is VfsPath.FileScheme or VfsPath.SmbScheme
+            && !tab.Path.Contains("://", StringComparison.Ordinal);
+        var empty = !tab.IsLoading && tab.Error is null && tab.Entries.All(entry =>
+            entry.Kind is VfsEntryKind.ParentLink or VfsEntryKind.Action);
+        _emptyFolderSetup.IsVisible = isDiskOrShare && empty && Mode is null && !_pluginTabIds.ContainsKey(tab);
+        _emptyFolderMessage.Text = Loc.T("Ten folder jest pusty. Wybierz, co ma pokazywać — ustawienia zostaną zapisane w pliku c4k.dir.");
+        var brushes = _skins.Current;
+        _emptyFolderSetup.Background = brushes.PanelBackground;
+        _emptyFolderSetup.BorderBrush = brushes.PanelBorder;
+        _emptyFolderConfigure.Background = brushes.Accent;
+        _emptyFolderConfigure.Foreground = brushes.AccentForeground;
+        _emptyFolderConfigure.BorderBrush = brushes.Accent;
+        _emptyFolderMessage.Foreground = brushes.MutedForeground;
     }
 
     private void UpdateStatus()
@@ -747,17 +801,19 @@ public sealed class FilePanelView : ViewBase
         _statusMarked.FontFamily = b.FontFamily;
         _statusMarked.FontSize = _status.FontSize;
         _statusMarkedEdge.Background = b.SelectedForeground;
+        UpdateEmptyFolderSetup();
         _pathBox.FontFamily = b.FontFamily;
         _pathBox.FontSize = b.FontSize;
         _pathBox.FontWeight = modern ? FontWeight.SemiBold : FontWeight.Normal;
         _locationButton.Foreground = b.HeaderForeground;
         _locationButton.FontSize = b.FontSize;
         ToolTip.SetTip(_locationButton, Loc.T("Zmień lokalizację panelu: dyski, Ten komputer, sieć, połączenia SSH/FTP (Alt+F1 / Alt+F2)"));
-        foreach (var button in new[] { _filesModeButton, _previewModeButton })
-        {
-            button.FontFamily = b.FontFamily;
-            button.FontSize = modern ? Math.Max(11, b.FontSize - 1) : b.FontSize;
-        }
+        _modeSwitch.FontFamily = b.FontFamily;
+        _modeSwitch.FontSize = modern ? Math.Max(12, b.FontSize) : b.FontSize;
+        ToolTip.SetTip(_modeSwitch, Loc.T("Przełącz między listą plików a podglądem"));
+        _filesModeLabel.FontFamily = b.FontFamily;
+        _previewModeLabel.FontFamily = b.FontFamily;
+        _filesModeLabel.FontSize = _previewModeLabel.FontSize = modern ? Math.Max(11, b.FontSize - 1) : b.FontSize;
 
         UpdateModeButtons();
         ApplyChrome();
@@ -766,22 +822,20 @@ public sealed class FilePanelView : ViewBase
 
     private void UpdateModeButtons()
     {
-        if (_filesModeButton is null || _previewModeButton is null)
+        if (_modeSwitch is null)
         {
             return;
         }
 
         var brushes = _skins.Current;
-        StyleModeButton(_filesModeButton, Mode is null, brushes);
-        StyleModeButton(_previewModeButton, Mode is PreviewPanelView, brushes);
-    }
-
-    private static void StyleModeButton(Button button, bool selected, SkinBrushes brushes)
-    {
-        button.Background = selected ? brushes.ActiveHeaderBackground : Brushes.Transparent;
-        button.Foreground = selected ? brushes.ActiveHeaderForeground : brushes.HeaderForeground;
-        button.BorderBrush = selected ? brushes.PanelBorder : Brushes.Transparent;
-        button.BorderThickness = new Thickness(selected ? 1 : 0);
+        var showingPreview = Mode is PreviewPanelView;
+        _updatingModeSwitch = true;
+        _modeSwitch.IsChecked = showingPreview;
+        _updatingModeSwitch = false;
+        _filesModeLabel.Foreground = showingPreview ? brushes.MutedForeground : brushes.HeaderForeground;
+        _previewModeLabel.Foreground = showingPreview ? brushes.HeaderForeground : brushes.MutedForeground;
+        _filesModeLabel.FontWeight = showingPreview ? FontWeight.Normal : FontWeight.SemiBold;
+        _previewModeLabel.FontWeight = showingPreview ? FontWeight.SemiBold : FontWeight.Normal;
     }
 
     /// <summary>Active panel: modern skins tint the path bar and show the accent edge; retro skins use the cursor colours.</summary>

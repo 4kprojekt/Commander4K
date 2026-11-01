@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
+using Avalonia.Threading;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
 using Commander4K.Core.Theming;
@@ -31,6 +32,7 @@ public sealed class SplashScene : Control
     private const int Slots = 10, Cur = 4, NSeg = 28, NPk = 10;
     private const double PulseMs = 550, FlightMs = 850;
     private static readonly double C = Math.Cos(Math.PI / 6), S = Math.Sin(Math.PI / 6);
+    private static readonly double[] SpeedLevels = [0.5, 1, 2, 4];
 
     // Name, size text, folder?
     private static readonly (string Name, string Size, bool Dir)[] Data =
@@ -64,19 +66,40 @@ public sealed class SplashScene : Control
     private readonly Rect[] _segs;
     private readonly List<Flight> _flights = [];
     private readonly List<(int Item, double Time)> _arrivedFiles = [];
+    private readonly object _stateGate = new();
     private readonly double[] _ledA = new double[3], _ledB = new double[3], _arcPulse = [double.MinValue, double.MinValue, double.MinValue];
+    private readonly double[] _wirePulses = [double.MinValue, double.MinValue];
+    private readonly Queue<(string, double, bool, IBrush)> _textOrder = [];
+    private readonly StreamGeometry[] _wireGeometries;
+    private readonly StreamGeometry[] _arcGeometries;
+    private readonly PolylinePath[] _wirePaths;
+    private readonly PolylinePath[] _arcPaths;
+    private readonly RadialGradientBrush? _ambient;
     private double _wirePulse1 = double.MinValue, _wirePulse2 = double.MinValue, _l2Until;
     private double _p, _doneAt, _off, _lastLaunch, _outUntil, _now;
     private double? _prev;
-    private bool _done, _ready, _finishedRaised, _running;
+    private bool _done, _ready, _finishedRaised;
     private bool _activeLeft = true;
     private int _base, _launches, _arrived;
     private double _scale = -1;
+    private volatile bool _running;
+    private int _workerGeneration;
+    private int _framePending;
 
     public SplashScene(SkinBrushes brushes, SplashMode mode)
     {
         _mode = mode;
         _c = new ScenePalette(brushes.Skin.Palette);
+        _ambient = _c.Glow
+            ? new RadialGradientBrush
+            {
+                Center = new RelativePoint(0.5, 0.52, RelativeUnit.Relative),
+                GradientOrigin = new RelativePoint(0.5, 0.52, RelativeUnit.Relative),
+                RadiusX = new RelativeScalar(0.5, RelativeUnit.Relative),
+                RadiusY = new RelativeScalar(0.45, RelativeUnit.Relative),
+                GradientStops = [new GradientStop(_c.AccentDimColor, 0), new GradientStop(Colors.Transparent, 0.72)],
+            }
+            : null;
         _regular = new Typeface(brushes.MonospaceFamily);
         _bold = new Typeface(brushes.MonospaceFamily, weight: FontWeight.Bold);
         _messages =
@@ -126,6 +149,8 @@ public sealed class SplashScene : Control
             [new(22, 240), new(110, 240), new(110, 177), new(147, 177)],
             [new(177, 147), new(177, 110), new(240, 110), new(240, 22)],
         ];
+        _wirePaths = [.. _wires.Select(CreatePath)];
+        _wireGeometries = [.. _wires.Select(Polyline)];
         var segs = new List<Rect>();
         for (var k = 0; k < 7; k++) segs.Add(new Rect(135 + (k * 12), 130, 10, 4));
         for (var k = 0; k < 7; k++) segs.Add(new Rect(220, 135 + (k * 12), 4, 10));
@@ -135,6 +160,8 @@ public sealed class SplashScene : Control
         _flightArcs = [.. Enumerable.Range(0, 3).Select(k => new Arc(
             new Point3(24, 200 - (k * 35), 103), new Point3(178 + (k * 8), 178 + (k * 8), 212 - (k * 14)), new Point3(130 + (k * 35), 24, 147)))];
         _arcs = [.. _flightArcs.Select(a => Enumerable.Range(0, 29).Select(i => P(a.At(i / 28.0))).ToArray())];
+        _arcPaths = [.. _arcs.Select(CreatePath)];
+        _arcGeometries = [.. _arcs.Select(Polyline)];
         Restart(0);
     }
 
@@ -148,32 +175,40 @@ public sealed class SplashScene : Control
     public double Speed { get; private set; }
 
     /// <summary>The app is ready: the bar runs to 100% quickly and the splash finishes.</summary>
-    public void Complete() => _ready = true;
+    public void Complete()
+    {
+        lock (_stateGate)
+        {
+            _ready = true;
+        }
+    }
 
     /// <summary>Space restarts, ←/→ and Tab pick the active panel, ↑/↓ change the tempo.</summary>
     public bool HandleKey(Avalonia.Input.Key key)
     {
-        switch (key)
+        lock (_stateGate)
         {
-            case Avalonia.Input.Key.Space or Avalonia.Input.Key.Enter:
-                Restart(_now);
-                return true;
-            case Avalonia.Input.Key.Left:
-                _activeLeft = true;
-                return true;
-            case Avalonia.Input.Key.Right:
-                _activeLeft = false;
-                return true;
-            case Avalonia.Input.Key.Tab:
-                _activeLeft = !_activeLeft;
-                return true;
-            case Avalonia.Input.Key.Up or Avalonia.Input.Key.Down:
-                double[] levels = [0.5, 1, 2, 4];
-                var i = Math.Clamp(Array.IndexOf(levels, Speed) + (key == Avalonia.Input.Key.Up ? 1 : -1), 0, levels.Length - 1);
-                Speed = levels[i];
-                return true;
-            default:
-                return false;
+            switch (key)
+            {
+                case Avalonia.Input.Key.Space or Avalonia.Input.Key.Enter:
+                    Restart(_now);
+                    return true;
+                case Avalonia.Input.Key.Left:
+                    _activeLeft = true;
+                    return true;
+                case Avalonia.Input.Key.Right:
+                    _activeLeft = false;
+                    return true;
+                case Avalonia.Input.Key.Tab:
+                    _activeLeft = !_activeLeft;
+                    return true;
+                case Avalonia.Input.Key.Up or Avalonia.Input.Key.Down:
+                    var i = Math.Clamp(Array.IndexOf(SpeedLevels, Speed) + (key == Avalonia.Input.Key.Up ? 1 : -1), 0, SpeedLevels.Length - 1);
+                    Speed = SpeedLevels[i];
+                    return true;
+                default:
+                    return false;
+            }
         }
     }
 
@@ -183,31 +218,76 @@ public sealed class SplashScene : Control
     {
         base.OnAttachedToVisualTree(e);
         _running = true;
-        RequestFrame();
+        var generation = Interlocked.Increment(ref _workerGeneration);
+        var thread = new Thread(() => Animate(generation))
+        {
+            IsBackground = true,
+            Name = "Commander4K splash animation",
+            Priority = ThreadPriority.BelowNormal,
+        };
+        thread.Start();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
         _running = false;
+        Interlocked.Increment(ref _workerGeneration);
     }
 
-    private void RequestFrame() => TopLevel.GetTopLevel(this)?.RequestAnimationFrame(_ =>
+    private void Animate(int generation)
     {
-        if (!_running)
+        while (_running && generation == Volatile.Read(ref _workerGeneration))
         {
-            return;
-        }
+            var tick = Stopwatch.GetTimestamp();
+            bool finished;
+            lock (_stateGate)
+            {
+                finished = Step(Stopwatch.GetElapsedTime(_clock).TotalMilliseconds);
+            }
 
-        Step(Stopwatch.GetElapsedTime(_clock).TotalMilliseconds);
-        InvalidateVisual();
-        RequestFrame();
-    });
+            if (!_running || generation != Volatile.Read(ref _workerGeneration))
+            {
+                break;
+            }
+
+            if (Interlocked.Exchange(ref _framePending, 1) == 0)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    Interlocked.Exchange(ref _framePending, 0);
+                    if (_running && generation == Volatile.Read(ref _workerGeneration))
+                    {
+                        InvalidateVisual();
+                    }
+                }, DispatcherPriority.Render);
+            }
+
+            if (finished)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_running && generation == Volatile.Read(ref _workerGeneration))
+                    {
+                        Finished?.Invoke();
+                    }
+                }, DispatcherPriority.Render);
+            }
+
+            var elapsed = Stopwatch.GetElapsedTime(tick);
+            var remaining = TimeSpan.FromMilliseconds(16.67) - elapsed;
+            if (remaining > TimeSpan.Zero)
+            {
+                Thread.Sleep(remaining);
+            }
+        }
+    }
 
     // ---------- state ----------
 
-    private void Step(double now)
+    private bool Step(double now)
     {
+        var finished = false;
         _now = now;
         if (_prev is null)
         {
@@ -242,7 +322,7 @@ public sealed class SplashScene : Control
         else if (_mode == SplashMode.Startup && !_finishedRaised && now - _doneAt > 450)
         {
             _finishedRaised = true;
-            Finished?.Invoke();
+            finished = true;
         }
 
         // The left panel scrolls, fast while indexing.
@@ -266,6 +346,10 @@ public sealed class SplashScene : Control
                 Arrive(f, now);
             }
         }
+
+        _wirePulses[0] = _wirePulse1;
+        _wirePulses[1] = _wirePulse2;
+        return finished;
     }
 
     private void Launch(double now)
@@ -325,6 +409,14 @@ public sealed class SplashScene : Control
 
     public override void Render(DrawingContext context)
     {
+        lock (_stateGate)
+        {
+            RenderFrame(context);
+        }
+    }
+
+    private void RenderFrame(DrawingContext context)
+    {
         var bounds = Bounds;
         var k = Math.Min(bounds.Width / ViewSize.Width, bounds.Height / ViewSize.Height);
         if (k <= 0)
@@ -340,18 +432,9 @@ public sealed class SplashScene : Control
 
         context.FillRectangle(_c.Bg, bounds);
         var now = _now;
-        if (_c.Glow)
+        if (_ambient is not null)
         {
-            // The ambient pool of light under the desk.
-            var pool = new RadialGradientBrush
-            {
-                Center = new RelativePoint(0.5, 0.52, RelativeUnit.Relative),
-                GradientOrigin = new RelativePoint(0.5, 0.52, RelativeUnit.Relative),
-                RadiusX = new RelativeScalar(0.5, RelativeUnit.Relative),
-                RadiusY = new RelativeScalar(0.45, RelativeUnit.Relative),
-                GradientStops = [new GradientStop(_c.AccentDimColor, 0), new GradientStop(Colors.Transparent, 0.72)],
-            };
-            context.FillRectangle(pool, bounds);
+            context.FillRectangle(_ambient, bounds);
         }
 
         var view = Matrix.CreateScale(k, k) * Matrix.CreateTranslation((bounds.Width - (ViewSize.Width * k)) / 2, (bounds.Height - (ViewSize.Height * k)) / 2);
@@ -407,13 +490,12 @@ public sealed class SplashScene : Control
         Led(context, new Rect(19, 22, 3, 276), 1.5, true);
 
         var under = Pen(_c.Deck, 3.5, scaled: true); // Masks the grid lines under the wire.
-        var pulses = new[] { _wirePulse1, _wirePulse2 };
         for (var i = 0; i < _wires.Length; i++)
         {
-            var geometry = Polyline(_wires[i]);
+            var geometry = _wireGeometries[i];
             context.DrawGeometry(null, under, geometry);
             context.DrawGeometry(null, Hair(_done ? _c.Line : _c.Accent), geometry);
-            DrawPulse(context, _wires[i], pulses[i], now);
+            DrawPulse(context, _wirePaths[i], _wirePulses[i], now);
         }
 
         // Progress ring round the logo, with one bright segment running round it.
@@ -580,8 +662,8 @@ public sealed class SplashScene : Control
         var arcPen = Pen(_done ? _c.Detail : _c.AccentDim, 1, dashed: true);
         for (var k = 0; k < _arcs.Length; k++)
         {
-            context.DrawGeometry(null, arcPen, Polyline(_arcs[k]));
-            DrawPulse(context, _arcs[k], _arcPulse[k], now);
+            context.DrawGeometry(null, arcPen, _arcGeometries[k]);
+            DrawPulse(context, _arcPaths[k], _arcPulse[k], now);
         }
 
         foreach (var f in _flights)
@@ -604,7 +686,7 @@ public sealed class SplashScene : Control
     }
 
     /// <summary>A 70-unit dash running the length of a wire in 0.55 s (the figure's <c>stroke-dasharray</c> pulse).</summary>
-    private void DrawPulse(DrawingContext context, Point[] points, double start, double now)
+    private void DrawPulse(DrawingContext context, PolylinePath path, double start, double now)
     {
         var t = (now - start) / PulseMs;
         if (t is < 0 or >= 1)
@@ -612,15 +694,49 @@ public sealed class SplashScene : Control
             return;
         }
 
-        var from = (-70 + (1070 * t)) / 1000;
-        var part = Slice(points, Math.Max(0, from), Math.Min(1, from + 0.07));
-        if (part.Length < 2)
+        var from = Math.Max(0, (-70 + (1070 * t)) / 1000) * path.Length;
+        var to = Math.Min(1, (-70 + (1070 * t)) / 1000 + 0.07) * path.Length;
+        if (to <= from)
         {
             return;
         }
 
         using var _ = context.PushOpacity(t < 0.9 ? 1 : (1 - t) * 10);
-        context.DrawGeometry(null, Pen(_c.AccentHi, 2.2, round: true), Polyline(part));
+        var pen = Pen(_c.AccentHi, 2.2, round: true);
+        var segment = SegmentAt(path, from);
+        var point = PointAt(path, segment, from);
+        while (true)
+        {
+            var segmentEnd = Math.Min(to, path.Distances[segment + 1]);
+            var next = PointAt(path, segment, segmentEnd);
+            context.DrawLine(pen, point, next);
+            if (segmentEnd >= to)
+            {
+                break;
+            }
+
+            point = next;
+            segment++;
+        }
+    }
+
+    private static int SegmentAt(PolylinePath path, double distance)
+    {
+        var segment = 0;
+        while (segment < path.Distances.Length - 2 && path.Distances[segment + 1] < distance)
+        {
+            segment++;
+        }
+
+        return segment;
+    }
+
+    private static Point PointAt(PolylinePath path, int segment, double distance)
+    {
+        var start = path.Distances[segment];
+        var length = path.Distances[segment + 1] - start;
+        var amount = length <= 0 ? 0 : (distance - start) / length;
+        return path.Points[segment] + ((path.Points[segment + 1] - path.Points[segment]) * amount);
     }
 
     private void DrawFaces(DrawingContext context, Geometry[] faces)
@@ -680,16 +796,19 @@ public sealed class SplashScene : Control
 
     private FormattedText Text(string text, double size, bool bold, IBrush brush)
     {
-        if (_texts.Count > 400)
-        {
-            _texts.Clear(); // Counters change every frame; keep the cache bounded.
-        }
-
         var key = (text, size, bold, brush);
         if (!_texts.TryGetValue(key, out var formatted))
         {
             formatted = new FormattedText(text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, bold ? _bold : _regular, size, brush);
             _texts[key] = formatted;
+            _textOrder.Enqueue(key);
+            if (_texts.Count > 512)
+            {
+                while (_texts.Count > 384)
+                {
+                    _texts.Remove(_textOrder.Dequeue());
+                }
+            }
         }
 
         return formatted;
@@ -782,39 +901,18 @@ public sealed class SplashScene : Control
         return geometry;
     }
 
-    /// <summary>The part of a polyline between two fractions of its length.</summary>
-    private static Point[] Slice(Point[] points, double from, double to)
+    private static PolylinePath CreatePath(Point[] points)
     {
-        var lengths = new double[points.Length];
-        for (var i = 1; i < points.Length; i++) lengths[i] = lengths[i - 1] + Point.Distance(points[i - 1], points[i]);
-        double a = from * lengths[^1], b = to * lengths[^1];
-        if (b <= a)
+        var distances = new double[points.Length];
+        for (var i = 1; i < points.Length; i++)
         {
-            return [];
+            distances[i] = distances[i - 1] + Point.Distance(points[i - 1], points[i]);
         }
 
-        Point At(double s)
-        {
-            var i = 1;
-            while (i < points.Length - 1 && lengths[i] < s) i++;
-            var span = lengths[i] - lengths[i - 1];
-            var t = span <= 0 ? 0 : (s - lengths[i - 1]) / span;
-            return points[i - 1] + ((points[i] - points[i - 1]) * t);
-        }
-
-        var result = new List<Point> { At(a) };
-        for (var i = 1; i < points.Length - 1; i++)
-        {
-            if (lengths[i] > a && lengths[i] < b)
-            {
-                result.Add(points[i]);
-            }
-        }
-
-        result.Add(At(b));
-        return [.. result];
+        return new PolylinePath(points, distances, distances[^1]);
     }
 
+    /// <summary>The part of a polyline between two fractions of its length.</summary>
     private enum RowCursor
     {
         None,
@@ -823,6 +921,8 @@ public sealed class SplashScene : Control
     }
 
     private readonly record struct Point3(double X, double Y, double Z);
+
+    private readonly record struct PolylinePath(Point[] Points, double[] Distances, double Length);
 
     /// <summary>A file's flight: a quadratic Bézier from the left panel over the hub into the right one.</summary>
     private readonly record struct Arc(Point3 Start, Point3 Control, Point3 End)

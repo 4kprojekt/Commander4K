@@ -183,6 +183,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     /// <summary>A tile was clicked; the folder is the one whose preview (or <c>c4k.dir</c>) produced it.</summary>
     public Func<PreviewTile, VfsEntry?, Task>? OpenTile { get; init; }
 
+    public Func<Plugins.BuiltIn.Dashboard.DashboardPreview, int, DashboardTileEdit, Task>? EditDashboardTile { get; init; }
+
     public Func<string, BrowserPanelView>? CreateBrowserPreview { get; init; }
 
     public Func<string, Task>? ConfigureSftpConnection { get; init; }
@@ -1495,28 +1497,46 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         var ordered = folder.Items.OrderByDescending(i => i.Size ?? -1).ThenBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         var pending = folder.Items.Count(i => i.Size is null);
 
-        var list = new StackPanel { Spacing = 1, Margin = new Thickness(12, 4) };
         if (folder.Complete && folder.Items.Count == 0 && _entry is { } emptyFolder
             && VfsPath.GetScheme(emptyFolder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme
             && ConfigureFolderView is { } configure)
         {
-            list.Children.Add(new TextBlock
+            SetStatus(Loc.T("Gotowe · {0}", folder.Path));
+            var message = new TextBlock
             {
                 Text = Loc.T("Ten folder jest pusty. Wybierz, co ma pokazywać — ustawienia zostaną zapisane w pliku c4k.dir."),
                 Foreground = _brushes.MutedForeground,
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 8),
-            });
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
             var button = new Button
             {
-                Content = Loc.T("Skonfiguruj"),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Padding = new Thickness(12, 6),
+                Content = Loc.T("Skonfiguruj jako specjalny folder"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Padding = new Thickness(16, 8),
+                Background = _brushes.Accent,
+                Foreground = _brushes.AccentForeground,
             };
             button.Click += async (_, _) => await configure(emptyFolder.Path);
-            list.Children.Add(button);
+            return new Grid
+            {
+                Children =
+                {
+                    new StackPanel
+                    {
+                        Spacing = 16,
+                        MaxWidth = 440,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(24),
+                        Children = { message, button },
+                    },
+                },
+            };
         }
 
+        var list = new StackPanel { Spacing = 1, Margin = new Thickness(12, 4) };
         list.Children.Add(new TextBlock
         {
             Text = $"Razem: {FileViewportCanvas.FormatSize(known)}" + (folder.Complete ? string.Empty : Loc.T("  (liczenie… {0} folderów)", pending)) +
@@ -1670,7 +1690,15 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             tile => OpenTile is { } open ? open(tile, folder) : Task.CompletedTask,
             TileButton,
             AskFolderTrust,
-            _notify);
+            _notify,
+            async (index, edit) =>
+            {
+                if (EditDashboardTile is { } editTile)
+                {
+                    await editTile(dashboard, index, edit);
+                    await ReloadCurrentAsync();
+                }
+            });
         SetStatus(Loc.P(dashboard.Slots.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty));
         return _dashboard;
     }

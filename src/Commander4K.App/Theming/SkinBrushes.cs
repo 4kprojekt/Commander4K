@@ -56,6 +56,7 @@ public sealed class SkinBrushes
         SelectedBackground = p.SelectedBackground is { } selected ? Brush(selected) : null;
         CursorSelectedForeground = Brush(p.CursorSelectedForeground ?? p.SelectedForeground);
         InactiveCursorBorder = Brush(p.InactiveCursorBorder ?? p.CursorBackground);
+        AccentForeground = ContrastingForeground(Accent.Color);
         Warning = Brush(warning);
         Success = Brush(p.Success ?? p.Progress);
         WarningBackground = Brush(p.WarningBackground ?? p.PanelBackground.Mix(warning, 0.14));
@@ -124,6 +125,7 @@ public sealed class SkinBrushes
     public IImmutableSolidColorBrush? SelectedBackground { get; }
     public IImmutableSolidColorBrush CursorSelectedForeground { get; }
     public IImmutableSolidColorBrush InactiveCursorBorder { get; }
+    public IImmutableSolidColorBrush AccentForeground { get; }
     public IImmutableSolidColorBrush Warning { get; }
     public IImmutableSolidColorBrush Success { get; }
     public IImmutableSolidColorBrush WarningBackground { get; }
@@ -149,6 +151,20 @@ public sealed class SkinBrushes
     public double ControlRadius => IsModern ? 4 : 0;
 
     public static Color ToColor(RgbColor c) => Color.FromArgb(c.A, c.R, c.G, c.B);
+
+    private static IImmutableSolidColorBrush ContrastingForeground(Color background)
+    {
+        static double Linear(byte channel)
+        {
+            var value = channel / 255d;
+            return value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+        }
+
+        var luminance = 0.2126 * Linear(background.R) + 0.7152 * Linear(background.G) + 0.0722 * Linear(background.B);
+        var whiteContrast = 1.05 / (luminance + 0.05);
+        var blackContrast = (luminance + 0.05) / 0.05;
+        return new ImmutableSolidColorBrush(whiteContrast >= blackContrast ? Colors.White : Colors.Black);
+    }
 
     private static ImmutableSolidColorBrush Brush(RgbColor c) => new(ToColor(c));
 }
