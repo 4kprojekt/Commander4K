@@ -11,6 +11,7 @@ using Commander4K.App.Ai;
 using Commander4K.App.Mcp;
 using Commander4K.Core.Mcp;
 using Commander4K.App.Browser;
+using Commander4K.App.Connections;
 using Commander4K.App.Composition;
 using Commander4K.App.Dialogs;
 using Commander4K.App.Input;
@@ -738,6 +739,7 @@ public sealed class MainWindow : Window
             AskAiAboutFile = AskAiAboutFileAsync,
             CreatePreviewPlugin = CreatePreviewPluginAsync,
             CreateBrowserPreview = url => new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut),
+            ConfigureSftpConnection = path => ConfigureSftpConnectionAsync(source, path),
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
             RunShortcut = RunShortcut,
             AskFolderTrust = AskFolderTrustAsync,
@@ -2367,6 +2369,13 @@ public sealed class MainWindow : Window
     private void OpenFile(FilePanelView panel, VfsEntry entry, bool plain = false)
     {
         var previewPlugin = PreviewPluginResolver.Resolve(_host!.PreviewPlugins, entry);
+        if (previewPlugin is SftpConnectionPreviewPlugin)
+        {
+            panel.ShowMode(CreatePreview(panel, pinnedFile: entry));
+            SetActive(panel);
+            return;
+        }
+
         if (previewPlugin is BrowserPlugin
             && Uri.TryCreate(entry.Path, UriKind.Absolute, out var url)
             && url.Scheme is "http" or "https")
@@ -3396,6 +3405,52 @@ public sealed class MainWindow : Window
         target.CloseMode();
         SetActive(target);
         await target.NavigateAsync(connection.Path);
+    }
+
+    private async Task ConfigureSftpConnectionAsync(FilePanelView source, string path)
+    {
+        if (!Uri.TryCreate(path, UriKind.Absolute, out var uri)
+            || !uri.Scheme.Equals("sftp", StringComparison.OrdinalIgnoreCase))
+        {
+            Notify(Loc.T("Nieprawidłowy adres SFTP: {0}", path), isError: true);
+            return;
+        }
+
+        var initial = new ConnectionSetting
+        {
+            Name = uri.Host,
+            Path = path,
+            UserName = RemoteTransferVfsPlugin.UserNameOf(path),
+        };
+        var result = await new ConnectionDialog(_skins!.Current, TestConnectionAsync, initial).ShowAsync(this);
+        if (result is null)
+        {
+            return;
+        }
+
+        var connection = result.Setting;
+        var realm = RemoteTransferVfsPlugin.RealmFor(connection.Path);
+        var existing = _host!.Settings.Connections.FindIndex(saved =>
+            string.Equals(RemoteTransferVfsPlugin.RealmFor(saved.Path), realm, StringComparison.OrdinalIgnoreCase));
+        if (existing < 0)
+        {
+            _host.Settings.Connections.Add(connection);
+        }
+        else
+        {
+            _host.Settings.Connections[existing] = connection;
+        }
+
+        _host.ApplySettings();
+        await _host.SaveSettingsAsync();
+        if (!await PrepareConnectionAsync(connection, result.Secret))
+        {
+            Notify(Loc.T("Zapisano „{0}”, ale serwer odrzucił login — spróbuj ponownie przy otwieraniu.", connection.Name), isError: true);
+        }
+
+        source.CloseMode();
+        SetActive(source);
+        await source.NavigateAsync(connection.Path);
     }
 
     private async Task AddLanHostAsync()

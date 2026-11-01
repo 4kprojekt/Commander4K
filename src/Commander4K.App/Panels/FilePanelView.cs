@@ -6,6 +6,7 @@ using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Commander4K.App.Composition;
+using Commander4K.App.Connections;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
@@ -427,6 +428,12 @@ public sealed class FilePanelView : ViewBase
     /// <summary>Enter: opens containers in place, reports files to the window.</summary>
     public void Open(VfsEntry entry)
     {
+        if (PreviewPluginResolver.Resolve(_host.PreviewPlugins, entry) is SftpConnectionPreviewPlugin)
+        {
+            FileActivated?.Invoke(entry);
+            return;
+        }
+
         switch (entry.Kind)
         {
             case VfsEntryKind.ParentLink:

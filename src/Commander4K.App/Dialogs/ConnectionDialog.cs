@@ -41,7 +41,7 @@ public sealed class ConnectionDialog : DialogWindow<ConnectionDialogResult?>
     private readonly StackPanel _portRow;
 
     /// <param name="test">Tries the connection; returns an error message or <c>null</c> when it works.</param>
-    public ConnectionDialog(SkinBrushes brushes, Func<ConnectionDialogResult, Task<string?>> test) : base(Loc.T("Dodaj połączenie sieciowe"), brushes, 620)
+    public ConnectionDialog(SkinBrushes brushes, Func<ConnectionDialogResult, Task<string?>> test, ConnectionSetting? initialSetting = null) : base(Loc.T("Dodaj połączenie sieciowe"), brushes, 620)
     {
         _test = test;
         _type = new ComboBox().HorizontalAlignment(HorizontalAlignment.Stretch)
@@ -88,7 +88,40 @@ public sealed class ConnectionDialog : DialogWindow<ConnectionDialogResult?>
                 (Loc.T("Testuj"), () => _ = TestAsync(), false),
                 (Loc.T("Anuluj"), () => Complete(null), false)));
         UpdateFields(typeChanged: true);
+        if (initialSetting is not null)
+        {
+            ApplyInitialSetting(initialSetting);
+        }
+
         Opened += (_, _) => _host.Focus();
+    }
+
+    private void ApplyInitialSetting(ConnectionSetting setting)
+    {
+        if (!Uri.TryCreate(setting.Path, UriKind.Absolute, out var uri)
+            || !uri.Scheme.Equals("sftp", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _type.SelectedIndex = Sftp;
+        UpdateFields(typeChanged: true);
+        _name.Text = setting.Name;
+        _host.Text = uri.Host;
+        _port.Text = (uri.Port is >= 1 and <= 65535 ? uri.Port : 22).ToString();
+        _user.Text = setting.UserName ?? (uri.UserInfo.Length == 0 ? Environment.UserName : Uri.UnescapeDataString(uri.UserInfo));
+        _folder.Text = uri.AbsolutePath;
+        if (setting.Auth == "password")
+        {
+            _auth.SelectedIndex = AuthPassword;
+        }
+        else if (setting.Auth == "key")
+        {
+            _auth.SelectedIndex = AuthKey;
+            _keyFile.Text = setting.KeyFile ?? string.Empty;
+        }
+
+        UpdateFields(typeChanged: false);
     }
 
     private void UpdateFields(bool typeChanged)

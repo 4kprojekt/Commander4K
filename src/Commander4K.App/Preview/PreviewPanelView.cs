@@ -9,6 +9,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Commander4K.App.Composition;
 using Commander4K.App.Browser;
+using Commander4K.App.Connections;
 using Commander4K.App.Input;
 using Commander4K.App.Panels;
 using Commander4K.App.Theming;
@@ -175,6 +176,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     public Func<PreviewTile, VfsEntry?, Task>? OpenTile { get; init; }
 
     public Func<string, BrowserPanelView>? CreateBrowserPreview { get; init; }
+
+    public Func<string, Task>? ConfigureSftpConnection { get; init; }
 
     /// <summary>App shortcuts pressed inside a web preview page (Avalonia never sees those keys); Esc closes the preview first.</summary>
     public Func<Core.Input.KeyStroke, bool>? RunShortcut { get; init; }
@@ -722,6 +725,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private Control? Render(PreviewContent content) => content switch
     {
         BrowserPagePreview browser => BrowserView(browser),
+        SftpConnectionPreview sftp => SftpConnectionView(sftp),
         WebPreview web => WebView(web),
         ActionsPreview actions => ActionsView(actions),
         FormPreview form => FormView(form),
@@ -737,6 +741,41 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         MessagePreview message => new TextBlock { Text = message.Message, Foreground = _brushes.HiddenForeground, Margin = new Thickness(16), TextWrapping = TextWrapping.Wrap },
         _ => null,
     };
+
+    private Control SftpConnectionView(SftpConnectionPreview preview)
+    {
+        var stack = new StackPanel { Margin = new Thickness(16), Spacing = 10 };
+        stack.Children.Add(new TextBlock
+        {
+            Text = Loc.T("Połączenie SFTP"),
+            FontSize = _brushes.FontSize + 4,
+            FontWeight = FontWeight.Bold,
+            Foreground = _brushes.DirectoryForeground,
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = Loc.T("Skonfiguruj użytkownika i sposób logowania. Przy pierwszym połączeniu aplikacja poprosi o sprawdzenie klucza hosta SSH."),
+            Foreground = _brushes.MutedForeground,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        var configure = new Button
+        {
+            Content = Loc.T("Skonfiguruj"),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(12, 6),
+            IsEnabled = ConfigureSftpConnection is not null,
+        };
+        configure.Click += async (_, _) =>
+        {
+            if (ConfigureSftpConnection is { } action)
+            {
+                await action(preview.Path);
+            }
+        };
+        stack.Children.Add(configure);
+        return Scroll(stack);
+    }
 
     private Control BrowserView(BrowserPagePreview page)
     {

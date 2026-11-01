@@ -14,6 +14,7 @@ using Commander4K.Core.Updates;
 using Commander4K.Core.Vfs;
 using Commander4K.App.PluginPanels;
 using Commander4K.App.Browser;
+using Commander4K.App.Connections;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Archives;
 using Commander4K.Plugins.BuiltIn.Columns;
@@ -112,7 +113,7 @@ public sealed class AppHost : IAsyncDisposable
         BuiltInPanels = [new SystemInfoPanelPlugin(), new TaskManagerPanelPlugin(), new LogAnalyzerPanelPlugin(), PowerShell, new PluginManagerPanel(this)];
         PanelPlugins = BuiltInPanels;
         CommandPlugins = [PowerShell];
-        BuiltInPreviews = [BrowserPlugin.Instance, new MarkdownPreviewPlugin(), new CanvasPreviewPlugin(), new ImagePreviewPlugin(), new FolderPreviewPlugin(), new TextPreviewPlugin()];
+        BuiltInPreviews = [BrowserPlugin.Instance, SftpConnectionPreviewPlugin.Instance, new MarkdownPreviewPlugin(), new CanvasPreviewPlugin(), new ImagePreviewPlugin(), new FolderPreviewPlugin(), new TextPreviewPlugin()];
         PreviewPlugins = BuiltInPreviews;
         ApplySettings();
     }
