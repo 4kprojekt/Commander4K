@@ -1589,7 +1589,6 @@ public sealed class MainWindow : Window
     // ---- folder view suggestions: a hint when the cursor rests on a folder that suits a preview ----
 
     private static readonly TimeSpan SuggestionDelay = TimeSpan.FromMilliseconds(700);
-    private DispatcherTimer? _suggestTimer;
     private CancellationTokenSource? _suggestCancel;
     private FilePanelView? _suggestPanel;
     private string? _suggestFor;
@@ -1636,29 +1635,12 @@ public sealed class MainWindow : Window
 
         _suggestPanel = panel;
         _suggestFor = folder.Path;
-        _suggestTimer ??= CreateSuggestionTimer();
-        _suggestTimer.Start();
-    }
-
-    private DispatcherTimer CreateSuggestionTimer()
-    {
-        var timer = new DispatcherTimer { Interval = SuggestionDelay };
-        timer.Tick += (_, _) =>
-        {
-            timer.Stop();
-            if (_suggestPanel is { Mode: null } panel && panel.ActiveTab.CurrentEntry is { } entry
-                && string.Equals(entry.Path, _suggestFor, StringComparison.OrdinalIgnoreCase))
-            {
-                _suggestCancel = new CancellationTokenSource();
-                _ = SuggestAsync(panel, entry, _suggestCancel.Token);
-            }
-        };
-        return timer;
+        _suggestCancel = new CancellationTokenSource();
+        _ = SuggestAsync(panel, folder, _suggestCancel.Token);
     }
 
     private void CancelSuggestion()
     {
-        _suggestTimer?.Stop();
         _suggestCancel?.Cancel();
         _suggestCancel?.Dispose();
         _suggestCancel = null;
@@ -1668,8 +1650,18 @@ public sealed class MainWindow : Window
         _right?.ShowSuggestion(null);
     }
 
+    /// <summary>After the cursor rested <see cref="SuggestionDelay"/> on <paramref name="folder"/>: the best suggestions as they arrive.</summary>
     private async Task SuggestAsync(FilePanelView panel, VfsEntry folder, CancellationToken cancellationToken)
     {
+        try
+        {
+            await Task.Delay(SuggestionDelay, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // The cursor moved on.
+        }
+
         var service = _host!.FolderSuggestions;
         await Task.Run(async () =>
         {
@@ -1734,7 +1726,9 @@ public sealed class MainWindow : Window
                 return ex.Message;
             }
         });
-        Notify(error ?? Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file), isError: error is not null);
+        Notify(error is null
+            ? Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file)
+            : Loc.T("Nie zapisano c4k.dir ({0}) — widok otwarty tylko teraz.", error), isError: error is not null);
 
         var config = FolderConfig.Parse(folder.Path, json);
         if (config.Enter is { } action)
