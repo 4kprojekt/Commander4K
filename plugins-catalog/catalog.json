@@ -400,11 +400,11 @@
         },
         {
           "path": "main.ps1",
-          "sha256": "2c9727eb4af42f88db87c2f5116924685797bc18db23c45a1bf70e5669be39fd"
+          "sha256": "1600986d26828cb379ee61f141d365c91b3efc43efabcb74b874fe5ddbe7c1d4"
         },
         {
           "path": "plugin.json",
-          "sha256": "f496ce50307d5556d26c9f2f1298ddf1cc96d03f2c460390eeb001e3b3e17b7f"
+          "sha256": "8667c8abccc004378578c0f44b8dd5427b65e0efdc9323d2f5fbf858965e453d"
         },
         {
           "path": "sync.ps1",

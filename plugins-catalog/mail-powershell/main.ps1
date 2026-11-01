@@ -203,36 +203,25 @@ function Add-MailDashboardTile($Existing, $Tile) {
     ($root | ConvertTo-Json -Depth 20) + "`n"
 }
 
-function Add-MailAccount([string] $Active) {
-    if (-not $Active -or -not (Test-MailLocalDiskPath $Active)) {
-        throw 'Konto pocztowe można dodać tylko w folderze na dysku lub udziale sieciowym (nie w archiwum, na SFTP ani w widoku Ten komputer).'
-    }
-    $title = 'Dodaj konto pocztowe'
-    $address = Read-C4KInput $title 'Adres e-mail (to także nazwa użytkownika):' ''
-    if ($null -eq $address) { return @{ message = 'Anulowano.' } }
+# Asks for the address, the servers and the sender's name, then checks the login (the app asks for the password and
+# keeps it; nothing is written when it fails). Returns the c4k.dir options, or $null when the user cancelled.
+function Read-MailAccountOptions([string] $Title) {
+    $address = Read-C4KInput $Title 'Adres e-mail (to także nazwa użytkownika):' ''
+    if ($null -eq $address) { return $null }
     $address = $address.Trim()
     if ($address -notmatch $script:MailAddressPattern) { throw 'To nie wygląda na adres e-mail.' }
     $domain = $address.Substring($address.IndexOf('@') + 1)
-    $imap = Read-C4KInput $title 'Serwer IMAP (host:port):' "imap.${domain}:993"
-    if ($null -eq $imap) { return @{ message = 'Anulowano.' } }
+    $imap = Read-C4KInput $Title 'Serwer IMAP (host:port):' "imap.${domain}:993"
+    if ($null -eq $imap) { return $null }
     $imap = $imap.Trim()
     if ($imap -notmatch $script:MailHostPattern) { throw 'Serwer IMAP ma mieć postać host albo host:port.' }
-    $smtp = Read-C4KInput $title 'Serwer SMTP (host:port; puste = bez wysyłania):' "smtp.${domain}:465"
-    if ($null -eq $smtp) { return @{ message = 'Anulowano.' } }
+    $smtp = Read-C4KInput $Title 'Serwer SMTP (host:port; puste = bez wysyłania):' "smtp.${domain}:465"
+    if ($null -eq $smtp) { return $null }
     $smtp = $smtp.Trim()
     if ($smtp -and $smtp -notmatch $script:MailHostPattern) { throw 'Serwer SMTP ma mieć postać host albo host:port.' }
-    $display = Read-C4KInput $title 'Imię i nazwisko nadawcy (opcjonalnie):' ''
-    if ($null -eq $display) { return @{ message = 'Anulowano.' } }
-    $folderName = Read-C4KInput $title 'Nazwa folderu konta:' $domain
-    if ($null -eq $folderName) { return @{ message = 'Anulowano.' } }
-    $folderName = (($folderName -replace '[\\/:*?"<>|\x00-\x1f]', '_').Trim()).TrimEnd('.', ' ')
-    if (-not $folderName -or $folderName -match '^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$') { throw 'Podaj poprawną nazwę folderu.' }
+    $display = Read-C4KInput $Title 'Imię i nazwisko nadawcy (opcjonalnie):' ''
+    if ($null -eq $display) { return $null }
 
-    $accountPath = Join-MailPath $Active $folderName
-    if ($null -ne (Get-C4KItem $accountPath)) { throw "Folder $folderName już istnieje." }
-    $dashboardPath = Join-MailPath $Active 'c4k.dir'
-
-    # The login is checked first (the app asks for the password and keeps it); nothing is written when it fails.
     $account = @{ imap = $imap; smtp = $(if ($smtp) { $smtp } else { $null }); user = $address; interactive = $true }
     [void] (Get-C4KMailFolders $account)
 
@@ -242,6 +231,26 @@ function Add-MailAccount([string] $Active) {
     if ($display.Trim()) { $options['name'] = $display.Trim() }
     $options['refresh'] = '5m'
     $options['since'] = '3m'
+    $options
+}
+
+function Add-MailAccount([string] $Active) {
+    if (-not $Active -or -not (Test-MailLocalDiskPath $Active)) {
+        throw 'Konto pocztowe można dodać tylko w folderze na dysku lub udziale sieciowym (nie w archiwum, na SFTP ani w widoku Ten komputer).'
+    }
+    $title = 'Dodaj konto pocztowe'
+    $options = Read-MailAccountOptions $title
+    if ($null -eq $options) { return @{ message = 'Anulowano.' } }
+    $domain = ([string] $options['user']).Substring(([string] $options['user']).IndexOf('@') + 1)
+    $folderName = Read-C4KInput $title 'Nazwa folderu konta:' $domain
+    if ($null -eq $folderName) { return @{ message = 'Anulowano.' } }
+    $folderName = (($folderName -replace '[\\/:*?"<>|\x00-\x1f]', '_').Trim()).TrimEnd('.', ' ')
+    if (-not $folderName -or $folderName -match '^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$') { throw 'Podaj poprawną nazwę folderu.' }
+
+    $accountPath = Join-MailPath $Active $folderName
+    if ($null -ne (Get-C4KItem $accountPath)) { throw "Folder $folderName już istnieje." }
+    $dashboardPath = Join-MailPath $Active 'c4k.dir'
+
     $action = { [ordered]@{ plugin = 'official.mail'; options = $options } }
     $accountConfig = [ordered]@{ '$schema' = $script:MailSchemaUrl; preview = (& $action); enter = (& $action) }
 
@@ -518,6 +527,20 @@ Register-C4KHandler 'command.execute' {
 }
 
 Register-C4KHandler 'background.tick' { param($p) Invoke-MailTick }
+
+# A folder that is being made a mail account (the app's "folder view" choice): ask for the account, check the login
+# and hand the options back; the app writes them into the folder's c4k.dir.
+Register-C4KHandler 'preview.setup' {
+    param($p)
+    if ($p.preview -ne 'account') { return @{ options = @{} } }
+    if (-not (Test-MailLocalDiskPath ([string] $p.folder))) {
+        throw 'Konto pocztowe może mieć tylko folder na dysku lub w udziale sieciowym.'
+    }
+    try { $options = Read-MailAccountOptions 'Konto pocztowe w tym folderze' }
+    catch { throw (Get-MailErrorText $_) }
+    if ($null -eq $options) { return $null }
+    @{ options = $options }
+}
 
 Register-C4KHandler 'preview.render' {
     param($p)

@@ -13,7 +13,7 @@
       { "id": "add-account", "title": "Dodaj konto pocztowe", "category": "Poczta", "description": "Pyta o adres i serwery, sprawdza logowanie i dodaje folder konta z kartą na pulpicie." }
     ],
     "previews": [
-      { "id": "account", "title": "Poczta: konto", "extensions": ["/"], "priority": -10, "card": true },
+      { "id": "account", "title": "Poczta: konto", "extensions": ["/"], "priority": -10, "card": true, "setup": true },
       { "id": "message", "title": "Poczta: wiadomość", "extensions": [".eml"], "priority": 60, "enter": true }
     ]
   }

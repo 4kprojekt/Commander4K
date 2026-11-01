@@ -74,8 +74,10 @@ public sealed record PanelContribution(
 /// <param name="Card">The plugin answers <c>preview.card</c>, so dashboards can show this preview as a live card.</param>
 /// <param name="Enter">Enter on a matching file opens the pinned preview; Shift+Enter keeps the shell open.</param>
 /// <param name="Suggest">When folders should be offered this preview (checked by the host; see <see cref="PreviewSuggestRule"/>).</param>
+/// <param name="Setup">The plugin answers <c>preview.setup</c>: when a folder is given this preview, the host asks the
+/// plugin for the folder's <c>options</c> (the plugin asks the user) before writing <c>c4k.dir</c>.</param>
 public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, string? WebRoot = null, bool Card = false, bool Enter = false,
-    PreviewSuggestRule? Suggest = null);
+    PreviewSuggestRule? Suggest = null, bool Setup = false);
 
 /// <param name="Interval">How often the host calls the plugin in the background (<c>"1m"</c>, <c>"5m"</c>…); clamped to at least one minute.</param>
 public sealed record BackgroundContribution(string Interval);

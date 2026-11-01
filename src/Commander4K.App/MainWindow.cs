@@ -1185,10 +1185,29 @@ public sealed class MainWindow : Window
                 if (choice.StartsWith("plugin:", StringComparison.Ordinal))
                 {
                     var plugin = _host.PluginCatalog.Find(choice[7..])!;
-                    action = new System.Text.Json.Nodes.JsonObject { ["plugin"] = plugin.Id };
+                    var pluginAction = new System.Text.Json.Nodes.JsonObject { ["plugin"] = plugin.Id };
+                    action = pluginAction;
+
+                    // The user picked the plugin: install it (the confirmation is the consent), enable it if it waits
+                    // for consent, then let it ask what the folder needs (an account, a server…) before c4k.dir is written.
                     if (!IsInstalled(plugin.Id))
                     {
-                        await OfferCatalogPluginAsync(plugin.Id);
+                        await InstallFromCatalogAsync(plugin.Id);
+                    }
+
+                    if (!IsInstalled(plugin.Id) || !await EnsurePluginEnabledAsync(plugin.Id))
+                    {
+                        return;
+                    }
+
+                    if (await SetupFolderPluginAsync(plugin.Id, folder) is not { } options)
+                    {
+                        return;
+                    }
+
+                    if (System.Text.Json.Nodes.JsonNode.Parse(options) is System.Text.Json.Nodes.JsonObject { Count: > 0 } optionsNode)
+                    {
+                        pluginAction["options"] = optionsNode;
                     }
                 }
                 else
@@ -1564,6 +1583,71 @@ public sealed class MainWindow : Window
         await RunFolderCommandAsync(config, run);
     }
 
+    /// <summary>An installed plugin that still waits for consent: asks now, with the same text as the plugin manager.</summary>
+    private async Task<bool> EnsurePluginEnabledAsync(string pluginId)
+    {
+        var host = _host!;
+        if (host.DiscoveredPlugins.FirstOrDefault(p => string.Equals(p.Manifest?.Id, pluginId, StringComparison.OrdinalIgnoreCase)) is not { } plugin)
+        {
+            return false;
+        }
+
+        if (host.PluginBlocker(plugin) is not { } blocker)
+        {
+            return true;
+        }
+
+        if (!plugin.IsValid || host.Approvals.IsApproved(plugin.Manifest!))
+        {
+            Notify(blocker, isError: true); // e.g. its runtime is missing: consent would not help
+            return false;
+        }
+
+        var message = await PluginManagerPanel.ApprovalMessageAsync(plugin, CancellationToken.None);
+        if (!await new ConfirmDialog(_skins!.Current, Loc.T("Włączyć wtyczkę?"), message, Loc.T("Włącz")).ShowAsync(this))
+        {
+            return false;
+        }
+
+        if (await PluginManagerPanel.ApproveAsync(host, plugin) is { } stillBlocked)
+        {
+            Notify(stillBlocked, isError: true);
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// <c>preview.setup</c>: a folder preview that declares <c>"setup": true</c> asks the user what the folder needs and
+    /// returns its <c>options</c>. "{}" when the plugin needs nothing; <c>null</c> when the user cancelled or it failed.
+    /// </summary>
+    private async Task<string?> SetupFolderPluginAsync(string pluginId, string folder)
+    {
+        var preview = _host!.PreviewPlugins.OfType<Core.Plugins.ExternalPreviewPlugin>().FirstOrDefault(p =>
+            string.Equals(p.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase) && p.SupportsSetup && p.Contribution.Extensions.Contains("/"));
+        if (preview is null)
+        {
+            return "{}";
+        }
+
+        try
+        {
+            var options = await preview.SetupAsync(folder, _host.HostFor(preview.Manifest), CancellationToken.None);
+            if (options is null)
+            {
+                Notify(Loc.T("Anulowano konfigurację „{0}”.", preview.Manifest.Name));
+            }
+
+            return options;
+        }
+        catch (Exception ex) when (ex is Core.Plugins.JsonRpcException or TimeoutException or IOException or InvalidOperationException or OperationCanceledException)
+        {
+            await new MessageDialog(_skins!.Current, Loc.T("Nie skonfigurowano folderu"), ex.Message).ShowAsync(this);
+            return null;
+        }
+    }
+
     private async Task OfferCatalogPluginAsync(string pluginId)
     {
         if (_host!.PluginCatalog.Find(pluginId) is not { } entry)
@@ -1601,7 +1685,7 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var result = await AiPluginInstaller.InstallAsync(this, _skins!.Current, AiContext, files, OpenPluginManagerAsync, fromCatalog: true);
+        var result = await AiPluginInstaller.InstallAsync(this, _skins!.Current, AiContext, files, OpenPluginManagerAsync, fromCatalog: true, enable: true);
         Notify(result.Message);
     }
 

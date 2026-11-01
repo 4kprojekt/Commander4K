@@ -88,13 +88,21 @@ public sealed class PluginTableCanvas : Control
         var widths = ColumnWidths(bounds.Width - 12);
 
         // Header.
+        // Design system: 11/600 capitals in the muted colour, a rule below; the sort chevron in the accent colour.
         var header = new Rect(0, 0, bounds.Width, b.RowHeight);
         context.FillRectangle(b.HeaderBackground, header);
+        if (b.IsModern)
+        {
+            context.FillRectangle(b.PanelBorder, new Rect(0, b.RowHeight - 1, bounds.Width, 1));
+        }
+
         var x = 6.0;
         for (var c = 0; c < _columns.Count; c++)
         {
-            var title = _columns[c].Header + (c == SortColumn ? (SortDescending ? " ▼" : " ▲") : "");
-            DrawText(context, b, title, b.HeaderForeground, x, 0, widths[c] - 8, b.BoldTypeface, Align(_columns[c]));
+            var title = b.IsModern ? _columns[c].Header.ToUpper(Culture) : _columns[c].Header;
+            var sorted = c == SortColumn;
+            DrawText(context, b, title + (sorted ? (SortDescending ? " ▼" : " ▲") : ""), sorted && b.IsModern ? b.Accent : b.IsModern ? b.MutedForeground : b.HeaderForeground,
+                x + (b.IsModern ? 8 : 0), 0, widths[c] - 8, b.BoldTypeface, Align(_columns[c]), b.IsModern ? 11 : null);
             x += widths[c];
         }
 
@@ -189,6 +197,11 @@ public sealed class PluginTableCanvas : Control
         {
             context.FillRectangle(IsActivePanel ? b.CursorBackground : b.InactiveCursorBackground, rowRect, radius);
         }
+        else if (b.IsModern && visible.HasChildren && visible.Depth == 0)
+        {
+            // A group: a band in the header colour, like the design's grouped log entries.
+            context.FillRectangle(b.HeaderBackground, rowRect, radius);
+        }
         else if (b.IsModern && visible.Row.Severity is RowSeverity.Warning or RowSeverity.Error)
         {
             context.FillRectangle(visible.Row.Severity == RowSeverity.Warning ? b.WarningBackground : b.ErrorBackground, rowRect, radius);
@@ -199,14 +212,14 @@ public sealed class PluginTableCanvas : Control
             : visible.Row.Severity switch
             {
                 RowSeverity.Muted => b.HiddenForeground,
-                RowSeverity.Highlight => b.DirectoryForeground,
+                RowSeverity.Highlight => b.IsModern ? b.FileForeground : b.DirectoryForeground,
                 RowSeverity.Warning => b.IsModern ? b.Warning : b.ArchiveForeground,
                 RowSeverity.Error => b.Error,
                 _ => b.FileForeground,
             };
         var typeface = visible.Row.Severity == RowSeverity.Highlight || visible.HasChildren ? b.BoldTypeface : b.Typeface;
 
-        var x = 6.0;
+        var x = b.IsModern ? 14.0 : 6.0;
         for (var c = 0; c < _columns.Count && c < visible.Row.Cells.Count; c++)
         {
             var cellX = x;
@@ -261,7 +274,7 @@ public sealed class PluginTableCanvas : Control
         _ => TextAlignment.Left,
     };
 
-    private static void DrawText(DrawingContext context, SkinBrushes b, string text, IBrush brush, double x, double y, double width, Typeface typeface, TextAlignment alignment)
+    private static void DrawText(DrawingContext context, SkinBrushes b, string text, IBrush brush, double x, double y, double width, Typeface typeface, TextAlignment alignment, double? fontSize = null)
     {
         if (width <= 4 || string.IsNullOrEmpty(text))
         {
@@ -269,7 +282,7 @@ public sealed class PluginTableCanvas : Control
         }
 
         var line = text.AsSpan().IndexOfAny('\r', '\n') is var cut and >= 0 ? text[..cut] + " …" : text;
-        var formatted = new FormattedText(line, Culture, FlowDirection.LeftToRight, typeface, b.FontSize, brush)
+        var formatted = new FormattedText(line, Culture, FlowDirection.LeftToRight, typeface, fontSize ?? b.FontSize, brush)
         {
             MaxTextWidth = width,
             MaxLineCount = 1,

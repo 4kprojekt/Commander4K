@@ -90,6 +90,7 @@
               "webRoot": { "type": "string", "description": "Folder inside the plugin (relative, no ..) with the HTML/JS pages shown when preview.render returns kind \"web\". Required for that kind." },
               "card": { "type": "boolean", "default": false, "description": "The plugin answers preview.card, so c4k.dir dashboards can show this preview as a live card." },
               "enter": { "type": "boolean", "default": false, "description": "Enter on a matching file opens the pinned preview; Shift+Enter keeps the shell open." },
+              "setup": { "type": "boolean", "default": false, "description": "Folder previews: the plugin answers preview.setup, so when the user gives a folder this preview the app asks the plugin for the folder's options (the plugin asks the user) before writing c4k.dir." },
               "suggest": {
                 "type": "object",
                 "description": "When the cursor rests on a folder that matches this rule, the app offers this preview as the folder's view (accepting writes c4k.dir). Checked by the app on the folder listing; the plugin is asked (preview.suggest) only with ask: true and only after the rule matched.",

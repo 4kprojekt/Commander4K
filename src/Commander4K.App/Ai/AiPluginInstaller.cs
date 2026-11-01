@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Commander4K.App.Dialogs;
+using Commander4K.App.PluginPanels;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
 using Commander4K.Core.Plugins;
@@ -23,9 +24,12 @@ public static class AiPluginInstaller
     /// <param name="forMcp">Called by an MCP client: no source-check choice (findings come back as the fix request,
     /// nothing is installed), no plugin manager afterwards, and English messages for the model. The confirmation with
     /// the permissions stays — it is the user's consent.</param>
+    /// <param name="enable">The confirmation is also the consent to the permissions: the plugin is enabled right
+    /// after installing (official catalog plugins, chosen by the user for a folder or from the catalog).</param>
     public static async Task<AiInstallResult> InstallAsync(Window owner, SkinBrushes brushes, AiAppContext context, IReadOnlyList<GeneratedFile> files, Func<Task> openPluginManager,
-        bool fromCatalog = false, PluginLimits? limits = null, bool forMcp = false)
+        bool fromCatalog = false, PluginLimits? limits = null, bool forMcp = false, bool enable = false)
     {
+        enable &= fromCatalog && !forMcp;
         // Expected validation failures are caught inside the lambda, so they never leave Task.Run (debugger-friendly).
         var (draft, findings, error) = await Task.Run<(PluginDraft?, IReadOnlyList<SourceFinding>, string?)>(() =>
         {
@@ -85,10 +89,13 @@ public static class AiPluginInstaller
             Loc.T("Pliki: {0}", string.Join(", ", draft.Files.Select(f => f.Path))) + "\n" +
             Loc.T("Folder: {0}", draft.TargetFolder) + "\n\n" +
             (draft.TargetExists ? Loc.T("Wtyczka o tym id już istnieje — jej folder zostanie zastąpiony. ") : string.Empty) +
-            Loc.T("Wtyczka zostanie zapisana jako wyłączona; włączysz ją w menedżerze wtyczek po sprawdzeniu uprawnień.");
+            (enable
+                ? Loc.T("Instalacja oznacza zgodę na te uprawnienia: wtyczka zostanie od razu włączona. Wyłączysz ją w menedżerze wtyczek.")
+                : Loc.T("Wtyczka zostanie zapisana jako wyłączona; włączysz ją w menedżerze wtyczek po sprawdzeniu uprawnień."));
         var title = forMcp ? Loc.T("Zainstalować wtyczkę od klienta MCP?") : fromCatalog ? Loc.T("Zainstalować wtyczkę z katalogu?") : Loc.T("Zainstalować wtyczkę od AI?");
         // An MCP request pops up unprompted: Enter must not install.
-        if (!await new ConfirmDialog(brushes, title, message, draft.TargetExists ? Loc.T("Zastąp") : Loc.T("Zainstaluj"), cancelIsDefault: forMcp).ShowAsync(owner))
+        var confirm = enable ? Loc.T("Zainstaluj i włącz") : draft.TargetExists ? Loc.T("Zastąp") : Loc.T("Zainstaluj");
+        if (!await new ConfirmDialog(brushes, title, message, confirm, cancelIsDefault: forMcp).ShowAsync(owner))
         {
             return new AiInstallResult(forMcp ? "The user declined the installation." : Loc.T("Anulowano instalację wtyczki."));
         }
@@ -121,6 +128,14 @@ public static class AiPluginInstaller
         if (forMcp)
         {
             return new AiInstallResult($"Installed {manifest.Id} {manifest.Version} in {draft.TargetFolder}. It is disabled: call enable_plugin (the user reviews its permissions).", Installed: true);
+        }
+
+        if (enable && context.Host.DiscoveredPlugins.FirstOrDefault(p => string.Equals(p.Manifest?.Id, manifest.Id, StringComparison.OrdinalIgnoreCase)) is { } installed)
+        {
+            var blocker = await PluginManagerPanel.ApproveAsync(context.Host, installed);
+            return new AiInstallResult(blocker is null
+                ? Loc.T("Zainstalowano i włączono „{0}”.", manifest.Name)
+                : Loc.T("Zainstalowano „{0}”, ale nie działa: {1}", manifest.Name, blocker), Installed: true);
         }
 
         await openPluginManager();

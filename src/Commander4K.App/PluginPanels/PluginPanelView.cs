@@ -36,7 +36,14 @@ public sealed class PluginPanelView : Grid, IPanelModeView
     private readonly PluginTableCanvas _table = new();
     private readonly TextBox _filter;
     private readonly WrapPanel _actions;
-    private readonly SelectableTextBlock _details;
+    private readonly StackPanel _details = new() { Spacing = 14, Margin = new Thickness(14, 12) };
+    private readonly Control _searchField;
+    private readonly Grid _body = new();
+    private readonly GridSplitter _splitter = new();
+    private readonly Border _statusBar;
+    private PanelDetails? _shownDetails;
+    private string? _detailsMessage;
+    private bool? _detailsAtSide;
     private readonly TextBlock _status;
     private readonly WaveDots _busy = new() { IsVisible = false, Margin = new Thickness(6, 0, 0, 0) };
     private readonly Border _header;
@@ -61,40 +68,42 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         _services = services;
         _brushes = brushes;
 
-        _filter = new TextBox().PlaceholderText(Loc.T("Filtruj… (pisz, aby zawęzić)")).MinWidth(220).Padding(6, 2);
+        _filter = new TextBox().PlaceholderText(Loc.T("Filtruj… (pisz, aby zawęzić)"));
         _filter.TextChanged += (_, _) => Rebuild(keepCursorId: CurrentRow?.Row.Id);
         _filter.KeyDown += OnFilterKeyDown;
+        _searchField = Ds.SearchField(brushes, _filter, 26).Width(240).VerticalAlignment(VerticalAlignment.Top);
         _actions = new WrapPanel().Orientation(Orientation.Horizontal);
         foreach (var action in session.Actions)
         {
             var a = action;
-            _actions.Children.Add(new Button()
-                .Content(action.Shortcut is { } key ? $"{action.Title} ({key})" : action.Title)
-                .Padding(8, 2).Margin(0, 0, 4, 4).FontSize(12)
-                .OnClick(async _ => await ExecuteActionAsync(a)));
+            var button = Ds.Button(brushes, action.Title, () => _ = ExecuteActionAsync(a), ButtonKind.Toolbar).Margin(0, 0, 6, 4);
+            ToolTip.SetTip(button, action.Shortcut is { } key ? $"{action.Title} ({key})" : action.Title);
+            _actions.Children.Add(button);
         }
 
-        _actions.Children.Add(new Button().Content(Loc.T("Odśwież (Ctrl+R)")).Padding(8, 2).FontSize(12).OnClick(_ => Reload()));
-        _actions.Children.Add(new Button().Content(Loc.T("Zamknij (Esc)")).Padding(8, 2).Margin(4, 0, 0, 0).FontSize(12).OnClick(_ => CloseRequested?.Invoke()));
+        var refresh = Ds.ToolButton(brushes, "⟳", Loc.T("Odśwież (Ctrl+R)"), () => Reload());
+        var close = Ds.ToolButton(brushes, "✕", Loc.T("Zamknij (Esc)"), () => CloseRequested?.Invoke());
+        var right = new StackPanel().Orientation(Orientation.Horizontal).Spacing(2).VerticalAlignment(VerticalAlignment.Top).Children(refresh, close);
 
-        // The title is already in the panel's path bar; the header holds the filter and the actions only.
-        _filter.Width = 220;
-        _filter.Height = 28;
-        _filter.VerticalAlignment = VerticalAlignment.Top;
-        _header = new Border().Padding(6, 4).Child(new Grid().Cols("Auto,*").Children(
-            _filter.Margin(0, 0, 10, 0),
-            _actions.Col(1)));
+        // Design system: a tool bar on the header colour with a rule below (the title is in the panel's path bar).
+        _header = new Border().Padding(8, 6, 8, 2).Child(new Grid().Cols("Auto,*,Auto").Children(
+            _searchField.Margin(0, 0, 10, 4),
+            _actions.Col(1),
+            right.Col(2)));
 
-        _details = new SelectableTextBlock().TextWrapping(TextWrapping.Wrap).Margin(8, 6);
         _detailsBorder = new Border().Child(new ScrollViewer().Content(_details));
-        _status = new TextBlock().Margin(6, 2).TextTrimming(TextTrimming.CharacterEllipsis);
+        _status = new TextBlock().VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
+        _statusBar = new Border().MinHeight(26).Padding(12, 0).Child(new Grid().Cols("Auto,*").Children(_busy.VerticalAlignment(VerticalAlignment.Center), _status.Col(1)));
 
-        RowDefinitions = new RowDefinitions("Auto,2*,4,*,Auto");
+        RowDefinitions = new RowDefinitions("Auto,*,Auto");
         Children.Add(_header);
-        Children.Add(_table.Row(1));
-        Children.Add(new GridSplitter().Row(2).ResizeDirection(GridResizeDirection.Rows));
-        Children.Add(_detailsBorder.Row(3));
-        Children.Add(new Grid().Row(4).Cols("Auto,*").Children(_busy, _status.Col(1)));
+        Children.Add(_body.Row(1));
+        Children.Add(_statusBar.Row(2));
+        _body.Children.Add(_table);
+        _body.Children.Add(_splitter);
+        _body.Children.Add(_detailsBorder);
+        PlaceDetails(atSide: false);
+        SizeChanged += (_, e) => PlaceDetails(e.NewSize.Width >= 960);
 
         _table.Activated += () => Activated?.Invoke();
         _table.RowClicked += index => MoveCursor(index);
@@ -173,19 +182,91 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         _brushes = brushes;
         _table.Brushes = brushes;
         _header.Background = brushes.HeaderBackground;
+        _header.BorderBrush = brushes.PanelBorder;
+        _header.BorderThickness = new Thickness(0, 0, 0, brushes.IsModern ? 1 : 0);
         _detailsBorder.Background = brushes.PanelBackground;
-        _details.Foreground = brushes.FileForeground;
-        _details.FontFamily = brushes.FontFamily;
-        _details.FontSize = brushes.FontSize - 1;
+        _detailsBorder.BorderBrush = brushes.PanelBorder;
+        _splitter.Background = brushes.PanelBorder;
+        _statusBar.Background = brushes.StatusBackground;
+        _statusBar.BorderBrush = brushes.PanelBorder;
+        _statusBar.BorderThickness = new Thickness(0, brushes.IsModern ? 1 : 0, 0, 0);
         _status.Foreground = brushes.StatusForeground;
+        _status.FontSize = Math.Max(11, brushes.FontSize - 1);
         _busy.Foreground = brushes.StatusForeground;
-        Background = brushes.StatusBackground;
-        foreach (var text in _header.GetLogicalDescendants().OfType<TextBlock>())
+        Background = brushes.PanelBackground;
+        foreach (var button in _header.GetLogicalDescendants().OfType<Button>())
         {
-            text.Foreground = brushes.HeaderForeground;
+            Ds.Style(button, brushes, button.Content is "⟳" or "✕" ? ButtonKind.Ghost : ButtonKind.Toolbar);
         }
 
+        RenderDetails();
         _table.InvalidateVisual();
+    }
+
+    /// <summary>The details pane: beside the table on a wide panel (the design), under it on a narrow one.</summary>
+    private void PlaceDetails(bool atSide)
+    {
+        if (_detailsAtSide == atSide)
+        {
+            return;
+        }
+
+        _detailsAtSide = atSide;
+        _body.RowDefinitions.Clear();
+        _body.ColumnDefinitions.Clear();
+        if (atSide)
+        {
+            _body.ColumnDefinitions = new ColumnDefinitions("*,1,360");
+            Grid.SetRow(_table, 0); Grid.SetColumn(_table, 0);
+            Grid.SetRow(_splitter, 0); Grid.SetColumn(_splitter, 1);
+            Grid.SetRow(_detailsBorder, 0); Grid.SetColumn(_detailsBorder, 2);
+            _splitter.ResizeDirection = GridResizeDirection.Columns;
+        }
+        else
+        {
+            _body.RowDefinitions = new RowDefinitions("2*,1,*");
+            Grid.SetColumn(_table, 0); Grid.SetRow(_table, 0);
+            Grid.SetColumn(_splitter, 0); Grid.SetRow(_splitter, 1);
+            Grid.SetColumn(_detailsBorder, 0); Grid.SetRow(_detailsBorder, 2);
+            _splitter.ResizeDirection = GridResizeDirection.Rows;
+        }
+    }
+
+    /// <summary>Each section: an accent heading over a two-column grid (muted key, selectable value).</summary>
+    private void RenderDetails()
+    {
+        _details.Children.Clear();
+        var b = _brushes;
+        if (_detailsMessage is { } message)
+        {
+            _details.Children.Add(Ds.Muted(b, message));
+            return;
+        }
+
+        if (_shownDetails is null)
+        {
+            return;
+        }
+
+        foreach (var section in _shownDetails.Sections)
+        {
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 12, RowSpacing = 4 };
+            var row = 0;
+            foreach (var (key, value) in section.Items)
+            {
+                grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+                var keyText = new TextBlock { Text = key, FontSize = 12, Foreground = b.MutedForeground, MaxWidth = 140, TextWrapping = TextWrapping.Wrap };
+                var valueText = new SelectableTextBlock { Text = value, FontSize = 12, Foreground = b.FileForeground, TextWrapping = TextWrapping.Wrap };
+                Grid.SetRow(keyText, row);
+                Grid.SetRow(valueText, row);
+                Grid.SetColumn(valueText, 1);
+                grid.Children.Add(keyText);
+                grid.Children.Add(valueText);
+                row++;
+            }
+
+            _details.Children.Add(new StackPanel { Spacing = 8, Children = { Ds.SectionHeading(b, section.Title), grid } });
+        }
     }
 
     /// <summary>Keys while the panel is active; returns <c>false</c> for keys left to the global keymap.</summary>
@@ -516,7 +597,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         _detailsLoading?.Cancel();
         if (CurrentRow is not { } row)
         {
-            _details.Text = string.Empty;
+            ShowDetails(null, null);
             return;
         }
 
@@ -530,38 +611,22 @@ public sealed class PluginPanelView : Grid, IPanelModeView
                 return;
             }
 
-            _details.Text = Format(details);
+            ShowDetails(details, null);
         }
         catch (OperationCanceledException)
         {
         }
         catch (Exception ex)
         {
-            _details.Text = "⚠ " + ex.Message;
+            ShowDetails(null, "⚠ " + ex.Message);
         }
     }
 
-    private static string Format(PanelDetails? details)
+    private void ShowDetails(PanelDetails? details, string? message)
     {
-        if (details is null)
-        {
-            return string.Empty;
-        }
-
-        var text = new StringBuilder();
-        foreach (var section in details.Sections)
-        {
-            text.Append("■ ").AppendLine(section.Title);
-            var width = Math.Min(28, section.Items.Select(i => i.Key.Length).DefaultIfEmpty(0).Max());
-            foreach (var (key, value) in section.Items)
-            {
-                text.Append("   ").Append(key.PadRight(width)).Append("  ").AppendLine(value);
-            }
-
-            text.AppendLine();
-        }
-
-        return text.ToString().TrimEnd();
+        _shownDetails = details;
+        _detailsMessage = message;
+        RenderDetails();
     }
 
     private void OnFilterKeyDown(object? sender, KeyEventArgs e)

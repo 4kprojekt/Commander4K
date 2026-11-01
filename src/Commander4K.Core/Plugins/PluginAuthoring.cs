@@ -207,7 +207,8 @@ public static partial class PluginAuthoring
             throw new InvalidOperationException($"\"{draft.TargetFolder}\" already exists.");
         }
 
-        var temporary = draft.TargetFolder + ".new-" + Guid.NewGuid().ToString("N")[..8];
+        RemoveLeftovers(draft.TargetFolder);
+        var temporary = draft.TargetFolder + TemporarySuffix + Guid.NewGuid().ToString("N")[..8];
         foreach (var file in draft.Files)
         {
             WriteFile(Path.Combine(temporary, file.Path), file);
@@ -243,6 +244,34 @@ public static partial class PluginAuthoring
                 catch (Exception manifest) when (manifest is IOException or UnauthorizedAccessException)
                 {
                 }
+            }
+        }
+    }
+
+    private const string TemporarySuffix = ".new-";
+
+    /// <summary>A folder an install writes into before it becomes the plugin's folder.</summary>
+    public static bool IsTemporaryFolder(string folder) =>
+        Path.GetFileName(Path.TrimEndingDirectorySeparator(folder)).Contains(TemporarySuffix, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Temporary folders that an earlier, interrupted install of the same plugin left behind.</summary>
+    private static void RemoveLeftovers(string target)
+    {
+        var parent = Path.GetDirectoryName(target);
+        if (parent is null || !Directory.Exists(parent))
+        {
+            return;
+        }
+
+        foreach (var leftover in Directory.EnumerateDirectories(parent, Path.GetFileName(target) + TemporarySuffix + "*"))
+        {
+            try
+            {
+                Directory.Delete(leftover, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Still held by something; Discover skips it anyway, the next install tries again.
             }
         }
     }

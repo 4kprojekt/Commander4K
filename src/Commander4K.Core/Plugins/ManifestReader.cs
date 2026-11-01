@@ -38,6 +38,12 @@ public static partial class ManifestReader
         {
             foreach (var folder in Directory.EnumerateDirectories(root))
             {
+                // "<id>.new-xxxxxxxx" is an install in progress (or one Windows kept from finishing): never a plugin.
+                if (PluginAuthoring.IsTemporaryFolder(folder))
+                {
+                    continue;
+                }
+
                 if (File.Exists(Path.Combine(folder, FileName)))
                 {
                     found.Add(Read(folder));

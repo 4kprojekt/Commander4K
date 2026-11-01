@@ -1292,5 +1292,13 @@
   "Edycja + podgląd": "Edit + preview",
   "F4 przełącza edycję": "F4 switches editing",
   "Tekst": "Text",
-  "Wiersz {0}, kol. {1}": "Line {0}, col. {1}"
+  "Wiersz {0}, kol. {1}": "Line {0}, col. {1}",
+  "_// plugin install: consent and folder setup": "",
+  "Anulowano konfigurację „{0}”.": "Setting up \"{0}\" was cancelled.",
+  "Nie skonfigurowano folderu": "The folder was not set up",
+  "Włączyć wtyczkę?": "Enable the plugin?",
+  "Zainstalowano „{0}”, ale nie działa: {1}": "Installed \"{0}\", but it cannot run: {1}",
+  "Zainstalowano i włączono „{0}”.": "Installed and enabled \"{0}\".",
+  "Zainstaluj i włącz": "Install and enable",
+  "Instalacja oznacza zgodę na te uprawnienia: wtyczka zostanie od razu włączona. Wyłączysz ją w menedżerze wtyczek.": "Installing means consenting to these permissions: the plugin is enabled right away. You can disable it in the plugin manager."
 }

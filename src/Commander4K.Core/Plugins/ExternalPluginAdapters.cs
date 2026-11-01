@@ -557,6 +557,31 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
     /// <c>preview.card</c> with the same parameters as <c>preview.render</c> plus <c>previous</c> (the last card, so a
     /// refresh can extend a chart). Previews that do not declare <c>"card": true</c> get the plain card: title and Open.
     /// </summary>
+    /// <summary>The preview answers <c>preview.setup</c> (manifest <c>"setup": true</c>).</summary>
+    public bool SupportsSetup => preview.Setup;
+
+    /// <summary>
+    /// <c>preview.setup</c> for a folder that is getting this preview: the plugin asks the user what it needs (through
+    /// ui.prompt, ui.confirm…) and answers <c>{ options }</c> for the folder's <c>c4k.dir</c>, or <c>null</c> when
+    /// the user cancelled. Interactive, so the call may take as long as the user does (up to 15 minutes).
+    /// </summary>
+    /// <returns>The options as JSON text; <c>null</c> = cancelled.</returns>
+    public async Task<string?> SetupAsync(string folder, IPluginHost host, CancellationToken cancellationToken)
+    {
+        var result = await plugin.CallAsync("preview.setup", new
+        {
+            preview = preview.Id,
+            folder,
+            context = ExternalPlugin.Context(host),
+        }, cancellationToken, TimeSpan.FromMinutes(15)).ConfigureAwait(false);
+        if (result.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return result.TryGetProperty("options", out var options) && options.ValueKind == JsonValueKind.Object ? options.GetRawText() : "{}";
+    }
+
     public async Task<PreviewCard> LoadCardAsync(PreviewCardRequest request, IPluginHost host, CancellationToken cancellationToken)
     {
         if (!preview.Card)
