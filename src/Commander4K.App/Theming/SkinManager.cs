@@ -69,15 +69,16 @@ public sealed class SkinManager
         r["ControlCornerRadius"] = new CornerRadius(b.ControlRadius);
         r["OverlayCornerRadius"] = new CornerRadius(b.IsModern ? 6 : 0);
 
-        // Buttons: raised surface, 1 px border, hover / pressed tokens.
+        // Buttons: raised surface, keyboard focus, hover and pressed states.
         Set(r, b.Surface2, "ButtonBackground", "ButtonBackgroundDisabled", "RepeatButtonBackground", "ToggleButtonBackground");
         Set(r, b.HoverBackground, "ButtonBackgroundPointerOver", "RepeatButtonBackgroundPointerOver", "ToggleButtonBackgroundPointerOver");
         Set(r, b.PressedBackground, "ButtonBackgroundPressed", "RepeatButtonBackgroundPressed", "ToggleButtonBackgroundPressed");
         Set(r, b.WindowForeground, "ButtonForeground", "ButtonForegroundPointerOver", "ButtonForegroundPressed", "RepeatButtonForeground", "ToggleButtonForeground");
         Set(r, b.MutedForeground, "ButtonForegroundDisabled");
         Set(r, b.PanelBorder, "ButtonBorderBrush", "ButtonBorderBrushPointerOver", "ButtonBorderBrushPressed", "ButtonBorderBrushDisabled", "RepeatButtonBorderBrush", "ToggleButtonBorderBrush");
+        Set(r, b.FocusRing, "ButtonBorderBrushFocused", "ToggleButtonBorderBrushFocused");
 
-        // Text boxes: panel background, focus ring on focus.
+        // Text boxes: code-oriented inputs retain the same skin, including selection and focus.
         Set(r, b.PanelBackground, "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused", "TextControlBackgroundDisabled");
         Set(r, b.FileForeground, "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused");
         Set(r, b.MutedForeground, "TextControlPlaceholderForeground", "TextControlPlaceholderForegroundPointerOver", "TextControlPlaceholderForegroundFocused", "TextControlForegroundDisabled");
@@ -90,8 +91,11 @@ public sealed class SkinManager
         Set(r, b.Surface2, "ComboBoxBackground", "ComboBoxBackgroundPressed", "ComboBoxDropDownBackground", "ComboBoxBackgroundDisabled");
         Set(r, b.HoverBackground, "ComboBoxBackgroundPointerOver", "ComboBoxItemBackgroundPointerOver", "ListBoxItemBackgroundPointerOver");
         Set(r, b.PanelBorder, "ComboBoxBorderBrush", "ComboBoxBorderBrushPointerOver", "ComboBoxBorderBrushPressed", "ComboBoxDropDownBorderBrush");
+        Set(r, b.FocusRing, "ComboBoxBorderBrushFocused");
         Set(r, b.FileForeground, "ComboBoxForeground", "ComboBoxItemForeground", "ComboBoxItemForegroundPointerOver", "ComboBoxItemForegroundSelected", "ListBoxItemForeground");
         Set(r, b.HighlightBackground, "ComboBoxItemBackgroundSelected", "ComboBoxItemBackgroundSelectedPointerOver", "ListBoxItemBackgroundSelected", "ListBoxItemBackgroundSelectedPointerOver");
+        Set(r, b.PanelBackground, "ListBoxBackground");
+        Set(r, b.PanelBorder, "ListBoxBorderBrush");
 
         // Menus and context menus: raised surface with hover rows.
         Set(r, b.Surface2, "MenuFlyoutPresenterBackground");
@@ -102,8 +106,13 @@ public sealed class SkinManager
         Set(r, b.MutedForeground, "MenuFlyoutItemKeyboardAcceleratorTextForeground", "MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver");
 
         // Switches and check boxes use the accent when on (design system: 40×20 switch, accent fill).
-        Set(r, b.Accent, "ToggleSwitchFillOn", "ToggleSwitchFillOnPointerOver", "CheckBoxCheckBackgroundFillChecked", "CheckBoxCheckBackgroundStrokeChecked");
-        Set(r, b.MutedForeground, "ToggleSwitchStrokeOff", "ToggleSwitchKnobFillOff", "CheckBoxCheckBackgroundStrokeUnchecked");
+        Set(r, b.Accent, "ToggleSwitchFillOn", "ToggleSwitchFillOnPointerOver", "ToggleSwitchFillOnPressed",
+            "CheckBoxCheckBackgroundFillChecked", "CheckBoxCheckBackgroundFillCheckedPointerOver",
+            "CheckBoxCheckBackgroundStrokeChecked", "CheckBoxCheckBackgroundStrokeCheckedPointerOver");
+        Set(r, b.MutedForeground, "ToggleSwitchStrokeOff", "ToggleSwitchStrokeOffPointerOver", "ToggleSwitchKnobFillOff",
+            "CheckBoxCheckBackgroundStrokeUnchecked", "CheckBoxCheckBackgroundStrokeUncheckedPointerOver");
+        Set(r, b.PanelBackground, "ToggleSwitchFillOff", "ToggleSwitchFillOffPointerOver", "CheckBoxCheckBackgroundFillUnchecked");
+        Set(r, b.FocusRing, "CheckBoxCheckBackgroundStrokeCheckedPressed");
 
         // Tooltips.
         Set(r, b.Surface2, "ToolTipBackground");

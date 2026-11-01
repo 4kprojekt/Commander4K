@@ -1276,7 +1276,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             button.Background = _brushes.Accent;
             button.BorderBrush = _brushes.Accent;
-            button.Foreground = Avalonia.Media.Brushes.White;
+            button.Foreground = _brushes.AccentForeground;
         }
 
         button.Click += async (_, _) => await action();
@@ -1422,7 +1422,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             AcceptsReturn = true,
             AcceptsTab = true,
             TextWrapping = TextWrapping.Wrap,
-            FontFamily = FontFamily.Parse("Cascadia Mono, Consolas, Courier New"),
+            FontFamily = _brushes.MonospaceFamily,
             FontSize = _brushes.FontSize,
             Background = _brushes.PanelBackground,
             Foreground = _brushes.FileForeground,
@@ -1461,7 +1461,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             Text = text,
             TextWrapping = TextWrapping.NoWrap,
-            FontFamily = FontFamily.Parse("Cascadia Mono, Consolas, Courier New"),
+            FontFamily = _brushes.MonospaceFamily,
             FontSize = _brushes.FontSize - 1,
             Background = _brushes.PanelBackground,
             Foreground = _brushes.FileForeground,

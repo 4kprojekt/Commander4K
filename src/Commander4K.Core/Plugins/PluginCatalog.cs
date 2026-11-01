@@ -207,7 +207,7 @@ public sealed class PluginCatalogService(HttpClient http, string cachePath)
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.Replace("\r", string.Empty, StringComparison.Ordinal))));
 
     public static PluginCatalogDocument Parse(string json) =>
-        JsonSerializer.Deserialize(json, PluginCatalogJsonContext.Default.PluginCatalogDocument) ?? new PluginCatalogDocument();
+        EnsureUniquePluginIds(JsonSerializer.Deserialize(json, PluginCatalogJsonContext.Default.PluginCatalogDocument) ?? new PluginCatalogDocument());
 
     private static int PreviewMatchScore(PluginCatalogEntry plugin, VfsEntry entry)
     {
@@ -238,6 +238,19 @@ public sealed class PluginCatalogService(HttpClient http, string cachePath)
     {
         using var stream = typeof(PluginCatalogService).Assembly.GetManifestResourceStream("plugin-catalog.json")
             ?? throw new InvalidOperationException("The built-in plugin catalog is missing.");
-        return JsonSerializer.Deserialize(stream, PluginCatalogJsonContext.Default.PluginCatalogDocument) ?? new PluginCatalogDocument();
+        return EnsureUniquePluginIds(JsonSerializer.Deserialize(stream, PluginCatalogJsonContext.Default.PluginCatalogDocument) ?? new PluginCatalogDocument());
+    }
+
+    private static PluginCatalogDocument EnsureUniquePluginIds(PluginCatalogDocument catalog)
+    {
+        var duplicate = catalog.Plugins
+            .GroupBy(plugin => plugin.Id, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null)
+        {
+            throw new JsonException($"The plugin catalog contains duplicate plugin id \"{duplicate.Key}\".");
+        }
+
+        return catalog;
     }
 }

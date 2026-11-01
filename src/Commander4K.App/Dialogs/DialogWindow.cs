@@ -21,10 +21,7 @@ public abstract class DialogWindow<TResult> : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         CanResize = false;
         ShowInTaskbar = false;
-        Background = brushes.IsModern ? brushes.Surface2 : brushes.WindowBackground;
-        Foreground = brushes.WindowForeground;
-        FontFamily = brushes.FontFamily;
-        FontSize = brushes.FontSize;
+        WindowSkin.Apply(this, brushes, raisedSurface: true);
     }
 
     protected SkinBrushes Brushes { get; }
@@ -62,10 +59,7 @@ public abstract class DialogWindow<TResult> : Window
                 .VerticalContentAlignment(VerticalAlignment.Center).IsDefault(isDefault).OnClick(_ => onClick());
             if (isDefault)
             {
-                button.Background = Brushes.Accent;
-                button.BorderBrush = Brushes.Accent;
-                button.Foreground = Avalonia.Media.Brushes.White;
-                button.FontWeight = FontWeight.SemiBold;
+                WindowSkin.ApplyAccent(button, Brushes);
             }
 
             row.Children.Add(button);
@@ -144,7 +138,7 @@ public sealed class MessageDialog : DialogWindow<bool>
         var text = new SelectableTextBlock().Text(message).TextWrapping(TextWrapping.Wrap);
         if (monospace)
         {
-            text.FontFamily = FontFamily.Parse("Cascadia Mono, Consolas");
+            text.FontFamily = Brushes.MonospaceFamily;
         }
 
         SetBody(new ScrollViewer().MaxHeight(520).Content(text), ButtonRow(("OK", () => Complete(true), true)));
@@ -249,7 +243,7 @@ public sealed class HostKeyDialog : DialogWindow<bool>
             ? Loc.T("Serwer {0}:{1} przedstawił INNY klucz niż poprzednio. Może to oznaczać atak typu man-in-the-middle ", host, port) +
               Loc.T("albo reinstalację serwera. Połącz się tylko, jeśli wiesz, dlaczego klucz się zmienił.")
             : Loc.T("Łączysz się z {0}:{1} po raz pierwszy. Sprawdź odcisk klucza z administratorem serwera, zanim mu zaufasz.", host, port);
-        var print = new SelectableTextBlock().Text("SHA256:" + fingerprint).FontFamily(FontFamily.Parse("Cascadia Mono, Consolas")).Margin(0, 4, 0, 0);
+        var print = new SelectableTextBlock().Text("SHA256:" + fingerprint).FontFamily(Brushes.MonospaceFamily).Margin(0, 4, 0, 0);
         if (mismatch)
         {
             print.Foreground = brushes.Error;

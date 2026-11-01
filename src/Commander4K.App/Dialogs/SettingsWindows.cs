@@ -76,10 +76,7 @@ public sealed class SettingsWindow : Window
     private void BuildLayout(string? query)
     {
         var brushes = _brushes;
-        Background = brushes.PanelBackground;
-        Foreground = brushes.WindowForeground;
-        FontFamily = brushes.FontFamily;
-        FontSize = brushes.FontSize;
+        WindowSkin.Apply(this, brushes, panelSurface: true);
 
         _search = new TextBox().Text(query ?? string.Empty).Height(34).MaxWidth(560).Padding(10, 0).CornerRadius(new CornerRadius(6))
             .VerticalContentAlignment(VerticalAlignment.Center)
@@ -106,8 +103,7 @@ public sealed class SettingsWindow : Window
         var buttons = new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Children(
             new Button().Content(Loc.T("Sprawdź aktualizacje")).Height(30).OnClick(async _ => await _checkForUpdates()),
             new Button().Content(Loc.T("O programie")).Height(30).OnClick(async _ => await new AboutDialog(brushes).ShowAsync(this)),
-            new Button().Content(Loc.T("Zamknij")).Height(30).Background(brushes.Accent).BorderBrush(brushes.Accent)
-                .Foreground(Avalonia.Media.Brushes.White).FontWeight(FontWeight.SemiBold).OnClick(_ => Close()));
+            WindowSkin.ApplyAccent(new Button().Content(Loc.T("Zamknij")).Height(30), brushes).OnClick(_ => Close()));
         DockPanel.SetDock(buttons, Dock.Right);
         var footer = new Border().Background(brushes.HeaderBackground).BorderBrush(brushes.PanelBorder).BorderThickness(new Thickness(0, 1, 0, 0))
             .Padding(20, 10).Child(new DockPanel().Children(
@@ -282,7 +278,7 @@ public sealed class SettingsWindow : Window
 
     private TextBox BindingEditor(string commandId)
     {
-        var box = new TextBox().Width(220).Text(BindingsText(commandId)).FontFamily(FontFamily.Parse("Cascadia Mono, Consolas"));
+        var box = new TextBox().Width(220).Text(BindingsText(commandId)).FontFamily(_brushes.MonospaceFamily);
         async Task CommitAsync()
         {
             var requested = (box.Text ?? string.Empty)

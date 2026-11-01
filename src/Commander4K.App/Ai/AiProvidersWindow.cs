@@ -63,10 +63,7 @@ public sealed class AiProvidersWindow : Window
     private void BuildLayout()
     {
         var b = _brushes;
-        Background = b.PanelBackground;
-        Foreground = b.WindowForeground;
-        FontFamily = b.FontFamily;
-        FontSize = b.FontSize;
+        WindowSkin.Apply(this, b, panelSurface: true);
 
         _list = new StackPanel().Spacing(10).Margin(24, 16, 24, 24);
         _scroll = new ScrollViewer().Content(_list);
@@ -80,8 +77,7 @@ public sealed class AiProvidersWindow : Window
             new Button().Content(Loc.T("Odśwież listę")).Height(30).OnClick(async _ => await RefreshCatalogAsync()),
             new Button().Content(Loc.T("📂 Folder config/ai")).Height(30).OnClick(_ =>
                 SkinPickerDialog.OpenFolder(Path.GetDirectoryName(_host.AiCredentials.FilePath)!)),
-            new Button().Content(Loc.T("Zamknij")).Height(30).Background(b.Accent).BorderBrush(b.Accent)
-                .Foreground(Avalonia.Media.Brushes.White).FontWeight(FontWeight.SemiBold).OnClick(_ => Close()));
+            WindowSkin.ApplyAccent(new Button().Content(Loc.T("Zamknij")).Height(30), b).OnClick(_ => Close()));
         DockPanel.SetDock(buttons, Dock.Right);
         var footer = new Border().Background(b.HeaderBackground).BorderBrush(b.PanelBorder).BorderThickness(new Thickness(0, 1, 0, 0))
             .Padding(24, 10).Child(new DockPanel().Children(buttons, _source));
@@ -519,5 +515,5 @@ public sealed class AiProvidersWindow : Window
         new Button().Content(text).Height(30).IsEnabled(enabled).VerticalContentAlignment(VerticalAlignment.Center).OnClick(_ => onClick());
 
     private Button Primary(string text, Action onClick) =>
-        Button(text, onClick).Background(_brushes.Accent).BorderBrush(_brushes.Accent).Foreground(Avalonia.Media.Brushes.White).FontWeight(FontWeight.SemiBold);
+        WindowSkin.ApplyAccent(Button(text, onClick), _brushes);
 }

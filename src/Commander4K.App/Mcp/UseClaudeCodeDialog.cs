@@ -21,7 +21,7 @@ public sealed class UseClaudeCodeDialog : DialogWindow<bool>
     {
         _prompt = prompt;
         var text = new SelectableTextBlock().Text(prompt).TextWrapping(TextWrapping.Wrap)
-            .FontFamily(FontFamily.Parse("Cascadia Mono, Consolas"));
+            .FontFamily(brushes.MonospaceFamily);
         SetBody(
             Label(Loc.T("Wklej to w Claude Code połączonym z Commander4K przez MCP")),
             new ScrollViewer().MaxHeight(360).Content(text),

@@ -37,7 +37,7 @@ public sealed class FolderSuggestionCard : Border
                 Focusable = false,
                 Padding = new Thickness(10, 3),
                 FontSize = brushes.FontSize,
-                Foreground = primary ? brushes.CursorForeground : brushes.WindowForeground,
+                Foreground = primary ? brushes.AccentForeground : brushes.WindowForeground,
                 Background = primary ? brushes.Accent : brushes.HoverBackground,
                 CornerRadius = new CornerRadius(brushes.IsModern ? 4 : 0),
             };

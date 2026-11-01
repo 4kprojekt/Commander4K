@@ -351,7 +351,7 @@ public sealed class SkinEditorDialog : DialogWindow<Skin?>
             .AcceptsReturn(true)
             .TextWrapping(TextWrapping.NoWrap)
             .Height(380)
-            .FontFamily(FontFamily.Parse("Cascadia Mono, Consolas"))
+            .FontFamily(Brushes.MonospaceFamily)
             .FontSize(12)
             .PlaceholderText(Loc.T("Wklej tutaj JSON skórki…"));
         _json.TextChanged += (_, _) => Validate(preview: false);

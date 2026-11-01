@@ -23,7 +23,7 @@ public sealed class SplashWindow : Window
     {
         _scene = new SplashScene(brushes, mode);
         Title = "Commander4K";
-        Background = brushes.WindowBackground;
+        WindowSkin.Apply(this, brushes);
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Width = _scene.ViewSize.Width;
         Height = _scene.ViewSize.Height;

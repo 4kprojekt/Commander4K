@@ -1993,8 +1993,7 @@ public sealed class MainWindow : Window
 
     private void ApplySkin(SkinBrushes b)
     {
-        Background = b.WindowBackground;
-        Foreground = b.WindowForeground;
+        WindowSkin.Apply(this, b);
         _splitter.Background = b.WindowBackground;
         var radius = new CornerRadius(b.IsModern ? 6 : 0);
         _jobsBar.Background = b.StatusBackground;
@@ -2472,7 +2471,7 @@ public sealed class MainWindow : Window
         }
         else
         {
-            new ViewerWindow(_host!, _skins!.Current, entry).Show(this);
+            ShowViewer(entry);
         }
     }
 
@@ -2489,8 +2488,15 @@ public sealed class MainWindow : Window
         }
         else if (_host!.Viewer.CanView(entry))
         {
-            new ViewerWindow(_host, _skins!.Current, entry).Show(this);
+            ShowViewer(entry);
         }
+    }
+
+    private void ShowViewer(VfsEntry entry)
+    {
+        var window = new ViewerWindow(_host!, _skins!.Current, entry);
+        FollowSkin(window, window.ApplySkin);
+        window.Show(this);
     }
 
     private void ToggleMarkAndAdvance()
@@ -3318,7 +3324,7 @@ public sealed class MainWindow : Window
     private void OpenSearch()
     {
         var panel = _active;
-        new SearchWindow(_host!, _skins!.Current, panel.ActiveTab.Path, entry =>
+        var window = new SearchWindow(_host!, _skins!.Current, panel.ActiveTab.Path, entry =>
         {
             var parent = _host!.Router.GetParentPath(entry.Path);
             if (entry.IsContainer)
@@ -3331,7 +3337,9 @@ public sealed class MainWindow : Window
             }
 
             Activate();
-        }).Show(this);
+        });
+        FollowSkin(window, window.ApplySkin);
+        window.Show(this);
     }
 
     private async ValueTask ShowDriveMenuAsync(FilePanelView panel)
@@ -3602,7 +3610,9 @@ public sealed class MainWindow : Window
 
     private Task ShowTextWindowAsync(string title, string text)
     {
-        new TextWindow(_skins!.Current, title, text).Show(this);
+        var window = new TextWindow(_skins!.Current, title, text);
+        FollowSkin(window, window.ApplySkin);
+        window.Show(this);
         return Task.CompletedTask;
     }
 

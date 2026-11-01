@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Commander4K.Core.Folders;
 using Commander4K.Core.Plugins;
 using Commander4K.PluginSdk;
@@ -330,11 +331,29 @@ public sealed class FolderConfigTests
 public sealed class PluginCatalogTests
 {
     [Fact]
+    public void Catalog_rejects_duplicate_plugin_ids()
+    {
+        const string json = """
+            {
+              "plugins": [
+                { "id": "official.example", "name": "Example", "path": "plugins/example" },
+                { "id": "OFFICIAL.EXAMPLE", "name": "Duplicate", "path": "plugins/duplicate" }
+              ]
+            }
+            """;
+
+        var exception = Assert.Throws<JsonException>(() => PluginCatalogService.Parse(json));
+
+        Assert.Contains("official.example", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Catalog_lists_every_plugin_file_with_its_current_hash()
     {
         var root = RepositoryRoot();
         var catalog = PluginCatalogService.Parse(File.ReadAllText(Path.Combine(root, "plugins-catalog", "catalog.json")));
         Assert.NotEmpty(catalog.Plugins);
+        Assert.Equal(catalog.Plugins.Count, catalog.Plugins.Select(plugin => plugin.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         const string hint = " — run: pwsh ./plugins-catalog/Update-Catalog.ps1";
 
         foreach (var plugin in catalog.Plugins)

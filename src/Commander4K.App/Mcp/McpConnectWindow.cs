@@ -63,10 +63,7 @@ public sealed class McpConnectWindow : Window
     private void BuildLayout()
     {
         var b = _brushes;
-        Background = b.PanelBackground;
-        Foreground = b.WindowForeground;
-        FontFamily = b.FontFamily;
-        FontSize = b.FontSize;
+        WindowSkin.Apply(this, b, panelSurface: true);
         var settings = _host.Settings.Mcp;
 
         _enabled = new ToggleSwitch().IsChecked(settings.Enabled).OnContent(Loc.T("Wł.")).OffContent(Loc.T("Wył."));
@@ -111,8 +108,8 @@ public sealed class McpConnectWindow : Window
             new TextBlock().Text(Loc.T("Połącz Claude Code")).FontSize(18).FontWeight(FontWeight.SemiBold).Foreground(b.FileForeground),
             Muted(Loc.T("Claude Code łączy się z Commander4K przez MCP na 127.0.0.1 i może przeglądać pliki w wybranych folderach, pisać i instalować wtyczki oraz sterować panelami. O ryzykowne akcje aplikacja zawsze pyta."))));
         var footer = new Border().Background(b.HeaderBackground).BorderBrush(b.PanelBorder).BorderThickness(new Thickness(0, 1, 0, 0))
-            .Padding(24, 10).Child(new Button().Content(Loc.T("Zamknij")).Height(30).HorizontalAlignment(HorizontalAlignment.Right)
-                .Background(b.Accent).BorderBrush(b.Accent).Foreground(Brushes.White).FontWeight(FontWeight.SemiBold).OnClick(click => Close()));
+            .Padding(24, 10).Child(WindowSkin.ApplyAccent(new Button().Content(Loc.T("Zamknij")).Height(30).HorizontalAlignment(HorizontalAlignment.Right), b)
+                .OnClick(click => Close()));
         DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(footer, Dock.Bottom);
         Content = new DockPanel().Children(top, footer, _scroll);

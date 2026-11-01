@@ -128,10 +128,7 @@ public sealed class AiChatWindow : Window
     private void BuildLayout()
     {
         var b = _brushes;
-        Background = b.PanelBackground;
-        Foreground = b.WindowForeground;
-        FontFamily = b.FontFamily;
-        FontSize = b.FontSize;
+        WindowSkin.Apply(this, b, panelSurface: true);
 
         _messages = new StackPanel().Spacing(14).Margin(20, 16);
         _scroll = new ScrollViewer().Content(_messages);
@@ -139,8 +136,8 @@ public sealed class AiChatWindow : Window
         _input = new TextBox().AcceptsReturn(true).TextWrapping(TextWrapping.Wrap).MinHeight(64).MaxHeight(200)
             .PlaceholderText(Loc.T("Zadaj pytanie… (Enter wysyła, Shift+Enter nowa linia, Esc przerywa)"));
         _input.AddHandler(KeyDownEvent, OnInputKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
-        _send = new Button().Content(Loc.T("Wyślij")).Height(30).MinWidth(88).Background(b.Accent).BorderBrush(b.Accent)
-            .Foreground(Avalonia.Media.Brushes.White).FontWeight(FontWeight.SemiBold).OnClick(click => _ = SendAsync());
+        _send = WindowSkin.ApplyAccent(new Button().Content(Loc.T("Wyślij")).Height(30).MinWidth(88), b)
+            .OnClick(click => _ = SendAsync());
         _pluginButton = new Button().Height(30).OnClick(click =>
         {
             if (_pluginMode)
@@ -239,8 +236,7 @@ public sealed class AiChatWindow : Window
         var files = answer is null ? [] : PluginAuthoring.ParseFiles(text);
         if (files.Any(f => string.Equals(f.Path, ManifestReader.FileName, StringComparison.OrdinalIgnoreCase)))
         {
-            buttons.Children.Add(new Button().Content(Loc.T("🧩 Zainstaluj wtyczkę")).Height(26).FontSize(11).Padding(10, 0)
-                .Background(b.Accent).BorderBrush(b.Accent).Foreground(Avalonia.Media.Brushes.White)
+            buttons.Children.Add(WindowSkin.ApplyAccent(new Button().Content(Loc.T("🧩 Zainstaluj wtyczkę")).Height(26).FontSize(11).Padding(10, 0), b)
                 .OnClick(async click =>
                 {
                     var result = await AiPluginInstaller.InstallAsync(this, _brushes, _context, files, _openPluginManager);
@@ -290,8 +286,8 @@ public sealed class AiChatWindow : Window
 
         if (!configured)
         {
-            panel.Children.Add(new Button().Content(Loc.T("Zaloguj do dostawców AI…")).Height(30).HorizontalAlignment(HorizontalAlignment.Left)
-                .Background(b.Accent).BorderBrush(b.Accent).Foreground(Avalonia.Media.Brushes.White).OnClick(click => _openProviders()));
+            panel.Children.Add(WindowSkin.ApplyAccent(new Button().Content(Loc.T("Zaloguj do dostawców AI…")).Height(30).HorizontalAlignment(HorizontalAlignment.Left), b)
+                .OnClick(click => _openProviders()));
         }
 
         return panel;
