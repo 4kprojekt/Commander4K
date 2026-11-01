@@ -516,7 +516,7 @@ A dashboard tile with `"card"` is a live card drawn by a preview instead of a pl
 - Consent: `api` cards with methods other than GET/HEAD and every `ssh` card wait until the user trusts this `c4k.dir` (the same trust as `run`; a changed file asks again), and only on disks and shares.
 - `ssh` runs one fixed, read-only command (uname, `/proc`, `df`) with the saved login or keys; non-Linux servers show their status only. `options.keyFile` (and `options.user`) pick the key; like every path in the file, a relative `keyFile` is resolved against the folder and `~` is the user's profile.
 
-The official catalog has preview plugins with cards: `official.json-preview`, `official.openapi-preview` and `official.html-preview`. For your own, see `preview.card` in the protocol table.
+The official catalog has preview plugins with cards: `official.json-preview`, `official.openapi-preview`, `official.html-preview`, `official.pe-info` (EXE/DLL: architecture, version, signer, execution level, missing DLLs) and `official.archive-info` (file count, unpacked size, compression, package id and version). For your own, see `preview.card` in the protocol table.
 
 ### Example: mail ("Poczta")
 

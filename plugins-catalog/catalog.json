@@ -551,7 +551,7 @@
         },
         {
           "path": "main.py",
-          "sha256": "4f21c6aec91df54c56907b55db1c8ebbfab33b756d6c7ed09396d57ec6fea1e6"
+          "sha256": "7f6f0a7924c53eb74fa80c8c9fd790f2ee4366154c353ff7f8e1bb2aec80f190"
         },
         {
           "path": "pe.py",
@@ -567,7 +567,7 @@
         },
         {
           "path": "signature.py",
-          "sha256": "b60fb1242ff5c5dae6708c4170be3bdac6da25ae7327a14c600e48577291fa11"
+          "sha256": "b824ea4ce0c12e66b40f0b07a2ee7c171b84823e131ba853a2d4474af4476022"
         }
       ]
     },
@@ -601,7 +601,7 @@
         },
         {
           "path": "main.py",
-          "sha256": "151bfbf3cb8fc2327037cfb8f36484f9e46994294a4030684b9d7267638e67b4"
+          "sha256": "b90b09f547e965185fa84a26b6c7cdb946c076160198c1214663a277a55f26bd"
         },
         {
           "path": "packages.py",
@@ -609,7 +609,7 @@
         },
         {
           "path": "plugin.json",
-          "sha256": "92566695a1b1d23828e912e82b946ab25f27777c95c110e7e1c166ad5e1a8f12"
+          "sha256": "f8d33bf82bd513ffcc6be5250eb3def13212474b6994f666f2306a24af09366e"
         }
       ]
     }

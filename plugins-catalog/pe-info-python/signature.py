@@ -230,8 +230,13 @@ def decode(data):
         raise DerError("uszkodzony identyfikator podpisującego")
     wanted_issuer, wanted_serial = issuer_and_serial[0].raw, issuer_and_serial[1].content
 
+    skipped = None
     for certificate in (certificates.children(3) if certificates is not None else []):
-        tbs = certificate.children(4)[0].children(5)
+        try:
+            tbs = certificate.children(4)[0].children(5)
+        except _PARTIAL as error:   # a malformed extra certificate: skipped, the signer's may still follow
+            skipped = skipped or str(error) or type(error).__name__
+            continue
         index = 1 if tbs and tbs[0].tag == 0xA0 else 0     # optional [0] version
         if len(tbs) < index + 6:
             continue
@@ -258,7 +263,7 @@ def decode(data):
             _keep(result, read)
         break
     else:
-        result.error = "nie znaleziono certyfikatu podpisującego"
+        result.error = "nie znaleziono certyfikatu podpisującego" + (f" (pominięto uszkodzony certyfikat: {skipped})" if skipped else "")
 
     _keep(result, lambda: _signing_time(result, signer_parts))
     _keep(result, lambda: _timestamp(result, signer_parts))
