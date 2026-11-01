@@ -106,6 +106,19 @@ public sealed class FolderSuggestionService(
         }
     }
 
+    /// <summary>Drops the cached answer for <paramref name="folder"/> (its c4k.dir was just written or changed).</summary>
+    public void Forget(string folder)
+    {
+        var path = folder.ToUpperInvariant();
+        lock (_gate)
+        {
+            foreach (var key in _cache.Keys.Where(k => k.Path == path).ToList())
+            {
+                _cache.Remove(key);
+            }
+        }
+    }
+
     /// <summary>Higher score; on a tie a plugin before the built-in views, then the higher priority.</summary>
     public static bool IsBetter(RankedSuggestion candidate, RankedSuggestion current)
     {

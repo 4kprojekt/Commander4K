@@ -64,6 +64,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     /// <summary>Folder views opened one from another (a dashboard picked on a dashboard); empty when following the cursor.</summary>
     private readonly ViewHistory<PinnedFolder> _history = new();
     private readonly Button _backButton;
+
+    /// <summary>"📄 Pliki (Esc)" (or "Zamknij"): back to the file list; the spotlight after a suggested view points here.</summary>
+    public Button FilesButton { get; }
     private readonly StackPanel _trail = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
     private readonly Dictionary<string, Bitmap?> _thumbnails = new(StringComparer.Ordinal);
 
@@ -126,7 +129,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             _trail.Col(1).IsVisible(pinned is not null),
             _editButton.Col(2),
             _saveButton.Col(3),
-            new Button().Col(4).Content(pinned is null && _pinnedFile is null ? Loc.T("Zamknij (Esc)") : Loc.T("📄 Pliki (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
+            FilesButton = new Button().Col(4).Content(pinned is null && _pinnedFile is null ? Loc.T("Zamknij (Esc)") : Loc.T("📄 Pliki (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
         _status = new TextBlock().Margin(8, 2).TextTrimming(TextTrimming.CharacterEllipsis);
 
         RowDefinitions = new RowDefinitions("Auto,*,Auto");

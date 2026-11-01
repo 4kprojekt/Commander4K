@@ -1089,6 +1089,7 @@ public sealed class MainWindow : Window
             return;
         }
 
+        _host.FolderSuggestions.Forget(folder);
         Notify(Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file));
         await tab.RefreshAsync();
     }
@@ -1729,21 +1730,19 @@ public sealed class MainWindow : Window
         var folder = suggestion.Folder;
         var json = FolderConfigWriter.CreateForAction(FolderConfigWriter.ActionFor(suggestion.Suggestion.View), "both");
         var file = FolderConfig.ChildPath(folder.Path, FolderConfig.FileName);
-        var error = await Task.Run(async () =>
+        var (result, error) = await FolderConfigWriter.CreateNewAsync(file, json, TimeSpan.FromSeconds(5), CancellationToken.None);
+        _host!.FolderSuggestions.Forget(folder.Path);
+        if (result == FolderConfigWrite.AlreadyExists)
         {
-            try
-            {
-                await File.WriteAllTextAsync(file, json);
-                return null;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                return ex.Message;
-            }
-        });
-        Notify(error is null
+            // The listing was cut short or the answer was stale: the folder's own file wins, never overwritten.
+            Notify(Loc.T("Folder ma już własny c4k.dir — otwieram go zamiast propozycji."));
+            await EnterFolderAsync(panel, folder);
+            return;
+        }
+
+        Notify(result == FolderConfigWrite.Written
             ? Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file)
-            : Loc.T("Nie zapisano c4k.dir ({0}) — widok otwarty tylko teraz.", error), isError: error is not null);
+            : Loc.T("Nie zapisano c4k.dir ({0}) — widok otwarty tylko teraz.", error), isError: result == FolderConfigWrite.Failed);
 
         var config = FolderConfig.Parse(folder.Path, json);
         if (config.Enter is { } action)
@@ -1753,9 +1752,56 @@ public sealed class MainWindow : Window
         }
     }
 
-    /// <summary>The spotlight on "📄 Pliki (Esc)" after a suggested view opened (Task 7).</summary>
+    private Tour.SpotlightOverlay? _tour;
+
+    /// <summary>
+    /// After a suggested view opened: the spotlight on "📄 Pliki (Esc)", until the user closed it three times or once
+    /// went back to the files that way.
+    /// </summary>
     private void ShowBackToFilesTour(FilePanelView panel)
     {
+        var memory = _host!.FolderSuggestions.Memory;
+        if (!memory.ShouldShowTour || panel.Mode is not PreviewPanelView preview)
+        {
+            return;
+        }
+
+        var used = false;
+        void Used()
+        {
+            preview.CloseRequested -= Used;
+            used = true; // Recorded once, as used: closing the spotlight now is not a dismissal.
+            _tour?.Close();
+            _ = Task.Run(memory.RecordTourUsedAsync);
+        }
+
+        preview.CloseRequested += Used;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (panel.Mode != preview || Avalonia.Controls.Primitives.OverlayLayer.GetOverlayLayer(this) is not { } layer)
+            {
+                return;
+            }
+
+            _tour?.Close();
+            var tour = new Tour.SpotlightOverlay(_skins!.Current, preview.FilesButton,
+                Loc.T("Tu (albo Esc) wrócisz do zwykłej listy plików. Shift+Enter wchodzi do folderu bez widoku."), Loc.T("OK"));
+            tour.Closed += closed =>
+            {
+                layer.Children.Remove(closed);
+                if (_tour == closed)
+                {
+                    _tour = null;
+                }
+
+                if (!used)
+                {
+                    _ = Task.Run(memory.RecordTourDismissedAsync);
+                }
+            };
+            _tour = tour;
+            layer.Children.Add(tour);
+        }, DispatcherPriority.Loaded);
     }
 
     private async ValueTask ResetFolderSuggestionsAsync(CommandInvocation invocation)
@@ -1781,6 +1827,17 @@ public sealed class MainWindow : Window
         if (_host is null || _active is null)
         {
             return;
+        }
+
+        // The spotlight closes on any key; Esc and Enter only close it, so the first Esc does not leave the view too.
+        if (_tour is { } tour && e.Key is not (Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin))
+        {
+            tour.Close();
+            if (e.Key is Key.Escape or Key.Enter)
+            {
+                e.Handled = true;
+                return;
+            }
         }
 
         var focused = FocusManager?.GetFocusedElement();
