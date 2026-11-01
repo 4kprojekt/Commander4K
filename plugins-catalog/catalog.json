@@ -518,7 +518,7 @@
     {
       "id": "official.pe-info",
       "name": "Podgląd EXE i DLL",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "4Kprojekt",
       "runtime": "python",
       "description": {
@@ -559,7 +559,7 @@
         },
         {
           "path": "plugin.json",
-          "sha256": "64573df805583bcb3a0d431922aa5da98effaec444dff9944b938911936eab3f"
+          "sha256": "a3b9cdbcb7474e4ad556055f288bbf8945994920f342cf381da1150be62ce6f2"
         },
         {
           "path": "resources.py",
@@ -574,7 +574,7 @@
     {
       "id": "official.archive-info",
       "name": "Podgląd archiwów",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "4Kprojekt",
       "runtime": "python",
       "description": {
@@ -609,7 +609,7 @@
         },
         {
           "path": "plugin.json",
-          "sha256": "f8d33bf82bd513ffcc6be5250eb3def13212474b6994f666f2306a24af09366e"
+          "sha256": "168ec1f94f5eb572634998ea93039be9130cfcfa335377ffec016871869b12b7"
         }
       ]
     }
