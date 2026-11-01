@@ -518,7 +518,7 @@
     {
       "id": "official.pe-info",
       "name": "Podgląd EXE i DLL",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "4Kprojekt",
       "runtime": "python",
       "description": {
@@ -547,19 +547,19 @@
         },
         {
           "path": "deps.py",
-          "sha256": "29e3380fb6078a6211621ef3c95876e97a79ee99ceeb26dd9ea77c528ecf6911"
+          "sha256": "06e5bfe9581f176cec15d4497bff8f2a184475d2118ba07c315c2409070e9452"
         },
         {
           "path": "main.py",
-          "sha256": "7f6f0a7924c53eb74fa80c8c9fd790f2ee4366154c353ff7f8e1bb2aec80f190"
+          "sha256": "bffeb52bb13673f53d21b84b750eeca70b5a4163a636c9933cfa55ec06015879"
         },
         {
           "path": "pe.py",
-          "sha256": "195858921217f97365d02157388fe3fe013cfc0b5bde532782b4185b4fa14566"
+          "sha256": "79c678ce2f8444da98efba4c9dce1c60e57e72b8556a71866d8605d0e0c2d8d5"
         },
         {
           "path": "plugin.json",
-          "sha256": "64573df805583bcb3a0d431922aa5da98effaec444dff9944b938911936eab3f"
+          "sha256": "a3b9cdbcb7474e4ad556055f288bbf8945994920f342cf381da1150be62ce6f2"
         },
         {
           "path": "resources.py",
@@ -574,7 +574,7 @@
     {
       "id": "official.archive-info",
       "name": "Podgląd archiwów",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "4Kprojekt",
       "runtime": "python",
       "description": {
@@ -601,7 +601,7 @@
         },
         {
           "path": "main.py",
-          "sha256": "b90b09f547e965185fa84a26b6c7cdb946c076160198c1214663a277a55f26bd"
+          "sha256": "90f9577a7d76ae81167c0e44492338a0bfcc05a4795b4aadac5bd6732dc13387"
         },
         {
           "path": "packages.py",
@@ -609,7 +609,7 @@
         },
         {
           "path": "plugin.json",
-          "sha256": "f8d33bf82bd513ffcc6be5250eb3def13212474b6994f666f2306a24af09366e"
+          "sha256": "168ec1f94f5eb572634998ea93039be9130cfcfa335377ffec016871869b12b7"
         }
       ]
     },

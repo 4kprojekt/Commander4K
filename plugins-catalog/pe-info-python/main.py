@@ -4,6 +4,7 @@ Everything is read through the app (fs.read) with c4k.read_bytes. One function p
 sections of each preview id. Nothing raises out of preview.render.
 """
 import datetime
+import unicodedata
 
 import c4k
 import clr
@@ -13,6 +14,7 @@ import resources
 import signature
 
 MAX_SHOWN_FUNCTIONS = 400
+MAX_SHOWN_IMPORTS = 300    # DLLs listed under "Importy"
 MAX_SHOWN_EXPORTS = 2000
 
 SUBSYSTEMS = {1: "natywny (sterownik)", 2: "GUI Windows", 3: "konsola", 7: "POSIX", 9: "Windows CE",
@@ -57,7 +59,8 @@ def _mark(flag):
 
 
 def _cell(text):
-    return str(text).replace("|", "\\|")
+    """Text for one Markdown line or table cell: `|` escaped, CR/LF and other control characters become spaces."""
+    return "".join(" " if unicodedata.category(ch) in ("Cc", "Zl", "Zp") else ch for ch in str(text)).replace("|", "\\|")
 
 
 def _timestamp(image):
@@ -111,15 +114,25 @@ def section_imports(image, entry, ctx):
     if not image.imports:
         return []
     lines = ["## Importy", ""]
-    for item in image.imports:
+    for item in image.imports[:MAX_SHOWN_IMPORTS]:
         suffix = ", opóźniony" if item.delayed else ""
-        lines.append(f"- **{_cell(item.dll)}** — {len(item.functions)} funkcji{suffix}")
+        if item.same_as is not None:
+            lines.append(f"- **{_cell(item.dll)}** — ta sama tabela co {_cell(item.same_as)}{suffix}")
+            continue
+        if item.cut and not item.functions:
+            lines.append(f"- **{_cell(item.dll)}** — funkcji nie odczytano (limit importów){suffix}")
+            continue
+        count = f"{len(item.functions)}+" if item.cut else str(len(item.functions))
+        lines.append(f"- **{_cell(item.dll)}** — {count} funkcji{suffix}")
         shown = item.functions[:MAX_SHOWN_FUNCTIONS]
         if shown:
             text = ", ".join("`" + name.replace("`", "'") + "`" for name in shown)
             if len(item.functions) > len(shown):
                 text += f" … i jeszcze {len(item.functions) - len(shown)}"
             lines.append(f"  {text}")
+    more = len(image.imports) - MAX_SHOWN_IMPORTS
+    if more > 0:
+        lines.append(f"- … i jeszcze {more} {_plural(more, 'biblioteka', 'biblioteki', 'bibliotek')}")
     return lines + [""]
 
 
@@ -439,10 +452,11 @@ def _analyze(entry, entropy=True, budget=8 * 1024 * 1024, details=True):
 
 @c4k.handler("preview.render")
 def render(params):
-    entry = params["entry"]
-    kind = params.get("preview") or "exe"
-    lines = [f"# {entry['name']}", ""]
+    lines = []
     try:
+        entry = params["entry"]
+        kind = params.get("preview") or "exe"
+        lines = [f"# {_cell(entry.get('name') or entry.get('path') or 'plik')}", ""]
         reader, image = _analyze(entry, entropy=False)
     except pe.PeError as error:
         return {"kind": "markdown", "content": "\n".join(lines + [f"⚠ To nie jest prawidłowym plikiem PE ({error})."])}
@@ -464,24 +478,39 @@ def render(params):
     return {"kind": "markdown", "content": "\n".join(lines)}
 
 
-def _in_windows(path):
-    root = deps._system_root().rstrip("\\/").lower() + "\\"
-    return path.lower().startswith(root)
+SYSTEM_FOLDERS = ("system32", "syswow64", "sysarm32", "winsxs")
+NO_EMBEDDED_SYSTEM = "brak osadzonego (pliki systemu Windows są zwykle podpisane w katalogu — nie sprawdzono)"
+
+
+def _in_windows(path, root=None):
+    """True for a file in %SystemRoot%\\System32, SysWOW64, SysArm32 or WinSxS (any depth) or directly in %SystemRoot%
+    (regedit.exe); not for user-writable folders such as Temp, Tasks or tracing."""
+    root = (root or deps._system_root()).replace("/", "\\").rstrip("\\").lower()
+    path = (path or "").replace("/", "\\").lower()
+    if not path.startswith(root + "\\"):
+        return False
+    rest = path[len(root) + 1:].split("\\")
+    return len(rest) == 1 or rest[0] in SYSTEM_FOLDERS
 
 
 def _card_signature(sig, path):
-    """(value, status) of the card's "Podpis" row; status is None for a readable signature. Files under %SystemRoot%
-    without an embedded signature are not flagged: Windows signs them in catalogs (.cat), which this plugin does not read."""
+    """(value, status) of the card's "Podpis" row; status is None for a readable signature. System files of Windows
+    (see _in_windows) without an embedded signature are not flagged: Windows usually signs them in catalogs (.cat),
+    which this plugin does not check."""
     if not sig.present:
-        return ("brak osadzonego (pliki Windows mają podpis w katalogu)", None) if _in_windows(path) else ("brak", "warning")
+        return (NO_EMBEDDED_SYSTEM, None) if _in_windows(path) else ("brak", "warning")
     who = sig.organization or sig.subject
     return (who, None) if who else ("nie odczytano", "warning")
 
 
 def _card_level(ctx):
+    """(value, status) of the card's "Uprawnienia" row: a warning for requireAdministrator or uiAccess=true."""
     manifest = ctx.manifest()
-    level = manifest.execution_level if manifest is not None and not manifest.skipped_reason else None
-    return CARD_LEVELS.get(level, "uprawnienia użytkownika")
+    usable = manifest is not None and not manifest.skipped_reason
+    level = manifest.execution_level if usable else None
+    ui_access = bool(usable and manifest.ui_access)
+    value = CARD_LEVELS.get(level, "uprawnienia użytkownika") + (", uiAccess" if ui_access else "")
+    return value, ("warning" if level == "requireAdministrator" or ui_access else None)
 
 
 @c4k.handler("preview.card")
@@ -506,10 +535,11 @@ def card(params):
         sig = ctx.signature()
         missing = ctx.missing()   # direct imports only (max_depth=1): one c4k.stat each, nothing walked
         signer, signer_status = _card_signature(sig, path)
+        level, level_status = _card_level(ctx)
         items = [{"kind": "value", "label": "Architektura", "value": f"{image.machine} ({'PE32+' if image.pe32_plus else 'PE32'})"},
                  {"kind": "value", "label": "Wersja", "value": info.get("_fixed") or "—"},
                  {"kind": "value", "label": "Podpis", "value": signer, **({"status": signer_status} if signer_status else {})},
-                 {"kind": "value", "label": "Uprawnienia", "value": _card_level(ctx)}]
+                 {"kind": "value", "label": "Uprawnienia", "value": level, **({"status": level_status} if level_status else {})}]
         if missing:
             items.append({"kind": "value", "label": "Brakujące DLL", "value": str(len(missing)), "status": "error"})
             items.append({"kind": "text", "text": ", ".join(missing[:5]) + (" …" if len(missing) > 5 else "")})
@@ -517,7 +547,7 @@ def card(params):
         return {"title": entry.get("name"), "icon": icon, "status": "error",
                 "items": [{"kind": "text", "text": f"Nie udało się odczytać pliku: {error}"}], "actions": actions}
     return {"title": info.get("FileDescription") or entry.get("name"), "subtitle": info.get("CompanyName"), "icon": icon,
-            "status": "warning" if signer_status or missing else "ok", "items": items, "actions": actions}
+            "status": "warning" if signer_status or level_status or missing else "ok", "items": items, "actions": actions}
 
 
 c4k.serve()

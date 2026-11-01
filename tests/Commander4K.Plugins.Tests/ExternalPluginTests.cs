@@ -1089,6 +1089,128 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Archive_preview_entry_names_cannot_start_blocks()
+    {
+        var zip = ZipOf("names.zip", ("a\n## Uwagi\nBrak uwag.", "x"), ("b\r\n~~~", "x"), ("readme.md", "# Opis\n```` text\nkod\n```\n"));
+        var md = await RenderAsync("archive-info-python", zip, "archive");
+        var lines = md.Split('\n');
+        Assert.Single(lines, l => l.StartsWith("## Uwagi", StringComparison.Ordinal));
+        Assert.Single(lines, l => l == "Brak uwag.");
+        Assert.DoesNotContain(lines, l => l.TrimStart().StartsWith("~~~", StringComparison.Ordinal));
+        Assert.True(md.IndexOf("## Uwagi", StringComparison.Ordinal) < md.IndexOf("## README", StringComparison.Ordinal));
+        Assert.Equal("````", lines.Last(l => l.Length > 0));   // the README's open fence is closed with its own marker
+    }
+
+    [Fact]
+    public async Task Archive_md_and_fence_repair()
+    {
+        const string code = """
+            import c4k
+            c4k.serve = lambda: None
+            import main
+            names = [main._md('a\n## Uwagi\nBrak uwag.'), main._md('a\r\n~~~'), main._md('x\x00y\u2028z')]
+            fences = [main.unclosed_fence(rows) for rows in (['~~~~', 'x'], ['```', '~~~'], ['~~~', '~~~'], ['````', '```'], ['```py', 'x', '```'], ['   ~~~', '~~~~ '])]
+            sys.stdout.write(repr(names) + '|' + repr(fences))
+            """;
+        Assert.Equal(@"['a ## Uwagi Brak uwag.', 'a  \\~\\~\\~', 'x y z']|['~~~~', '```', None, '````', None, None]",
+            await RunPluginPythonAsync("archive-info-python", code));
+    }
+
+    [Fact]
+    public async Task Pe_imports_are_capped_in_total_and_shared_tables_walked_once()
+    {
+        // 1023 import + 1023 delay-import descriptors sharing one 4096-entry name table took 40 s and 6,6 MB of Markdown;
+        // eight distinct 4096-entry tables are cut at MAX_IMPORT_NAMES (20 000) names in total
+        const string code = """
+            import struct, time
+            import c4k
+            c4k.serve = lambda: None
+            import pe, main
+            RAW, SEC = 0x400, 0x60000
+            def build(tables, per_table, delayed):
+                buf = bytearray(RAW + SEC)
+                buf[0:2] = b'MZ'; struct.pack_into('<I', buf, 0x3C, 0x40)
+                buf[0x40:0x44] = b'PE\0\0'
+                struct.pack_into('<HHIIIHH', buf, 0x44, 0x8664, 1, 0, 0, 0, 240, 0x22)
+                opt = 0x58
+                struct.pack_into('<H', buf, opt, 0x20B)
+                struct.pack_into('<I', buf, opt + 60, RAW)
+                struct.pack_into('<I', buf, opt + 108, 16)
+                n = tables * per_table
+                struct.pack_into('<II', buf, opt + 112 + 8, 0x1000, 20 * (n + 1))
+                if delayed:
+                    struct.pack_into('<II', buf, opt + 112 + 13 * 8, 0x8000, 32 * (n + 1))
+                st = opt + 240
+                buf[st:st + 8] = b'.idata\0\0'
+                struct.pack_into('<IIII', buf, st + 8, SEC, 0x1000, SEC, RAW)
+                struct.pack_into('<I', buf, st + 36, 0xC0000040)
+                off = lambda rva: RAW + rva - 0x1000
+                names, dll = 0x11000, 0x11100
+                buf[off(names) + 2:off(names) + 7] = b'Func\0'
+                buf[off(dll):off(dll) + 6] = b'a.dll\0'
+                for i in range(n):
+                    table = 0x12000 + (i // per_table) * 0x8000
+                    struct.pack_into('<IIIII', buf, off(0x1000) + 20 * i, table, 0, 0, dll, 0)
+                    if delayed:
+                        struct.pack_into('<IIIIII', buf, off(0x8000) + 32 * i, 1, dll, 0, 0, table, 0)
+                for t in range(tables):
+                    for i in range(4096):
+                        struct.pack_into('<Q', buf, off(0x12000 + t * 0x8000) + 8 * i, names)
+                return bytes(buf)
+            def run(data):
+                start = time.time()
+                image = pe.parse(pe.RangeReader('C:\\x.exe', len(data), fetch=lambda p, o, n: data[o:o + n]), entropy=False)
+                md = '\n'.join(main.section_imports(image, {}, None) + ['- ' + n for n in image.warnings + main.notes(image, None, None)])
+                return image, md, time.time() - start
+            shared, md1, t1 = run(build(1, 1023, True))
+            distinct, md2, t2 = run(build(8, 1, False))
+            sys.stdout.write('|'.join(str(x) for x in (
+                t1 < 3, len(md1.encode()) < 300_000, len(shared.imports), sum(1 for i in shared.imports if i.same_as),
+                'a.dll** — ta sama tabela co a.dll' in md1, '… i jeszcze 1746 bibliotek' in md1,
+                t2 < 3, len(md2.encode()) < 300_000, sum(len(i.functions) for i in distinct.imports),
+                'lista importów przerwana' in md2, '3616+ funkcji' in md2, 'funkcji nie odczytano (limit importów)' in md2)))
+            """;
+        Assert.Equal("True|True|2046|2045|True|True|True|True|20000|True|True|True", await RunPluginPythonAsync("pe-info-python", code));
+    }
+
+    [Fact]
+    public async Task Pe_read_budget_charges_offset_only_for_streamed_paths()
+    {
+        const string code = """
+            import pe
+            def used(path):
+                reader = pe.RangeReader(path, 0x30000, fetch=lambda p, o, n: bytes(n))
+                reader.read(0x20000, 16)
+                return reader.used
+            paths = ['sftp://h/x.exe', r'zip://C:\a.zip::/x.exe', r'\\?\C:\x.exe', r'\\.\pipe\x', 'C:\\x.exe', r'\\srv\share\x.exe']
+            sys.stdout.write(','.join(str(used(p)) for p in paths))
+            """;
+        Assert.Equal("196608,196608,196608,196608,65536,65536", await RunPluginPythonAsync("pe-info-python", code));
+    }
+
+    [Fact]
+    public async Task Pe_card_exempts_only_system_folders_and_flags_elevation()
+    {
+        const string code = """
+            from types import SimpleNamespace as NS
+            import c4k
+            c4k.serve = lambda: None
+            import main
+            root = r'C:\Windows'
+            paths = [r'C:\Windows\regedit.exe', r'C:\Windows\System32\a.dll', r'C:\Windows\SysWOW64\a.dll', r'C:\Windows\SysArm32\a.dll',
+                     r'C:\Windows\WinSxS\x\a.dll', r'C:\Windows\Temp\x.exe', r'C:\Windows\Tasks\x.exe', r'C:\Windows\tracing\x.exe',
+                     r'C:\WindowsApps\x.exe', r'D:\x.exe']
+            exempt = ''.join('1' if main._in_windows(p, root) else '0' for p in paths)
+            ctx = lambda level, ui: NS(manifest=lambda: NS(execution_level=level, ui_access=ui, skipped_reason=None))
+            levels = [main._card_level(ctx(level, ui))[1] for level, ui in (('asInvoker', False), ('highestAvailable', False),
+                      ('requireAdministrator', False), ('asInvoker', True))]
+            unsigned = main._card_signature(NS(present=False), r'C:\Windows\Temp\x.exe')
+            sys.stdout.write(exempt + '|' + repr(levels) + '|' + repr(unsigned) + '|' + main._cell('1.0\r\n|x\x07'))
+            """;
+        Assert.Equal(@"1111100000|[None, None, 'warning', 'warning']|('brak', 'warning')|1.0  \|x ", await RunPluginPythonAsync("pe-info-python", code));
+    }
+
+    [Fact]
     public async Task Python_preview_returns_a_card()
     {
         await using var plugin = Start("folder-stats-python");

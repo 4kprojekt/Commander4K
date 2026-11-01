@@ -140,7 +140,7 @@ def _parse_local(resolution, budget):
     import pe
     reader = pe.RangeReader(resolution.path, resolution.size or 0, budget=budget.remaining)
     try:
-        image = pe.parse(reader, details=False, entropy=False)
+        image = pe.parse(reader, details=False, entropy=False, names=False)
     finally:
         budget.take(reader.used)
     over = any(OVER_BUDGET in w for w in image.warnings)
