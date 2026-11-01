@@ -60,7 +60,26 @@ public sealed record PanelContribution(
 /// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
 /// <param name="Card">The plugin answers <c>preview.card</c>, so dashboards can show this preview as a live card.</param>
 /// <param name="WebRoot">Folder inside the plugin (relative) with the HTML/JS shown for <c>kind: "web"</c> results.</param>
-public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, bool Card = false, string? WebRoot = null);
+/// <param name="Suggest">When folders should be offered this preview (checked by the host; see <see cref="PreviewSuggestRule"/>).</param>
+public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, bool Card = false, string? WebRoot = null,
+    PreviewSuggestRule? Suggest = null);
+
+/// <summary>
+/// <c>contributes.previews[].suggest</c>: the host checks it on the folder's listing without starting the plugin, and
+/// only with <see cref="Ask"/> sends <c>preview.suggest</c> once the rule matched.
+/// </summary>
+/// <param name="Files">Patterns like <c>extensions</c> (<c>.jpg</c>, <c>*.csv</c>, <c>package.json</c>).</param>
+/// <param name="MinCount">At least this many matching files.</param>
+/// <param name="MinShare">Matching files among all files (folders not counted), 0..1.</param>
+/// <param name="Contains">Names of entries (files or folders) that must all exist, e.g. <c>.obsidian</c>.</param>
+/// <param name="Message">Hint text per language code; <c>{count}</c> = the number of matching files.</param>
+public sealed record PreviewSuggestRule(
+    IReadOnlyList<string>? Files = null,
+    int MinCount = 1,
+    double MinShare = 0,
+    IReadOnlyList<string>? Contains = null,
+    IReadOnlyDictionary<string, string>? Message = null,
+    bool Ask = false);
 
 public sealed record PaletteActionContribution(string Id, string Title, string? Icon = null, bool ForItem = false);
 

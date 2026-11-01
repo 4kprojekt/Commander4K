@@ -155,10 +155,7 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
     /// <c>.csv</c> = extension; anything else is a file name or a pattern with <c>*</c>/<c>?</c> (<c>package.json</c>,
     /// <c>requirements*.txt</c>, <c>*.openapi.json</c>), so a preview can claim specific files without a whole extension.
     /// </summary>
-    public static bool Matches(string pattern, string name) =>
-        pattern.StartsWith('.') && pattern.IndexOfAny(['*', '?']) < 0
-            ? string.Equals(Path.GetExtension(name), pattern, StringComparison.OrdinalIgnoreCase)
-            : pattern != "/" && System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(pattern, name, ignoreCase: true);
+    public static bool Matches(string pattern, string name) => Folders.FolderSuggestionRules.MatchesPattern(pattern, name);
 
     public Task<PreviewContent> LoadAsync(VfsEntry entry, IPluginHost host, IProgress<PreviewContent>? progress, CancellationToken cancellationToken) =>
         LoadWithOptionsAsync(entry, host, null, cancellationToken);
