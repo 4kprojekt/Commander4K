@@ -1319,5 +1319,6 @@
   "Nie będę proponować widoku dla tego folderu. Cofniesz to poleceniem „Wyczyść odrzucone podpowiedzi widoku folderu”.": "No more view suggestions for this folder. Undo it with \"Clear declined folder view suggestions\".",
   "Przyjmij podpowiedź widoku folderu": "Accept the folder view suggestion",
   "Wyczyść odrzucone podpowiedzi widoku folderu": "Clear declined folder view suggestions",
-  "Wyczyszczono odrzucone podpowiedzi.": "Declined suggestions cleared."
+  "Wyczyszczono odrzucone podpowiedzi.": "Declined suggestions cleared.",
+  "Nie zapisano c4k.dir ({0}) — widok otwarty tylko teraz.": "c4k.dir was not saved ({0}) — the view is open just this once."
 }
