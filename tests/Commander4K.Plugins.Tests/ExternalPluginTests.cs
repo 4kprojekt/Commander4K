@@ -521,6 +521,74 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Contains("KERNEQ32.dll", notes, StringComparison.Ordinal);
     }
 
+    /// <summary>The apphost with its SHELL32.dll import renamed to VERSION.dll (same length; not a KnownDLL), next to a copy of System32's version.dll.</summary>
+    private async Task<string> AppWithLocalDllAsync()
+    {
+        var exe = Path.ChangeExtension(typeof(ExternalPluginTests).Assembly.Location, ".exe");
+        var bytes = await File.ReadAllBytesAsync(exe, TestToken);
+        var at = bytes.AsSpan().IndexOf(Encoding.ASCII.GetBytes("SHELL32.dll\0"));
+        Assert.True(at > 0, "the apphost imports SHELL32.dll");
+        Encoding.ASCII.GetBytes("VERSION.dll").CopyTo(bytes, at);
+        var folder = Directory.CreateDirectory(Path.Combine(_folder, "local-tree")).FullName;
+        var path = Path.Combine(folder, "app.exe");
+        await File.WriteAllBytesAsync(path, bytes, TestToken);
+        File.Copy(Path.Combine(Environment.SystemDirectory, "version.dll"), Path.Combine(folder, "VERSION.dll"));
+        return path;
+    }
+
+    [Fact]
+    public async Task Pe_preview_walks_app_local_dll_tree()
+    {
+        var md = await RenderAsync("pe-info-python", await AppWithLocalDllAsync(), "exe");
+        var start = md.IndexOf("## Zależności", StringComparison.Ordinal);
+        Assert.True(start >= 0, md);
+        var section = md[start..md.IndexOf("\n## ", start + 3, StringComparison.Ordinal)].Split('\n').Where(l => l.TrimStart().StartsWith("- ", StringComparison.Ordinal)).ToList();
+        var local = section.FindIndex(l => l == "- ✅ VERSION.dll — obok pliku");
+        Assert.True(local >= 0, string.Join('\n', section));
+        Assert.StartsWith("  - ", section[local + 1], StringComparison.Ordinal); // version.dll's own imports follow, indented
+        // KERNEL32.dll is imported by both app.exe and version.dll: listed once
+        var names = section.Select(l => l.TrimStart()[2..].Split(" — ")[0].Split(' ', 2)[1].ToLowerInvariant()).ToList();
+        Assert.Single(names, n => n == "kernel32.dll");
+        Assert.Equal(names.Count, names.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Pe_dependency_walk_shares_one_budget_and_caps_api_sets()
+    {
+        var app = await AppWithLocalDllAsync();
+        const string code = """
+            import types, os
+            from types import SimpleNamespace as NS
+            fake = types.ModuleType('c4k')
+            class HostError(Exception): pass
+            def stat(p):
+                return {'kind': 'file', 'size': os.path.getsize(p)} if os.path.isfile(p) else None
+            def read_bytes(p, o=0, n=65536):
+                with open(p, 'rb') as f:
+                    f.seek(o)
+                    return f.read(n)
+            def list_dir(p):
+                raise HostError('no reg')
+            fake.HostError, fake.stat, fake.read_bytes, fake.list_dir = HostError, stat, read_bytes, list_dir
+            sys.modules['c4k'] = fake
+            import pe, deps
+            app = r'APP'
+            image = pe.parse(pe.RangeReader(app, os.path.getsize(app)), entropy=False)
+            full = deps.Budget(8 << 20)
+            walked = deps.tree(app, image, known=set(), budget=full)
+            small = deps.Budget(1)
+            starved = deps.tree(app, image, known=set(), budget=small)
+            version = lambda t: next(n for n in t if n.resolution.name == 'VERSION.dll')
+            fake_image = NS(machine='x64', imports=[pe.Import('foo.dll', [], True), pe.Import('foo.dll', [], False)]
+                            + [pe.Import(f'api-ms-win-test-l1-1-{i}.dll') for i in range(250)])
+            other = deps.tree(r'C:\nowhere\app.exe', fake_image, known=set())
+            sys.stdout.write('|'.join(str(x) for x in (full.spent > 0, version(walked).error, version(walked).children_count > 0,
+                version(starved).error, full.remaining == (8 << 20) - full.spent, other[0].delayed, len(other), other.more_api_sets)))
+            """;
+        var output = await RunPluginPythonAsync("pe-info-python", code.Replace("APP", app, StringComparison.Ordinal));
+        Assert.Equal("True|None|True|przekroczono limit odczytu|True|False|201|50", output);
+    }
+
     [Fact]
     public async Task Pe_preview_of_dll_shows_permissions_and_dependencies_after_exports()
     {
