@@ -1,10 +1,12 @@
 """Dependency resolution for the pe-info plugin: where Windows would load each imported DLL from (simplified).
 
 Order: API set (api-ms-*, ext-ms-*) -> KnownDLLs (registry) -> the file's own folder -> System32 (SysWOW64 for x86)
--> not found. Each folder check is one c4k.stat, cached per (folder, name) within a render. DLLs found next to the file
-are parsed in turn (headers and imports only, each with its own RangeReader and budget), up to max_depth levels and
-max_modules modules (API sets, resolved by name alone, do not count); system DLLs are not walked. A file inside
-System32/SysWOW64 has no app-local neighbours: its imports resolve as system DLLs.
+-> not found. Each folder check is one c4k.stat, cached per (folder, name) within a render (with the size, so a DLL
+that is walked is not stat'ed again). DLLs found next to the file are parsed in turn (headers and imports only, each
+with its own RangeReader), up to max_depth levels and max_modules modules (API sets, resolved by name alone, do not
+count; at most MAX_API_SETS of them are listed). All those readers draw on one shared Budget: once it is spent the walk
+stops and the node says so. System DLLs are not walked. A file inside System32/SysWOW64 has no app-local
+neighbours: its imports resolve as system DLLs.
 
 c4k (and pe, which imports it) are imported inside the functions that call the host, so system_folder and resolve's
 pure parts can be imported in a plain Python process.
@@ -14,6 +16,9 @@ from dataclasses import dataclass
 
 KNOWN_DLLS_KEY = r"reg://HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\KnownDLLs"
 API_SET_PREFIXES = ("api-ms-", "ext-ms-")
+MAX_API_SETS = 200
+DEFAULT_BUDGET = 8 * 1024 * 1024
+OVER_BUDGET = "przekroczono limit odczytu"
 
 _known = None
 
@@ -23,6 +28,7 @@ class Resolution:
     name: str
     kind: str            # "apiset" | "known" | "local" | "system" | "missing"
     path: str = None
+    size: int = None     # from the stat that found it
 
 
 @dataclass
@@ -35,8 +41,22 @@ class Node:
 
 
 class Tree(list):
-    """Nodes in display order (each followed by its children); `truncated` when MAX_MODULES was reached."""
+    """Nodes in display order (each followed by its children); `truncated` when max_modules was reached,
+    `more_api_sets` = API sets left out after MAX_API_SETS."""
     truncated = False
+    more_api_sets = 0
+
+
+class Budget:
+    """Bytes the whole walk may still read (shared by every reader it creates)."""
+
+    def __init__(self, total):
+        self.remaining = max(0, total)
+        self.spent = 0
+
+    def take(self, count):
+        self.remaining = max(0, self.remaining - count)
+        self.spent += count
 
 
 def system_folder(machine, system_root):
@@ -80,6 +100,7 @@ def known_dlls():
 
 
 def _exists(folder, name, cache):
+    """(path, size) of the file `name` in `folder`, or None; one c4k.stat, cached."""
     key = (folder.lower(), name.lower())
     if cache is not None and key in cache:
         return cache[key]
@@ -89,7 +110,7 @@ def _exists(folder, name, cache):
         found = c4k.stat(path)
     except Exception:  # an unreadable location counts as "not there"
         found = None
-    result = path if found and found.get("kind") != "directory" else None
+    result = (path, found.get("size") or 0) if found and found.get("kind") != "directory" else None
     if cache is not None:
         cache[key] = result
     return result
@@ -107,50 +128,74 @@ def resolve(name, folder, machine, known, cache=None):
     in_system = folder.rstrip("\\/").lower() in {system_folder(m, root).lower() for m in ("x86", "x64")}
     local = None if in_system else _exists(folder, name, cache)
     if local:
-        return Resolution(name, "local", local)
+        return Resolution(name, "local", local[0], local[1])
     found = _exists(system, name, cache)
     if found:
-        return Resolution(name, "system", found)
+        return Resolution(name, "system", found[0], found[1])
     return Resolution(name, "missing")
 
 
-def _parse_local(path):
-    """Headers and imports of an app-local DLL, with its own reader and budget."""
-    import c4k
+def _parse_local(resolution, budget):
+    """Headers and imports of an app-local DLL: its own reader, limited to what is left of the shared budget."""
     import pe
-    found = c4k.stat(path) or {}
-    reader = pe.RangeReader(path, found.get("size") or 0)
-    return pe.parse(reader, details=False, entropy=False)
+    reader = pe.RangeReader(resolution.path, resolution.size or 0, budget=budget.remaining)
+    try:
+        image = pe.parse(reader, details=False, entropy=False)
+    finally:
+        budget.take(reader.used)
+    over = any(OVER_BUDGET in w for w in image.warnings)
+    return image, (OVER_BUDGET if over else None)
 
 
-def tree(path, image, max_depth=3, max_modules=60, known=None, cache=None):
-    """Dependencies of `image` (the file at `path`) as a flat pre-order list; modules already seen are not repeated."""
+def tree(path, image, max_depth=3, max_modules=60, known=None, cache=None, budget=None):
+    """Dependencies of `image` (the file at `path`) as a flat pre-order list; modules already seen are not repeated
+    (a module seen first as delay-loaded and later as a normal import becomes a normal one)."""
     known = known_dlls() if known is None else known
     cache = {} if cache is None else cache
+    budget = Budget(DEFAULT_BUDGET) if budget is None else budget
     nodes = Tree()
     seen = {base_name(path).lower()}
-    counted = [0]   # modules that cost host calls; API sets are resolved by name and do not count
+    by_name = {}
+    counted = [0, 0]   # [modules that cost host calls, API sets listed]
 
     def walk(imports, folder, machine, depth, delayed_parent):
         added = 0
         for item in imports:
             name = (item.dll or "").strip()
-            if not name or name == "?" or name.lower() in seen:
+            lower = name.lower()
+            delayed = delayed_parent or item.delayed
+            if not name or name == "?":
                 continue
-            api_set = name.lower().startswith(API_SET_PREFIXES)
-            if not api_set and counted[0] >= max_modules:
-                nodes.truncated = True
+            if lower in seen:
+                existing = by_name.get(lower)
+                if existing is not None and existing.delayed and not delayed:
+                    existing.delayed = False
                 continue
-            seen.add(name.lower())
-            counted[0] += 0 if api_set else 1
-            node = Node(resolve(name, folder, machine, known, cache), depth, delayed=delayed_parent or item.delayed)
+            if lower.startswith(API_SET_PREFIXES):
+                seen.add(lower)
+                if counted[1] >= MAX_API_SETS:
+                    nodes.more_api_sets += 1
+                    continue
+                counted[1] += 1
+            else:
+                if counted[0] >= max_modules:
+                    nodes.truncated = True
+                    continue
+                seen.add(lower)
+                counted[0] += 1
+            node = Node(resolve(name, folder, machine, known, cache), depth, delayed=delayed)
+            by_name[lower] = node
             nodes.append(node)
             added += 1
             if node.resolution.kind == "local" and depth + 1 < max_depth:
+                if budget.remaining <= 0:
+                    node.error = OVER_BUDGET
+                    continue
                 try:
-                    child = _parse_local(node.resolution.path)
+                    child, node.error = _parse_local(node.resolution, budget)
                 except Exception as error:  # a broken neighbour is shown, never raised
-                    node.error = str(error) or type(error).__name__
+                    text = str(error) or type(error).__name__
+                    node.error = OVER_BUDGET if OVER_BUDGET in text else text
                     continue
                 node.children_count = walk(child.imports, folder_of(node.resolution.path), child.machine, depth + 1, node.delayed)
         return added

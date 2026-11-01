@@ -169,6 +169,8 @@ def section_dependencies(image, entry, ctx):
     if not nodes:
         return []
     lines = ["## Zależności", ""] + [_dependency_line(node) for node in nodes]
+    if nodes.more_api_sets:
+        lines.append(f"- … i jeszcze {nodes.more_api_sets} zestawów API systemu")
     if nodes.truncated:
         lines.append(f"- … pominięto dalsze moduły (limit {MAX_MODULES})")
     return lines + [""]
@@ -275,10 +277,14 @@ class Context:
         if self._dependencies is None:
             self._dependencies = deps.Tree()
             if self.path is not None:
+                # the walk reads from what is left of this render's budget, and the main reader pays for it
+                budget = deps.Budget(self.reader.budget - self.reader.used)
                 try:
-                    self._dependencies = deps.tree(self.path, self.image, max_modules=MAX_MODULES)
+                    self._dependencies = deps.tree(self.path, self.image, max_modules=MAX_MODULES, budget=budget)
                 except Exception as error:  # nothing may raise out of preview.render
                     self.dependencies_error = str(error) or type(error).__name__
+                finally:
+                    self.reader.used += budget.spent
         return self._dependencies
 
     def missing(self):
@@ -309,6 +315,7 @@ def render(params):
     ctx = Context(reader, image, entry["path"])
     ctx.manifest()   # resources first: the section entropy reads must not use up the budget before them
     ctx.version()
+    ctx.dependencies()   # then the dependency walk, which shares this render's budget
     pe.add_entropy(reader, image)
     for build in ORDER.get(kind, ORDER["exe"]):
         try:
