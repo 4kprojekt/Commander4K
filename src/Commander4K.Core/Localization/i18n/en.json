@@ -1227,5 +1227,8 @@
   "{0} podfolderu|{0} podfolderów|{0} podfolderów": "{0} subfolder|{0} subfolders",
   "Rozmiar może być niedokładny: brak dostępu do {0}, nawet jako administrator.": "The size may be inaccurate: {0} could not be read, even as administrator.",
   "Rozmiar może być niedokładny: brak uprawnień do {0}. Spróbuj uruchomić Commander4K jako administrator.": "The size may be inaccurate: no permission to read {0}. Try running Commander4K as administrator.",
-  "Commander4K {0} — Administrator": "Commander4K {0} — Administrator"
+  "Commander4K {0} — Administrator": "Commander4K {0} — Administrator",
+  "Ten folder zawiera {0} zdjęcie. Przełączyć w widok galerii?|Ten folder zawiera {0} zdjęcia. Przełączyć w widok galerii?|Ten folder zawiera {0} zdjęć. Przełączyć w widok galerii?": "This folder has {0} picture. Switch to the gallery view?|This folder has {0} pictures. Switch to the gallery view?",
+  "To jest vault Obsidiana. Pokazać jako notatki z powiązaniami?": "This is an Obsidian vault. Show it as linked notes?",
+  "Ten folder zawiera {0} notatkę Markdown. Pokazać jako notatki?|Ten folder zawiera {0} notatki Markdown. Pokazać jako notatki?|Ten folder zawiera {0} notatek Markdown. Pokazać jako notatki?": "This folder has {0} Markdown note. Show it as notes?|This folder has {0} Markdown notes. Show them as notes?"
 }

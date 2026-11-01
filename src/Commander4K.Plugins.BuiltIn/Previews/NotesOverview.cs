@@ -317,7 +317,7 @@ public static partial class NotesOverview
         return [.. notes.OfType<Note>()];
     }
 
-    private static bool IsMarkdown(string name) =>
+    internal static bool IsMarkdown(string name) =>
         name.EndsWith(".md", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".markdown", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The first real sentence: headings, links and Markdown markers stripped, at most 180 characters.</summary>
