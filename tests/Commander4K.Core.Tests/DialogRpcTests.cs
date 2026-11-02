@@ -41,6 +41,18 @@ public sealed class DialogRpcTests
         Assert.Null(DialogRpc.Answer(request, null));
     }
 
+    [Fact]
+    public void A_field_button_comes_back_as_the_button_key()
+    {
+        using var json = JsonDocument.Parse("""{ "title": "x", "fields": [ { "id": "user", "button": "Auto" } ] }""");
+        var request = DialogRpc.Parse(json.RootElement);
+
+        Assert.Equal("Auto", request.Fields[0].Button);
+        var answer = DialogRpc.Answer(request, new Dictionary<string, string> { ["user"] = "jan@example.com", [DialogAnswers.ButtonKey] = "user" })!;
+        Assert.Equal("user", answer["$button"]);
+        Assert.False(DialogRpc.Answer(request, new Dictionary<string, string> { ["user"] = "x" })!.ContainsKey("$button"));
+    }
+
     [Theory]
     [InlineData("""{ "title": "x" }""")]
     [InlineData("""{ "fields": [] }""")]

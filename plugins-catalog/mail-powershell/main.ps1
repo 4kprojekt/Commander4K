@@ -208,7 +208,7 @@ function Get-MailAccountFields($Values, [bool] $WithFolder) {
     $value = { param($Id, $Default) if ($Values -and $null -ne $Values[$Id]) { [string] $Values[$Id] } else { $Default } }
     $manual = @{ servers = 'manual' }
     $fields = [System.Collections.Generic.List[hashtable]]::new()
-    $fields.Add(@{ id = 'user'; label = 'Adres e-mail'; value = (& $value 'user' ''); placeholder = 'ja@example.com'; help = 'To także nazwa użytkownika do logowania. Hasło zapisze aplikacja, nie wtyczka.'; required = $true })
+    $fields.Add(@{ id = 'user'; label = 'Adres e-mail'; value = (& $value 'user' ''); placeholder = 'ja@example.com'; button = 'Auto'; help = 'To także nazwa użytkownika do logowania. Hasło zapisze aplikacja, nie wtyczka. „Auto” ustala serwery z adresu (bez logowania).'; required = $true })
     $fields.Add(@{ id = 'name'; label = 'Imię i nazwisko nadawcy'; value = (& $value 'name' ''); help = 'Opcjonalne; widać je w polu „Od” wysłanych wiadomości.' })
     if ($WithFolder) {
         $fields.Add(@{ id = 'folder'; label = 'Nazwa folderu konta'; value = (& $value 'folder' ''); placeholder = 'domena adresu, np. example.com' })
@@ -267,6 +267,25 @@ function Test-MailAccountValues($Values, [string] $Parent) {
     @{ errors = $errors; options = $options; folder = $folder }
 }
 
+# "Auto" beside the address: the app looks up the servers (it never logs in or sends the password) and the window comes
+# back with them filled in, so the user sees the server names before "Sprawdź i zapisz" sends the password there.
+function Find-MailServers($Values) {
+    $address = ([string] $Values['user']).Trim()
+    if ($address -notmatch $script:MailAddressPattern) { return @{ errors = @{ user = 'To nie wygląda na adres e-mail.' } } }
+    try { $found = Find-C4KMailConfig $address }
+    catch { return @{ message = 'Nie udało się ustalić serwerów: ' + (Get-MailErrorText $_) } }
+    $Values['servers'] = 'manual'
+    if ($null -eq $found.imap) { return @{ message = 'Nie udało się ustalić serwerów automatycznie. Wpisz je ręcznie.' } }
+    $Values['imap'] = "$($found.imap.host):$($found.imap.port)"
+    $Values['smtp'] = if ($found.smtp) { "$($found.smtp.host):$($found.smtp.port)" } else { '' }
+    $source = @{ autoconfig = 'konfiguracja domeny'; srv = 'rekordy SRV'; ispdb = 'baza Thunderbirda'; mx = 'rekord MX'; autodiscover = 'Autodiscover'; probe = 'sprawdzenie serwerów' }[[string] $found.source]
+    $confidence = @{ high = 'wysoka'; medium = 'średnia'; low = 'niska' }[[string] $found.confidence]
+    $text = "Znalezione przez: $source (pewność: $confidence). IMAP $($Values['imap'])" + $(if ($Values['smtp']) { ", SMTP $($Values['smtp'])." } else { '; SMTP nie znaleziono.' })
+    if ($found.imap.username -and $found.imap.username -ne $address) { $text += ' Dostawca podaje login „' + $found.imap.username + '”, a konto loguje się adresem e-mail.' }
+    if ($found.requiresUserConfirmation) { return @{ message = "$text $($found.confirmationReason)" } }
+    @{ description = $text }
+}
+
 # One window with the address, the sender, the servers and the sync settings (and the folder name when $Parent is
 # given). After the answers pass their checks it logs in once (the app asks for the password and keeps it); a refused
 # login shows the window again with the reason, so nothing is written until it works. Returns @{ options; folder },
@@ -275,10 +294,19 @@ function Read-MailAccountOptions([string] $Title, [string] $Parent) {
     $values = $null
     $errors = $null
     $message = $null
-    $description = 'Ustawienia trafią do c4k.dir folderu konta. Przed zapisem aplikacja zaloguje się raz, żeby sprawdzić konto.'
+    $intro = 'Ustawienia trafią do c4k.dir folderu konta. Przed zapisem aplikacja zaloguje się raz, żeby sprawdzić konto.'
+    $description = $intro
     while ($true) {
         $values = Show-C4KDialog $Title (Get-MailAccountFields $values ([bool] $Parent)) -Description $description -Submit 'Sprawdź i zapisz' -Message $message -Errors $errors
         if ($null -eq $values) { return $null }
+        $description = $intro
+        if ($values['$button'] -eq 'user') {
+            $found = Find-MailServers $values
+            $errors = $found.errors
+            $message = $found.message
+            if ($found.description) { $description = "$intro`n`n$($found.description)" }
+            continue
+        }
         $result = Test-MailAccountValues $values $Parent
         $errors = $result.errors
         $message = $null

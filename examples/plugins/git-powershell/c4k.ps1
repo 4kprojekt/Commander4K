@@ -133,6 +133,7 @@ function Save-C4KMailAttachment([string] $Path, [int] $Index, [string] $Target) 
 function New-C4KMailReply([string] $Path, [string] $Mode = 'reply', [string] $Self = '') { Invoke-C4K 'mail.reply' @{ path = $Path; mode = $Mode; self = $Self } }  # Mode: reply | replyAll | forward -> draft (fs.read)
 function Write-C4KMailDraft([string] $Path, [hashtable] $Draft) { [void](Invoke-C4K 'mail.compose' @{ path = $Path; draft = $Draft }) }  # fs.write (+ fs.read for attachments); draft = to, cc, bcc, subject, body, inReplyTo, references, attachments, from
 function Send-C4KMail([hashtable] $Account, [string] $Path) { (Invoke-C4K 'mail.send' @{ account = $Account; path = $Path }).messageId }  # fs.read -> Message-ID
+function Find-C4KMailConfig([string] $Email) { Invoke-C4K 'mail.discover' @{ email = $Email } }  # -> imap, smtp, authMethods, source, confidence, requiresUserConfirmation, confirmationReason, attempts; never logs in
 function Request-C4KBackgroundTick { [void](Invoke-C4K 'background.wake') }  # background: ask the app for a background.tick now (answer ticks with Register-C4KHandler 'background.tick' { @{ more = $false } })
 
 function Start-C4KPlugin {

@@ -132,6 +132,11 @@ public sealed class ScopedMailHost(PluginManifest manifest, VfsRouter router, IM
             return await Backend.SendAsync(manifest.Id, account, stream, cancellationToken).ConfigureAwait(false);
         });
 
+    // The audit names the domain only; discovery never logs in, so it needs no backend.
+    public Task<MailDiscoveryResult> DiscoverAsync(string email, CancellationToken cancellationToken = default) =>
+        Gate("mail.discover", email.Contains('@') ? email[(email.LastIndexOf('@') + 1)..] : "?", [],
+            () => MailDiscovery.Default.DiscoverAsync(email, cancellationToken));
+
     /// <summary>The file behind an attachment path: <c>x.eml#2</c> (an attachment of a forwarded message) is read from <c>x.eml</c>.</summary>
     private static string AttachmentSource(string attachment) =>
         MailDrafts.TryParseEmlReference(attachment, out var emlPath, out _) ? emlPath : attachment;

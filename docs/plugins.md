@@ -180,7 +180,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `ui.showText` | `{ title, text }` | `null` | — |
 | `ui.confirm` | `{ title, message }` | `true`/`false` | — |
 | `ui.prompt` | `{ title, message, initial? }` | string or `null` | — |
-| `ui.dialog` | `{ title, fields: [{ id, type?, label?, value?, placeholder?, help?, required?, options?, visibleWhen?, min?, max? }], description?, submit?, message?, errors? }` | `{ id: value }` or `null` | — (one window with many fields; see [Dialog windows](#dialog-windows-uidialog); audited without the answers) |
+| `ui.dialog` | `{ title, fields: [{ id, type?, label?, value?, placeholder?, help?, required?, options?, visibleWhen?, min?, max?, button? }], description?, submit?, message?, errors? }` | `{ id: value }` or `null` | — (one window with many fields; see [Dialog windows](#dialog-windows-uidialog); audited without the answers) |
 | `ui.navigate` | `{ path, focus? }` | `null` | — |
 | `ui.openUrl` | `{ url }` | `null` | — (http/https only; opens the app's built-in browser panel, audited) |
 | `ui.openFolder` | `{ path }` | `null` | — (the user is asked where to open it: Explorer or the active panel; nothing is created; audited) |
@@ -217,6 +217,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `mail.reply` | `{ path, mode: "reply"\|"replyAll"\|"forward", self }` | draft | `mail` + `fs.read` |
 | `mail.compose` | `{ path, draft }` (writes the draft as a message file) | `null` | `mail` + `fs.write` (+ `fs.read` for attachments) |
 | `mail.send` | `{ account, path }` (sends the draft file, then copies it to Sent) | `{ messageId }` | `mail` + `fs.read` |
+| `mail.discover` | `{ email }`: finds the servers in order domain autoconfig, SRV, Thunderbird ISPDB, MX (Google/Microsoft 365 = OAuth2), Autodiscover, then probing `mail.`/`imap.`/`smtp.`; a certificate made out to another name makes that name a candidate. Each server must accept TLS (993/465) or a required STARTTLS with a valid certificate. Never logs in, ≤ 20 s | `{ imap, smtp: { host, port, security: ssl\|starttls, username } \| null, authMethods, source, confidence: high\|medium\|low, requiresUserConfirmation, confirmationReason, attempts }`. Show the server names before you log in when `requiresUserConfirmation` is set | `mail` |
 | `background.wake` | `{}` (asks for a `background.tick` now) | — | `background` |
 
 `entry` = `{ name, path, kind, size, modified, hidden }`:
@@ -374,6 +375,7 @@ Every helper maps to one protocol method above:
 | `mail.reply` | `mail_reply(path, mode="reply", self_address="")` | `mailReply(path, mode, self)` | `New-C4KMailReply $Path [$Mode] [$Self]` |
 | `mail.compose` | `mail_compose(path, draft)` | `mailCompose(path, draft)` | `Write-C4KMailDraft $Path $Draft` |
 | `mail.send` | `mail_send(account, path)` → Message-ID | `mailSend(account, path)` | `Send-C4KMail $Account $Path` |
+| `mail.discover` | `mail_discover(email)` | `mailDiscover(email)` | `Find-C4KMailConfig $Email` |
 | `background.wake` | `background_wake()` | `backgroundWake()` | `Request-C4KBackgroundTick` |
 | any other | `call("method", **params)` | `call('method', params)` | `Invoke-C4K 'method' @{ … }` |
 
@@ -451,6 +453,7 @@ Register-C4KHandler 'preview.action' { param($p) if ($p.action -eq 'refresh') { 
 | `visibleWhen` | `{ otherFieldId: value or [values] }`: the field is shown only while every named field has one of those values. This is how modes work (password vs key). |
 | `required` | The window does not close while the field is empty (a checkbox: not ticked). Checked only while the field is visible. |
 | `min`, `max` | Range for `number`. |
+| `button` | Label of a button beside a `text`/`password`/`number` box (e.g. `Auto`). It closes the window without checks; the answers then hold every field as typed plus `"`$button": "<field id>"`. Do the work and call `ui.dialog` again with the new `value`s (the mail plugin's "Auto" fills in the servers this way). |
 
 Answers: `number` fields answer a number (or `null` when empty), checkboxes `true`/`false`, all others text. Hidden fields and headings are left out, so a field of the mode the user did not pick never reaches you. Text is trimmed except for `password` and `multiline`.
 

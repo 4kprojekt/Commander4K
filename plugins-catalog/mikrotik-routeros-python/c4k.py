@@ -141,6 +141,7 @@ def mail_save_attachment(path, index, target): call("mail.saveAttachment", path=
 def mail_reply(path, mode="reply", self_address=""): return call("mail.reply", path=path, mode=mode, self=self_address)  # mode: reply | replyAll | forward -> draft (fs.read)
 def mail_compose(path, draft):       call("mail.compose", path=path, draft=draft)              # fs.write (+ fs.read for draft["attachments"]); draft = {to, cc, bcc, subject, body, inReplyTo, references, attachments, from}
 def mail_send(account, path):        return call("mail.send", account=account, path=path)["messageId"]  # fs.read -> Message-ID
+def mail_discover(email):          return call("mail.discover", email=email)                 # -> {imap, smtp, authMethods, source, confidence, requiresUserConfirmation, confirmationReason, attempts}; never logs in
 def background_wake():              call("background.wake")                                    # background: ask the app for a background.tick now (answer ticks with @handler("background.tick") -> {"more": bool})
 
 

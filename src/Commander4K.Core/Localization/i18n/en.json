@@ -1330,5 +1330,9 @@
   "Okno może mieć najwyżej {0} pól.": "A window can have at most {0} fields.",
   "Nieznany rodzaj pola „{0}”.": "Unknown field type \"{0}\".",
   "Pole „{0}” potrzebuje listy „options”.": "Field \"{0}\" needs an \"options\" list.",
-  "Pola okna muszą mieć niepowtarzalne, niepuste identyfikatory.": "Window fields need unique, non-empty ids."
+  "Pola okna muszą mieć niepowtarzalne, niepuste identyfikatory.": "Window fields need unique, non-empty ids.",
+  "„{0}” nie jest adresem e-mail.": "\"{0}\" is not an e-mail address.",
+  "Serwer {0} nie należy do domeny {1}. Sprawdź, czy to Twój dostawca, zanim podasz hasło.": "Server {0} is not in the domain {1}. Make sure it is your provider before you give the password.",
+  "Nie udało się połączyć z serwerem; to tylko propozycja.": "Could not connect to the server; this is only a suggestion.",
+  "Ten dostawca zwykle wymaga logowania OAuth2 albo hasła aplikacji; zwykłe hasło może nie zadziałać.": "This provider usually requires OAuth2 sign-in or an app password; a plain password may not work."
 }

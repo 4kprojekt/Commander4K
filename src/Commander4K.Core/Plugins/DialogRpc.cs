@@ -60,6 +60,11 @@ public static class DialogRpc
             };
         }
 
+        if (values.TryGetValue(DialogAnswers.ButtonKey, out var button))
+        {
+            answer[DialogAnswers.ButtonKey] = button;
+        }
+
         return answer;
     }
 
@@ -90,7 +95,7 @@ public static class DialogRpc
             : null;
         return new DialogField(id, type, Text(f, "label"), Value(f, "value"), Text(f, "placeholder"), Text(f, "help"),
             f.TryGetProperty("required", out var r) && r.ValueKind == JsonValueKind.True,
-            options, visibleWhen, Number(f, "min"), Number(f, "max"));
+            options, visibleWhen, Number(f, "min"), Number(f, "max"), Text(f, "button"));
     }
 
     private static string? Text(JsonElement e, string name) =>

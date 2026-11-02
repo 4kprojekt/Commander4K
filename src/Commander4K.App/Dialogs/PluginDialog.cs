@@ -113,7 +113,16 @@ public sealed class PluginDialog : DialogWindow<IReadOnlyDictionary<string, stri
                     _ => () => box.Text?.Trim() ?? string.Empty,
                 };
                 row.Focusable = box;
-                row.Panel.Children.Add(box);
+                if (field.Button is { Length: > 0 } buttonLabel)
+                {
+                    var button = Ds.Button(Brushes, buttonLabel, () => PressButton(field.Id)).Col(1).Margin(6, 0, 0, 0);
+                    row.Panel.Children.Add(new Grid().Cols("*,Auto").Children(box, button));
+                }
+                else
+                {
+                    row.Panel.Children.Add(box);
+                }
+
                 break;
         }
 
@@ -206,6 +215,14 @@ public sealed class PluginDialog : DialogWindow<IReadOnlyDictionary<string, stri
             return;
         }
 
+        Complete(answers);
+    }
+
+    /// <summary>A field's button: every value as typed, unchecked, plus which button it was; the plugin shows the dialog again.</summary>
+    private void PressButton(string fieldId)
+    {
+        var answers = _rows.Where(r => r.Read is not null).ToDictionary(r => r.Field.Id, r => r.Read!(), StringComparer.Ordinal);
+        answers[DialogAnswers.ButtonKey] = fieldId;
         Complete(answers);
     }
 

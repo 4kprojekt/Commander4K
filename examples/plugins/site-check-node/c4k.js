@@ -139,5 +139,6 @@ module.exports = {
   mailReply: (path, mode = 'reply', self = '') => call('mail.reply', { path, mode, self }), // mode: reply | replyAll | forward -> draft (fs.read)
   mailCompose: (path, draft) => call('mail.compose', { path, draft }),           // fs.write (+ fs.read for draft.attachments); draft = {to, cc, bcc, subject, body, inReplyTo, references, attachments, from}
   mailSend: async (account, path) => (await call('mail.send', { account, path })).messageId, // fs.read -> Message-ID
+  mailDiscover: email => call('mail.discover', { email }),                      // -> {imap, smtp, authMethods, source, confidence, requiresUserConfirmation, confirmationReason, attempts}; never logs in
   backgroundWake: () => call('background.wake'),                                // background: ask the app for a background.tick now (answer ticks with on('background.tick', …) -> { more })
 };

@@ -252,9 +252,9 @@ public sealed class ExternalPlugin : IAsyncDisposable
 
         if (MailRpc.Handles(method))
         {
-            // An interactive mail call may show the password or certificate dialog.
-            using var wait = p?.TryGetProperty("account", out var account) == true && account.ValueKind == JsonValueKind.Object
-                && !(account.TryGetProperty("interactive", out var interactive) && interactive.ValueKind == JsonValueKind.False)
+            // An interactive mail call may show the password or certificate dialog; discovery (≤ 20 s) runs while the user waits for it.
+            using var wait = method == "mail.discover" || (p?.TryGetProperty("account", out var account) == true && account.ValueKind == JsonValueKind.Object
+                && !(account.TryGetProperty("interactive", out var interactive) && interactive.ValueKind == JsonValueKind.False))
                 ? UserWait() : default(Waiting?);
             return await MailRpc.HandleAsync(method, p, _host.Mail, cancellationToken).ConfigureAwait(false);
         }

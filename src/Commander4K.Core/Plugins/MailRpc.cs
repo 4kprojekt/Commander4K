@@ -128,6 +128,19 @@ public static class MailRpc
                 return null;
             case "mail.send":
                 return new { messageId = await mail.SendAsync(Account(p), Str(p, "path"), ct).ConfigureAwait(false) };
+            case "mail.discover":
+                var found = await mail.DiscoverAsync(Str(p, "email"), ct).ConfigureAwait(false);
+                return new
+                {
+                    imap = Server(found.Imap),
+                    smtp = Server(found.Smtp),
+                    authMethods = found.AuthMethods,
+                    source = found.Source,
+                    confidence = found.Confidence,
+                    requiresUserConfirmation = found.RequiresUserConfirmation,
+                    confirmationReason = found.ConfirmationReason,
+                    attempts = found.Attempts,
+                };
             default:
                 throw new JsonRpcException(JsonRpcException.MethodNotFound, Loc.T("Nieznana metoda „{0}”.", method));
         }
@@ -170,6 +183,9 @@ public static class MailRpc
         attachments = d.AttachmentPaths,
         from = d.From is { } from ? Address(from) : null,
     };
+
+    private static object? Server(MailServerSettings? s) =>
+        s is null ? null : new { host = s.Host, port = s.Port, security = s.Security, username = s.Username };
 
     private static object Address(MailAddress a) => new { name = a.Name, address = a.Address };
 

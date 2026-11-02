@@ -20,6 +20,8 @@ public sealed record DialogOption(string Value, string Label);
 /// <summary>One field of a <see cref="DialogRequest"/>.</summary>
 /// <param name="Value">Initial value as text: a number in invariant culture, <c>true</c>/<c>false</c> for a checkbox, an option's value for a select.</param>
 /// <param name="VisibleWhen">Shown only while every named field has one of the listed values (modes: password vs key).</param>
+/// <param name="Button">A button beside a text field: it closes the dialog without checks and the answers carry
+/// <c>"$button": "&lt;field id&gt;"</c>; the plugin does its work and shows the dialog again with new values.</param>
 public sealed record DialogField(
     string Id,
     DialogFieldType Type,
@@ -31,7 +33,14 @@ public sealed record DialogField(
     IReadOnlyList<DialogOption>? Options = null,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? VisibleWhen = null,
     double? Min = null,
-    double? Max = null);
+    double? Max = null,
+    string? Button = null);
+
+public static class DialogAnswers
+{
+    /// <summary>The answer key naming the field whose <see cref="DialogField.Button"/> closed the dialog.</summary>
+    public const string ButtonKey = "$button";
+}
 
 /// <summary>
 /// A modal window with several fields (<see cref="IPluginHost.ShowDialogAsync"/>). To report a check the plugin made

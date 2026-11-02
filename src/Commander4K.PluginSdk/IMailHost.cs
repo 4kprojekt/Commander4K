@@ -76,6 +76,26 @@ public sealed record MailDraft(
     IReadOnlyList<string> AttachmentPaths,
     MailAddress? From = null);
 
+/// <param name="Security"><c>ssl</c> (TLS from the first byte, ports 993/465) or <c>starttls</c> (required, never optional).</param>
+public sealed record MailServerSettings(string Host, int Port, string Security, string Username);
+
+/// <summary>What <see cref="IMailHost.DiscoverAsync"/> found for an address.</summary>
+/// <param name="Imap"><c>null</c> when nothing was found.</param>
+/// <param name="AuthMethods"><c>password</c>, <c>oauth2</c>.</param>
+/// <param name="Source"><c>autoconfig</c>, <c>srv</c>, <c>ispdb</c>, <c>mx</c>, <c>autodiscover</c>, <c>probe</c> or <c>none</c>.</param>
+/// <param name="Confidence"><c>high</c>, <c>medium</c> or <c>low</c> (not verified by a connection).</param>
+/// <param name="ConfirmationReason">Why the user should look at the servers before giving a password (another domain, OAuth2, unverified).</param>
+/// <param name="Attempts">What was tried, without the address or any secret.</param>
+public sealed record MailDiscoveryResult(
+    MailServerSettings? Imap,
+    MailServerSettings? Smtp,
+    IReadOnlyList<string> AuthMethods,
+    string Source,
+    string Confidence,
+    bool RequiresUserConfirmation,
+    string? ConfirmationReason,
+    IReadOnlyList<string> Attempts);
+
 /// <summary>
 /// Mail through the app: connections, credentials and certificates stay with the host. Every member requires
 /// <see cref="PluginPermissions.Mail"/>; the file permission noted per member is required as well.
@@ -113,6 +133,12 @@ public interface IMailHost
 
     /// <summary>Sends a draft file (also requires fs.read) and appends it to Sent; returns the Message-ID.</summary>
     Task<string> SendAsync(MailAccount account, string draftPath, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Finds the IMAP/SMTP servers of an address (domain autoconfig, SRV, Thunderbird's database, MX, Autodiscover,
+    /// then probing) and checks them with a TLS connection. Never logs in and never sends a password; at most 20 s.
+    /// </summary>
+    Task<MailDiscoveryResult> DiscoverAsync(string email, CancellationToken cancellationToken = default);
 }
 
 /// <summary>The server refused the login and the account has no usable credentials (non-interactive calls).</summary>
