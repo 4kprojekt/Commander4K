@@ -906,13 +906,35 @@ public sealed class MainWindow : Window
             Notify(Loc.T("{0}: {1}", config.FilePath, error), isError: true);
         }
 
-        if (config?.Enter is not { IsPlainFiles: false } action)
+        // A file with only a "preview" view shows that view on Enter too; an explicit "enter": "files" keeps the files.
+        if ((config?.Enter ?? (config?.Preview is { Kind: FolderActionKind.View or FolderActionKind.Panel } preview ? preview : null))
+            is not { IsPlainFiles: false } action)
         {
             await panel.NavigateAsync(folder.Path);
             return;
         }
 
-        await RunFolderActionAsync(panel, folder, config, action);
+        await RunFolderActionAsync(panel, folder, config!, action);
+    }
+
+    /// <summary>Enter (or a double click) on <c>c4k.dir</c> in the file list: the folder's view replaces the files.</summary>
+    private async Task ShowOwnFolderViewAsync(FilePanelView panel, VfsEntry file)
+    {
+        var folderPath = panel.ActiveTab.Path;
+        var config = await Task.Run(() => _host!.ReadFolderConfigAsync(folderPath, CancellationToken.None));
+        if (config?.Error is { } error)
+        {
+            Notify(Loc.T("{0}: {1}", config.FilePath, error), isError: true);
+            return;
+        }
+
+        if ((config?.Enter ?? config?.Preview) is { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel } action)
+        {
+            await RunFolderActionAsync(panel, new VfsEntry(panel.ActiveTab.Title, folderPath, VfsEntryKind.Directory), config!, action);
+            return;
+        }
+
+        OpenFile(panel, file, plain: true);
     }
 
     /// <summary>
@@ -2723,6 +2745,13 @@ public sealed class MainWindow : Window
     /// <param name="plain">Shift+Enter: skip a preview that claims Enter (<c>"enter": true</c>) and open the file as before.</param>
     private void OpenFile(FilePanelView panel, VfsEntry entry, bool plain = false)
     {
+        if (!plain && panel.Mode is null
+            && string.Equals(entry.Path, FolderConfig.ChildPath(panel.ActiveTab.Path, FolderConfig.FileName), StringComparison.OrdinalIgnoreCase))
+        {
+            _ = ShowOwnFolderViewAsync(panel, entry);
+            return;
+        }
+
         var previewPlugin = PreviewPluginResolver.Resolve(_host!.PreviewPlugins, entry);
         if (previewPlugin is SftpConnectionPreviewPlugin)
         {

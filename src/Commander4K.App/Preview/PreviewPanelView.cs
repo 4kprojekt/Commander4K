@@ -618,7 +618,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         // A folder may say how it wants to be shown (c4k.dir); the file is read only for folders on the way here.
         Func<IPluginHost, IProgress<PreviewContent>, CancellationToken, Task<PreviewContent>>? folderView = null;
         IPreviewPlugin? plugin = null;
-        if (target.IsContainer && target.Kind is not (VfsEntryKind.Host or VfsEntryKind.ParentLink))
+        // The source panel already shows this folder's view over its files: the quick view shows the files instead.
+        var viewShownBySource = _pinned is null && _source.Mode is not null && string.Equals(target.Path, _source.ActiveTab.Path, StringComparison.OrdinalIgnoreCase);
+        if (target.IsContainer && target.Kind is not (VfsEntryKind.Host or VfsEntryKind.ParentLink) && !viewShownBySource)
         {
             FolderConfig? config;
             FolderAction? action;
