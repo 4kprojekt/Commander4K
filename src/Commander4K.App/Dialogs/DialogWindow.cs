@@ -360,12 +360,19 @@ public sealed class LoginDialog : DialogWindow<LoginResult?>
 
     /// <param name="allowKey">SSH: offer a private key file instead of a password.</param>
     /// <param name="lockUser">The user name is fixed (mail accounts); only the password is asked.</param>
-    public LoginDialog(SkinBrushes brushes, string realm, string? userName = null, bool allowKey = false, bool lockUser = false) : base(Loc.T("Logowanie"), brushes)
+    /// <param name="error">Why the dialog is shown again (a refused password), as an error notice above the fields.</param>
+    public LoginDialog(SkinBrushes brushes, string realm, string? userName = null, bool allowKey = false, bool lockUser = false, string? error = null)
+        : base(Loc.T("Logowanie"), brushes)
     {
         _user = new TextBox().Text(userName ?? string.Empty).PlaceholderText(Loc.T("użytkownik (np. DOMENA\\jan)"));
         _user.IsEnabled = !lockUser;
         _password = new TextBox().PasswordChar('•').PlaceholderText(Loc.T("hasło"));
         var body = new List<Control> { Message(Loc.T("„{0}” wymaga zalogowania.", realm)), Label(Loc.T("Użytkownik")), _user, Label(Loc.T("Hasło")).Margin(0, 6, 0, 4), _password };
+        if (error is not null)
+        {
+            body.Insert(0, Ds.Notice(brushes, error, NoticeKind.Error).Margin(0, 0, 0, 6));
+        }
+
         if (allowKey)
         {
             _keyFile = new TextBox().IsEnabled(false).Text(Plugins.BuiltIn.Remote.RemoteLogin.DefaultKeyFiles().FirstOrDefault() ?? string.Empty)
@@ -421,7 +428,20 @@ public sealed class HostKeyDialog : DialogWindow<bool>
 
 /// <param name="Keywords">Extra searchable text that is not displayed (command ids, synonyms).</param>
 /// <param name="Group">Section the item is listed under (design: "POLECENIA", "USTAWIENIA"); consecutive items share it.</param>
-public sealed record PickerItem(string Label, string? Detail, string Value, string? Keywords = null, bool IsSeparator = false, string? Group = null);
+/// <param name="Icon">16 px outline icon as path data on a 16-unit grid (<see cref="PickerIcons"/>), drawn in the muted colour.</param>
+public sealed record PickerItem(string Label, string? Detail, string Value, string? Keywords = null, bool IsSeparator = false, string? Group = null, string? Icon = null);
+
+/// <summary>Row icons of the command palette (design "Paleta komend"): 16-unit outlines, 1.25 px stroke.</summary>
+public static class PickerIcons
+{
+    public const string Command = "M3 4.5l3 3.5-3 3.5 M8 12h5";
+    public const string Setting = "M5.75 8a2.25 2.25 0 1 0 4.5 0a2.25 2.25 0 1 0 -4.5 0 M8 2v1.5 M8 12.5V14 M2 8h1.5 M12.5 8H14 M3.75 3.75l1.05 1.05 M11.2 11.2l1.05 1.05 M3.75 12.25l1.05-1.05 M11.2 4.8l1.05-1.05";
+    public const string Panel = "M2 13.5h12 M3.5 11V7.5 M6.5 11V3.5 M9.5 11V6 M12.5 11V8.5";
+    public const string Files = "M1.75 4.25c0-.83.67-1.5 1.5-1.5h3.1l1.4 1.5h5c.83 0 1.5.67 1.5 1.5v6.5c0 .83-.67 1.5-1.5 1.5H3.25c-.83 0-1.5-.67-1.5-1.5z";
+    public const string Preview = "M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8z M6 8a2 2 0 1 0 4 0a2 2 0 1 0 -4 0";
+    public const string Web = "M1.5 8a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0 M1.75 8h12.5 M8 1.75c-2 2-2 10.5 0 12.5 M8 1.75c2 2 2 10.5 0 12.5";
+    public const string Skin = "M8 1.75a6.25 6.25 0 1 0 0 12.5c.9 0 1.25-.6 1.25-1.2 0-.8-.75-1.05-.75-1.8 0-.7.55-1.25 1.25-1.25h1.5a3 3 0 0 0 3-3C14.25 4.3 11.45 1.75 8 1.75z M5 7h.01 M7.25 4.75h.01 M10.25 5h.01";
+}
 
 /// <summary>
 /// Filterable list in the design's "Paleta komend" layout (drive menu, frecency jump list, panel modes, the command
@@ -628,6 +648,19 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
             label.Inlines!.Add(run);
         }
 
+        Avalonia.Controls.Shapes.Path? icon = item.Icon is { } data
+            ? new Avalonia.Controls.Shapes.Path
+            {
+                Data = Geometry.Parse(data),
+                Width = 16,
+                Height = 16,
+                StrokeThickness = 1.25,
+                StrokeLineCap = PenLineCap.Round,
+                StrokeJoin = PenLineJoin.Round,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0),
+            }
+            : null;
         var inline = item.Detail is { Length: > 0 and <= InlineDetailLength };
         var detail = item.Detail is { Length: > 0 }
             ? new TextBlock
@@ -658,6 +691,15 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
             content = new StackPanel { Children = { label, detail } };
         }
 
+        if (icon is not null)
+        {
+            var withIcon = new DockPanel();
+            DockPanel.SetDock(icon, Dock.Left);
+            withIcon.Children.Add(icon);
+            withIcon.Children.Add(content);
+            content = withIcon;
+        }
+
         var border = new Border
         {
             MinHeight = 30,
@@ -668,7 +710,7 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
             Cursor = new Cursor(StandardCursorType.Hand),
             Child = content,
         };
-        var row = new Row(item, border, label, detail, highlights);
+        var row = new Row(item, border, label, detail, highlights, icon);
         border.PointerEntered += (_, _) => Paint(row, hover: true);
         border.PointerExited += (_, _) => Paint(row, hover: false);
         border.PointerReleased += (_, e) =>
@@ -713,6 +755,11 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
         if (row.Detail is not null)
         {
             row.Detail.Foreground = selected ? Brushes.CursorForeground : Brushes.MutedForeground;
+        }
+
+        if (row.Icon is not null)
+        {
+            row.Icon.Stroke = selected ? Brushes.CursorForeground : Brushes.MutedForeground;
         }
     }
 
@@ -765,5 +812,5 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
         return runs;
     }
 
-    private sealed record Row(PickerItem Item, Border Border, TextBlock Label, TextBlock? Detail, List<Avalonia.Controls.Documents.Run> Highlights);
+    private sealed record Row(PickerItem Item, Border Border, TextBlock Label, TextBlock? Detail, List<Avalonia.Controls.Documents.Run> Highlights, Avalonia.Controls.Shapes.Path? Icon);
 }

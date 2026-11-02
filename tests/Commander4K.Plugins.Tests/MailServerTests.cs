@@ -47,7 +47,7 @@ public sealed class MailServerTests : IDisposable
         if (imap.Scheme == "imaps") implicitTls.Add(imap.Port);
         if (smtp.Scheme == "smtps") implicitTls.Add(smtp.Port);
 
-        var credentials = new MailCredentials(new SecretStore(Path.Combine(_dir, "secrets.json")), (_, _) => Task.FromResult<string?>(password));
+        var credentials = new MailCredentials(new SecretStore(Path.Combine(_dir, "secrets.json")), (_, _, _) => Task.FromResult<string?>(password));
         var certificates = new MailCertificateStore(Path.Combine(_dir, "mail_certificates.json"), (_, _) =>
         {
             Interlocked.Increment(ref _confirmations);
@@ -146,7 +146,7 @@ public sealed class MailServerTests : IDisposable
         var login = imap.UserInfo.Split(':', 2);
         var user = Uri.UnescapeDataString(login[0]);
         var password = Uri.UnescapeDataString(login[1]);
-        var credentials = new MailCredentials(new SecretStore(Path.Combine(_dir, "secrets.json")), (_, _) => Task.FromResult<string?>(password));
+        var credentials = new MailCredentials(new SecretStore(Path.Combine(_dir, "secrets.json")), (_, _, _) => Task.FromResult<string?>(password));
         var certificates = new MailCertificateStore(Path.Combine(_dir, "mail_certificates.json"), (_, _) => Task.FromResult(true));
         var warnings = new List<string>();
         var implicitTls = smtp.Scheme == "smtps" ? new HashSet<int> { smtp.Port } : new HashSet<int>();
@@ -234,7 +234,7 @@ public sealed class MailServerTests : IDisposable
         var implicitTls = new HashSet<int>();
         if (imap.Scheme == "imaps") implicitTls.Add(imap.Port);
         if (smtp.Scheme == "smtps") implicitTls.Add(smtp.Port);
-        var credentials = new MailCredentials(new SecretStore(Path.Combine(_dir, "secrets.json")), (_, _) => Task.FromResult<string?>(password));
+        var credentials = new MailCredentials(new SecretStore(Path.Combine(_dir, "secrets.json")), (_, _, _) => Task.FromResult<string?>(password));
         var certificates = new MailCertificateStore(Path.Combine(_dir, "mail_certificates.json"), (_, _) => Task.FromResult(true));
         var service = new MailService(credentials, certificates, options: new MailServiceOptions { UseCondStore = false, ImplicitTlsPorts = implicitTls });
         return (service, new MailAccount($"{imap.Host}:{imap.Port}", $"{smtp.Host}:{smtp.Port}", user), smtp, user, password);

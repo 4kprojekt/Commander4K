@@ -80,7 +80,7 @@ public sealed class ScopedMailHostTests : IAsyncLifetime
         const string secret = "S3cr3t-Pa55-xyz";
         var secrets = new SecretStore(Path.Combine(_dir, "secrets.json"));
         secrets.Set(MailCredentials.SmtpSecretName("test.mail", account), secret, "smtp.example.org");
-        var credentials = new MailCredentials(secrets, (_, _) => Task.FromResult<string?>(null));
+        var credentials = new MailCredentials(secrets, (_, _, _) => Task.FromResult<string?>(null));
         _backend.OnSend = async () => _backend.SeenPassword = await credentials.GetSmtpPasswordAsync("test.mail", account, afterRefusal: false, Token);
 
         var id = await host.SendAsync(account, draft, Token);

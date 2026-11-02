@@ -1473,7 +1473,7 @@ public sealed class MailPluginTests : IAsyncLifetime
             if (imap.Scheme == "imaps") implicitTls.Add(imap.Port);
             if (smtp.Scheme == "smtps") implicitTls.Add(smtp.Port);
             var secrets = new SecretStore(Path.Combine(dir, $"secrets-{User}.json"));
-            var credentials = new MailCredentials(secrets, (_, _) => Task.FromResult<string?>(User));
+            var credentials = new MailCredentials(secrets, (_, _, _) => Task.FromResult<string?>(User));
             var certificates = new MailCertificateStore(Path.Combine(dir, $"certs-{User}.json"), (_, _) => Task.FromResult(true));
             Service = new MailService(credentials, certificates, options: new MailServiceOptions { UseCondStore = false, ImplicitTlsPorts = implicitTls });
         }

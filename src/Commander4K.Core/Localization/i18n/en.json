@@ -236,7 +236,6 @@
   "Zaznaczono {0:N0} · {1}": "Selected {0:N0} · {1}",
   "✕ Anuluj": "✕ Cancel",
   "Wersja {0} · zmiany zapisywane od razu w config/settings.json": "Version {0} · changes are saved to config/settings.json right away",
-  "Paleta komend, pliki, ustawienia…": "Command palette, files, settings…",
   "Zamknij zakładkę (Ctrl+W)": "Close tab (Ctrl+W)",
   "Nowa zakładka (Ctrl+T)": "New tab (Ctrl+T)",
   "Wczytywanie… {0:N0}   [Esc – Anuluj]": "Loading… {0:N0}   [Esc – Cancel]",
@@ -1318,5 +1317,8 @@
   "Nie zapisano ustawień: {0}": "Settings were not saved: {0}",
   "Nowy język interfejsu obowiązuje po ponownym uruchomieniu. Uruchomić Commander4K ponownie teraz? Otwarte foldery zostaną zapamiętane.": "The new interface language takes effect after a restart. Restart Commander4K now? Open folders are remembered.",
   "Uruchom ponownie": "Restart",
-  "Zmienić język?": "Change the language?"
+  "Zmienić język?": "Change the language?",
+  "Serwer odrzucił hasło. Wpisz je jeszcze raz.": "The server refused the password. Type it again.",
+  "Tryby panelu (F2)": "Panel modes (F2)",
+  "Polecenia, ustawienia, tryby panelu…": "Commands, settings, panel modes…"
 }

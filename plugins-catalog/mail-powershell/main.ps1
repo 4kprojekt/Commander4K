@@ -204,34 +204,51 @@ function Add-MailDashboardTile($Existing, $Tile) {
 }
 
 # Asks for the address, the servers and the sender's name, then checks the login (the app asks for the password and
-# keeps it; nothing is written when it fails). Returns the c4k.dir options, or $null when the user cancelled.
+# keeps it; nothing is written when it fails). A mistake (a bad address, a refused password, an unknown server) goes
+# back to the questions with everything typed so far filled in. Returns the c4k.dir options, or $null when cancelled.
 function Read-MailAccountOptions([string] $Title) {
-    $address = Read-C4KInput $Title 'Adres e-mail (to także nazwa użytkownika):' ''
-    if ($null -eq $address) { return $null }
-    $address = $address.Trim()
-    if ($address -notmatch $script:MailAddressPattern) { throw 'To nie wygląda na adres e-mail.' }
-    $domain = $address.Substring($address.IndexOf('@') + 1)
-    $imap = Read-C4KInput $Title 'Serwer IMAP (host:port):' "imap.${domain}:993"
-    if ($null -eq $imap) { return $null }
-    $imap = $imap.Trim()
-    if ($imap -notmatch $script:MailHostPattern) { throw 'Serwer IMAP ma mieć postać host albo host:port.' }
-    $smtp = Read-C4KInput $Title 'Serwer SMTP (host:port; puste = bez wysyłania):' "smtp.${domain}:465"
-    if ($null -eq $smtp) { return $null }
-    $smtp = $smtp.Trim()
-    if ($smtp -and $smtp -notmatch $script:MailHostPattern) { throw 'Serwer SMTP ma mieć postać host albo host:port.' }
-    $display = Read-C4KInput $Title 'Imię i nazwisko nadawcy (opcjonalnie):' ''
-    if ($null -eq $display) { return $null }
+    $typed = @{ address = ''; imap = $null; smtp = $null; display = '' }
+    while ($true) {
+        $problem = $null
+        $address = Read-C4KInput $Title 'Adres e-mail (to także nazwa użytkownika):' $typed.address
+        if ($null -eq $address) { return $null }
+        $typed.address = $address.Trim()
+        if ($typed.address -notmatch $script:MailAddressPattern) {
+            $problem = 'To nie wygląda na adres e-mail.'
+        }
+        else {
+            $domain = $typed.address.Substring($typed.address.IndexOf('@') + 1)
+            $imap = Read-C4KInput $Title 'Serwer IMAP (host:port):' $(if ($null -ne $typed.imap) { $typed.imap } else { "imap.${domain}:993" })
+            if ($null -eq $imap) { return $null }
+            $typed.imap = $imap.Trim()
+            $smtp = Read-C4KInput $Title 'Serwer SMTP (host:port; puste = bez wysyłania):' $(if ($null -ne $typed.smtp) { $typed.smtp } else { "smtp.${domain}:465" })
+            if ($null -eq $smtp) { return $null }
+            $typed.smtp = $smtp.Trim()
+            $display = Read-C4KInput $Title 'Imię i nazwisko nadawcy (opcjonalnie):' $typed.display
+            if ($null -eq $display) { return $null }
+            $typed.display = $display.Trim()
 
-    $account = @{ imap = $imap; smtp = $(if ($smtp) { $smtp } else { $null }); user = $address; interactive = $true }
-    [void] (Get-C4KMailFolders $account)
+            if ($typed.imap -notmatch $script:MailHostPattern) { $problem = 'Serwer IMAP ma mieć postać host albo host:port.' }
+            elseif ($typed.smtp -and $typed.smtp -notmatch $script:MailHostPattern) { $problem = 'Serwer SMTP ma mieć postać host albo host:port.' }
+            else {
+                $account = @{ imap = $typed.imap; smtp = $(if ($typed.smtp) { $typed.smtp } else { $null }); user = $typed.address; interactive = $true }
+                try { [void] (Get-C4KMailFolders $account) }
+                catch { $problem = Get-MailErrorText $_ }
+            }
+        }
 
-    $options = [ordered]@{ imap = $imap }
-    if ($smtp) { $options['smtp'] = $smtp }
-    $options['user'] = $address
-    if ($display.Trim()) { $options['name'] = $display.Trim() }
-    $options['refresh'] = '5m'
-    $options['since'] = '3m'
-    $options
+        if (-not $problem) {
+            $options = [ordered]@{ imap = $typed.imap }
+            if ($typed.smtp) { $options['smtp'] = $typed.smtp }
+            $options['user'] = $typed.address
+            if ($typed.display) { $options['name'] = $typed.display }
+            $options['refresh'] = '5m'
+            $options['since'] = '3m'
+            return $options
+        }
+
+        if (-not (Confirm-C4K $Title "Nie udało się połączyć z kontem: $problem`n`nPoprawić dane? Wpisane pola zostaną zachowane.")) { return $null }
+    }
 }
 
 function Add-MailAccount([string] $Active) {

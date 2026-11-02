@@ -103,7 +103,7 @@ public sealed class AppHost : IAsyncDisposable
         Audit = new AuditLog(Path.Combine(dataDirectory, "data", "logs"));
         Approvals = new PluginApprovalStore(Path.Combine(config.ConfigDirectory, "plugin-approvals.json"));
         Mail = new Core.Mail.MailService(
-            new Core.Mail.MailCredentials(Secrets, (realm, user) => MailPasswordPrompt?.Invoke(realm, user) ?? Task.FromResult<string?>(null)),
+            new Core.Mail.MailCredentials(Secrets, (realm, user, refused) => MailPasswordPrompt?.Invoke(realm, user, refused) ?? Task.FromResult<string?>(null)),
             new Core.Mail.MailCertificateStore(Path.Combine(config.ConfigDirectory, "mail_certificates.json"),
                 (hostPort, fingerprint) => MailCertificatePrompt?.Invoke(hostPort, fingerprint) ?? Task.FromResult(false)),
             warning: message => Audit.Record("mail", "mail.warning", message, AuditOutcome.Failed));
@@ -122,7 +122,7 @@ public sealed class AppHost : IAsyncDisposable
     public Core.Mail.MailService Mail { get; }
 
     /// <summary>(realm text, user) → password or <c>null</c>; the window shows the dialog (called from background threads).</summary>
-    public Func<string, string, Task<string?>>? MailPasswordPrompt { get; set; }
+    public Func<string, string, bool, Task<string?>>? MailPasswordPrompt { get; set; }
 
     /// <summary>(host:port, SHA-256 fingerprint) → trust; the window shows the dialog (called from background threads).</summary>
     public Func<string, string, Task<bool>>? MailCertificatePrompt { get; set; }

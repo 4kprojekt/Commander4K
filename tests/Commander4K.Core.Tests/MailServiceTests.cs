@@ -18,19 +18,26 @@ public sealed class MailServiceTests : IDisposable
 
     private SecretStore Secrets() => new(Path.Combine(_dir, "secrets.json"));
 
-    private MailCredentials Credentials(SecretStore secrets, string? answer = "pw") => new(secrets, (_, _) =>
+    private MailCredentials Credentials(SecretStore secrets, string? answer = "pw") => new(secrets, (_, _, _) =>
     {
         Interlocked.Increment(ref _prompts);
         return Task.FromResult(answer);
     });
 
+    private readonly List<bool> _refusedFlags = [];
+
     /// <summary>Answers the prompts in order; <c>null</c> = the user cancelled.</summary>
     private MailCredentials Scripted(SecretStore secrets, params string?[] answers)
     {
         var queue = new Queue<string?>(answers);
-        return new MailCredentials(secrets, (_, _) =>
+        return new MailCredentials(secrets, (_, _, refused) =>
         {
             Interlocked.Increment(ref _prompts);
+            lock (_refusedFlags)
+            {
+                _refusedFlags.Add(refused);
+            }
+
             return Task.FromResult(queue.Count > 0 ? queue.Dequeue() : null);
         });
     }
@@ -117,16 +124,17 @@ public sealed class MailServiceTests : IDisposable
         Assert.False(secrets.Exists(MailCredentials.ImapSecretName("a", account)));
         Assert.False(secrets.Exists(MailCredentials.SmtpSecretName("a", account)));
 
-        // Two typos: refused twice, still nothing stored, and a background call afterwards never prompts.
-        await using (var service = Service(Scripted(secrets, "typo", "typo2"), server))
+        // Three typos: refused every time up to the limit, still nothing stored, and a background call afterwards never prompts.
+        await using (var service = Service(Scripted(secrets, "typo", "typo2", "typo3"), server))
         {
             await Assert.ThrowsAsync<MailAuthenticationRequiredException>(() => service.FoldersAsync("a", account, Token));
             Assert.False(secrets.Exists(MailCredentials.ImapSecretName("a", account)));
             await Assert.ThrowsAsync<MailAuthenticationRequiredException>(() => service.FoldersAsync("a", account with { Interactive = false }, Token));
         }
 
-        Assert.Equal(4, _prompts);
-        Assert.Equal(3, server.RefusedLogins); // typo, typo, typo2; the background call never reached the server.
+        Assert.Equal(2 + MailService.LoginAttempts, _prompts);
+        Assert.Equal(4, server.RefusedLogins); // typo, then typo, typo2, typo3; the background call never reached the server.
+        Assert.Equal([false, true, false, true, true], _refusedFlags); // each re-prompt says the password was refused
 
         // A typo, then the right one: only the accepted password is stored.
         await using (var service = Service(Scripted(secrets, "typo", "right"), server))

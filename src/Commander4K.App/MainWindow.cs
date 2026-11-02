@@ -349,10 +349,9 @@ public sealed class MainWindow : Window
             .OnClick(click => _ = ExecuteAsync(CommandIds.CommandPalette))
             .Content(new Grid().Cols("Auto,*,Auto").Children(
                 new TextBlock().Text("⌕").FontSize(14).VerticalAlignment(VerticalAlignment.Center).Margin(0, 0, 8, 0),
-                new TextBlock().Col(1).Text(Loc.T("Paleta komend, pliki, ustawienia…")).FontSize(12).VerticalAlignment(VerticalAlignment.Center)
+                new TextBlock().Col(1).Text(Loc.T("Polecenia, ustawienia, tryby panelu…")).FontSize(12).VerticalAlignment(VerticalAlignment.Center)
                     .TextTrimming(TextTrimming.CharacterEllipsis),
-                new Border().Col(2).Padding(6, 1).CornerRadius(new CornerRadius(4)).BorderThickness(new Thickness(1))
-                    .Child(new TextBlock().Text("Ctrl+Shift+P").FontSize(11))));
+                Ds.Kbd(skins.Current, "Ctrl+Shift+P").Col(2).Margin(8, 0, 0, 0)));
         _menuBar = new Grid().Cols("*,Auto").Height(32).Children(_menu.VerticalAlignment(VerticalAlignment.Center), _paletteButton.Col(1));
         DockPanel.SetDock(_menuBar, Dock.Top);
         Content = new DockPanel().Children(_menuBar, shell);
@@ -1875,11 +1874,13 @@ public sealed class MainWindow : Window
         foreach (var command in host.ListCommands().OrderBy(c => c.Description, StringComparer.CurrentCulture))
         {
             var keys = string.Join(", ", host.KeyBindings.Where(b => string.Equals(b.Value, command.Id, StringComparison.OrdinalIgnoreCase)).Select(b => b.Key));
-            items.Add(new PickerItem(command.Description, keys.Length > 0 ? keys : null, "cmd:" + command.Id, command.Id, Group: Loc.T("Polecenia")));
+            items.Add(new PickerItem(command.Description, keys.Length > 0 ? keys : null, "cmd:" + command.Id, command.Id, Group: Loc.T("Polecenia"), Icon: PickerIcons.Command));
         }
 
-        items.AddRange(host.Skins.Skins.Select(s => new PickerItem(s.DisplayName, Loc.T("Skórka"), "skin:" + s.Id, "skórka motyw kolory theme skin", Group: Loc.T("Skórki"))));
-        items.AddRange(host.SettingsCatalog.Select(s => new PickerItem(s.Title, s.Category, "set:" + s.Title, "ustawienia " + string.Join(' ', s.Keywords ?? []), Group: Loc.T("Ustawienia"))));
+        // Design "Paleta komend": commands, settings, panel modes (F2); skins after them.
+        items.AddRange(host.SettingsCatalog.Select(s => new PickerItem(s.Title, s.Category, "set:" + s.Title, "ustawienia " + string.Join(' ', s.Keywords ?? []), Group: Loc.T("Ustawienia"), Icon: PickerIcons.Setting)));
+        items.AddRange(PanelModeItems(Loc.T("Tryby panelu (F2)")));
+        items.AddRange(host.Skins.Skins.Select(s => new PickerItem(s.DisplayName, Loc.T("Skórka"), "skin:" + s.Id, "skórka motyw kolory theme skin", Group: Loc.T("Skórki"), Icon: PickerIcons.Skin)));
 
         var choice = await new PickerDialog(
             _skins!.Current, Loc.T("Paleta komend"), items, Loc.T("Wpisz, czego szukasz — komendy, skórki, ustawienia"), "Ctrl+Shift+P", showHeader: false).ShowAsync(this);
@@ -1893,6 +1894,9 @@ public sealed class MainWindow : Window
                 break;
             case ["set", var title]:
                 OpenSettings(title);
+                break;
+            case ["mode", _]:
+                await ApplyPanelModeAsync(choice!.Value);
                 break;
         }
     }
@@ -3871,38 +3875,51 @@ public sealed class MainWindow : Window
     /// <summary>F2: choose what the opposite panel shows — files, quick view or any plugin panel.</summary>
     private async ValueTask ShowPanelModesAsync(CommandInvocation _)
     {
-        var host = _host!;
         var (target, _) = ModeTarget();
         var side = target == _left ? Loc.T("lewy") : Loc.T("prawy");
+        var choice = await new PickerDialog(_skins!.Current, Loc.T("Tryb panelu ({0})", side), PanelModeItems(group: null), Loc.T("Co ma pokazywać {0} panel?", side)).ShowAsync(this);
+        if (choice is not null)
+        {
+            await ApplyPanelModeAsync(choice.Value);
+        }
+    }
+
+    /// <summary>The panel modes (files, quick view, browser, plugin panels), for F2 and the command palette.</summary>
+    private List<PickerItem> PanelModeItems(string? group)
+    {
         var items = new List<PickerItem>
         {
-            new(Loc.T("Pliki"), Loc.T("lista plików (zamyka tryb panelu)"), "files", "lista katalog"),
-            new(Loc.T("Podgląd (Ctrl+Q)"), Loc.T("markdown z edycją, tekst, obrazy, rozmiary folderów — dla pliku pod kursorem"), "preview", "quick view markdown"),
-            new(Loc.T("Przeglądarka (Ctrl+Alt+W)"), Loc.T("strony WWW, wyszukiwarki, ChatGPT / Gemini / Claude — logowanie jest zapamiętywane"), "browser", "www internet web ai"),
+            new(Loc.T("Pliki"), Loc.T("lista plików (zamyka tryb panelu)"), "mode:files", "lista katalog", Group: group, Icon: PickerIcons.Files),
+            new(Loc.T("Podgląd (Ctrl+Q)"), Loc.T("markdown z edycją, tekst, obrazy, rozmiary folderów — dla pliku pod kursorem"), "mode:preview", "quick view markdown", Group: group, Icon: PickerIcons.Preview),
+            new(Loc.T("Przeglądarka (Ctrl+Alt+W)"), Loc.T("strony WWW, wyszukiwarki, ChatGPT / Gemini / Claude — logowanie jest zapamiętywane"), "mode:browser", "www internet web ai", Group: group, Icon: PickerIcons.Web),
         };
-        items.AddRange(host.PanelPlugins.Select(p => new PickerItem(p.Title, p.Description, CommandIds.PanelPrefix + p.Id, p.Manifest.Name)));
+        items.AddRange(_host!.PanelPlugins.Select(p => new PickerItem(
+            p.Title, group is null ? p.Description : Loc.T("Wtyczka"), "mode:" + CommandIds.PanelPrefix + p.Id, p.Manifest.Name + " " + p.Description, Group: group, Icon: PickerIcons.Panel)));
+        return items;
+    }
 
-        var choice = await new PickerDialog(_skins!.Current, Loc.T("Tryb panelu ({0})", side), items, Loc.T("Co ma pokazywać {0} panel?", side)).ShowAsync(this);
-        switch (choice?.Value)
+    /// <summary>Shows a mode from <see cref="PanelModeItems"/> in the panel opposite the active one.</summary>
+    private async Task ApplyPanelModeAsync(string value)
+    {
+        var (target, _) = ModeTarget();
+        switch (value)
         {
-            case null:
-                return;
-            case "files":
+            case "mode:files":
                 target.CloseMode();
                 SetActive(target);
                 break;
-            case "preview":
+            case "mode:preview":
                 if (target.Mode is not PreviewPanelView)
                 {
                     TogglePreview();
                 }
 
                 break;
-            case "browser":
+            case "mode:browser":
                 OpenBrowser(null, target);
                 break;
-            default:
-                await ExecuteAsync(choice.Value);
+            case var panel when panel.StartsWith("mode:", StringComparison.Ordinal):
+                await ExecuteAsync(panel["mode:".Length..]);
                 break;
         }
     }
@@ -4397,10 +4414,11 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>Mail password for an interactive account; called from background threads, the dialog runs on the UI thread.</summary>
-    private Task<string?> AskMailPasswordAsync(string realm, string user) =>
+    private Task<string?> AskMailPasswordAsync(string realm, string user, bool refused) =>
         Dispatcher.UIThread.InvokeAsync(async () =>
         {
-            var credential = await new LoginDialog(_skins!.Current, realm, user, lockUser: true).ShowAsync(this);
+            var credential = await new LoginDialog(_skins!.Current, realm, user, lockUser: true,
+                error: refused ? Loc.T("Serwer odrzucił hasło. Wpisz je jeszcze raz.") : null).ShowAsync(this);
             return credential?.Password;
         });
 

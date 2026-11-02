@@ -526,10 +526,16 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
         }
     }
 
-    /// <summary>A refused login asks once more (interactive) or reports that a login is required (background).</summary>
+    /// <summary>
+    /// A refused login asks again, up to <see cref="LoginAttempts"/> times (interactive), or reports that a login is
+    /// required (background).
+    /// </summary>
+    /// <summary>Passwords the user may type for one connection before the login fails.</summary>
+    public const int LoginAttempts = 3;
+
     private async Task AuthenticateAsync(MailKitService client, string pluginId, MailAccount account, string password, bool isSmtp, CancellationToken ct)
     {
-        for (var refused = false; ; refused = true)
+        for (var refusals = 0; ; refusals++)
         {
             try
             {
@@ -541,7 +547,7 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
                 _credentials.Accept(pluginId, account, isSmtp, password);
                 return;
             }
-            catch (MailKitAuthenticationException) when (account.Interactive && !refused)
+            catch (MailKitAuthenticationException) when (account.Interactive && refusals < LoginAttempts - 1)
             {
                 _credentials.Reject(pluginId, account, isSmtp, password);
                 password = isSmtp
