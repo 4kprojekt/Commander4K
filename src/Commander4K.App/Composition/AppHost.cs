@@ -51,6 +51,9 @@ public sealed class PluginUiProxy : IPluginUi
 
     public Task<string?> PromptAsync(string title, string message, string initial) => Target?.PromptAsync(title, message, initial) ?? Task.FromResult<string?>(null);
 
+    public Task<IReadOnlyDictionary<string, string>?> ShowDialogAsync(DialogRequest request) =>
+        Target?.ShowDialogAsync(request) ?? Task.FromResult<IReadOnlyDictionary<string, string>?>(null);
+
     public Task EditFileAsync(string path) => Target?.EditFileAsync(path) ?? Task.CompletedTask;
 
     public Task OpenPanelAsync(string panelPluginId, string? argument) => Target?.OpenPanelAsync(panelPluginId, argument) ?? Task.CompletedTask;

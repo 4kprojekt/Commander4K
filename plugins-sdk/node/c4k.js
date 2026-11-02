@@ -87,6 +87,7 @@ module.exports = {
   showText: (title, text) => call('ui.showText', { title, text }),
   confirm: (title, message) => call('ui.confirm', { title, message }),           // true/false
   prompt: (title, message, initial = '') => call('ui.prompt', { title, message, initial }), // string or null
+  dialog: (title, fields, options = {}) => call('ui.dialog', { ...options, title, fields }), // one window, many fields; options: description, submit, message, errors -> {id: value} or null
   navigate: (path, focus = null) => call('ui.navigate', { path, focus }),
   openUrl: url => call('ui.openUrl', { url }),                                   // internal browser, http(s) only
   openFolder: path => call('ui.openFolder', { path }),                           // the user chooses: Explorer or the active panel

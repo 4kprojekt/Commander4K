@@ -2112,6 +2112,53 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Equal(["test.sel1"], selected);
     }
 
+    [Fact]
+    public async Task Dialog_answers_with_types_and_its_wait_does_not_count_against_the_time_limit()
+    {
+        var folder = Path.Combine(_folder, "test.dialog");
+        Directory.CreateDirectory(folder);
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", "python", "c4k.py"), Path.Combine(folder, "c4k.py"));
+        File.WriteAllText(Path.Combine(folder, "main.py"), """
+            import time
+            import c4k
+
+            @c4k.handler("ask")
+            def ask(p):
+                return c4k.dialog("Połączenie", [
+                    {"id": "host", "label": "Adres", "required": True},
+                    {"id": "port", "type": "number", "value": 22},
+                    {"id": "auth", "type": "segmented", "options": ["password", "key"]},
+                    {"id": "save", "type": "checkbox"}], submit="Połącz")
+
+            @c4k.handler("slow")
+            def slow(p):
+                time.sleep(3)
+                return "late"
+
+            c4k.serve()
+            """);
+        File.WriteAllText(Path.Combine(folder, "plugin.json"), """
+            { "id": "test.dialog", "name": "Dialog", "version": "1.0.0", "author": "a", "description": "d",
+              "runtime": { "type": "python", "entry": "main.py" }, "permissions": [], "contributes": { "commands": [{ "id": "x", "title": "X" }] } }
+            """);
+        var plugin = StartFrom(folder);
+        _started.Add(plugin);
+        _ui.DialogAnswer = new Dictionary<string, string> { ["host"] = "nas.lan", ["port"] = "2222", ["auth"] = "key", ["save"] = "true" };
+        _ui.DialogDelay = TimeSpan.FromSeconds(2.5);
+
+        // The user takes longer than the call's limit; the wait for the window does not count.
+        var answer = await plugin.CallAsync("ask", null, TestToken, TimeSpan.FromSeconds(1));
+
+        Assert.Equal("nas.lan", answer.GetProperty("host").GetString());
+        Assert.Equal(2222, answer.GetProperty("port").GetDouble());
+        Assert.True(answer.GetProperty("save").GetBoolean());
+        Assert.Equal("Połącz", _ui.LastDialog!.Submit);
+        Assert.Equal(DialogFieldType.Segmented, _ui.LastDialog.Fields[2].Type);
+        Assert.Contains(_audit.Recent("test.dialog"), e => e.Operation == "ui.dialog" && !e.Detail.Contains("nas.lan", StringComparison.Ordinal));
+        // Without a window the limit still applies.
+        await Assert.ThrowsAsync<TimeoutException>(() => plugin.CallAsync("slow", null, TestToken, TimeSpan.FromSeconds(1)));
+    }
+
     private ExternalPlugin Start(string example) => StartFrom(Path.Combine(Examples, example));
 
     private ExternalPlugin StartFrom(string folder, IMailBackend? mail = null)
@@ -2171,6 +2218,19 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         public Task<bool> ConfirmAsync(string title, string message) => Task.FromResult(true);
 
         public Task<string?> PromptAsync(string title, string message, string initial) => Task.FromResult(PromptAnswer);
+
+        public IReadOnlyDictionary<string, string>? DialogAnswer { get; set; }
+
+        public TimeSpan DialogDelay { get; set; }
+
+        public DialogRequest? LastDialog { get; private set; }
+
+        public async Task<IReadOnlyDictionary<string, string>?> ShowDialogAsync(DialogRequest request)
+        {
+            LastDialog = request;
+            await Task.Delay(DialogDelay);
+            return DialogAnswer;
+        }
 
         public Task EditFileAsync(string path) => Task.CompletedTask;
 

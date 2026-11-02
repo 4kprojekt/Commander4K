@@ -204,18 +204,17 @@ public sealed class MailPluginTests : IAsyncLifetime
         File.WriteAllText(Path.Combine(poczta, "c4k.dir"),
             "// pulpit\n{ \"enter\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Dokumenty\", \"open\": \"Dokumenty\" } ] }, \"preview\": \"dashboard\", \"note\": 42 }");
         _ui.Active = poczta;
-        _ui.Prompts.Enqueue("anna@example.org");
-        _ui.Prompts.Enqueue("imap.example.org:993");
-        _ui.Prompts.Enqueue("smtp.example.org:465");
-        _ui.Prompts.Enqueue("Anna Nowak");
-        _ui.Prompts.Enqueue("Firma");
+        // One window; the servers come from the address ("auto"), so IMAP and SMTP are not answered.
+        _ui.Dialogs.Enqueue(Answers(("user", "anna@example.org"), ("name", "Anna Nowak"), ("folder", "Firma"), ("servers", "auto"), ("refresh", "5m"), ("since", "3m")));
 
         await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
 
-        // Suggestions: IMAP and SMTP from the address domain, the folder name from the domain.
-        Assert.Equal("imap.example.org:993", _ui.PromptInitials[1]);
-        Assert.Equal("smtp.example.org:465", _ui.PromptInitials[2]);
-        Assert.Equal("example.org", _ui.PromptInitials[4]);
+        var request = Assert.Single(_ui.DialogRequests);
+        Assert.Equal("Dodaj konto pocztowe", request.Title);
+        var imap = request.Fields.Single(f => f.Id == "imap");
+        Assert.Equal(["manual"], imap.VisibleWhen!["servers"]);
+        Assert.Equal(DialogFieldType.Segmented, request.Fields.Single(f => f.Id == "servers").Type);
+        Assert.True(request.Fields.Single(f => f.Id == "user").Required);
         var accountDir = Path.Combine(poczta, "Firma");
         var accountText = File.ReadAllText(Path.Combine(accountDir, "c4k.dir"));
         Assert.DoesNotContain("password", accountText, StringComparison.OrdinalIgnoreCase);
@@ -253,15 +252,15 @@ public sealed class MailPluginTests : IAsyncLifetime
         var poczta = Path.Combine(_dir, "Nowa");
         Directory.CreateDirectory(poczta);
         _ui.Active = poczta;
-        foreach (var answer in new[] { "jan@example.org", "imap.example.org:993", "", "", "Jan" })
-        {
-            _ui.Prompts.Enqueue(answer);
-        }
+        _ui.Dialogs.Enqueue(Answers(("user", "jan@example.org"), ("name", ""), ("folder", "Jan"), ("servers", "manual"), ("imap", "imap.example.org:993"), ("smtp", ""), ("refresh", "off"), ("since", "1y")));
 
         await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
 
         var dashboard = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "c4k.dir")))!;
         Assert.Equal("dashboard", dashboard["preview"]!.GetValue<string>());
+        var options = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "Jan", "c4k.dir")))!["preview"]!["options"]!;
+        Assert.False(options["refresh"]!.GetValue<bool>());
+        Assert.Equal("1y", options["since"]!.GetValue<string>());
         Assert.Equal("Jan", dashboard["enter"]!["tiles"]![0]!["title"]!.GetValue<string>());
         Assert.Null(JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "Jan", "c4k.dir")))!["preview"]!["options"]!["smtp"]);
 
@@ -272,20 +271,22 @@ public sealed class MailPluginTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Add_account_with_a_wrong_login_writes_nothing()
+    public async Task Add_account_with_a_wrong_login_asks_again_and_writes_nothing()
     {
         var backend = new FakeMailServer { ThrowAuth = true };
         var plugin = Start(backend);
         var poczta = Path.Combine(_dir, "Zle");
         Directory.CreateDirectory(poczta);
         _ui.Active = poczta;
-        foreach (var answer in new[] { "jan@example.org", "imap.example.org:993", "", "", "Jan" })
-        {
-            _ui.Prompts.Enqueue(answer);
-        }
+        _ui.Dialogs.Enqueue(Answers(("user", "jan@example.org"), ("folder", "Jan"), ("servers", "auto")));
+        // The second window (after the refused login) is cancelled.
 
-        await Assert.ThrowsAnyAsync<Exception>(() => new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token));
+        await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
 
+        Assert.Equal(2, _ui.DialogRequests.Count);
+        var again = _ui.DialogRequests[1];
+        Assert.StartsWith("Nie można się zalogować", again.Message, StringComparison.Ordinal);
+        Assert.Equal("jan@example.org", again.Fields.Single(f => f.Id == "user").Value);
         Assert.Empty(Directory.GetFileSystemEntries(poczta));
         Assert.Null(_storage.Get(PluginId, "accounts"));
     }
@@ -1084,10 +1085,7 @@ public sealed class MailPluginTests : IAsyncLifetime
         File.WriteAllText(Path.Combine(poczta, "c4k.dir"),
             "{ \"zeta\": \"2026-01-01T10:00:00Z\", \"enter\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"2026-01-01\", \"open\": \"x\" } ] }, \"preview\": \"dashboard\", \"alpha\": 1.50 }");
         _ui.Active = poczta;
-        foreach (var answer in new[] { "anna@example.org", "imap.example.org:993", "", "", "Firma" })
-        {
-            _ui.Prompts.Enqueue(answer);
-        }
+        _ui.Dialogs.Enqueue(Answers(("user", "anna@example.org"), ("folder", "Firma"), ("servers", "auto")));
 
         await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
 
@@ -1781,6 +1779,9 @@ public sealed class MailPluginTests : IAsyncLifetime
         }
     }
 
+    private static Dictionary<string, string> Answers(params (string Id, string Value)[] values) =>
+        values.ToDictionary(v => v.Id, v => v.Value, StringComparer.Ordinal);
+
     private sealed class RecordingUi : IPluginUi
     {
         public List<(string Message, string? Target)> Notifications { get; } = [];
@@ -1819,14 +1820,17 @@ public sealed class MailPluginTests : IAsyncLifetime
             return Task.FromResult(ConfirmAnswer);
         }
 
-        public Queue<string?> Prompts { get; } = new();
+        public Task<string?> PromptAsync(string title, string message, string initial) => Task.FromResult<string?>(null);
 
-        public List<string> PromptInitials { get; } = [];
+        /// <summary>Answers of the next <c>ui.dialog</c> windows; an empty queue = Cancel.</summary>
+        public Queue<IReadOnlyDictionary<string, string>> Dialogs { get; } = new();
 
-        public Task<string?> PromptAsync(string title, string message, string initial)
+        public List<DialogRequest> DialogRequests { get; } = [];
+
+        public Task<IReadOnlyDictionary<string, string>?> ShowDialogAsync(DialogRequest request)
         {
-            PromptInitials.Add(initial);
-            return Task.FromResult(Prompts.Count > 0 ? Prompts.Dequeue() : null);
+            DialogRequests.Add(request);
+            return Task.FromResult<IReadOnlyDictionary<string, string>?>(Dialogs.TryDequeue(out var answers) ? answers : null);
         }
 
         public Task EditFileAsync(string path) => Task.CompletedTask;

@@ -1320,5 +1320,15 @@
   "Zmienić język?": "Change the language?",
   "Serwer odrzucił hasło. Wpisz je jeszcze raz.": "The server refused the password. Type it again.",
   "Tryby panelu (F2)": "Panel modes (F2)",
-  "Polecenia, ustawienia, tryby panelu…": "Commands, settings, panel modes…"
+  "Polecenia, ustawienia, tryby panelu…": "Commands, settings, panel modes…",
+  "_// Commander4K.App/Dialogs/PluginDialog.cs": "",
+  "To pole jest wymagane.": "This field is required.",
+  "Zaznacz to pole.": "Tick this box.",
+  "Wpisz liczbę.": "Enter a number.",
+  "Liczba musi być z zakresu {0}–{1}.": "The number must be between {0} and {1}.",
+  "_// Commander4K.Core/Plugins/DialogRpc.cs": "",
+  "Okno może mieć najwyżej {0} pól.": "A window can have at most {0} fields.",
+  "Nieznany rodzaj pola „{0}”.": "Unknown field type \"{0}\".",
+  "Pole „{0}” potrzebuje listy „options”.": "Field \"{0}\" needs an \"options\" list.",
+  "Pola okna muszą mieć niepowtarzalne, niepuste identyfikatory.": "Window fields need unique, non-empty ids."
 }

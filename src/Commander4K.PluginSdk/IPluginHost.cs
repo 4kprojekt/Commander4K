@@ -97,6 +97,12 @@ public interface IPluginHost
     /// <summary>Asks for a line of text; <c>null</c> when cancelled.</summary>
     Task<string?> PromptAsync(string title, string message, string initial = "");
 
+    /// <summary>
+    /// Shows a window with several fields; the answers by field id (hidden fields and headings left out), or <c>null</c>
+    /// when cancelled. Values are text like <see cref="DialogField.Value"/>.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, string>?> ShowDialogAsync(DialogRequest request);
+
     /// <summary>Opens a file in the user's configured editor (tools.json).</summary>
     Task EditFileAsync(string path);
 

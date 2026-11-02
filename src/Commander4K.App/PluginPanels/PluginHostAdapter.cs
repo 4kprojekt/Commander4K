@@ -16,6 +16,7 @@ public sealed class PluginHostAdapter(
     Func<string, string, Task> showText,
     Func<string, string, Task<bool>> confirm,
     Func<string, string, string, Task<string?>> prompt,
+    Func<DialogRequest, Task<IReadOnlyDictionary<string, string>?>> dialog,
     Func<string, string?, Task> openPanel,
     Func<string, Task> editFile,
     Func<string, Task> openUrl,
@@ -57,6 +58,9 @@ public sealed class PluginHostAdapter(
 
     public Task<string?> PromptAsync(string title, string message, string initial) =>
         Dispatcher.UIThread.InvokeAsync(() => prompt(title, message, initial));
+
+    public Task<IReadOnlyDictionary<string, string>?> ShowDialogAsync(DialogRequest request) =>
+        Dispatcher.UIThread.InvokeAsync(() => dialog(request));
 
     public Task EditFileAsync(string path) => Dispatcher.UIThread.InvokeAsync(() => editFile(path));
 

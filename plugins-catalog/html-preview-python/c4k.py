@@ -80,6 +80,8 @@ def notify(message, error=False, target=None): call("ui.notify", message=message
 def show_text(title, text):          call("ui.showText", title=title, text=text)
 def confirm(title, message):         return call("ui.confirm", title=title, message=message)  # True/False
 def prompt(title, message, initial=""): return call("ui.prompt", title=title, message=message, initial=initial)  # str or None
+def dialog(title, fields, description=None, submit=None, message=None, errors=None):  # one window, many fields -> {id: value} or None
+    return call("ui.dialog", title=title, fields=fields, description=description, submit=submit, message=message, errors=errors)
 def navigate(path, focus=None):      call("ui.navigate", path=path, focus=focus)
 def open_url(url):                   call("ui.openUrl", url=url)                              # internal browser, http(s) only
 def open_folder(path):               call("ui.openFolder", path=path)                         # the user chooses: Explorer or the active panel

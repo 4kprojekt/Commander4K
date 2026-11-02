@@ -28,6 +28,9 @@ public interface IPluginUi
 
     Task<string?> PromptAsync(string title, string message, string initial);
 
+    /// <summary>A window with several fields. Default: answers "cancelled" (hosts without a window).</summary>
+    Task<IReadOnlyDictionary<string, string>?> ShowDialogAsync(DialogRequest request) => Task.FromResult<IReadOnlyDictionary<string, string>?>(null);
+
     Task EditFileAsync(string path);
 
     Task OpenPanelAsync(string panelPluginId, string? argument);
@@ -84,6 +87,20 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
     public Task<bool> ConfirmAsync(string title, string message) => ui.ConfirmAsync(title, message);
 
     public Task<string?> PromptAsync(string title, string message, string initial = "") => ui.PromptAsync(title, message, initial);
+
+    /// <remarks>Not gated, like <see cref="PromptAsync"/>. The audit names the dialog and its fields, never the answers.</remarks>
+    public Task<IReadOnlyDictionary<string, string>?> ShowDialogAsync(DialogRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var ids = request.Fields.Where(f => f.Type != DialogFieldType.Heading).Select(f => f.Id).ToList();
+        if (ids.Count == 0 || ids.Any(string.IsNullOrWhiteSpace) || ids.Distinct(StringComparer.Ordinal).Count() != ids.Count)
+        {
+            throw new ArgumentException(Loc.T("Pola okna muszą mieć niepowtarzalne, niepuste identyfikatory."), nameof(request));
+        }
+
+        audit.Record(Manifest.Id, "ui.dialog", $"{request.Title}: {string.Join(", ", ids)}", AuditOutcome.Info);
+        return ui.ShowDialogAsync(request);
+    }
 
     public Task EditFileAsync(string path)
     {

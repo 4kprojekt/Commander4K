@@ -25,7 +25,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "f86877d69f59b126268ba4fa262d2068df8beb79fee8ce6587a2e070e0e2a8d2"
+          "sha256": "075aa38ef06c9c33c59f9b5e1ffb303ad6b248a7f941520e246aa44ff3a56690"
         },
         {
           "path": "main.ps1",
@@ -63,7 +63,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "f86877d69f59b126268ba4fa262d2068df8beb79fee8ce6587a2e070e0e2a8d2"
+          "sha256": "075aa38ef06c9c33c59f9b5e1ffb303ad6b248a7f941520e246aa44ff3a56690"
         },
         {
           "path": "main.ps1",
@@ -101,7 +101,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+          "sha256": "756ffc74bb73ece3f611f3eaf985f2e962e9ca154b7232c077c993bd54b84dd6"
         },
         {
           "path": "main.py",
@@ -150,7 +150,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "f86877d69f59b126268ba4fa262d2068df8beb79fee8ce6587a2e070e0e2a8d2"
+          "sha256": "075aa38ef06c9c33c59f9b5e1ffb303ad6b248a7f941520e246aa44ff3a56690"
         },
         {
           "path": "main.ps1",
@@ -183,7 +183,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+          "sha256": "756ffc74bb73ece3f611f3eaf985f2e962e9ca154b7232c077c993bd54b84dd6"
         },
         {
           "path": "main.py",
@@ -220,7 +220,7 @@
       "files": [
         {
           "path": "c4k.js",
-          "sha256": "9244bfd5c08800abea7da704499b711ad1095e229201752909fff0841ba9e8ce"
+          "sha256": "953f2f5f2d4d6b42d0e49b657a7ad0ef8c19d1946cdc94b87b0dba8ded229c9b"
         },
         {
           "path": "main.js",
@@ -257,7 +257,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+          "sha256": "756ffc74bb73ece3f611f3eaf985f2e962e9ca154b7232c077c993bd54b84dd6"
         },
         {
           "path": "main.py",
@@ -300,7 +300,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+          "sha256": "756ffc74bb73ece3f611f3eaf985f2e962e9ca154b7232c077c993bd54b84dd6"
         },
         {
           "path": "main.py",
@@ -353,7 +353,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+          "sha256": "756ffc74bb73ece3f611f3eaf985f2e962e9ca154b7232c077c993bd54b84dd6"
         },
         {
           "path": "main.py",
@@ -372,7 +372,7 @@
     {
       "id": "official.mail",
       "name": "Poczta",
-      "version": "1.0.1",
+      "version": "1.1.0",
       "author": "4Kprojekt",
       "runtime": "powershell",
       "description": {
@@ -392,7 +392,7 @@
       "files": [
         {
           "path": "c4k.ps1",
-          "sha256": "f86877d69f59b126268ba4fa262d2068df8beb79fee8ce6587a2e070e0e2a8d2"
+          "sha256": "075aa38ef06c9c33c59f9b5e1ffb303ad6b248a7f941520e246aa44ff3a56690"
         },
         {
           "path": "compose.ps1",
@@ -400,11 +400,11 @@
         },
         {
           "path": "main.ps1",
-          "sha256": "9cc1f7870e335c65974342ce81cad54f0bf10364d427b1f71472086be70a5806"
+          "sha256": "7ac479457345c2d4ec32db47d8801a9b5572686173fa839d443c279c75d7571f"
         },
         {
           "path": "plugin.json",
-          "sha256": "565b5e6701c696236e5af9a1ab2dfa1f9563f15538304009588a074de9f8da04"
+          "sha256": "1a68ba27773b133090188c6c47a639e9037c1bde201a52d1f9f16abc3243afca"
         },
         {
           "path": "sync.ps1",
@@ -440,7 +440,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+          "sha256": "756ffc74bb73ece3f611f3eaf985f2e962e9ca154b7232c077c993bd54b84dd6"
         },
         {
           "path": "clr.py",
@@ -511,7 +511,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+          "sha256": "756ffc74bb73ece3f611f3eaf985f2e962e9ca154b7232c077c993bd54b84dd6"
         },
         {
           "path": "main.py",
@@ -567,7 +567,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+          "sha256": "756ffc74bb73ece3f611f3eaf985f2e962e9ca154b7232c077c993bd54b84dd6"
         },
         {
           "path": "main.py",
@@ -612,7 +612,7 @@
       "files": [
         {
           "path": "c4k.py",
-          "sha256": "3e3f3bf8ae07034d6094c2c5c8db62f115b3fe13313dd542c50976227ee0dcf0"
+          "sha256": "756ffc74bb73ece3f611f3eaf985f2e962e9ca154b7232c077c993bd54b84dd6"
         },
         {
           "path": "main.py",
@@ -636,10 +636,10 @@
         }
       ],
       "previewExtensions": [
-        "*.log.?",
         ".err",
         ".log",
-        ".out"
+        ".out",
+        "*.log.?"
       ]
     }
   ]

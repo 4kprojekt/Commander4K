@@ -157,7 +157,7 @@ Ask for the fewest permissions that do the job.
 | `preview.suggest` | `{ preview, folder: { … }, entries: [{ … }], truncated, context }` | Only for previews whose `suggest` rule has `"ask": true`, and only after the rule matched the folder under the cursor. `{ score (0–1), message, options? }` or `null`. Answers below 0.5 are ignored, and the best answer across all previews becomes a hint ("switch to …?"); accepting writes `c4k.dir` with `{ "plugin": <id>, "preview": <preview>, "options": <options> }`. `entries` is the folder listing (at most 500, `truncated` when cut). 5 s limit, process start included; an error or timeout means no suggestion. See "Folder suggestions". |
 | `preview.message` | `{ preview, entry, method, params, context }` | Any JSON value. A web preview page called `c4k.request(method, params)`; answer it here (30 s limit). See "Web previews". |
 | `preview.card` | `{ preview, entry: { … } \| null, context, options, previous }` | Only for previews with `"card": true` in `contributes.previews`. The small form shown on a `c4k.dir` dashboard: `{ title?, subtitle?, icon?, status?: "ok"\|"warning"\|"error", items: [...], actions: [{ label, target }] }`. Items: `{ kind: "value", label, value, status? }`, `{ kind: "progress", label, fraction (0–1), text? }`, `{ kind: "text", text }`, `{ kind: "thumbnails", images: [path] }` (at most 4, read with your `fs.read`), `{ kind: "chart", chart: { kind: "line"\|"bar", unit?, min?, max?, series: [{ name, points: [{ x, y, label? }] }] } }`. `previous` is the card you returned last time (thumbnails as a count), so a card refreshed on a timer can add a point to its chart; keep at most 120 points. An action `target` is a path, a URL, `c4k:refresh` (read the card again) or `c4k:plugin/<action>?k=v` (your `preview.action` with the card's entry; the card is read again afterwards). Previews without `"card": true` get a plain card with their title and an Open button. |
-| `preview.setup` | `{ preview, folder, context }` | Only for folder previews with `"setup": true`. Sent when the user gives a folder this preview (*Widok folderu…*), after the plugin is installed and enabled and before `c4k.dir` is written. Ask what the folder needs with `ui.prompt`/`ui.confirm` (the call may take up to 15 minutes) and answer `{ options: { … } }`; the app writes them as the action's `options`. Answer `null` when the user cancels: nothing is written. Throw to show an error. |
+| `preview.setup` | `{ preview, folder, context }` | Only for folder previews with `"setup": true`. Sent when the user gives a folder this preview (*Widok folderu…*), after the plugin is installed and enabled and before `c4k.dir` is written. Ask what the folder needs in one `ui.dialog` window (or `ui.confirm` for a yes/no; the call may take up to 15 minutes) and answer `{ options: { … } }`; the app writes them as the action's `options`. Answer `null` when the user cancels: nothing is written. Throw to show an error. |
 | `shutdown` | — | `null`, then exit |
 
 `options` is the `"options"` object of the folder's `c4k.dir` when the panel or preview was opened through it (see [Folder files](#folder-files-c4kdir)), otherwise `null`.
@@ -168,7 +168,7 @@ Ask for the fewest permissions that do the job.
 
 Rows form a tree through `parentId`. The app handles sorting (column header click), filtering (typing), expand and collapse, marking (`Insert`) and the details pane. A plugin only describes data.
 
-Long loads are fine: the panel shows a spinner and stays responsive. Requests time out after 60 s, except `panel.receivers`/`panel.providers` (5 s, a dialog is waiting) and `panel.receive`/`panel.provide` (no limit; the user cancels them).
+Long loads are fine: the panel shows a spinner and stays responsive. Requests time out after 60 s, except `panel.receivers`/`panel.providers` (5 s, a dialog is waiting) and `panel.receive`/`panel.provide` (no limit; the user cancels them). While a request waits for the user (`ui.confirm`, `ui.prompt`, `ui.dialog`, or an interactive mail call showing the password dialog), its clock stands still and starts again from the full time afterwards.
 
 ### Requests from the plugin to the app
 
@@ -180,6 +180,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `ui.showText` | `{ title, text }` | `null` | — |
 | `ui.confirm` | `{ title, message }` | `true`/`false` | — |
 | `ui.prompt` | `{ title, message, initial? }` | string or `null` | — |
+| `ui.dialog` | `{ title, fields: [{ id, type?, label?, value?, placeholder?, help?, required?, options?, visibleWhen?, min?, max? }], description?, submit?, message?, errors? }` | `{ id: value }` or `null` | — (one window with many fields; see [Dialog windows](#dialog-windows-uidialog); audited without the answers) |
 | `ui.navigate` | `{ path, focus? }` | `null` | — |
 | `ui.openUrl` | `{ url }` | `null` | — (http/https only; opens the app's built-in browser panel, audited) |
 | `ui.openFolder` | `{ path }` | `null` | — (the user is asked where to open it: Explorer or the active panel; nothing is created; audited) |
@@ -335,6 +336,7 @@ Every helper maps to one protocol method above:
 | `ui.showText` | `show_text(title, text)` | `showText(title, text)` | `Show-C4KText $Title $Text` |
 | `ui.confirm` | `confirm(title, message)` | `confirm(title, message)` | `Confirm-C4K $Title $Message` |
 | `ui.prompt` | `prompt(title, message, initial="")` | `prompt(title, message, initial)` | `Read-C4KInput $Title $Message $Initial` |
+| `ui.dialog` | `dialog(title, fields, description=None, submit=None, message=None, errors=None)` | `dialog(title, fields, { description, submit, message, errors })` | `Show-C4KDialog $Title $Fields [-Description] [-Submit] [-Message] [-Errors]` |
 | `ui.navigate` | `navigate(path, focus=None)` | `navigate(path, focus)` | — (`Invoke-C4K 'ui.navigate' @{ path = … }`) |
 | `ui.openUrl` | `open_url(url)` | `openUrl(url)` | `Open-C4KUrl $Url` |
 | `ui.openFolder` | `open_folder(path)` | `openFolder(path)` | `Open-C4KFolder $Path` |
@@ -391,6 +393,128 @@ c4k.serve()
 ```
 
 Its `plugin.json` declares `"permissions": ["fs.read"]` and `"contributes": { "previews": [ { "id": "ini", "title": "INI", "extensions": [".ini"], "priority": 60 } ] }`.
+
+## Building the interface
+
+A plugin never draws controls. It returns data, and the app draws it with its own design system and the user's skin. So a plugin looks like the rest of the app, follows skin changes, and can be written in any language. There are four building blocks; pick the smallest one that does the job.
+
+| Block | Where | Returned by | Use it for |
+|---|---|---|---|
+| Panel table | a file panel | `panel.load` | lists and trees with columns, a details pane and actions on marked rows |
+| Markdown view | the preview / a folder view | `preview.render` → `{ kind: "markdown" }` | reports, summaries, read-only pages; add `actions` for buttons |
+| Preview form | the preview / a folder view | `preview.render` → `{ kind: "form" }` | editing that stays on screen (a draft, a note): text fields, attached files, buttons |
+| Dialog window | a modal window | your call to `ui.dialog` | settings, setup and logins: one window with many fields, sections and modes |
+
+`ui.prompt` (one line) and `ui.confirm` (yes/no) stay for single questions. Do not chain several `ui.prompt` calls: use one `ui.dialog`.
+
+### Markdown views and buttons
+
+Markdown is rendered with formatting: headings, lists, tables, code, quotes and `mermaid` diagrams. There is no HTML engine; for a full HTML page use a [web preview](#web-previews).
+
+Any `preview.render` result may carry `actions`, a bar of buttons above the content. A button's `target` built with `action_target` (`Get-C4KActionTarget` in PowerShell) comes back to your `preview.action` handler, which returns `null` (render again) or a new result:
+
+```powershell
+Register-C4KHandler 'preview.render' {
+    param($p)
+    $md = "# $($p.entry.name)`n`n| Klucz | Wartość |`n|---|---|`n| Rozmiar | $($p.entry.size) B |"
+    @{ kind = 'markdown'; content = $md; actions = @(@{ label = 'Odśwież'; target = (Get-C4KActionTarget 'refresh'); shortcut = 'R' }) }
+}
+Register-C4KHandler 'preview.action' { param($p) if ($p.action -eq 'refresh') { $null } }
+```
+
+`pinned` is `true` when the user opened the entry with Enter; that is the place for buttons that change something.
+
+### Preview forms
+
+`{ kind: "form", title, fields: [{ id, label, value, multiline?, password? }], files, buttons, message?, messageError? }` keeps text fields inside the preview. The app sends `preview.formChanged` with all values 800 ms after the user stops typing (save a draft there) and passes the same `values` to `preview.action` when a button is pressed. Return the form again with `message` / `messageError: true` to report a problem. The mail plugin's message drafts are this kind of form.
+
+### Dialog windows: `ui.dialog`
+
+`ui.dialog` opens a modal window built like the app's own dialogs (the SFTP connection window, for example): a header, section headings, labels above fields, help text under them, an error line per field and Cancel / OK in the footer. The call returns when the user closes the window: an object with the answers by field id, or `null` for Cancel.
+
+| Request key | Meaning |
+|---|---|
+| `title` | Window title (required). |
+| `description` | Text under the header. |
+| `fields` | The fields, in order (required, at most 60). |
+| `submit` | Label of the OK button (default "OK"), e.g. "Zapisz", "Połącz". |
+| `message` | An error shown above the fields (a refused login…). |
+| `errors` | `{ fieldId: "message" }`: errors shown under those fields. |
+
+| Field key | Meaning |
+|---|---|
+| `id` | Key of the answer; unique and not empty (a heading may leave it empty). |
+| `type` | `text` (default), `multiline`, `password`, `number`, `select` (drop-down list), `segmented` (a switch of 2–4 modes), `checkbox`, `file`, `folder` (a text box with a "Wybierz…" picker), `heading` (a section title, no value). |
+| `label`, `placeholder`, `help` | Label above the field (beside a checkbox), grey text inside an empty box, muted text under the field. |
+| `value` | Initial value: text, a number, `true`/`false`, or an option's `value`. |
+| `options` | For `select` and `segmented`: `[{ value, label }]` or plain strings. |
+| `visibleWhen` | `{ otherFieldId: value or [values] }`: the field is shown only while every named field has one of those values. This is how modes work (password vs key). |
+| `required` | The window does not close while the field is empty (a checkbox: not ticked). Checked only while the field is visible. |
+| `min`, `max` | Range for `number`. |
+
+Answers: `number` fields answer a number (or `null` when empty), checkboxes `true`/`false`, all others text. Hidden fields and headings are left out, so a field of the mode the user did not pick never reaches you. Text is trimmed except for `password` and `multiline`.
+
+The app checks only `required` and number ranges. Anything else (the format of an address, a login that must work) is your check: when it fails, call `ui.dialog` again with the answers as `value`s and `errors` or `message`. The user sees the same window again with the problem marked. Password fields are masked; never log or store their values (the app keeps real passwords for you where it can, e.g. mail logins). The audit log records the window title and field ids, never the answers.
+
+```powershell
+function Read-Settings($Previous, $Errors, [string] $Message) {
+    $v = { param($Id, $Default) if ($Previous -and $null -ne $Previous[$Id]) { $Previous[$Id] } else { $Default } }
+    $fields = @(
+        @{ id = 'server'; type = 'heading'; label = 'Serwer' }
+        @{ id = 'host'; label = 'Adres'; value = (& $v 'host' ''); placeholder = 'nas.lan'; required = $true }
+        @{ id = 'port'; type = 'number'; label = 'Port'; value = (& $v 'port' 22); min = 1; max = 65535 }
+        @{ id = 'auth'; type = 'segmented'; label = 'Logowanie'; value = (& $v 'auth' 'password')
+           options = @(@{ value = 'password'; label = 'Hasło' }, @{ value = 'key'; label = 'Klucz' }) }
+        @{ id = 'keyFile'; type = 'file'; label = 'Plik klucza'; value = (& $v 'keyFile' ''); visibleWhen = @{ auth = 'key' }; required = $true }
+        @{ id = 'save'; type = 'checkbox'; label = 'Zapamiętaj'; value = (& $v 'save' $true) }
+    )
+    Show-C4KDialog 'Połączenie' $fields -Submit 'Połącz' -Message $Message -Errors $Errors
+}
+
+$answers = $null; $errors = $null
+while ($true) {
+    $answers = Read-Settings $answers $errors
+    if ($null -eq $answers) { return $null }                 # Cancel
+    $errors = @{}
+    if ($answers['host'] -match '\s') { $errors['host'] = 'Adres nie może zawierać spacji.' }
+    if ($errors.Count -eq 0) { break }                       # otherwise the same window again, with the error
+}
+```
+
+The same in Python is `c4k.dialog(title, fields, description=None, submit=None, message=None, errors=None)` and in Node `c4k.dialog(title, fields, { description, submit, message, errors })`. A dialog is the natural answer to `preview.setup` (a folder plugin asks for its options once) and to a command such as "Dodaj konto". The time the user spends in the window does not count against the time limit of the request you are handling (the same holds for `ui.prompt`, `ui.confirm` and an interactive mail login). Open dialogs only while handling something the user started, never from `background.tick`.
+
+### A PowerShell plugin step by step
+
+1. Make a folder `plugins/my-plugin/` with `plugin.json`, `main.ps1` and a copy of [`plugins-sdk/powershell/c4k.ps1`](../plugins-sdk/powershell/c4k.ps1). The plugin manager (`Ctrl+N` → `powershell`) creates a working one.
+2. In `plugin.json` set `"runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" }`, the smallest `permissions` and what you contribute (`commands`, `panels`, `previews`).
+3. `main.ps1` dot-sources the client, registers one handler per request and starts the loop:
+
+   ```powershell
+   . "$PSScriptRoot/c4k.ps1"
+   Register-C4KHandler 'command.execute' {
+       param($p)
+       $answers = Show-C4KDialog 'Powitanie' @(@{ id = 'name'; label = 'Imię'; required = $true })
+       if ($answers) { Show-C4KNotification "Cześć, $($answers['name'])!" }
+       $null
+   }
+   Start-C4KPlugin
+   ```
+
+4. Do every file, process and network operation with the `*-C4K*` functions from the [SDK reference](#sdk-reference), never with PowerShell's own cmdlets. Write diagnostics with `Write-C4KLog`.
+5. Enable the plugin in the plugin manager and read its log there (`F3`) when something fails. Claude Code over MCP does the same with `check_plugin`, `install_plugin`, `render_preview` and `get_plugin_log`.
+
+The examples [`git-powershell`](../examples/plugins/git-powershell) (command + panel), [`plugins-catalog/steam-library-powershell`](../plugins-catalog/steam-library-powershell) (folder view with tiles) and [`plugins-catalog/mail-powershell`](../plugins-catalog/mail-powershell) (Markdown views, forms, a setup dialog, cards, background work) show complete plugins.
+
+### PowerShell: returning values
+
+The client runs a handler as `$result = & $handler $params`, and PowerShell sends **everything the handler outputs** into `$result`, not only the last line. The usual mistakes:
+
+- **Stray output becomes part of the answer.** `$list.Add($x)` on an `ArrayList`, `$hash.Remove($k)` or a cmdlet that returns something turn the answer into an array, and the app rejects it. Discard such values: `[void] $list.Add($x)`, `$null = …`, or use `[System.Collections.Generic.List[object]]`, whose `Add` returns nothing.
+- **Arrays unroll.** A function that returns a one-item array returns the item; an empty array becomes `$null`. Return lists with a leading comma, `, $rows.ToArray()`, or wrap them where you use them: `rows = @(Get-Rows)`.
+- **Nesting depth.** Answers are serialized with `ConvertTo-Json -Depth 30`; anything deeper becomes a type name string.
+- **Parameters are hashtables.** `$p.entry.path` works, but values arrive as JSON types: cast where it matters (`[string] $p.entry.path`, `[bool] $p.pinned`).
+- **Errors.** `$ErrorActionPreference` is `Stop`, so an uncaught error ends the request and its message is shown to the user. Catch the ones you can explain and throw a short sentence instead.
+- **Never write to stdout.** `Write-Output`, `Write-Host`, a bare expression at script level or `echo` break the protocol; `Write-C4KLog` goes to the plugin log.
 
 ## Web previews
 
@@ -464,7 +588,7 @@ Dashboard tiles: `{ "title", "subtitle"?, "icon"?, "image"?, "open" | "url" | "r
 }
 ```
 
-A plugin that is not installed shows a tile that downloads it from the official catalog.
+A plugin that is not installed, is disabled, or has `"setup": true` but no `options` in the file shows a setup card instead. Its button installs the plugin from the official catalog (one consent), enables it, sends `preview.setup` so the plugin can ask for its options in a dialog, writes the answer into every action of the file that names the plugin, and shows the view.
 
 The official `official.git-repo` plugin works this way: `{ "preview": { "plugin": "official.git-repo" } }` in a repository shows its branch, changes, recent commits, branches, tags and remotes, read with `git` through `shell.run` (options `commits`, `files`, `branches`).
 
@@ -526,7 +650,7 @@ The official catalog has preview plugins with cards: `official.json-preview`, `o
 
 ### Example: mail ("Poczta")
 
-The official mail plugin (`official.mail`) keeps an account in a folder and shows it as a card on a dashboard. The command *Dodaj konto pocztowe* (menu *Wtyczki ▸ Poczta*) asks for the address and servers, checks the login (the app asks for the password and keeps it; it never reaches a file) and writes both files below. By hand, an account folder `Poczta/firma/c4k.dir` is:
+The official mail plugin (`official.mail`) keeps an account in a folder and shows it as a card on a dashboard. There are two ways in. The command *Dodaj konto pocztowe* (menu *Wtyczki ▸ Poczta*) creates a new account folder under the active one and adds its card to that folder's dashboard. Choosing *Poczta* in *Widok folderu…* turns the current folder into an account through `preview.setup`. Both open one `ui.dialog` window: address, sender name, (folder name), servers "Z adresu" or "Ręcznie" (`visibleWhen` shows IMAP/SMTP only for the manual mode), how often to check and how far back to fetch. The plugin then logs in once (the app asks for the password and keeps it; it never reaches a file); a refused login opens the same window again with the reason, so nothing is written until it works. The command writes both files below. By hand, an account folder `Poczta/firma/c4k.dir` is:
 
 ```jsonc
 {

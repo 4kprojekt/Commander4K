@@ -28,6 +28,10 @@ public sealed class ExternalPlugin : IAsyncDisposable
     private readonly PluginStorage? _storage;
     private readonly ConcurrentDictionary<string, IProgress<TransferProgress>> _jobs = new(StringComparer.Ordinal);
 
+    // Time limits of the calls in flight; they stand still while the plugin waits for the user (see UserWait).
+    private readonly Dictionary<CancellationTokenSource, TimeSpan> _limits = [];
+    private int _userWaits;
+
     /// <param name="storage">Backs <c>storage.get/set</c>; without it those calls fail with "not available".</param>
     public ExternalPlugin(DiscoveredPlugin discovered, RuntimeInfo runtime, ScopedPluginHost host, AuditLog audit, PluginStorage? storage = null)
     {
@@ -49,7 +53,15 @@ public sealed class ExternalPlugin : IAsyncDisposable
     {
         var connection = await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        limit.CancelAfter(timeout ?? DefaultTimeout);
+        lock (_limits)
+        {
+            _limits[limit] = timeout ?? DefaultTimeout;
+            if (_userWaits == 0)
+            {
+                limit.CancelAfter(timeout ?? DefaultTimeout);
+            }
+        }
+
         try
         {
             return await connection.RequestAsync(method, parameters, limit.Token).ConfigureAwait(false);
@@ -58,6 +70,53 @@ public sealed class ExternalPlugin : IAsyncDisposable
         {
             throw new TimeoutException(Loc.T("Wtyczka „{0}” nie odpowiedziała na „{1}” w ciągu {2:0} s.", Manifest.Name, method, (timeout ?? DefaultTimeout).TotalSeconds));
         }
+        finally
+        {
+            lock (_limits)
+            {
+                _limits.Remove(limit);
+            }
+        }
+    }
+
+    /// <summary>
+    /// While the plugin waits for the user (a dialog, a confirmation, a mail password), the limits of its calls stand
+    /// still; when the last wait ends they start again from the full time. Otherwise a user who takes a minute to fill
+    /// in a setup window would see the command fail with a time-out.
+    /// </summary>
+    private Waiting UserWait()
+    {
+        lock (_limits)
+        {
+            if (_userWaits++ == 0)
+            {
+                foreach (var limit in _limits.Keys)
+                {
+                    limit.CancelAfter(Timeout.InfiniteTimeSpan);
+                }
+            }
+        }
+
+        return new Waiting(this);
+    }
+
+    private void EndUserWait()
+    {
+        lock (_limits)
+        {
+            if (--_userWaits == 0)
+            {
+                foreach (var (limit, time) in _limits)
+                {
+                    limit.CancelAfter(time);
+                }
+            }
+        }
+    }
+
+    private readonly struct Waiting(ExternalPlugin plugin) : IDisposable
+    {
+        public void Dispose() => plugin.EndUserWait();
     }
 
     /// <summary>Raised when the plugin asks for a tick now (<c>background.wake</c>); the argument is the plugin id.</summary>
@@ -193,6 +252,10 @@ public sealed class ExternalPlugin : IAsyncDisposable
 
         if (MailRpc.Handles(method))
         {
+            // An interactive mail call may show the password or certificate dialog.
+            using var wait = p?.TryGetProperty("account", out var account) == true && account.ValueKind == JsonValueKind.Object
+                && !(account.TryGetProperty("interactive", out var interactive) && interactive.ValueKind == JsonValueKind.False)
+                ? UserWait() : default(Waiting?);
             return await MailRpc.HandleAsync(method, p, _host.Mail, cancellationToken).ConfigureAwait(false);
         }
 
@@ -220,9 +283,24 @@ public sealed class ExternalPlugin : IAsyncDisposable
                 await _host.ShowTextAsync(Str("title"), Str("text")).ConfigureAwait(false);
                 return null;
             case "ui.confirm":
-                return await _host.ConfirmAsync(Str("title"), Str("message")).ConfigureAwait(false);
+                using (UserWait())
+                {
+                    return await _host.ConfirmAsync(Str("title"), Str("message")).ConfigureAwait(false);
+                }
+
             case "ui.prompt":
-                return await _host.PromptAsync(Str("title"), Str("message"), OptStr("initial") ?? string.Empty).ConfigureAwait(false);
+                using (UserWait())
+                {
+                    return await _host.PromptAsync(Str("title"), Str("message"), OptStr("initial") ?? string.Empty).ConfigureAwait(false);
+                }
+
+            case "ui.dialog":
+                var dialog = DialogRpc.Parse(p ?? default);
+                using (UserWait())
+                {
+                    return DialogRpc.Answer(dialog, await _host.ShowDialogAsync(dialog).ConfigureAwait(false));
+                }
+
             case "ui.navigate":
                 await _host.NavigateAsync(Str("path"), OptStr("focus")).ConfigureAwait(false);
                 return null;

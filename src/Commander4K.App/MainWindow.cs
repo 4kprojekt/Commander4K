@@ -281,6 +281,7 @@ public sealed class MainWindow : Window
             (title, text) => ShowTextWindowAsync(title, text),
             (title, message) => new ConfirmDialog(_skins!.Current, title, message).ShowAsync(this),
             (title, message, initial) => new InputDialog(_skins!.Current, title, message, initial).ShowAsync(this),
+            request => new PluginDialog(_skins!.Current, request).ShowAsync(this),
             OpenPanelAsync,
             async path => await host.Tools.EditAsync(path),
             url =>

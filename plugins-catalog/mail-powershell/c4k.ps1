@@ -66,6 +66,9 @@ function Show-C4KNotification([string] $Message, [switch] $IsError, [string] $Ta
 function Show-C4KText([string] $Title, [string] $Text) { [void](Invoke-C4K 'ui.showText' @{ title = $Title; text = $Text }) }
 function Confirm-C4K([string] $Title, [string] $Message) { Invoke-C4K 'ui.confirm' @{ title = $Title; message = $Message } }  # $true/$false
 function Read-C4KInput([string] $Title, [string] $Message, [string] $Initial = '') { Invoke-C4K 'ui.prompt' @{ title = $Title; message = $Message; initial = $Initial } }  # string or $null
+function Show-C4KDialog([string] $Title, [object[]] $Fields, [string] $Description, [string] $Submit, [string] $Message, [hashtable] $Errors) {  # one window, many fields -> hashtable id = value, or $null
+    Invoke-C4K 'ui.dialog' @{ title = $Title; fields = @($Fields); description = $Description; submit = $Submit; message = $Message; errors = $Errors }
+}
 function Open-C4KUrl([string] $Url) { [void](Invoke-C4K 'ui.openUrl' @{ url = $Url }) }                            # internal browser, http(s) only
 function Open-C4KFolder([string] $Path) { [void](Invoke-C4K 'ui.openFolder' @{ path = $Path }) }                  # the user chooses: Explorer or the active panel
 function Search-C4KWeb([string] $Query, [string] $Engine) { [void](Invoke-C4K 'ui.search' @{ query = $Query; engine = $(if ($Engine) { $Engine } else { $null }) }) }  # engine: assistant, google, chatgpt…

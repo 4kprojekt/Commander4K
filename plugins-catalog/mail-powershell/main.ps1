@@ -203,51 +203,92 @@ function Add-MailDashboardTile($Existing, $Tile) {
     ($root | ConvertTo-Json -Depth 20) + "`n"
 }
 
-# Asks for the address, the servers and the sender's name, then checks the login (the app asks for the password and
-# keeps it; nothing is written when it fails). A mistake (a bad address, a refused password, an unknown server) goes
-# back to the questions with everything typed so far filled in. Returns the c4k.dir options, or $null when cancelled.
-function Read-MailAccountOptions([string] $Title) {
-    $typed = @{ address = ''; imap = $null; smtp = $null; display = '' }
+# The fields of the account window. $Values are the answers of the previous round (shown again after a check failed).
+function Get-MailAccountFields($Values, [bool] $WithFolder) {
+    $value = { param($Id, $Default) if ($Values -and $null -ne $Values[$Id]) { [string] $Values[$Id] } else { $Default } }
+    $manual = @{ servers = 'manual' }
+    $fields = [System.Collections.Generic.List[hashtable]]::new()
+    $fields.Add(@{ id = 'user'; label = 'Adres e-mail'; value = (& $value 'user' ''); placeholder = 'ja@example.com'; help = 'To także nazwa użytkownika do logowania. Hasło zapisze aplikacja, nie wtyczka.'; required = $true })
+    $fields.Add(@{ id = 'name'; label = 'Imię i nazwisko nadawcy'; value = (& $value 'name' ''); help = 'Opcjonalne; widać je w polu „Od” wysłanych wiadomości.' })
+    if ($WithFolder) {
+        $fields.Add(@{ id = 'folder'; label = 'Nazwa folderu konta'; value = (& $value 'folder' ''); placeholder = 'domena adresu, np. example.com' })
+    }
+    $fields.Add(@{ id = 'serversHeading'; type = 'heading'; label = 'Serwery' })
+    $fields.Add(@{
+            id = 'servers'; type = 'segmented'; label = 'Ustawienia serwerów'; value = (& $value 'servers' 'auto')
+            options = @(@{ value = 'auto'; label = 'Z adresu' }, @{ value = 'manual'; label = 'Ręcznie' })
+            help = 'Z adresu: imap.<domena>:993 i smtp.<domena>:465. Port 993/465 to TLS, każdy inny wymaga STARTTLS.'
+        })
+    $fields.Add(@{ id = 'imap'; label = 'Serwer IMAP'; value = (& $value 'imap' ''); placeholder = 'imap.example.com:993'; required = $true; visibleWhen = $manual })
+    $fields.Add(@{ id = 'smtp'; label = 'Serwer SMTP'; value = (& $value 'smtp' ''); placeholder = 'smtp.example.com:465'; help = 'Puste = konto tylko do odbioru.'; visibleWhen = $manual })
+    $fields.Add(@{ id = 'syncHeading'; type = 'heading'; label = 'Synchronizacja' })
+    $fields.Add(@{
+            id = 'refresh'; type = 'select'; label = 'Sprawdzaj pocztę'; value = (& $value 'refresh' '5m')
+            options = @(@{ value = '1m'; label = 'co minutę' }, @{ value = '5m'; label = 'co 5 minut' }, @{ value = '15m'; label = 'co 15 minut' }, @{ value = '1h'; label = 'co godzinę' }, @{ value = 'off'; label = 'tylko po otwarciu i „Sprawdź teraz”' })
+        })
+    $fields.Add(@{
+            id = 'since'; type = 'select'; label = 'Pobieraj wiadomości z'; value = (& $value 'since' '3m')
+            options = @(@{ value = '1m'; label = 'ostatniego miesiąca' }, @{ value = '3m'; label = 'ostatnich 3 miesięcy' }, @{ value = '1y'; label = 'ostatniego roku' }, @{ value = '5y'; label = 'ostatnich 5 lat' })
+        })
+    , $fields.ToArray()
+}
+
+# Checks the answers of the account window: errors per field, else the c4k.dir options (and the folder name).
+function Test-MailAccountValues($Values, [string] $Parent) {
+    $errors = @{}
+    $address = ([string] $Values['user']).Trim()
+    if ($address -notmatch $script:MailAddressPattern) { $errors['user'] = 'To nie wygląda na adres e-mail.' }
+    $domain = if ($address.Contains('@')) { $address.Substring($address.IndexOf('@') + 1) } else { '' }
+    if ($Values['servers'] -eq 'manual') {
+        $imap = ([string] $Values['imap']).Trim()
+        $smtp = ([string] $Values['smtp']).Trim()
+        if ($imap -notmatch $script:MailHostPattern) { $errors['imap'] = 'Podaj host albo host:port, np. imap.example.com:993.' }
+        if ($smtp -and $smtp -notmatch $script:MailHostPattern) { $errors['smtp'] = 'Podaj host albo host:port albo zostaw puste.' }
+    }
+    else {
+        $imap = "imap.${domain}:993"
+        $smtp = "smtp.${domain}:465"
+    }
+    $folder = $null
+    if ($Parent) {
+        $folder = ([string] $Values['folder']).Trim()
+        if (-not $folder) { $folder = $domain }
+        $folder = (($folder -replace '[\\/:*?"<>|\x00-\x1f]', '_').Trim()).TrimEnd('.', ' ')
+        if (-not $folder -or $folder -match '^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$') { $errors['folder'] = 'Podaj poprawną nazwę folderu.' }
+        elseif ($null -ne (Get-C4KItem (Join-MailPath $Parent $folder))) { $errors['folder'] = "Folder $folder już istnieje." }
+    }
+    $options = [ordered]@{ imap = $imap }
+    if ($smtp) { $options['smtp'] = $smtp }
+    $options['user'] = $address
+    $name = ([string] $Values['name']).Trim()
+    if ($name) { $options['name'] = $name }
+    $options['refresh'] = if ($Values['refresh'] -eq 'off') { $false } elseif ($Values['refresh']) { [string] $Values['refresh'] } else { '5m' }
+    $options['since'] = if ($Values['since']) { [string] $Values['since'] } else { '3m' }
+    @{ errors = $errors; options = $options; folder = $folder }
+}
+
+# One window with the address, the sender, the servers and the sync settings (and the folder name when $Parent is
+# given). After the answers pass their checks it logs in once (the app asks for the password and keeps it); a refused
+# login shows the window again with the reason, so nothing is written until it works. Returns @{ options; folder },
+# or $null when the user cancelled.
+function Read-MailAccountOptions([string] $Title, [string] $Parent) {
+    $values = $null
+    $errors = $null
+    $message = $null
+    $description = 'Ustawienia trafią do c4k.dir folderu konta. Przed zapisem aplikacja zaloguje się raz, żeby sprawdzić konto.'
     while ($true) {
-        $problem = $null
-        $address = Read-C4KInput $Title 'Adres e-mail (to także nazwa użytkownika):' $typed.address
-        if ($null -eq $address) { return $null }
-        $typed.address = $address.Trim()
-        if ($typed.address -notmatch $script:MailAddressPattern) {
-            $problem = 'To nie wygląda na adres e-mail.'
+        $values = Show-C4KDialog $Title (Get-MailAccountFields $values ([bool] $Parent)) -Description $description -Submit 'Sprawdź i zapisz' -Message $message -Errors $errors
+        if ($null -eq $values) { return $null }
+        $result = Test-MailAccountValues $values $Parent
+        $errors = $result.errors
+        $message = $null
+        if ($errors.Count -gt 0) { continue }
+        $account = @{ imap = $result.options['imap']; smtp = $result.options['smtp']; user = $result.options['user']; interactive = $true }
+        try {
+            [void] (Get-C4KMailFolders $account)
+            return @{ options = $result.options; folder = $result.folder }
         }
-        else {
-            $domain = $typed.address.Substring($typed.address.IndexOf('@') + 1)
-            $imap = Read-C4KInput $Title 'Serwer IMAP (host:port):' $(if ($null -ne $typed.imap) { $typed.imap } else { "imap.${domain}:993" })
-            if ($null -eq $imap) { return $null }
-            $typed.imap = $imap.Trim()
-            $smtp = Read-C4KInput $Title 'Serwer SMTP (host:port; puste = bez wysyłania):' $(if ($null -ne $typed.smtp) { $typed.smtp } else { "smtp.${domain}:465" })
-            if ($null -eq $smtp) { return $null }
-            $typed.smtp = $smtp.Trim()
-            $display = Read-C4KInput $Title 'Imię i nazwisko nadawcy (opcjonalnie):' $typed.display
-            if ($null -eq $display) { return $null }
-            $typed.display = $display.Trim()
-
-            if ($typed.imap -notmatch $script:MailHostPattern) { $problem = 'Serwer IMAP ma mieć postać host albo host:port.' }
-            elseif ($typed.smtp -and $typed.smtp -notmatch $script:MailHostPattern) { $problem = 'Serwer SMTP ma mieć postać host albo host:port.' }
-            else {
-                $account = @{ imap = $typed.imap; smtp = $(if ($typed.smtp) { $typed.smtp } else { $null }); user = $typed.address; interactive = $true }
-                try { [void] (Get-C4KMailFolders $account) }
-                catch { $problem = Get-MailErrorText $_ }
-            }
-        }
-
-        if (-not $problem) {
-            $options = [ordered]@{ imap = $typed.imap }
-            if ($typed.smtp) { $options['smtp'] = $typed.smtp }
-            $options['user'] = $typed.address
-            if ($typed.display) { $options['name'] = $typed.display }
-            $options['refresh'] = '5m'
-            $options['since'] = '3m'
-            return $options
-        }
-
-        if (-not (Confirm-C4K $Title "Nie udało się połączyć z kontem: $problem`n`nPoprawić dane? Wpisane pola zostaną zachowane.")) { return $null }
+        catch { $message = 'Nie można się zalogować: ' + (Get-MailErrorText $_) }
     }
 }
 
@@ -256,13 +297,10 @@ function Add-MailAccount([string] $Active) {
         throw 'Konto pocztowe można dodać tylko w folderze na dysku lub udziale sieciowym (nie w archiwum, na SFTP ani w widoku Ten komputer).'
     }
     $title = 'Dodaj konto pocztowe'
-    $options = Read-MailAccountOptions $title
-    if ($null -eq $options) { return @{ message = 'Anulowano.' } }
-    $domain = ([string] $options['user']).Substring(([string] $options['user']).IndexOf('@') + 1)
-    $folderName = Read-C4KInput $title 'Nazwa folderu konta:' $domain
-    if ($null -eq $folderName) { return @{ message = 'Anulowano.' } }
-    $folderName = (($folderName -replace '[\\/:*?"<>|\x00-\x1f]', '_').Trim()).TrimEnd('.', ' ')
-    if (-not $folderName -or $folderName -match '^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$') { throw 'Podaj poprawną nazwę folderu.' }
+    $answer = Read-MailAccountOptions $title $Active
+    if ($null -eq $answer) { return @{ message = 'Anulowano.' } }
+    $options = $answer.options
+    $folderName = $answer.folder
 
     $accountPath = Join-MailPath $Active $folderName
     if ($null -ne (Get-C4KItem $accountPath)) { throw "Folder $folderName już istnieje." }
@@ -553,10 +591,9 @@ Register-C4KHandler 'preview.setup' {
     if (-not (Test-MailLocalDiskPath ([string] $p.folder))) {
         throw 'Konto pocztowe może mieć tylko folder na dysku lub w udziale sieciowym.'
     }
-    try { $options = Read-MailAccountOptions 'Konto pocztowe w tym folderze' }
-    catch { throw (Get-MailErrorText $_) }
-    if ($null -eq $options) { return $null }
-    @{ options = $options }
+    $answer = Read-MailAccountOptions 'Konto pocztowe w tym folderze'
+    if ($null -eq $answer) { return $null }
+    @{ options = $answer.options }
 }
 
 Register-C4KHandler 'preview.render' {
