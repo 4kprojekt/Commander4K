@@ -290,6 +290,9 @@ public sealed class MainWindow : Window
             },
             path => FolderOpener.OpenAsync(this, _skins!.Current, path, createIfMissing: false),
             SearchWebAsync);
+        // Every plugin's prompts, confirmations, notifications and panel context go through this; without it ui.prompt
+        // answers null at once and a plugin's setup looks "cancelled" (it was lost once in a refactor).
+        host.PluginUi.Target = _pluginHost;
         host.InstallFromCatalog = InstallFromCatalogAsync;
         host.PowerShell.CommandsChanged += () => Dispatcher.UIThread.Post(RebuildMenu);
         host.PluginsChanged += () => Dispatcher.UIThread.Post(() =>
