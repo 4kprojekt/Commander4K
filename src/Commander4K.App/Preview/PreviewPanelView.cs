@@ -520,11 +520,9 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private async Task LoadAfterPauseAsync(string key, VfsEntry? entry, PanelTab tab, CancellationToken cancellationToken)
     {
-        try
-        {
-            await Task.Delay(120, cancellationToken);
-        }
-        catch (OperationCanceledException)
+        // Waits without throwing: the debounce is cancelled on every cursor move.
+        await Task.Delay(120, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing | ConfigureAwaitOptions.ContinueOnCapturedContext);
+        if (cancellationToken.IsCancellationRequested)
         {
             return;
         }

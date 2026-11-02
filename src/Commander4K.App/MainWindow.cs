@@ -1975,11 +1975,9 @@ public sealed class MainWindow : Window
     /// <summary>After the cursor rested <see cref="SuggestionDelay"/> on <paramref name="folder"/>: the best suggestions as they arrive.</summary>
     private async Task SuggestAsync(FilePanelView panel, VfsEntry folder, CancellationToken cancellationToken)
     {
-        try
-        {
-            await Task.Delay(SuggestionDelay, cancellationToken);
-        }
-        catch (OperationCanceledException)
+        // Waits without throwing: a cancelled delay on every cursor move would stop the debugger each time.
+        await Task.Delay(SuggestionDelay, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing | ConfigureAwaitOptions.ContinueOnCapturedContext);
+        if (cancellationToken.IsCancellationRequested)
         {
             return; // The cursor moved on.
         }
