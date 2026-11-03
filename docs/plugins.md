@@ -405,6 +405,8 @@ A plugin never draws controls. It returns data, and the app draws it with its ow
 | Panel table | a file panel | `panel.load` | lists and trees with columns, a details pane and actions on marked rows |
 | Markdown view | the preview / a folder view | `preview.render` → `{ kind: "markdown" }` | reports, summaries, read-only pages; add `actions` for buttons |
 | Preview form | the preview / a folder view | `preview.render` → `{ kind: "form" }` | editing that stays on screen (a draft, a note): text fields, attached files, buttons |
+| List with preview | a folder view | `preview.render` → `{ kind: "list" }` | the files of a folder as rows (messages, tickets) with the preview of the selected one under the list or in the other panel |
+| Message reader | the preview | `preview.render` → `{ kind: "mail" }` | a message: sender, attachments, text, source and a quick reply |
 | Dialog window | a modal window | your call to `ui.dialog` | settings, setup and logins: one window with many fields, sections and modes |
 
 `ui.prompt` (one line) and `ui.confirm` (yes/no) stay for single questions. Do not chain several `ui.prompt` calls: use one `ui.dialog`.
@@ -425,6 +427,21 @@ Register-C4KHandler 'preview.action' { param($p) if ($p.action -eq 'refresh') { 
 ```
 
 `pinned` is `true` when the user opened the entry with Enter; that is the place for buttons that change something.
+
+An action may add `icon` (one of `mail inbox sent drafts trash archive junk folder reply replyAll forward delete flag unread move attachment new refresh send edit download`) and `style`: `primary` (the main action, accent colour) or `icon` (an icon button; the label becomes its tooltip). Without them the button looks as before.
+
+### Lists with a preview
+
+`{ kind: "list", folder, items: [{ path, title, subtitle?, snippet?, meta?, group?, tags? }], title?, tabs?: [{ label, target, count?, selected?, icon? }], filters?: [{ tag, label }], search?, status?, statusRight?, selected?, empty? }` shows the files of `folder` as two-line rows (design "Tryb panelu — klient poczty"). Every `path` must be a file directly in `folder`; other rows are dropped.
+
+- Selecting a row (click, ↑↓, PgUp/PgDn, Home/End) puts the panel's cursor on that file. The preview under the list follows the cursor like Ctrl+Q, so it shows whatever preview the file has: yours, another plugin's or a built-in one. When the opposite panel shows the quick view of this panel, the list has no preview of its own and the selected file appears there.
+- Enter or a double click opens the file like Enter in the file list.
+- Search (Ctrl+F) matches `title`, `subtitle` and `snippet`; a filter shows the rows whose `tags` contain its `tag` (empty `tag` = all). The tags `unread` (bold, a dot), `flagged` and `attachment` (icons) also change the row. Rows with the same `group` follow one heading.
+- A tab's `target` runs like an action (`Get-C4KActionTarget 'folder' @{ name = ... }`); answer with the other list. `actions` appear beside the search field.
+
+### Message reader
+
+`{ kind: "mail", subject, from, fromAddress?, to?, date?, attachments?: [{ name, size?, target? }], body, source?, folder?, quickReply?: { target, placeholder?, from? }, status?, note? }` shows a message: the subject, the sender with an avatar, attachment tiles (a click runs the tile's `target`), the text with a "Treść · Tekst · Źródło" switch and `actions` in the bar above. `quickReply` adds a text box; "Wyślij" (Ctrl+Enter) runs its `target` with `values: { text }`.
 
 ### Preview forms
 

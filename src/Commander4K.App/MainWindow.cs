@@ -868,9 +868,13 @@ public sealed class MainWindow : Window
 
     /// <param name="pinned">A folder's own view (c4k.dir "enter") shown in <paramref name="source"/> itself.</param>
     /// <param name="pinnedFile">A file opened with Enter by a preview that asks for it, shown in <paramref name="source"/> itself.</param>
-    private PreviewPanelView CreatePreview(FilePanelView source, PreviewPanelView.PinnedFolder? pinned = null, VfsEntry? pinnedFile = null) =>
+    /// <param name="embedded">The preview under a plugin's list: it follows <paramref name="source"/>'s cursor and has no header.</param>
+    private PreviewPanelView CreatePreview(FilePanelView source, PreviewPanelView.PinnedFolder? pinned = null, VfsEntry? pinnedFile = null, bool embedded = false) =>
         new(_host!, source, _skins!.Current, Notify, pinned, pinnedFile)
         {
+            Embedded = embedded,
+            CreateFollower = panel => CreatePreview(panel, embedded: true),
+            Opposite = () => source == _left ? _right : _left,
             CreateAppView = view => CreateFolderView(view),
             ShowUnknownPreviewOptions = entry => ShowUnknownPreviewPromptsAsync(source, entry),
             InstallCatalogPreview = InstallFromCatalogAsync,
@@ -3873,7 +3877,8 @@ public sealed class MainWindow : Window
     /// <summary>Ctrl+Q: quick view of the entry under the cursor, in the opposite panel; focus stays on the file list.</summary>
     private void TogglePreview()
     {
-        var (target, source) = ModeTarget();
+        // A plugin's list (the mail account) stays; its selection is previewed in the other panel instead of under it.
+        var (target, source) = _active.Mode is PreviewPanelView { HasList: true } ? (Other, _active) : ModeTarget();
         if (target.Mode is PreviewPanelView)
         {
             target.CloseMode();

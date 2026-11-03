@@ -113,7 +113,14 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private sealed record ActionReceiver(IInteractivePreviewPlugin Plugin, VfsEntry Entry, string? Options);
 
     /// <param name="Shortcut">The usable shortcut (<see cref="PreviewShortcuts.Normalize"/>), or <c>null</c>.</param>
-    private sealed record BoundAction(PreviewAction Action, ActionReceiver? Receiver, string? Shortcut);
+    /// <param name="Values">Form values sent with the action (a quick reply's text), read when it runs.</param>
+    private sealed record BoundAction(PreviewAction Action, ActionReceiver? Receiver, string? Shortcut, Func<IReadOnlyDictionary<string, string>>? Values = null);
+
+    /// <summary>The list on screen (<see cref="ListPreview"/>), the preview under it and the opposite panel it watches.</summary>
+    private ListPreviewView? _list;
+    private Grid? _listLayout;
+    private PreviewPanelView? _follower;
+    private FilePanelView? _watchedOpposite;
 
     /// <summary>The receiver of the content being rendered (<see cref="Show"/>).</summary>
     private ActionReceiver? _receiver;
@@ -219,6 +226,25 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     public Func<Core.Input.KeyStroke, bool>? RunShortcut { get; init; }
     /// <summary>Asks the user to trust a <c>c4k.dir</c> whose cards sign in or change something (POST, SSH); locked when null.</summary>
     public Func<FolderConfig, Task<bool>>? AskFolderTrust { get; init; }
+
+    /// <summary>A plugin's list is on screen: Ctrl+Q then previews its selection in the other panel.</summary>
+    public bool HasList => _list is not null;
+
+    /// <summary>The panel whose cursor this preview follows (or which it is pinned over).</summary>
+    public FilePanelView Source => _source;
+
+    /// <summary>A preview inside another view (under a list): no header of its own.</summary>
+    public bool Embedded
+    {
+        get => !_header.IsVisible;
+        init => _header.IsVisible = !value;
+    }
+
+    /// <summary>Creates the preview shown under a list: one that follows <paramref name="source"/>'s cursor like Ctrl+Q.</summary>
+    public Func<FilePanelView, PreviewPanelView>? CreateFollower { get; init; }
+
+    /// <summary>The other panel: while it shows the quick view of this panel, a list shows no preview of its own.</summary>
+    public Func<FilePanelView>? Opposite { get; init; }
 
     public string Title => _pinned is { } pinned ? pinned.Config.Title ?? pinned.Folder.Name : _pinnedFile?.Name ?? Loc.T("Podgląd");
 
@@ -386,6 +412,12 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             return true;
         }
 
+        // A list moves its selection with the cursor keys (the preview follows) and opens a row with Enter.
+        if (_list is { } list && FocusedTextBox() is null && list.HandleKey(e))
+        {
+            return true;
+        }
+
         // The window passes keys here only while this panel is active; inside a text field only Ctrl/Alt combos,
         // F-keys and Esc arrive, so a plain-letter shortcut never fires while the user types.
         // Reserved keys (Esc, Enter, Tab, Backspace, Alt+←/→) never reach a plugin, and while a field is being edited
@@ -447,6 +479,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         DisposeWeb();
         DisposeBrowserPreview();
         StopDashboard();
+        DropList();
         _ = FlushFormAsync(); // the last edit still reaches the plugin (its own time limit, not the view's)
         _lifetime.Cancel();
         if (IsPinned)
@@ -877,6 +910,11 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             _form = null;
         }
 
+        if (Inner(content) is not ListPreview)
+        {
+            DropList();
+        }
+
         var view = Render(content);
 
         // An entry nothing recognises (binary shown as hex, or no preview at all): offer official previews and AI prompts.
@@ -918,6 +956,10 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         BrowserPagePreview browser => BrowserView(browser),
         SftpConnectionPreview sftp => SftpConnectionView(sftp),
         WebPreview web => WebView(web),
+        ActionsPreview { Content: ListPreview list } actions => ListView(list, actions.Actions),
+        ListPreview list => ListView(list, []),
+        ActionsPreview { Content: MailPreview mail } actions => MailView(mail, actions.Actions),
+        MailPreview mail => MailView(mail, []),
         ActionsPreview actions => ActionsView(actions),
         FormPreview form => FormView(form),
         MarkdownPreview markdown when _editing => MarkdownEditor(markdown.Markdown),
@@ -1015,7 +1057,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         var bar = new WrapPanel();
         foreach (var action in actions.Actions)
         {
-            bar.Children.Add(ActionButton(action, primary: false));
+            bar.Children.Add(action.Icon is not null || action.Style is not null ? ActionControl(action, null) : ActionButton(action, primary: false));
         }
 
         var dock = new DockPanel();
@@ -1035,6 +1077,192 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
 
         return dock;
+    }
+
+    /// <summary>
+    /// A plugin's list: selecting a row puts the panel's cursor on its file, so the preview under the list — or the quick
+    /// view in the opposite panel, which then replaces it — shows whatever preview that file has.
+    /// </summary>
+    private Control ListView(ListPreview list, IReadOnlyList<PreviewAction> actions)
+    {
+        var tab = _source.ActiveTab;
+        var kept = _list?.Selected?.Path;
+        var cursor = SamePath(tab.Path, list.Folder) ? tab.CurrentEntry?.Path : null;
+        var selected = new[] { kept, list.Selected, cursor }.FirstOrDefault(path => path is not null && list.Items.Any(i => SamePath(i.Path, path)));
+        _list = new ListPreviewView(list, actions, _brushes, selected, item => FollowListItem(list.Folder, item), OpenListItem, action => ActionControl(action, null));
+        if (_list.Selected is { } first)
+        {
+            FollowListItem(list.Folder, first);
+        }
+
+        if (list.Status is not null || list.StatusRight is not null)
+        {
+            SetStatus(string.Join("   ·   ", new[] { list.Status, list.StatusRight }.Where(s => s is { Length: > 0 })));
+        }
+
+        _listLayout?.Children.Clear(); // a skin change draws the list again; the preview under it moves over
+        _listLayout = new Grid();
+        WatchOpposite();
+        LayoutList();
+        return _listLayout;
+    }
+
+    /// <summary>The list alone when the opposite panel shows its quick view; otherwise the list over a preview of the selected row.</summary>
+    private void LayoutList()
+    {
+        if (_listLayout is not { } layout || _list is not { } list)
+        {
+            return;
+        }
+
+        var elsewhere = Opposite?.Invoke() is { Mode: PreviewPanelView { IsPinned: false } quick } && quick.Source == _source;
+        layout.Children.Clear();
+        if (elsewhere || CreateFollower is not { } create)
+        {
+            DisposeFollower();
+            layout.RowDefinitions = new RowDefinitions("*");
+            layout.Children.Add(list);
+            return;
+        }
+
+        _follower ??= create(_source);
+        _follower.ApplySkin(_brushes);
+        layout.RowDefinitions = new RowDefinitions("*,Auto,*");
+        layout.Children.Add(list);
+        var splitter = new GridSplitter { Height = 5, Background = _brushes.PanelBorder, ResizeDirection = GridResizeDirection.Rows };
+        Grid.SetRow(splitter, 1);
+        layout.Children.Add(splitter);
+        Grid.SetRow(_follower, 2);
+        layout.Children.Add(_follower);
+    }
+
+    private void WatchOpposite()
+    {
+        var opposite = Opposite?.Invoke();
+        if (ReferenceEquals(opposite, _watchedOpposite))
+        {
+            return;
+        }
+
+        if (_watchedOpposite is { } old)
+        {
+            old.ModeChanged -= LayoutList;
+        }
+
+        _watchedOpposite = opposite;
+        if (opposite is not null)
+        {
+            opposite.ModeChanged += LayoutList;
+        }
+    }
+
+    private void DropList()
+    {
+        _list = null;
+        _listLayout?.Children.Clear();
+        _listLayout = null;
+        DisposeFollower();
+        if (_watchedOpposite is { } opposite)
+        {
+            opposite.ModeChanged -= LayoutList;
+            _watchedOpposite = null;
+        }
+    }
+
+    private void DisposeFollower()
+    {
+        if (_follower is { } follower)
+        {
+            _follower = null;
+            _ = follower.DisposeModeAsync();
+        }
+    }
+
+    /// <summary>The panel's cursor goes to the row's file (the folder is opened first if needed); previews follow the cursor.</summary>
+    private void FollowListItem(string folder, ListPreviewItem item)
+    {
+        var tab = _source.ActiveTab;
+        var name = item.Path.TrimEnd('\\', '/')[(item.Path.TrimEnd('\\', '/').LastIndexOfAny(['\\', '/']) + 1)..];
+        if (!SamePath(tab.Path, folder) || tab.IsLoading)
+        {
+            _ = tab.NavigateAsync(folder, name);
+            return;
+        }
+
+        for (var i = 0; i < tab.Entries.Count; i++)
+        {
+            if (SamePath(tab.Entries[i].Path, item.Path))
+            {
+                tab.MoveCursor(i);
+                return;
+            }
+        }
+
+        _ = tab.RefreshAsync(); // a file the listing does not have yet (just synced): list again
+    }
+
+    /// <summary>Enter or a double click on a row: the file opens like Enter in the file list.</summary>
+    private void OpenListItem(ListPreviewItem item)
+    {
+        if (OpenTile is { } open)
+        {
+            _ = open(new PreviewTile(item.Title, Target: item.Path), _entry);
+        }
+    }
+
+    private static bool SamePath(string? a, string? b) =>
+        a is not null && b is not null && string.Equals(a.TrimEnd('\\', '/'), b.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+
+    private Control MailView(MailPreview mail, IReadOnlyList<PreviewAction> actions)
+    {
+        if (mail.Status is { Length: > 0 } status)
+        {
+            SetStatus(status);
+        }
+
+        return MailReaderView.Build(mail, actions, _brushes, ActionControl);
+    }
+
+    /// <summary>
+    /// A plugin action in the design's tool-bar look: <c>primary</c> = accent button, <c>icon</c> = flat icon button with
+    /// the label as tooltip, otherwise a bordered button; an icon from <see cref="PreviewIcons"/> goes before the label.
+    /// </summary>
+    private Control ActionControl(PreviewAction action, Func<IReadOnlyDictionary<string, string>>? values)
+    {
+        var bound = new BoundAction(action, _receiver, PreviewShortcuts.Normalize(action.Shortcut), values);
+        _shortcuts.Add(bound);
+        var tip = bound.Shortcut is not null ? Loc.T("{0} ({1})", action.Label, action.Shortcut!) : action.Label;
+        var icon = PreviewIcons.Find(action.Icon);
+        Button button;
+        if (action.Style == "icon" && icon is not null)
+        {
+            button = Ds.ToolButton(_brushes, PreviewIcons.Create(icon, _brushes.MutedForeground, 16, 1.25), tip, () => _ = RunActionAsync(bound));
+        }
+        else
+        {
+            var primary = action.Style == "primary";
+            button = Ds.Button(_brushes, action.Label, () => _ = RunActionAsync(bound), primary ? ButtonKind.Primary : ButtonKind.Secondary);
+            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+            var foreground = primary ? _brushes.AccentForeground : _brushes.WindowForeground;
+            if (icon is not null)
+            {
+                content.Children.Add(PreviewIcons.Create(icon, foreground, 14, 1.4));
+            }
+
+            content.Children.Add(new TextBlock { Text = action.Label, FontSize = 12, Foreground = foreground, VerticalAlignment = VerticalAlignment.Center });
+            if (primary && action.Shortcut is { Length: > 0 } shortcut)
+            {
+                content.Children.Add(new TextBlock { Text = shortcut, FontSize = 12, FontWeight = FontWeight.Normal, Foreground = foreground, Opacity = 0.8, VerticalAlignment = VerticalAlignment.Center });
+            }
+
+            button.Content = content;
+            button.Height = 26;
+            button.Padding = new Thickness(9, 0);
+            ToolTip.SetTip(button, tip);
+        }
+
+        _actionButtons.Add(button);
+        return button;
     }
 
     /// <summary>A plugin button bound to the content's receiver: <c>c4k:plugin/…</c> goes back to that plugin, anything else opens like a tile.</summary>
@@ -1252,7 +1480,8 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         try
         {
             await FlushFormAsync();
-            var values = ReferenceEquals(_formOwner, receiver) && _formValues is { } current ? new Dictionary<string, string>(current, StringComparer.Ordinal) : null;
+            var values = bound.Values is { } read ? new Dictionary<string, string>(read(), StringComparer.Ordinal)
+                : ReferenceEquals(_formOwner, receiver) && _formValues is { } current ? new Dictionary<string, string>(current, StringComparer.Ordinal) : null;
             var request = new PreviewActionRequest(receiver.Entry, receiver.Options, name, arguments, values);
             var host = _app.HostFor(receiver.Plugin.Manifest);
             var token = _lifetime.Token;

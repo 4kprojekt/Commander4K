@@ -1184,8 +1184,8 @@ public sealed class MailPluginTests : IAsyncLifetime
         _ui.Other = target;
 
         var content = await MessagePreview(plugin).LoadWithOptionsAsync(FileEntry(file), Host(plugin), null, pinned: false, Token);
-        var save = Assert.Single(Assert.IsType<ActionsPreview>(content).Actions, a => a.Target.StartsWith("c4k:plugin/saveAttachment", StringComparison.Ordinal));
-        Assert.Equal("c4k:plugin/saveAttachment?i=0", save.Target);
+        var reader = Assert.IsType<MailPreview>(Assert.IsType<ActionsPreview>(content).Content);
+        Assert.Equal("c4k:plugin/saveAttachment?i=0", Assert.Single(reader.Attachments).Target);
         await ActAsync(plugin, file, "saveAttachment", args: new() { ["i"] = "0" });
 
         var saved = Assert.Single(Directory.GetFiles(target));

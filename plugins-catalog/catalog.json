@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-02",
+  "updated": "2026-11-03",
   "baseUrl": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/",
   "plugins": [
     {
@@ -400,7 +400,7 @@
         },
         {
           "path": "main.ps1",
-          "sha256": "a187d120f24e1c429ef9d9d166cbf181d053101e733ccd77a32ac7053b847103"
+          "sha256": "ce70340bfacf60f360b49c61ffc3c3b160f6864a08d8a99e9dc4604089da52e3"
         },
         {
           "path": "plugin.json",

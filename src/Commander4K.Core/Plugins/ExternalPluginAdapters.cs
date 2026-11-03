@@ -476,6 +476,14 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
         {
             content = ParseForm(result, entry);
         }
+        else if (string.Equals(kind, "list", StringComparison.OrdinalIgnoreCase))
+        {
+            content = ParseList(result, entry);
+        }
+        else if (string.Equals(kind, "mail", StringComparison.OrdinalIgnoreCase))
+        {
+            content = ParseMail(result, entry);
+        }
         else
         {
             var text = result.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() ?? string.Empty : string.Empty;
@@ -550,8 +558,81 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
             ? [.. list.EnumerateArray()
                 .Where(a => CardString(a, "target") is not null)
                 .Take(MaxActions)
-                .Select(a => new PreviewAction(CardString(a, "label") ?? CardString(a, "target")!, CardString(a, "target")!, PreviewShortcuts.Normalize(CardString(a, "shortcut")) is null ? null : CardString(a, "shortcut")))]
+                .Select(a => new PreviewAction(CardString(a, "label") ?? CardString(a, "target")!, CardString(a, "target")!,
+                    PreviewShortcuts.Normalize(CardString(a, "shortcut")) is null ? null : CardString(a, "shortcut"),
+                    CardString(a, "icon"), CardString(a, "style")))]
             : [];
+
+    private const int MaxListItems = 2000;
+    private const int MaxListTabs = 40;
+    private const int MaxMailAttachments = 100;
+    private const int MaxMailText = 2_000_000;
+
+    /// <summary>
+    /// <c>{ "kind": "list", "folder", "items": [{ path, title, subtitle?, snippet?, meta?, group?, tags? }], "title"?,
+    /// "tabs"?: [{ label, target, count?, selected?, icon? }], "filters"?: [{ tag, label }], "search"?, "status"?,
+    /// "statusRight"?, "selected"?, "empty"?, "badge"? }</c>. Rows must lie in <c>folder</c>; others are dropped.
+    /// </summary>
+    internal static PreviewContent ParseList(JsonElement result, VfsEntry entry)
+    {
+        var folder = CardString(result, "folder") ?? entry.Path;
+        var items = result.TryGetProperty("items", out var list) && list.ValueKind == JsonValueKind.Array
+            ? [.. list.EnumerateArray()
+                .Where(i => CardString(i, "path") is { } path && IsInFolder(path, folder))
+                .Take(MaxListItems)
+                .Select(i => new ListPreviewItem(CardString(i, "path")!, CardString(i, "title") ?? Path.GetFileName(CardString(i, "path")!),
+                    CardString(i, "subtitle"), CardString(i, "snippet"), CardString(i, "meta"), CardString(i, "group"), Strings(i, "tags")))]
+            : new List<ListPreviewItem>();
+        var tabs = result.TryGetProperty("tabs", out var tabList) && tabList.ValueKind == JsonValueKind.Array
+            ? [.. tabList.EnumerateArray()
+                .Where(t => CardString(t, "target") is not null)
+                .Take(MaxListTabs)
+                .Select(t => new ListPreviewTab(CardString(t, "label") ?? CardString(t, "target")!, CardString(t, "target")!,
+                    t.TryGetProperty("count", out var count) && count.TryGetInt32(out var n) ? n : null,
+                    t.TryGetProperty("selected", out var selected) && selected.ValueKind == JsonValueKind.True, CardString(t, "icon")))]
+            : new List<ListPreviewTab>();
+        var filters = result.TryGetProperty("filters", out var filterList) && filterList.ValueKind == JsonValueKind.Array
+            ? [.. filterList.EnumerateArray()
+                .Where(f => CardString(f, "label") is not null)
+                .Take(8)
+                .Select(f => new ListPreviewFilter(f.TryGetProperty("tag", out var tag) && tag.ValueKind == JsonValueKind.String ? tag.GetString() ?? string.Empty : string.Empty, CardString(f, "label")!))]
+            : new List<ListPreviewFilter>();
+        return new ListPreview(folder, items, CardString(result, "title"), tabs, filters, CardString(result, "search"), CardString(result, "status"),
+            CardString(result, "statusRight"), CardString(result, "selected"), CardString(result, "empty"), CardString(result, "badge"));
+    }
+
+    /// <summary>
+    /// <c>{ "kind": "mail", "subject", "from", "fromAddress"?, "to"?, "date"?, "attachments"?: [{ name, size?, target? }],
+    /// "body", "source"?, "folder"?, "quickReply"?: { target, placeholder?, from? }, "status"?, "badge"?, "note"? }</c>.
+    /// </summary>
+    internal static MailPreview ParseMail(JsonElement result, VfsEntry entry)
+    {
+        static string Clip(string? text) => text is null ? string.Empty : text.Length > MaxMailText ? text[..MaxMailText] + "\n[…]" : text;
+        var attachments = result.TryGetProperty("attachments", out var list) && list.ValueKind == JsonValueKind.Array
+            ? [.. list.EnumerateArray()
+                .Where(a => CardString(a, "name") is not null)
+                .Take(MaxMailAttachments)
+                .Select(a => new MailPreviewAttachment(CardString(a, "name")!, CardString(a, "size"), CardString(a, "target")))]
+            : new List<MailPreviewAttachment>();
+        var reply = result.TryGetProperty("quickReply", out var r) && r.ValueKind == JsonValueKind.Object ? r : default;
+        return new MailPreview(CardString(result, "subject") ?? entry.Name, CardString(result, "from") ?? string.Empty, CardString(result, "fromAddress"),
+            CardString(result, "to"), CardString(result, "date"), attachments, Clip(CardString(result, "body")),
+            CardString(result, "source") is { } source ? Clip(source) : null, CardString(result, "folder"),
+            CardString(reply, "target"), CardString(reply, "placeholder"), CardString(reply, "from"),
+            CardString(result, "status"), CardString(result, "badge"), CardString(result, "note"));
+    }
+
+    private static List<string> Strings(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var list) && list.ValueKind == JsonValueKind.Array
+            ? [.. list.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).Take(16)]
+            : [];
+
+    /// <summary>A path directly inside <paramref name="folder"/> (the list moves the panel's cursor there, so it must be in that folder).</summary>
+    private static bool IsInFolder(string path, string folder)
+    {
+        var cut = path.TrimEnd('\\', '/').LastIndexOfAny(['\\', '/']);
+        return cut > 0 && string.Equals(path[..cut].TrimEnd('\\', '/'), folder.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// <c>preview.card</c> with the same parameters as <c>preview.render</c> plus <c>previous</c> (the last card, so a

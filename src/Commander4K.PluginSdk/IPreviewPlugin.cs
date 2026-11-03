@@ -41,7 +41,70 @@ public sealed record MessagePreview(string Message) : PreviewContent;
 
 /// <summary>A button or link of an interactive preview.</summary>
 /// <param name="Target">Like a card action target, plus <c>c4k:plugin/&lt;action&gt;[?k=v&amp;…]</c> which calls <see cref="IInteractivePreviewPlugin.InvokeActionAsync"/>.</param>
-public sealed record PreviewAction(string Label, string Target, string? Shortcut = null);
+/// <param name="Icon">One of the host's icons (<see cref="PreviewIconNames"/>); unknown names are ignored.</param>
+/// <param name="Style"><c>primary</c> (the main action), <c>icon</c> (icon only, the label becomes its tooltip) or <c>null</c>.</param>
+public sealed record PreviewAction(string Label, string Target, string? Shortcut = null, string? Icon = null, string? Style = null);
+
+/// <summary>Icon names a preview may use on actions, list tabs and list rows.</summary>
+public static class PreviewIconNames
+{
+    public static readonly IReadOnlyList<string> All =
+        ["mail", "inbox", "sent", "drafts", "trash", "archive", "junk", "folder", "reply", "replyAll", "forward", "delete", "flag", "unread", "move", "attachment", "new", "refresh", "send", "edit", "download"];
+}
+
+/// <summary>One row of a <see cref="ListPreview"/>: a file whose own preview is shown when the row is selected.</summary>
+/// <param name="Meta">Short text on the right of the first line (a time, a size).</param>
+/// <param name="Group">Rows with the same group follow one heading ("Dziś", "Wczoraj").</param>
+/// <param name="Tags">Matched by <see cref="ListPreviewFilter"/>s. <c>unread</c> (bold, a dot), <c>flagged</c> and <c>attachment</c> (icons) also change the row.</param>
+public sealed record ListPreviewItem(string Path, string Title, string? Subtitle = null, string? Snippet = null, string? Meta = null, string? Group = null, IReadOnlyList<string>? Tags = null);
+
+/// <summary>A tab above the list (a mail folder…); its target runs like an action, so the plugin answers with the other list.</summary>
+public sealed record ListPreviewTab(string Label, string Target, int? Count = null, bool Selected = false, string? Icon = null);
+
+/// <summary>A filter of the segmented switch above the list; an empty <paramref name="Tag"/> shows every row.</summary>
+public sealed record ListPreviewFilter(string Tag, string Label);
+
+/// <summary>
+/// The files of <paramref name="Folder"/> as a list (messages, tickets…) with the preview of the selected one: under the
+/// list, or in the opposite panel when that panel shows the quick view. Selecting a row moves the panel's cursor onto the
+/// file, so the preview is the one any plugin gives that file.
+/// </summary>
+/// <param name="Selected">Path of the row selected first; otherwise the panel's cursor, otherwise the first row.</param>
+public sealed record ListPreview(
+    string Folder,
+    IReadOnlyList<ListPreviewItem> Items,
+    string? Title = null,
+    IReadOnlyList<ListPreviewTab>? Tabs = null,
+    IReadOnlyList<ListPreviewFilter>? Filters = null,
+    string? SearchPlaceholder = null,
+    string? Status = null,
+    string? StatusRight = null,
+    string? Selected = null,
+    string? Empty = null,
+    string? Badge = null) : PreviewContent;
+
+/// <param name="Target">What a click does (a <c>c4k:plugin/…</c> action saving it, a path…), or <c>null</c>.</param>
+public sealed record MailPreviewAttachment(string Name, string? Size = null, string? Target = null);
+
+/// <summary>A message to read: subject, sender, attachments, the text (Tekst) and optionally the source (Źródło), and a quick reply.</summary>
+/// <param name="QuickReplyTarget">A <c>c4k:plugin/…</c> action that receives the typed text as the form value <c>text</c>; <c>null</c> = no quick reply.</param>
+/// <param name="Badge">Short text on the right of the path bar (security checks, a folder).</param>
+public sealed record MailPreview(
+    string Subject,
+    string From,
+    string? FromAddress,
+    string? To,
+    string? Date,
+    IReadOnlyList<MailPreviewAttachment> Attachments,
+    string Body,
+    string? Source = null,
+    string? Folder = null,
+    string? QuickReplyTarget = null,
+    string? QuickReplyPlaceholder = null,
+    string? QuickReplyFrom = null,
+    string? Status = null,
+    string? Badge = null,
+    string? Note = null) : PreviewContent;
 
 /// <summary>Another preview with a row of actions under it.</summary>
 public sealed record ActionsPreview(PreviewContent Content, IReadOnlyList<PreviewAction> Actions) : PreviewContent;

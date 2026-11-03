@@ -914,8 +914,12 @@ public sealed class FilePanelView : ViewBase
         RebuildTabs();
     }
 
+    /// <summary>Raised after the mode over the list may have changed (shown, closed, another tab's view).</summary>
+    public event Action? ModeChanged;
+
     private void UpdateModeButtons()
     {
+        ModeChanged?.Invoke();
         if (_modeSwitch is null)
         {
             return;

@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Commander4K — klient poczty</title>
+<script src="./vendor/react.js"></script>
+<script src="./vendor/react-dom.js"></script>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0}
+.app{width:100%;min-height:900px;display:flex;flex-direction:column;background:var(--windowBackground);color:var(--windowForeground);font-family:"Segoe UI Variable Text","Segoe UI",Inter,system-ui,sans-serif;font-size:13px;box-sizing:border-box}
+.mono{font-family:"Cascadia Mono",Consolas,"JetBrains Mono",monospace}
+.mbtn{height:26px;padding:0 10px;border:0;border-radius:4px;background:transparent;color:var(--windowForeground);font:inherit}
+.btn{height:26px;padding:0 9px;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--panelBorder);border-radius:4px;background:transparent;color:var(--windowForeground);font:inherit;font-size:12px;white-space:nowrap;box-sizing:border-box}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.ibtn{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:4px;background:transparent;color:var(--mutedForeground);padding:0}
+.panel{min-width:0;display:flex;flex-direction:column;background:var(--panelBackground);border:1px solid var(--panelBorder);border-radius:6px;overflow:hidden}
+.tabs{height:32px;display:flex;align-items:center;gap:2px;padding:0 4px;background:var(--headerBackground);border-bottom:1px solid var(--panelBorder);box-sizing:border-box;flex:none}
+.tab{height:24px;max-width:240px;display:flex;align-items:center;gap:6px;padding:0 8px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--mutedForeground);font:inherit;font-size:12px;white-space:nowrap}
+.tab.on{border-color:var(--panelBorder);background:var(--panelBackground);color:var(--windowForeground);font-weight:600}
+.cnt{font-size:11px;font-weight:600;padding:0 5px;border-radius:8px;background:var(--accent);color:#fff;line-height:16px}
+.path{height:32px;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;background:var(--headerBackground);color:var(--headerForeground);border-bottom:1px solid var(--panelBorder);position:relative;box-sizing:border-box;white-space:nowrap;flex:none}
+.path.on{background:var(--activeHeaderBackground);color:var(--activeHeaderForeground)}
+.path.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent)}
+.drv{height:22px;display:flex;align-items:center;gap:5px;padding:0 6px;border:1px solid var(--panelBorder);border-radius:4px;background:var(--panelBackground);color:var(--windowForeground);font:inherit;font-size:12px;font-weight:600}
+.bar{min-height:38px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--panelBorder);box-sizing:border-box;flex:none}
+.search{flex:1 1 180px;min-width:140px;height:26px;display:flex;align-items:center;gap:6px;padding:0 8px;border:1px solid var(--panelBorder);border-radius:4px;background:var(--headerBackground);color:var(--mutedForeground);box-sizing:border-box}
+.search input{flex:1;min-width:0;border:0;background:transparent;color:var(--fileForeground);font:inherit;font-size:12px;outline:none}
+.seg{display:inline-flex;padding:2px;gap:2px;border:1px solid var(--panelBorder);border-radius:6px;background:var(--headerBackground)}
+.seg button{height:22px;padding:0 9px;display:inline-flex;align-items:center;gap:6px;border:0;border-radius:4px;background:transparent;color:var(--headerForeground);font:inherit;font-size:12px;white-space:nowrap}
+.seg button.on{background:var(--panelBackground);color:var(--fileForeground);font-weight:600;box-shadow:0 0 0 1px var(--panelBorder)}
+.grp{height:28px;display:flex;align-items:flex-end;gap:8px;padding:0 14px 5px 22px;color:var(--headerForeground);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;box-sizing:border-box}
+.status{height:26px;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--statusBackground);color:var(--statusForeground);border-top:1px solid var(--panelBorder);font-size:12px;box-sizing:border-box;white-space:nowrap;overflow:hidden;flex:none}
+.kbd{font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--panelBorder);background:var(--panelBackground);color:var(--headerForeground);white-space:nowrap}
+.fk{flex:1 1 0;min-width:0;display:flex;align-items:stretch;padding:0;border:0;border-radius:3px;overflow:hidden;background:var(--functionKeyLabelBackground);font:inherit;font-size:12px}
+.fk b{flex:none;width:26px;display:flex;align-items:center;justify-content:center;background:var(--functionKeyNumberBackground);color:var(--functionKeyNumberForeground)}
+.fk span{flex:1;min-width:0;display:flex;align-items:center;padding:0 8px;color:var(--functionKeyLabelForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.att{display:flex;align-items:center;gap:8px;height:40px;padding:0 10px 0 8px;border:1px solid var(--panelBorder);border-radius:6px;background:var(--headerBackground);color:var(--fileForeground);font:inherit;font-size:12px;box-sizing:border-box;min-width:0;text-align:left}
+.body{font-size:14px;line-height:1.65;color:var(--fileForeground);max-width:680px}
+.body p{margin:0 0 12px}
+.raw{margin:0;font-size:12px;line-height:1.6;color:var(--fileForeground);white-space:pre-wrap;word-break:break-all}
+.row{display:flex;align-items:center;gap:8px;height:22px;margin:0 4px;padding:0 8px;border-radius:3px;border:1px solid transparent;box-sizing:border-box;color:var(--fileForeground);white-space:nowrap}
+.nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.meta{flex:none;color:var(--mutedForeground);font-variant-numeric:tabular-nums}
+textarea.qr{width:100%;min-height:64px;resize:vertical;padding:8px 10px;border:1px solid var(--panelBorder);border-radius:6px;background:var(--headerBackground);color:var(--fileForeground);font:inherit;font-size:13px;line-height:1.5;box-sizing:border-box}
+</style>
+</helmet>
+<div class="app" style="{{vars}}">
+
+<!-- Pasek tytułu -->
+<div style="height: 32px; flex: none; display: flex; align-items: center; gap: 10px; padding-left: 12px; box-sizing: border-box">
+<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" style="color: var(--accent); flex: none"><rect width="16" height="16" rx="4" fill="currentColor"></rect><rect x="3.5" y="4" width="3.5" height="8" rx="1" fill="#fff"></rect><rect x="9" y="4" width="3.5" height="8" rx="1" fill="#fff" fill-opacity=".55"></rect></svg>
+<span style="font-size: 12px; color: var(--windowForeground)">Commander4K</span>
+<span style="font-size: 12px; color: var(--mutedForeground)">— Poczta · Odebrane</span>
+<div style="flex: 1"></div>
+<div style="display: flex; height: 32px; color: var(--windowForeground)" aria-hidden="true">
+<span style="width: 46px; display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"><path d="M0 5.5h10"></path></svg></span>
+<span style="width: 46px; display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"><rect x=".5" y=".5" width="9" height="9" rx="1.5"></rect></svg></span>
+<span style="width: 46px; display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor"><path d="M.5.5l9 9M9.5.5l-9 9"></path></svg></span>
+</div>
+</div>
+
+<!-- Pasek menu + przełącznik układu -->
+<div style="min-height: 34px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 6px 2px; flex-wrap: wrap; box-sizing: border-box">
+<button class="mbtn">Plik</button><button class="mbtn">Polecenia</button><button class="mbtn">Panele</button><button class="mbtn">Wtyczki</button><button class="mbtn">Konfiguracja</button><button class="mbtn">Pomoc</button>
+<div style="flex: 1"></div>
+<span style="font-size: 12px; color: var(--mutedForeground); margin-right: 6px">Układ poczty</span>
+<div class="seg" role="group" aria-label="Układ poczty">
+<sc-for list="{{layouts}}" as="l" hint-placeholder-count="2">
+<button class="{{l.cls}}" onClick="{{l.pick}}" aria-pressed="{{l.on}}">
+<sc-if value="{{l.split}}" hint-placeholder-val="{{true}}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"></rect><path d="M6.5 2.75v10.5M3.5 5.5h1.5M3.5 8h1.5M3.5 10.5h1.5"></path></svg></sc-if>
+<sc-if value="{{l.single}}" hint-placeholder-val="{{false}}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"></rect><path d="M4 5.5h8M4 8h8M4 10.5h5"></path></svg></sc-if>
+{{l.label}}</button>
+</sc-for>
+</div>
+<span class="kbd" style="margin-left: 6px">Ctrl+Shift+L</span>
+</div>
+
+<!-- Panele -->
+<div style="display: flex; flex-wrap: wrap; gap: 6px; padding: 0 6px; flex: none">
+
+<!-- LISTA WIADOMOŚCI -->
+<sc-if value="{{showList}}" hint-placeholder-val="{{true}}">
+<section class="panel" aria-label="Lista wiadomości (aktywny panel)" style="{{listFlex}}">
+<div class="tabs">
+<button class="tab on"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true" style="color: var(--accent)"><rect x="1.75" y="3.25" width="12.5" height="9.5" rx="1.5"></rect><path d="M2.25 4l5.75 4.5L13.75 4"></path></svg>Odebrane<span class="cnt">{{unreadCount}}</span></button>
+<button class="tab"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h3.1l1.4 1.5h5c.83 0 1.5.67 1.5 1.5v6.5c0 .83-.67 1.5-1.5 1.5H3.25c-.83 0-1.5-.67-1.5-1.5z"></path></svg>Klienci</button>
+<button class="tab"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2L7 9M14 2l-4.5 12L7 9 2 6.5z"></path></svg>Wysłane</button>
+<button class="ibtn" aria-label="Nowa karta folderu (Ctrl+T)"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg></button>
+</div>
+<div class="{{listPathCls}}">
+<button class="drv"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><rect x="1.75" y="3.25" width="12.5" height="9.5" rx="1.5"></rect><path d="M2.25 4l5.75 4.5L13.75 4"></path></svg>Praca<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4l2.5 2.5L7.5 4"></path></svg></button>
+<span style="font-weight: 600">Odebrane</span>
+<div style="flex: 1"></div>
+<span style="font-size: 12px; display: flex; align-items: center; gap: 6px"><span style="width: 7px; height: 7px; border-radius: 4px; background: var(--success)"></span>IMAP · połączono</span>
+</div>
+<div class="bar">
+<label class="search"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true" style="flex: none"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5l3.25 3.25"></path></svg><input type="search" placeholder="Szukaj w Odebranych" aria-label="Szukaj w Odebranych"><span class="kbd">Ctrl+F</span></label>
+<div class="seg" role="group" aria-label="Filtr">
+<sc-for list="{{filters}}" as="f" hint-placeholder-count="4">
+<button class="{{f.cls}}" onClick="{{f.pick}}" aria-pressed="{{f.on}}">{{f.label}}</button>
+</sc-for>
+</div>
+</div>
+<div style="height: 594px; overflow: auto; padding-bottom: 6px; box-sizing: border-box">
+<sc-for list="{{items}}" as="m" hint-placeholder-count="10">
+<sc-if value="{{m.isGroup}}" hint-placeholder-val="{{false}}">
+<div class="grp"><span>{{m.label}}</span><span style="font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--mutedForeground)">{{m.count}}</span></div>
+</sc-if>
+<sc-if value="{{m.isMail}}" hint-placeholder-val="{{true}}">
+<button style="{{m.rowStyle}}" onClick="{{m.pick}}" aria-current="{{m.cur}}">
+<sc-if value="{{m.unread}}" hint-placeholder-val="{{false}}"><span aria-label="Nieprzeczytana" style="{{m.dotStyle}}"></span></sc-if>
+<span style="display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0">
+<span class="ell" style="flex: 1; font-weight: {{m.fromW}}">{{m.from}}</span>
+<sc-if value="{{m.hasAtt}}" hint-placeholder-val="{{false}}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Załącznik" style="flex: none; color: {{m.metaColor}}"><path d="M13.25 7.5l-5.3 5.3a3.25 3.25 0 0 1-4.6-4.6l5.65-5.65a2.1 2.1 0 0 1 3 3L6.3 11.2a1 1 0 0 1-1.4-1.4l5.1-5.1"></path></svg></sc-if>
+<sc-if value="{{m.flag}}" hint-placeholder-val="{{false}}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Oflagowana" style="flex: none; color: {{m.flagColor}}"><path d="M3.5 14V2.5"></path><path d="M3.5 2.75h8.5l-2 2.75 2 2.75H3.5" fill="currentColor" fill-opacity=".3"></path></svg></sc-if>
+<span style="flex: none; font-size: 12px; font-variant-numeric: tabular-nums; color: {{m.metaColor}}">{{m.time}}</span>
+</span>
+<span style="display: flex; gap: 6px; width: 100%; min-width: 0; font-size: {{m.fs2}}">
+<span class="ell" style="flex: none; max-width: 70%; font-weight: {{m.subjW}}">{{m.subject}}</span>
+<span class="ell" style="flex: 1; color: {{m.metaColor}}">{{m.snippet}}</span>
+</span>
+</button>
+</sc-if>
+</sc-for>
+<sc-if value="{{empty}}" hint-placeholder-val="{{false}}">
+<div style="padding: 48px 24px; text-align: center; color: var(--mutedForeground)">Brak wiadomości dla tego filtra.</div>
+</sc-if>
+</div>
+<div class="status"><span class="ell">{{listStatus}}</span><div style="flex: 1"></div><span>Zsynchronizowano 20:21</span></div>
+</section>
+</sc-if>
+
+<!-- PODGLĄD / CZYTNIK -->
+<sc-if value="{{showReader}}" hint-placeholder-val="{{true}}">
+<section class="panel" aria-label="Podgląd wiadomości" style="{{readerFlex}}">
+<div class="tabs">
+<sc-if value="{{showBack}}" hint-placeholder-val="{{false}}">
+<button class="tab" onClick="{{back}}" style="color: var(--windowForeground)"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"></path></svg>Lista<span class="kbd" style="font-weight: 400">Backspace</span></button>
+</sc-if>
+<button class="tab on"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--accent)"><path d="M1.5 8s2.4-4.75 6.5-4.75S14.5 8 14.5 8 12.1 12.75 8 12.75 1.5 8 1.5 8z"></path><circle cx="8" cy="8" r="2"></circle></svg><span class="ell">{{cur.subject}}</span></button>
+</div>
+<div class="{{readerPathCls}}">
+<span style="font-weight: 600">Odebrane</span>
+<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true" style="opacity: .6"><path d="M3.5 2l3 3-3 3"></path></svg>
+<span class="ell">{{cur.from}}</span>
+<div style="flex: 1"></div>
+<span style="font-size: 12px; display: flex; align-items: center; gap: 5px"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--success)"><path d="M8 1.75l5 2v4c0 3-2.2 5.3-5 6.5-2.8-1.2-5-3.5-5-6.5v-4z"></path><path d="M5.75 8l1.6 1.6L10.5 6.5"></path></svg>DKIM · SPF · TLS</span>
+</div>
+<div class="bar">
+<button class="btn pri"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 4L2.75 7.5 6.5 11"></path><path d="M2.75 7.5h6.5a4 4 0 0 1 4 4v1"></path></svg>Odpowiedz</button>
+<button class="btn"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4L1.5 7.5 5 11"></path><path d="M8.5 4L5 7.5 8.5 11"></path><path d="M5 7.5h5a4 4 0 0 1 4 4v1"></path></svg>Wszystkim</button>
+<button class="btn"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 4l3.75 3.5L9.5 11"></path><path d="M13.25 7.5h-6.5a4 4 0 0 0-4 4v1"></path></svg>Przekaż</button>
+<span style="width: 1px; height: 18px; background: var(--panelBorder); margin: 0 2px"></span>
+<button class="ibtn" aria-label="Archiwizuj"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" aria-hidden="true"><path d="M2.25 4.75h11.5v8.5c0 .55-.45 1-1 1h-9.5c-.55 0-1-.45-1-1z"></path><path d="M1.75 2.25h12.5v2.5H1.75z"></path><path d="M6.5 7.25h3"></path></svg></button>
+<button class="ibtn" aria-label="Przenieś do folderu (F6)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h3.1l1.4 1.5h5c.83 0 1.5.67 1.5 1.5v6.5c0 .83-.67 1.5-1.5 1.5H3.25c-.83 0-1.5-.67-1.5-1.5z"></path><path d="M6 9h4.5M9 7.25L10.75 9 9 10.75"></path></svg></button>
+<button class="ibtn" aria-label="Oznacz flagą"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 14V2.5"></path><path d="M3.5 2.75h8.5l-2 2.75 2 2.75H3.5"></path></svg></button>
+<button class="ibtn" aria-label="Usuń (F8)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.75 4.25h10.5M6.25 4.25V2.75h3.5v1.5M4 4.25l.6 9h6.8l.6-9"></path></svg></button>
+<div style="flex: 1"></div>
+<div class="seg" role="group" aria-label="Widok treści">
+<sc-for list="{{views}}" as="v" hint-placeholder-count="3">
+<button class="{{v.cls}}" onClick="{{v.pick}}" aria-pressed="{{v.on}}">{{v.label}}</button>
+</sc-for>
+</div>
+</div>
+
+<div style="height: 594px; overflow: auto; box-sizing: border-box">
+<div style="padding: 20px 28px 24px; display: flex; flex-direction: column; gap: 16px; max-width: 760px; box-sizing: border-box">
+<h1 style="margin: 0; font-size: 20px; line-height: 1.3; font-weight: 600; color: var(--fileForeground)">{{cur.subject}}</h1>
+<div style="display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap">
+<span aria-hidden="true" style="{{cur.avStyle}}">{{cur.init}}</span>
+<div style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+<span style="display: flex; gap: 6px; align-items: baseline; min-width: 0; flex-wrap: wrap"><span style="font-weight: 600; color: var(--fileForeground)">{{cur.from}}</span><span style="font-size: 12px; color: var(--mutedForeground)">&lt;{{cur.email}}&gt;</span></span>
+<span style="font-size: 12px; color: var(--mutedForeground)">do: {{cur.to}}</span>
+</div>
+<span style="font-size: 12px; color: var(--mutedForeground); font-variant-numeric: tabular-nums; white-space: nowrap; padding-top: 2px">{{cur.full}}</span>
+</div>
+
+<sc-if value="{{cur.hasAtt}}" hint-placeholder-val="{{true}}">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--headerForeground)"><span style="font-weight: 600">Załączniki · {{cur.attCount}}</span><span style="color: var(--mutedForeground)">{{cur.attHint}}</span></div>
+<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px">
+<sc-for list="{{cur.att}}" as="a" hint-placeholder-count="2">
+<button class="att">
+<sc-if value="{{a.img}}" hint-placeholder-val="{{false}}"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; color: var(--networkForeground)"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"></rect><circle cx="5.5" cy="6.25" r="1.25"></circle><path d="M2 12l3.75-3.5 2.75 2.5 2-1.75 3.5 3"></path></svg></sc-if>
+<sc-if value="{{a.doc}}" hint-placeholder-val="{{true}}"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" aria-hidden="true" style="flex: none; color: {{a.color}}"><path d="M3.75 1.75h5.5l3 3v9.5h-8.5z"></path><path d="M9.25 1.75v3h3"></path></svg></sc-if>
+<span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span class="ell" style="font-weight: 600">{{a.n}}</span><span style="font-size: 11px; color: var(--mutedForeground); font-variant-numeric: tabular-nums">{{a.s}}</span></span>
+<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; color: var(--mutedForeground)"><path d="M8 2.5v8M4.75 7.5L8 10.75l3.25-3.25M3 13.5h10"></path></svg>
+</button>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<div style="height: 1px; background: var(--panelBorder)"></div>
+
+<sc-if value="{{viewHtml}}" hint-placeholder-val="{{true}}">
+<article class="body">
+<sc-for list="{{cur.body}}" as="p" hint-placeholder-count="3"><p>{{p}}</p></sc-for>
+<p style="color: var(--mutedForeground); font-size: 13px; white-space: pre-line; margin-top: 18px">{{cur.sig}}</p>
+</article>
+</sc-if>
+<sc-if value="{{viewText}}" hint-placeholder-val="{{false}}">
+<pre class="raw mono" style="font-size: 12.5px; line-height: 1.7">{{cur.plain}}</pre>
+</sc-if>
+<sc-if value="{{viewSrc}}" hint-placeholder-val="{{false}}">
+<pre class="raw mono" style="padding: 12px 14px; border: 1px solid var(--panelBorder); border-radius: 6px; background: var(--headerBackground)">{{cur.src}}</pre>
+</sc-if>
+
+<div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px">
+<label for="qr" style="font-size: 12px; font-weight: 600; color: var(--headerForeground)">Szybka odpowiedź</label>
+<textarea id="qr" class="qr" placeholder="{{cur.qrPh}}"></textarea>
+<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+<button class="btn pri">Wyślij <span style="opacity: .8; font-weight: 400">Ctrl+Enter</span></button>
+<button class="btn">Otwórz w edytorze</button>
+<div style="flex: 1"></div>
+<span style="font-size: 12px; color: var(--mutedForeground)">Wyśle z: Praca</span>
+</div>
+</div>
+</div>
+</div>
+<div class="status"><span class="ell">{{cur.statusL}}</span><div style="flex: 1"></div><span>{{cur.pos}}</span></div>
+</section>
+</sc-if>
+
+<!-- DRUGI PANEL: PLIKI (tryb jednego panelu) -->
+<sc-if value="{{showFiles}}" hint-placeholder-val="{{false}}">
+<section class="panel" aria-label="Prawy panel — pliki" style="flex: 1 1 520px">
+<div class="tabs"><button class="tab on"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" aria-hidden="true" style="color: var(--directoryForeground)"><path d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h3.1l1.4 1.5h5c.83 0 1.5.67 1.5 1.5v6.5c0 .83-.67 1.5-1.5 1.5H3.25c-.83 0-1.5-.67-1.5-1.5z" fill="currentColor" fill-opacity=".22"></path></svg>Pobrane</button></div>
+<div class="path"><button class="drv" style="background: transparent; color: var(--headerForeground)">D:<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4l2.5 2.5L7.5 4"></path></svg></button><span>Pobrane</span><div style="flex: 1"></div><span style="font-size: 12px">1,21 TB wolne</span></div>
+<div style="height: 26px; display: flex; align-items: center; gap: 8px; padding: 0 13px 0 37px; background: var(--headerBackground); color: var(--headerForeground); border-bottom: 1px solid var(--panelBorder); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; box-sizing: border-box; flex: none"><span style="flex: 1">Nazwa</span><span style="width: 84px; text-align: right">Rozmiar</span><span style="width: 124px">Data</span></div>
+<div style="height: 606px; padding-top: 4px; box-sizing: border-box; overflow: hidden">
+<sc-for list="{{files}}" as="f" hint-placeholder-count="12">
+<div class="row" style="{{f.st}}">
+<sc-if value="{{f.dir}}" hint-placeholder-val="{{false}}"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h3.1l1.4 1.5h5c.83 0 1.5.67 1.5 1.5v6.5c0 .83-.67 1.5-1.5 1.5H3.25c-.83 0-1.5-.67-1.5-1.5z" fill="currentColor" fill-opacity=".22"></path></svg></sc-if>
+<sc-if value="{{f.file}}" hint-placeholder-val="{{true}}"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="M3.75 1.75h5.5l3 3v9.5h-8.5z"></path><path d="M9.25 1.75v3h3"></path></svg></sc-if>
+<span class="nm">{{f.n}}</span>
+<span class="meta" style="width: 84px; text-align: right; color: inherit; opacity: .75">{{f.s}}</span>
+<span class="meta" style="width: 124px; color: inherit; opacity: .75">{{f.d}}</span>
+</div>
+</sc-for>
+</div>
+<div class="status"><span class="ell">Przeciągnij załącznik tutaj lub naciśnij F5</span><div style="flex: 1"></div><span style="display: flex; align-items: center; gap: 6px; color: var(--success)"><span style="width: 6px; height: 6px; border-radius: 3px; background: currentColor"></span>Skopiowano Umowa_wdrozenie_v3.pdf</span></div>
+</section>
+</sc-if>
+</div>
+
+<!-- Pasek zadań w tle -->
+<div style="margin: 6px 6px 0; min-height: 34px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 0 6px 0 12px; background: var(--statusBackground); color: var(--statusForeground); border: 1px solid var(--panelBorder); border-radius: 6px; font-size: 12px; box-sizing: border-box">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--accent); flex: none"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"></path><path d="M13.5 2.5v2.75h-2.75"></path></svg>
+<span style="font-weight: 600; color: var(--windowForeground); white-space: nowrap">IMAP IDLE</span>
+<span style="white-space: nowrap">Praca · 3 foldery obserwowane</span>
+<span style="white-space: nowrap; color: var(--mutedForeground)">Kolejka wysyłania: pusta</span>
+<div style="flex: 1"></div>
+<button class="btn">Synchronizuj teraz</button>
+</div>
+
+<!-- Linia poleceń -->
+<div class="mono" style="margin-top: 6px; height: 30px; flex: none; display: flex; align-items: center; padding: 0 12px; background: var(--commandLineBackground); color: var(--commandLineForeground); border-top: 1px solid var(--panelBorder); border-bottom: 1px solid var(--panelBorder); font-size: 12.5px; box-sizing: border-box">
+<span style="color: var(--mutedForeground); white-space: nowrap">mail:Praca\Odebrane&gt;</span>
+<span style="padding-left: 8px; white-space: nowrap">from:zielinska has:attachment</span>
+<span style="width: 7px; height: 15px; margin-left: 1px; background: var(--accent)"></span>
+</div>
+
+<!-- Klawisze F -->
+<div style="height: 28px; flex: none; display: flex; gap: 2px; padding: 2px; box-sizing: border-box; overflow: hidden">
+<button class="fk"><b>1</b><span>Pomoc</span></button><button class="fk"><b>2</b><span>Układ</span></button><button class="fk"><b>3</b><span>Czytaj</span></button><button class="fk"><b>4</b><span>Odpowiedz</span></button><button class="fk"><b>5</b><span>Zapisz załącznik</span></button><button class="fk"><b>6</b><span>Przenieś</span></button><button class="fk"><b>7</b><span>Nowa wiadomość</span></button><button class="fk"><b>8</b><span>Usuń</span></button><button class="fk"><b>9</b><span>Menu</span></button><button class="fk"><b>10</b><span>Wyjście</span></button>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark","section":"Skórka"},"density":{"editor":"enum","options":["compact","default","comfortable"],"default":"default","section":"Skórka"},"layout":{"editor":"enum","options":["split","single"],"default":"split","section":"Poczta"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  state = { layout: null, sel: 'm1', opened: false, filter: 'all', view: 'html' };
+
+  renderVals() {
+    const DARK = {
+      windowBackground:'#0B0E13', panelBackground:'#12161D', panelBorder:'#262D38',
+      headerBackground:'#181D25', headerForeground:'#9AA6B6',
+      fileForeground:'#D5DBE3', directoryForeground:'#F3C969', hiddenForeground:'#7D8796',
+      executableForeground:'#6EDC9F', archiveForeground:'#D49BFF', networkForeground:'#6CC4FF',
+      selectedForeground:'#FF8F5E', cursorBackground:'#1F56C4', cursorForeground:'#FFFFFF',
+      inactiveCursorBackground:'#1C2430', statusBackground:'#181D25', statusForeground:'#9AA6B6',
+      commandLineBackground:'#0E1218', commandLineForeground:'#D5DBE3',
+      functionKeyNumberBackground:'#0E1218', functionKeyNumberForeground:'#7FA8FF',
+      functionKeyLabelBackground:'#181D25', functionKeyLabelForeground:'#C3CBD6',
+      accent:'#4C8DFF', progress:'#43C59E', error:'#FF6B6B',
+      windowForeground:'#C3CBD6', mutedForeground:'#7D8796', surface2:'#1A2029',
+      hoverBackground:'#1D2430', pressedBackground:'#252D3A', focusRing:'#4C8DFF',
+      activeHeaderBackground:'#16243A', activeHeaderForeground:'#DCE7FF',
+      selectedBackground:'#2A1D17', cursorSelectedForeground:'#FFD9C7', inactiveCursorBorder:'#5A6A82',
+      warning:'#F2B544', success:'#43C59E'
+    };
+    const LIGHT = {
+      windowBackground:'#E6E9EE', panelBackground:'#FFFFFF', panelBorder:'#D3D8DF',
+      headerBackground:'#F4F6F9', headerForeground:'#4E5968',
+      fileForeground:'#1D232B', directoryForeground:'#8A5A00', hiddenForeground:'#6B7480',
+      executableForeground:'#0B7A47', archiveForeground:'#8B3FC4', networkForeground:'#0B6FB8',
+      selectedForeground:'#C2410C', cursorBackground:'#1F56C4', cursorForeground:'#FFFFFF',
+      inactiveCursorBackground:'#EAF0F8', statusBackground:'#F4F6F9', statusForeground:'#4E5968',
+      commandLineBackground:'#FFFFFF', commandLineForeground:'#1D232B',
+      functionKeyNumberBackground:'#E6E9EE', functionKeyNumberForeground:'#1F56C4',
+      functionKeyLabelBackground:'#F4F6F9', functionKeyLabelForeground:'#2C3440',
+      accent:'#1F5BD6', progress:'#138A6A', error:'#C42B2B',
+      windowForeground:'#2C3440', mutedForeground:'#6B7480', surface2:'#FFFFFF',
+      hoverBackground:'#EEF2F7', pressedBackground:'#E1E7EF', focusRing:'#1F5BD6',
+      activeHeaderBackground:'#E4ECFB', activeHeaderForeground:'#163E8F',
+      selectedBackground:'#FDEEE6', cursorSelectedForeground:'#FFD9C7', inactiveCursorBorder:'#7A8DAB',
+      warning:'#9A5B00', success:'#138A6A'
+    };
+    const T = this.props.theme === 'light' ? LIGHT : DARK;
+    const vars = Object.keys(T).map(function (k) { return '--' + k + ':' + T[k]; }).join(';');
+    const dens = { compact:[48,12], 'default':[56,13], comfortable:[64,14] }[this.props.density || 'default'] || [56,13];
+    const rowH = dens[0], fs = dens[1];
+
+    const st = this.state || {};
+    const layout = st.layout || this.props.layout || 'split';
+    const split = layout === 'split';
+    const opened = !split && !!st.opened;
+    const filter = st.filter || 'all';
+    const view = st.view || 'html';
+    const self = this;
+
+    const avatarTokens = ['accent','networkForeground','executableForeground','archiveForeground','directoryForeground','selectedForeground'];
+    const M = [
+      { id:'m1', grp:0, from:'Marta Zielińska', email:'marta@biuro-zielinska.pl', to:'mnie, Tomasz Wrona', time:'20:12', full:'pon., 2 lis 2026, 20:12', unread:1, av:0,
+        subject:'Umowa na wdrożenie — wersja do podpisu', snippet:'Dzień dobry, w załączniku przesyłam poprawioną umowę razem z harmonogramem…',
+        att:[{n:'Umowa_wdrozenie_v3.pdf', s:'412 KB', k:'pdf'}, {n:'Harmonogram_Q1_2027.xlsx', s:'38 KB', k:'xls'}],
+        body:['Dzień dobry,','w załączniku przesyłam poprawioną umowę na wdrożenie razem z harmonogramem prac na pierwszy kwartał. Uwzględniłam wszystkie uwagi z czwartkowego spotkania — przede wszystkim zmieniony zakres modułu raportów i nowy termin odbioru.','Proszę o sprawdzenie paragrafu 4 (odbiory częściowe) i daty w harmonogramie. Jeśli wszystko się zgadza, wystarczy odesłać podpisany skan, a oryginały wyślemy kurierem w tym tygodniu.','Gdyby coś wymagało jeszcze rozmowy, mam wolne okno jutro między 10:00 a 12:00.'],
+        sig:'Pozdrawiam serdecznie\nMarta Zielińska\nBiuro Zielińska · obsługa projektów' },
+      { id:'m2', grp:0, from:'CI · commander4k', email:'ci@commander4k.dev', to:'mnie', time:'18:40', full:'pon., 2 lis 2026, 18:40', av:1,
+        subject:'Build #482 zakończony powodzeniem', snippet:'main · 7c1e9a2 · 214 testów, 0 błędów, czas 3 min 12 s',
+        att:[],
+        body:['Gałąź: main','Commit: 7c1e9a2 — „Skórki: kontrast nagłówków w jasnej wersji”','Testy: 214 zaliczonych, 0 nieudanych, 3 pominięte. Czas budowania: 3 min 12 s.','Artefakty: Commander4K-0.9.3-x64.zip, Commander4K-0.9.3-arm64.zip.'],
+        sig:'Wiadomość wygenerowana automatycznie.' },
+      { id:'m3', grp:0, from:'Tomasz Wrona', email:'tomasz.wrona@studio-wrona.pl', to:'mnie', time:'16:05', full:'pon., 2 lis 2026, 16:05', unread:1, flag:1, av:2,
+        subject:'Re: Skórki JSON — kontrast w jasnej wersji', snippet:'Sprawdziłem nowe tokeny, nagłówek kolumn wypada teraz poniżej 4,5:1…',
+        att:[{n:'kontrast-jasna.png', s:'184 KB', k:'img'}],
+        body:['Cześć,','sprawdziłem nowe tokeny. Nagłówek kolumn w jasnej skórce wypada poniżej 4,5:1 na tle headerBackground — zrzut w załączniku. Proponuję przyciemnić headerForeground o jeden stopień.','Reszta wygląda dobrze, szczególnie kursor nieaktywnego panelu — teraz od razu widać, który panel ma fokus.'],
+        sig:'T.' },
+      { id:'m4', grp:0, from:'Hosting VPS', email:'faktury@hosting-vps.pl', to:'mnie', time:'11:22', full:'pon., 2 lis 2026, 11:22', av:3,
+        subject:'Faktura 10/2026 za serwer', snippet:'Faktura za październik jest dostępna w panelu klienta i w załączniku.',
+        att:[{n:'FV_10_2026.pdf', s:'96 KB', k:'pdf'}],
+        body:['Dzień dobry,','faktura za październik 2026 jest dostępna w panelu klienta oraz w załączniku do tej wiadomości.','Płatność zostanie pobrana automatycznie zgodnie z ustawieniami konta.'],
+        sig:'Zespół obsługi klienta' },
+      { id:'m5', grp:1, from:'Anna Kowalczyk', email:'anna.k@expo-team.pl', to:'mnie', time:'21:48', full:'niedz., 1 lis 2026, 21:48', unread:1, av:4,
+        subject:'Zdjęcia ze stoiska', snippet:'Wybrałam najlepsze ujęcia z targów, reszta jest na dysku zespołu.',
+        att:[{n:'stoisko_01.jpg', s:'6,2 MB', k:'img'}, {n:'stoisko_02.jpg', s:'5,8 MB', k:'img'}, {n:'stoisko_03.jpg', s:'6,4 MB', k:'img'}],
+        body:['Hej,','wybrałam najlepsze ujęcia ze stoiska — trzy w załączniku, reszta jest na dysku zespołu w folderze „Targi 2026”.','Na drugim zdjęciu dobrze widać kod QR na ladzie, może się przydać do materiałów.'],
+        sig:'Ania' },
+      { id:'m6', grp:1, from:'Piotr Nowicki', email:'piotr@nowicki.dev', to:'mnie', time:'14:30', full:'niedz., 1 lis 2026, 14:30', av:5,
+        subject:'Pytanie o API wtyczek', snippet:'Czy wtyczka panelu może dostać zdarzenie zmiany kursora w drugim panelu?',
+        att:[],
+        body:['Cześć,','piszę wtyczkę do podglądu logów i potrzebuję zdarzenia zmiany kursora w drugim panelu. W dokumentacji SDK widzę tylko OnCursorChanged dla panelu, w którym wtyczka jest osadzona.','Czy jest na to sposób, czy lepiej zgłosić to jako propozycję do API?'],
+        sig:'Piotr' },
+      { id:'m7', grp:2, from:'Kasia Lis', email:'k.lis@biuro-zielinska.pl', to:'mnie, Marta Zielińska', time:'pt 30.10', full:'pt, 30 paź 2026, 09:14', av:0,
+        subject:'Spotkanie w czwartek?', snippet:'Czy pasuje Ci czwartek o 14:00? Sala na drugim piętrze jest wolna.',
+        att:[],
+        body:['Cześć,','czy pasuje Ci czwartek o 14:00? Sala na drugim piętrze jest wolna, a Marta będzie już po rozmowie z działem prawnym.'],
+        sig:'Kasia' },
+      { id:'m8', grp:2, from:'Zespół Commander4K', email:'team@commander4k.dev', to:'zespół', time:'czw 29.10', full:'czw, 29 paź 2026, 17:30', av:1,
+        subject:'Notatki z retro — sprint 21', snippet:'Co poszło dobrze: skórki JSON, tryb panelu. Do poprawy: testy UI na ARM64.',
+        att:[{n:'retro-sprint-21.md', s:'4,1 KB', k:'md'}],
+        body:['Co poszło dobrze: skórki JSON wczytywane bez restartu, tryb panelu dla wtyczek, szybki podgląd Markdown.','Do poprawy: testy UI na ARM64 są niestabilne, kolejka kopiowania nie wznawia się po uśpieniu.','Pełne notatki w załączniku.'],
+        sig:'' }
+    ];
+    const GROUPS = ['Dziś', 'Wczoraj', 'Wcześniej'];
+    const pass = function (m) {
+      if (filter === 'unread') return !!m.unread;
+      if (filter === 'att') return m.att.length > 0;
+      if (filter === 'flag') return !!m.flag;
+      return true;
+    };
+    const unreadCount = M.filter(function (m) { return m.unread; }).length;
+    const sel = st.sel || 'm1';
+
+    const items = [];
+    let shown = 0;
+    GROUPS.forEach(function (g, gi) {
+      const ms = M.filter(function (m) { return m.grp === gi && pass(m); });
+      if (!ms.length) return;
+      items.push({ isGroup: true, isMail: false, label: g, count: String(ms.length) });
+      ms.forEach(function (m) {
+        shown++;
+        const cur = m.id === sel;
+        const fg = cur ? 'var(--cursorForeground)' : 'var(--fileForeground)';
+        const bg = cur ? 'var(--cursorBackground)' : 'transparent';
+        const metaColor = cur ? 'rgba(255,255,255,.82)' : 'var(--mutedForeground)';
+        items.push({
+          isGroup: false, isMail: true, cur: cur ? 'true' : 'false',
+          from: m.from, subject: m.subject, snippet: m.snippet, time: m.time,
+          unread: !!m.unread, flag: !!m.flag, hasAtt: m.att.length > 0,
+          fromW: m.unread ? 700 : 500, subjW: m.unread ? 600 : 400,
+          metaColor: metaColor, flagColor: cur ? '#FFFFFF' : 'var(--selectedForeground)',
+          fs2: (fs - 0.5) + 'px',
+          dotStyle: 'position:absolute;left:9px;top:' + Math.round(rowH / 2 - 9) + 'px;width:7px;height:7px;border-radius:4px;background:' + (cur ? '#FFFFFF' : 'var(--accent)'),
+          rowStyle: 'display:flex;flex-direction:column;justify-content:center;align-items:stretch;gap:3px;width:calc(100% - 8px);height:' + rowH + 'px;margin:0 4px 1px;padding:0 12px 0 24px;border:0;border-radius:4px;position:relative;background:' + bg + ';color:' + fg + ';font:inherit;font-size:' + fs + 'px;text-align:left;box-sizing:border-box',
+          pick: function () { self.setState({ sel: m.id, opened: true }); }
+        });
+      });
+    });
+
+    const m = M.find(function (x) { return x.id === sel; }) || M[0];
+    const idx = M.indexOf(m);
+    const docColor = { pdf:'var(--error)', xls:'var(--executableForeground)', md:'var(--fileForeground)' };
+    const att = m.att.map(function (a) {
+      return { n: a.n, s: a.s, img: a.k === 'img', doc: a.k !== 'img', color: docColor[a.k] || 'var(--fileForeground)' };
+    });
+    const first = m.from.split(' ')[0];
+    const cur = {
+      subject: m.subject, from: m.from, email: m.email, to: m.to, full: m.full,
+      init: m.from.split(/[\s·]+/).filter(Boolean).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase(),
+      avStyle: 'width:36px;height:36px;flex:none;border-radius:18px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;background:var(--' + avatarTokens[m.av] + ');color:var(--panelBackground)',
+      hasAtt: att.length > 0, att: att, attCount: String(att.length),
+      attHint: split ? 'F5 zapisuje na dysk' : 'F5 kopiuje do prawego panelu',
+      body: m.body, sig: m.sig,
+      plain: m.body.join('\n\n') + (m.sig ? '\n\n-- \n' + m.sig : ''),
+      src: [
+        'Return-Path: <' + m.email + '>',
+        'Received: from mx.' + m.email.split('@')[1] + ' by imap.praca (Dovecot) with LMTP; ' + m.full,
+        'DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=' + m.email.split('@')[1] + '; s=mail;',
+        'Authentication-Results: imap.praca; dkim=pass; spf=pass; dmarc=pass',
+        'From: ' + m.from + ' <' + m.email + '>',
+        'To: ' + m.to,
+        'Subject: ' + m.subject,
+        'Date: ' + m.full,
+        'Message-ID: <' + m.id + '.20261102@' + m.email.split('@')[1] + '>',
+        'MIME-Version: 1.0',
+        'Content-Type: ' + (att.length ? 'multipart/mixed; boundary="=_c4k"' : 'text/plain; charset=utf-8')
+      ].join('\n'),
+      qrPh: 'Odpowiedz: ' + first + '…',
+      statusL: (att.length ? att.length + ' zał. · ' : '') + 'UTF-8 · ' + (m.unread ? 'oznaczono jako przeczytaną' : 'przeczytana'),
+      pos: 'Wiadomość ' + (idx + 1) + ' z ' + M.length
+    };
+
+    const L = [{ id:'split', label:'Lista + podgląd' }, { id:'single', label:'Jeden panel' }];
+    const layouts = L.map(function (l) {
+      const on = l.id === layout;
+      return { label: l.label, cls: on ? 'on' : '', on: on ? 'true' : 'false', split: l.id === 'split', single: l.id === 'single',
+        pick: function () { self.setState({ layout: l.id, opened: false }); } };
+    });
+    const F = [{ id:'all', label:'Wszystkie' }, { id:'unread', label:'Nieprzeczytane' }, { id:'att', label:'Z załącznikami' }, { id:'flag', label:'Oflagowane' }];
+    const filters = F.map(function (f) {
+      const on = f.id === filter;
+      return { label: f.label, cls: on ? 'on' : '', on: on ? 'true' : 'false', pick: function () { self.setState({ filter: f.id }); } };
+    });
+    const V = [{ id:'html', label:'HTML' }, { id:'text', label:'Tekst' }, { id:'src', label:'Źródło' }];
+    const views = V.map(function (v) {
+      const on = v.id === view;
+      return { label: v.label, cls: on ? 'on' : '', on: on ? 'true' : 'false', pick: function () { self.setState({ view: v.id }); } };
+    });
+
+    const fRows = [
+      { n:'..', s:'<W GÓRĘ>', d:'2026-10-29 08:00', dir:1 },
+      { n:'Instalatory', s:'<KATALOG>', d:'2026-10-18 21:04', dir:1 },
+      { n:'Sterowniki', s:'<KATALOG>', d:'2026-08-02 15:47', dir:1 },
+      { n:'Umowy', s:'<KATALOG>', d:'2026-10-30 12:10', dir:1 },
+      { n:'7z2600-x64.exe', s:'1,6 MB', d:'2026-10-01 18:12' },
+      { n:'cv_2026.docx', s:'86 KB', d:'2026-09-09 12:30' },
+      { n:'IMG_20261012_183044.jpg', s:'6,4 MB', d:'2026-10-12 18:30' },
+      { n:'notatki.txt', s:'2,3 KB', d:'2026-10-29 07:55' },
+      { n:'PowerToysSetup-0.95.0-x64.msi', s:'312 MB', d:'2026-10-20 16:03' },
+      { n:'Umowa_wdrozenie_v3.pdf', s:'412 KB', d:'2026-11-02 20:24', nw:1 },
+      { n:'Ubuntu-26.04-desktop-amd64.iso', s:'5,9 GB', d:'2026-10-23 20:10' }
+    ];
+    const files = fRows.map(function (f) {
+      let s = 'height:22px;';
+      if (f.dir) s += 'color:var(--directoryForeground);font-weight:600;';
+      if (f.nw) s += 'background:var(--inactiveCursorBackground);border-color:var(--inactiveCursorBorder);color:var(--success);font-weight:600;';
+      return { n: f.n, s: f.s, d: f.d, dir: !!f.dir, file: !f.dir, st: s };
+    });
+
+    const showList = split || !opened;
+    const showReader = split || opened;
+    return {
+      vars: vars,
+      layouts: layouts, filters: filters, views: views,
+      items: items, empty: shown === 0, unreadCount: String(unreadCount),
+      listStatus: M.length + ' wiadomości, ' + unreadCount + ' nieprzeczytane' + (filter !== 'all' ? ' · filtr: ' + shown : ''),
+      showList: showList, showReader: showReader, showFiles: !split, showBack: !split && opened,
+      listFlex: split ? 'flex: 1 1 440px' : 'flex: 1 1 520px',
+      readerFlex: split ? 'flex: 1.55 1 620px' : 'flex: 1 1 520px',
+      listPathCls: 'path on',
+      readerPathCls: opened ? 'path on' : 'path',
+      viewHtml: view === 'html', viewText: view === 'text', viewSrc: view === 'src',
+      back: function () { self.setState({ opened: false }); },
+      cur: cur, files: files
+    };
+  }
+}
+</script>
+</body>
+</html>

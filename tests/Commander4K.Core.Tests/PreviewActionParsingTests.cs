@@ -27,6 +27,48 @@ public sealed class PreviewActionParsingTests
     }
 
     [Fact]
+    public async Task List_keeps_rows_in_its_folder_with_tabs_filters_and_styled_actions()
+    {
+        var result = await ParseAsync("""
+            { "kind": "list", "folder": "C:\\mail\\Odebrane",
+              "items": [
+                { "path": "C:\\mail\\Odebrane\\a.eml", "title": "Anna", "subtitle": "Umowa", "meta": "20:12", "group": "Dziś", "tags": ["unread", "flagged"] },
+                { "path": "C:\\other\\b.eml", "title": "spoza folderu" },
+                { "path": "C:\\mail\\Odebrane\\sub\\c.eml", "title": "w podfolderze" } ],
+              "tabs": [ { "label": "Odebrane", "target": "c4k:plugin/folder?name=Odebrane", "count": 3, "selected": true, "icon": "inbox" }, { "label": "bez celu" } ],
+              "filters": [ { "tag": "", "label": "Wszystkie" }, { "tag": "unread", "label": "Nieprzeczytane" } ],
+              "search": "Szukaj", "status": "1 wiadomość", "statusRight": "zsynchronizowano 20:21",
+              "actions": [ { "label": "Sprawdź", "target": "c4k:plugin/check", "icon": "refresh", "style": "icon" } ] }
+            """);
+
+        var actions = Assert.IsType<ActionsPreview>(result);
+        Assert.Equal(new PreviewAction("Sprawdź", "c4k:plugin/check", null, "refresh", "icon"), Assert.Single(actions.Actions));
+        var list = Assert.IsType<ListPreview>(actions.Content);
+        var row = Assert.Single(list.Items);
+        Assert.Equal(("Anna", "Umowa", "20:12", "Dziś"), (row.Title, row.Subtitle, row.Meta, row.Group));
+        Assert.Equal(["unread", "flagged"], row.Tags!);
+        Assert.Equal(new ListPreviewTab("Odebrane", "c4k:plugin/folder?name=Odebrane", 3, true, "inbox"), Assert.Single(list.Tabs!));
+        Assert.Equal(["", "unread"], list.Filters!.Select(f => f.Tag));
+        Assert.Equal(("Szukaj", "1 wiadomość", "zsynchronizowano 20:21"), (list.SearchPlaceholder, list.Status, list.StatusRight));
+    }
+
+    [Fact]
+    public async Task Mail_reads_sender_attachments_and_quick_reply()
+    {
+        var result = await ParseAsync("""
+            { "kind": "mail", "subject": "Umowa", "from": "Marta Zielińska", "fromAddress": "marta@example.pl", "to": "mnie",
+              "date": "pon., 2 lis 2026, 20:12", "body": "Dzień dobry", "source": "From: marta",
+              "attachments": [ { "name": "umowa.pdf", "size": "412 KB", "target": "c4k:plugin/saveAttachment?i=0" }, { "size": "bez nazwy" } ],
+              "quickReply": { "target": "c4k:plugin/quickReply", "placeholder": "Odpowiedz: Marta…", "from": "Praca" } }
+            """);
+
+        var mail = Assert.IsType<MailPreview>(result);
+        Assert.Equal(("Umowa", "Marta Zielińska", "marta@example.pl", "Dzień dobry", "From: marta"), (mail.Subject, mail.From, mail.FromAddress, mail.Body, mail.Source));
+        Assert.Equal(new MailPreviewAttachment("umowa.pdf", "412 KB", "c4k:plugin/saveAttachment?i=0"), Assert.Single(mail.Attachments));
+        Assert.Equal(("c4k:plugin/quickReply", "Odpowiedz: Marta…", "Praca"), (mail.QuickReplyTarget, mail.QuickReplyPlaceholder, mail.QuickReplyFrom));
+    }
+
+    [Fact]
     public async Task Actions_without_target_are_dropped_and_an_empty_list_keeps_the_plain_preview()
     {
         var result = await ParseAsync("""{"kind":"text","content":"t","actions":[{"label":"Nic"}]}""");
