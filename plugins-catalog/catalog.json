@@ -372,7 +372,7 @@
     {
       "id": "official.mail",
       "name": "Poczta",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "author": "4Kprojekt",
       "runtime": "powershell",
       "description": {
@@ -404,7 +404,7 @@
         },
         {
           "path": "plugin.json",
-          "sha256": "1a68ba27773b133090188c6c47a639e9037c1bde201a52d1f9f16abc3243afca"
+          "sha256": "f4e76b9983868e6466cb7c59e26b19dddac80b3058a5cfb30608846a661c07d6"
         },
         {
           "path": "sync.ps1",
