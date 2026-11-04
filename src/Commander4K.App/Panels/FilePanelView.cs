@@ -233,6 +233,11 @@ public sealed class FilePanelView : ViewBase
                     RebuildTabs();
                 }
             };
+
+            if (TabsKey() != _tabsKey)
+            {
+                RebuildTabs();
+            }
         }
     }
 
@@ -780,6 +785,7 @@ public sealed class FilePanelView : ViewBase
     private string TabTitle(PanelTab tab) =>
         tab.FolderViewOrigin is { Length: > 0 } origin ? origin
         : _pluginTabModes.TryGetValue(tab, out var view) ? view.Title
+        : tab == ActiveTab && Mode is { } activeMode && activeMode is ITitledModeView ? activeMode.Title
         : _pluginTabIds.TryGetValue(tab, out var pluginId) ? _host.FindPanel(pluginId)?.Title ?? tab.Title
         : tab.Title;
 

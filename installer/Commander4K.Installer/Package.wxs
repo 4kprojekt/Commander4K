@@ -1,4 +1,5 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <!-- UpgradeCode must never change: it is how a newer MSI finds and replaces an installed version. -->
   <Package Name="Commander4K"
            Manufacturer="4Kprojekt"
@@ -15,6 +16,8 @@
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/4kprojekt/Commander4K" />
     <Property Id="ARPHELPLINK" Value="https://github.com/4kprojekt/Commander4K/issues" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Commander4K" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="Commander4K" />
@@ -22,7 +25,7 @@
 
     <Feature Id="Main" Title="Commander4K">
       <Component Directory="INSTALLFOLDER">
-        <File Source="$(var.PublishDir)Commander4K.exe" KeyPath="yes" />
+        <File Id="Commander4KExe" Source="$(var.PublishDir)Commander4K.exe" KeyPath="yes" />
       </Component>
       <!-- Tells the in-app updater to update through a new MSI instead of replacing the exe in Program Files. -->
       <Component Directory="INSTALLFOLDER">
@@ -31,6 +34,9 @@
       <Component Directory="INSTALLFOLDER">
         <File Source="$(var.RepoRoot)LICENSE" Name="LICENSE.txt" />
       </Component>
+    </Feature>
+
+    <Feature Id="StartMenu" Title="Start Menu shortcut" Description="Add a Commander4K shortcut to the Start menu." Level="1">
       <Component Directory="INSTALLFOLDER" Id="StartMenuShortcut">
         <Shortcut Name="Commander4K"
                   Description="Dual-pane file manager"
@@ -41,5 +47,22 @@
         <RegistryValue Root="HKLM" Key="Software\4Kprojekt\Commander4K" Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
       </Component>
     </Feature>
+
+    <CustomAction Id="LaunchApplication"
+                  FileRef="Commander4KExe"
+                  ExeCommand=""
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="asyncNoWait" />
+
+    <ui:WixUI Id="WixUI_FeatureTree" />
+    <UI>
+      <Publish Dialog="ExitDialog"
+               Control="Finish"
+               Event="DoAction"
+               Value="LaunchApplication"
+               Order="1"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
   </Package>
 </Wix>

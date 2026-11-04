@@ -242,7 +242,7 @@ Details, including the full plugin flow: [Writing plugins with Claude Code over 
 
 From [Releases](https://github.com/4kprojekt/Commander4K/releases), pick your architecture: `win-x64` for Intel/AMD, `win-arm64` for Snapdragon and other ARM64 PCs. Then choose a package:
 
-- **Installer** (`Commander4K-<arch>.msi`): installs into Program Files and adds a Start menu shortcut. Settings go to `%AppData%\Commander4K`. Updates download and run the next MSI.
+- **Installer** (`Commander4K-<arch>.msi`): installs into Program Files, lets you choose whether to add a Start menu shortcut, and offers to launch Commander4K when installation finishes. Settings go to `%AppData%\Commander4K`. Updates download and run the next MSI.
 - **Portable** (`Commander4K-<arch>.zip`): unzip anywhere and run `Commander4K.exe`. You don't need to install anything else. Settings live in a `config` folder next to the exe, and updates replace the exe in place.
 
 Every download is listed in `SHA256SUMS.txt`, and the built-in updater refuses files that don't match.

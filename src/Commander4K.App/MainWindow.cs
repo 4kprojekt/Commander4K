@@ -864,6 +864,15 @@ public sealed class MainWindow : Window
         return browser;
     }
 
+    private BrowserPanelView OpenBrowserInNewTab(string? url, FilePanelView? target = null)
+    {
+        target ??= ModeTarget().Target;
+        var browser = new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), url, _skins!.Current, Notify, RunShortcut);
+        target.AddFolderViewTab(target.ActiveTab.Path, "browser:" + Guid.NewGuid().ToString("N"), browser);
+        SetActive(target);
+        return browser;
+    }
+
     /// <summary><see cref="IPluginHost.SearchWebAsync"/>: an engine id, otherwise (also the former "assistant") the user's search engine.</summary>
     private Task SearchWebAsync(string query, string? engine)
     {
@@ -889,7 +898,7 @@ public sealed class MainWindow : Window
             InstallCatalogPreview = InstallFromCatalogAsync,
             OpenPluginCatalog = () =>
             {
-                OpenBrowser("https://github.com/4kprojekt/Commander4K/tree/main/plugins-catalog");
+                OpenBrowserInNewTab("https://github.com/4kprojekt/Commander4K/tree/main/plugins-catalog");
                 return Task.CompletedTask;
             },
             ConfigureFolderView = folderPath => ConfigureFolderViewAsync(folderPath, source),
