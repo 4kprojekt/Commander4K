@@ -32,7 +32,8 @@ public sealed record MailFolderInfo(string ServerName, string LocalName, char Se
 
 public sealed record MailSyncRequest(string Folder, uint UidValidity, uint LastUid, ulong ModSeq, DateTimeOffset Since, IReadOnlyList<uint> KnownUids, int? Limit = null);
 
-public sealed record MailHeader(uint Uid, DateTimeOffset Date, string From, string Subject, MailFlags Flags, long Size, string FileName);
+/// <param name="HasAttachments">The message carries files (attachments or named inline parts), from its body structure.</param>
+public sealed record MailHeader(uint Uid, DateTimeOffset Date, string From, string Subject, MailFlags Flags, long Size, string FileName, bool HasAttachments = false);
 
 public sealed record MailSyncResult(
     uint UidValidity,

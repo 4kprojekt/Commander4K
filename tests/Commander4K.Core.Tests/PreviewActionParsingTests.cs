@@ -34,7 +34,10 @@ public sealed class PreviewActionParsingTests
               "items": [
                 { "path": "C:\\mail\\Odebrane\\a.eml", "title": "Anna", "subtitle": "Umowa", "meta": "20:12", "group": "Dziś", "tags": ["unread", "flagged"] },
                 { "path": "C:\\other\\b.eml", "title": "spoza folderu" },
-                { "path": "C:\\mail\\Odebrane\\sub\\c.eml", "title": "w podfolderze" } ],
+                { "path": "C:\\mail\\Odebrane\\2026\\11\\c.eml", "title": "w podfolderze" },
+                { "path": "C:\\mail\\Odebrane\\..\\x.eml", "title": "wychodzi z folderu" },
+                { "path": "C:\\mail\\Odebrane-inne\\d.eml", "title": "sąsiedni folder" } ],
+              "more": { "label": "Wczytaj starsze", "target": "c4k:plugin/folder?limit=400" }, "searchTarget": "c4k:plugin/search", "query": "umowa",
               "tabs": [ { "label": "Odebrane", "target": "c4k:plugin/folder?name=Odebrane", "count": 3, "selected": true, "icon": "inbox" }, { "label": "bez celu" } ],
               "filters": [ { "tag": "", "label": "Wszystkie" }, { "tag": "unread", "label": "Nieprzeczytane" } ],
               "search": "Szukaj", "status": "1 wiadomość", "statusRight": "zsynchronizowano 20:21",
@@ -44,8 +47,11 @@ public sealed class PreviewActionParsingTests
         var actions = Assert.IsType<ActionsPreview>(result);
         Assert.Equal(new PreviewAction("Sprawdź", "c4k:plugin/check", null, "refresh", "icon"), Assert.Single(actions.Actions));
         var list = Assert.IsType<ListPreview>(actions.Content);
-        var row = Assert.Single(list.Items);
+        Assert.Equal(["Anna", "w podfolderze"], list.Items.Select(i => i.Title));
+        var row = list.Items[0];
         Assert.Equal(("Anna", "Umowa", "20:12", "Dziś"), (row.Title, row.Subtitle, row.Meta, row.Group));
+        Assert.Equal(new PreviewAction("Wczytaj starsze", "c4k:plugin/folder?limit=400"), list.More);
+        Assert.Equal(("c4k:plugin/search", "umowa"), (list.SearchTarget, list.Query));
         Assert.Equal(["unread", "flagged"], row.Tags!);
         Assert.Equal(new ListPreviewTab("Odebrane", "c4k:plugin/folder?name=Odebrane", 3, true, "inbox"), Assert.Single(list.Tabs!));
         Assert.Equal(["", "unread"], list.Filters!.Select(f => f.Tag));

@@ -12,6 +12,8 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +27,42 @@ jobs:
       - name: Publish win-x64 and win-arm64
         shell: pwsh
         run: ./build-release.ps1 -Version "${{ github.ref_name }}" -Package
+
+      # Code signing through SignPath (free certificate for open source, https://signpath.org).
+      # Skipped until the secret SIGNPATH_API_TOKEN and the variables SIGNPATH_ORGANIZATION_ID / SIGNPATH_PROJECT_SLUG exist;
+      # the artifact configuration is .signpath/artifact-configurations/default.xml.
+      - name: Upload unsigned packages
+        id: unsigned
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned
+          path: |
+            dist/release/*.zip
+            dist/release/*.msi
+
+      - name: Sign with SignPath
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY || 'release-signing' }}
+          artifact-configuration-slug: default
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: dist/release
+
+      # Signing changes the files, so the checksums the updater verifies are computed again.
+      - name: Recompute SHA256SUMS
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/release -Include 'Commander4K-*.zip', 'Commander4K-*.msi' -Recurse | Sort-Object Name | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content dist/release/SHA256SUMS.txt -Encoding ascii
 
       - name: Create GitHub release
         shell: pwsh

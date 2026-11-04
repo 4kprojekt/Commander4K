@@ -194,11 +194,6 @@ public sealed class FileViewportCanvas : Control
         {
             DrawCentered(context, b, rows, error, b.Error);
         }
-
-        if (tab.IsLoading)
-        {
-            DrawLoadingBar(context, b, layout, tab);
-        }
     }
 
     protected override Size MeasureOverride(Size availableSize) =>
@@ -458,7 +453,7 @@ public sealed class FileViewportCanvas : Control
         var inner = new Rect(Bounds.Size).Deflate(inset);
         var headerHeight = !b.Skin.Chrome.ShowColumnHeaders ? 0 : b.IsModern ? Math.Round(b.FontSize * 2) : b.RowHeight;
         var header = new Rect(inner.X, inner.Y, inner.Width, headerHeight);
-        var footer = _tab is { IsLoading: true } ? b.RowHeight : 0;
+        var footer = 0;
         var top = b.IsModern ? 4 : 0; // Design system: 4 px above the first row.
         var rows = new Rect(inner.X, inner.Y + headerHeight + top, inner.Width, Math.Max(0, inner.Height - headerHeight - footer - top));
 
@@ -942,17 +937,6 @@ public sealed class FileViewportCanvas : Control
             var width = rows.Width * (0.35 + (0.08 * ((i * 7) % 5)));
             context.FillRectangle(b.Skeleton, new Rect(rows.X + 8, y, width, b.RowHeight * 0.4), 3);
         }
-    }
-
-    private void DrawLoadingBar(DrawingContext context, SkinBrushes b, CanvasLayout layout, PanelTab tab)
-    {
-        var bar = new Rect(layout.Inner.X, layout.RowsArea.Bottom, layout.Inner.Width, b.RowHeight);
-        context.FillRectangle(b.StatusBackground, bar);
-        var count = Math.Max(0, tab.Entries.Count - (tab.Entries.Count > 0 && tab.Entries[0].Kind == VfsEntryKind.ParentLink ? 1 : 0));
-        var dot = DotSize(b);
-        WaveDots.Draw(context, b.StatusForeground, bar.X + 10, bar.Y + (b.RowHeight / 2), dot);
-        var textX = bar.X + 10 + WaveDots.WidthFor(dot) + 10;
-        DrawText(context, b, Loc.T("Wczytywanie… {0:N0}   [Esc – Anuluj]", count), b.StatusForeground, textX, bar.Y, bar.Right - textX - 4, b.Typeface);
     }
 
     private static void DrawScrollbar(DrawingContext context, SkinBrushes b, Rect rows, PanelTab tab, int visible)

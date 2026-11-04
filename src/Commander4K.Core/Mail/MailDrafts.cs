@@ -103,7 +103,7 @@ public static partial class MailDrafts
             {
                 using var stream = openAttachment(emlPath);
                 var source = MimeMessage.Load(stream);
-                var entity = source.Attachments.ElementAtOrDefault(index)
+                var entity = AttachmentsOf(source).ElementAtOrDefault(index)
                     ?? throw new InvalidOperationException($"Attachment {index} not found.");
                 body.Attachments.Add(entity);
             }
@@ -126,10 +126,12 @@ public static partial class MailDrafts
             text = HtmlText.ToText(message.HtmlBody);
         }
 
-        var attachments = message.Attachments.Select((entity, i) => entity switch
+        var attachments = AttachmentsOf(message).Select((entity, i) => entity switch
         {
-            MimePart part => new MailAttachment(i, part.FileName ?? part.ContentType.Name ?? "attachment", part.ContentType.MimeType, part.Content?.Stream is { CanSeek: true } s ? s.Length : 0),
-            _ => new MailAttachment(i, entity.ContentDisposition?.FileName ?? entity.ContentType.Name ?? "attachment", entity.ContentType.MimeType, 0),
+            MimePart part => new MailAttachment(i, part.FileName ?? part.ContentType.Name ?? Fallback(part, i), part.ContentType.MimeType, DecodedLength(part)),
+            MessagePart attached => new MailAttachment(i, attached.ContentDisposition?.FileName ?? attached.ContentType.Name ?? (attached.Message?.Subject is { Length: > 0 } s ? s + ".eml" : Fallback(attached, i)),
+                attached.ContentType.MimeType, MessageLength(attached)),
+            _ => new MailAttachment(i, entity.ContentDisposition?.FileName ?? entity.ContentType.Name ?? Fallback(entity, i), entity.ContentType.MimeType, 0),
         }).ToList();
 
         return new MailMessageView(
@@ -142,6 +144,56 @@ public static partial class MailDrafts
             message.References.ToList(),
             text ?? "",
             attachments);
+    }
+
+    /// <summary>
+    /// The files of a message, in the order every index refers to (view, save, forward): parts marked as attachments,
+    /// and also parts sent "inline" with a file name or a Content-ID (Apple Mail, Outlook, pictures in HTML), and
+    /// attached messages. The text and HTML bodies themselves are not files.
+    /// </summary>
+    public static IReadOnlyList<MimeEntity> AttachmentsOf(MimeMessage message)
+    {
+        var text = message.BodyParts.OfType<TextPart>().FirstOrDefault(p => p.IsPlain && !p.IsAttachment && p.FileName is null);
+        var html = message.BodyParts.OfType<TextPart>().FirstOrDefault(p => p.IsHtml && !p.IsAttachment && p.FileName is null);
+        return [.. message.BodyParts.Where(entity => entity switch
+        {
+            MessagePart => true,
+            MimePart part when ReferenceEquals(part, text) || ReferenceEquals(part, html) => false,
+            MimePart part => part.IsAttachment || part.FileName is not null || (part is not TextPart && part.ContentId is not null),
+            _ => false,
+        })];
+    }
+
+    /// <summary>The size of the file itself, not of its base64 (about a third bigger).</summary>
+    private static long DecodedLength(MimePart part)
+    {
+        if (part.Content is null)
+        {
+            return 0;
+        }
+
+        using var measure = new MimeKit.IO.MeasuringStream();
+        part.Content.DecodeTo(measure);
+        return measure.Length;
+    }
+
+    private static long MessageLength(MessagePart part)
+    {
+        if (part.Message is null)
+        {
+            return 0;
+        }
+
+        using var measure = new MimeKit.IO.MeasuringStream();
+        part.Message.WriteTo(measure);
+        return measure.Length;
+    }
+
+    /// <summary>A name for a file sent without one (a picture in HTML): its type's extension.</summary>
+    private static string Fallback(MimeEntity entity, int index)
+    {
+        var extension = MimeTypes.TryGetExtension(entity.ContentType.MimeType, out var known) ? known : ".bin";
+        return string.Create(CultureInfo.InvariantCulture, $"{Loc.T("załącznik")} {index + 1}{extension}");
     }
 
     private static string Quote(MailMessageView view)

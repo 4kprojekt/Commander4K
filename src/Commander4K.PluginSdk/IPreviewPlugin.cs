@@ -65,11 +65,17 @@ public sealed record ListPreviewTab(string Label, string Target, int? Count = nu
 public sealed record ListPreviewFilter(string Tag, string Label);
 
 /// <summary>
-/// The files of <paramref name="Folder"/> as a list (messages, tickets…) with the preview of the selected one: under the
-/// list, or in the opposite panel when that panel shows the quick view. Selecting a row moves the panel's cursor onto the
-/// file, so the preview is the one any plugin gives that file.
+/// The files under <paramref name="Folder"/> (in it or in its subfolders) as a list (messages, tickets…) with the preview
+/// of the selected one: under the list, or in the opposite panel when that panel shows the quick view. Selecting a row
+/// moves the panel to the file's folder and its cursor onto the file, so the preview is the one any plugin gives that file.
 /// </summary>
 /// <param name="Selected">Path of the row selected first; otherwise the panel's cursor, otherwise the first row.</param>
+/// <param name="More">A button under the last row loading more rows (an older page); the plugin answers with the longer list.</param>
+/// <param name="SearchTarget">
+/// When set, the search field asks the plugin (so it can look beyond the rows it sent): a pause in typing runs this
+/// action with the form value <c>query</c>, and the answer is the list of matches with <paramref name="Query"/> set.
+/// </param>
+/// <param name="Query">The search the rows answer (an echo of <c>query</c>); the field keeps showing it.</param>
 public sealed record ListPreview(
     string Folder,
     IReadOnlyList<ListPreviewItem> Items,
@@ -81,7 +87,10 @@ public sealed record ListPreview(
     string? StatusRight = null,
     string? Selected = null,
     string? Empty = null,
-    string? Badge = null) : PreviewContent;
+    string? Badge = null,
+    PreviewAction? More = null,
+    string? SearchTarget = null,
+    string? Query = null) : PreviewContent;
 
 /// <param name="Target">What a click does (a <c>c4k:plugin/…</c> action saving it, a path…), or <c>null</c>.</param>
 public sealed record MailPreviewAttachment(string Name, string? Size = null, string? Target = null);

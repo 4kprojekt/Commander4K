@@ -6,7 +6,10 @@
 #                                      "Sprawdź teraz"), since ("<n>d|m|y" or "YYYY-MM-DD"; empty = 3 months)
 #   <account>/.mail/state.json         sync state (see New-MailState)
 #   <account>/.mail/lock               { machine, lastTick }: one computer per account folder
-#   <account>/<local folder>/<"● " if unread><yyyy-MM-dd HHmm sender - subject [uid N]>.eml
+#   <account>/<local folder>/<yyyy>/<MM>/<"● " if unread><yyyy-MM-dd HHmm sender - subject [uid N]>.eml
+#                                      (month folders keep every folder small; files of the flat layout before 1.2 are
+#                                      moved into them by the sync, as far as each tick's time allows. Local drafts
+#                                      without "[uid N]" stay directly in the drafts folder.)
 #
 # One tick does at most 50 fetches or 15 s of work and then answers { more = $true }; the next tick continues from
 # state.json, which is written after every folder. Sync never changes the server except for drafts (APPEND).
@@ -144,6 +147,7 @@ function New-MailState {
         authRequired = $false
         progress = $null
         flagged = [System.Collections.Generic.List[string]]::new()
+        attachments = [System.Collections.Generic.List[string]]::new()
         drafts = @{}
         retired = [System.Collections.Generic.List[string]]::new()
     }
@@ -195,6 +199,7 @@ function Read-MailState([string] $Folder) {
     $state.authRequired = [bool] $stored['authRequired']
     $state.progress = $stored['progress']
     foreach ($item in @($stored['flagged'])) { if ($item) { $state.flagged.Add([string] $item) } }
+    foreach ($item in @($stored['attachments'])) { if ($item) { $state.attachments.Add([string] $item) } }
     foreach ($item in @($stored['retired'])) { if ($item) { $state.retired.Add([string] $item) } }
     if ($stored['drafts'] -is [hashtable]) {
         foreach ($name in $stored['drafts'].Keys) {
@@ -217,6 +222,9 @@ function Read-MailState([string] $Folder) {
                 modSeq = [long] $entry['modSeq']
                 known = $known
                 backfill = [bool] $entry['backfill']
+                # Counted by the last sync, so views and cards need not list every month folder.
+                total = $(if ($null -ne $entry['total']) { [int] $entry['total'] } else { $null })
+                unread = $(if ($null -ne $entry['unread']) { [int] $entry['unread'] } else { $null })
             }
         }
     }
@@ -268,6 +276,13 @@ function Set-MailFlagged([hashtable] $State, [string] $Server, [long] $Uid, [boo
     else { [void] $State.flagged.Remove($key) }
 }
 
+# Messages with files (from the server's body structure at download), so the list shows a paperclip without opening them.
+function Set-MailAttachment([hashtable] $State, [string] $Server, [long] $Uid, [bool] $HasFiles) {
+    $key = "$Server/$Uid"
+    if ($HasFiles) { if (-not $State.attachments.Contains($key)) { $State.attachments.Add($key) } }
+    else { [void] $State.attachments.Remove($key) }
+}
+
 # ---- budget ----
 
 function New-MailBudget([int] $Seconds = $script:MailMaxSeconds) { @{ fetches = 0; deadline = (Get-MailNow).AddSeconds($Seconds) } }
@@ -286,6 +301,10 @@ function Test-MailDue([string] $Folder, [hashtable] $Options, [hashtable] $State
 # ---- folders and files ----
 
 function Get-MailUniqueLocal([string] $Name, [System.Collections.Generic.HashSet[string]] $Used) {
+    # A subfolder named like a year or a month ("INBOX\2026") would be taken for a month folder of its parent.
+    $parts = @($Name -split '\\')
+    for ($i = 1; $i -lt $parts.Count; $i++) { if ($parts[$i] -match '^(\d{2}|\d{4})$') { $parts[$i] += '_' } }
+    $Name = $parts -join '\'
     $candidate = $Name
     for ($n = 2; $Used.Contains($candidate); $n++) { $candidate = "$Name ($n)" }
     [void] $Used.Add($candidate)
@@ -325,9 +344,11 @@ function Update-MailFolderMap([string] $Folder, [hashtable] $State, [object[]] $
             $entry.local = $local
             $map.Remove($renamed[0])
             [void] $vanished.Remove($renamed[0])
-            # Flags stored under the old server name follow the folder.
-            for ($i = 0; $i -lt $State.flagged.Count; $i++) {
-                if ($State.flagged[$i].StartsWith($renamed[0] + '/')) { $State.flagged[$i] = $server + $State.flagged[$i].Substring($renamed[0].Length) }
+            # Flags and attachment marks stored under the old server name follow the folder.
+            foreach ($set in $State.flagged, $State.attachments) {
+                for ($i = 0; $i -lt $set.Count; $i++) {
+                    if ($set[$i].StartsWith($renamed[0] + '/')) { $set[$i] = $server + $set[$i].Substring($renamed[0].Length) }
+                }
             }
         }
         else {
@@ -345,15 +366,67 @@ function Update-MailFolderMap([string] $Folder, [hashtable] $State, [object[]] $
     foreach ($server in $map.Keys) { New-C4KDirectory (Join-MailPath $Folder $map[$server].local) }
 }
 
-# The synced messages of a local folder ("[uid N].eml" at the end; "[stary]" files are not ours). Listing errors
-# propagate, so a folder that cannot be listed is skipped for this tick instead of looking empty.
-# Returns @{ files = uid -> name; dupes = uid -> all names when one uid has several files }; names in ordinal order.
+# The month folder a message goes to, from the date its file name starts with ("2026-11-02 1200 …" -> "2026\11").
+function Get-MailMonthDir([string] $Name) {
+    $plain = if ($Name.StartsWith($script:MailUnread)) { $Name.Substring($script:MailUnread.Length) } else { $Name }
+    if ($plain -match '^(\d{4})-(\d{2})-\d{2} ') { "$($Matches[1])\$($Matches[2])" } else { $null }
+}
+
+# "2026\11\name.eml" -> "2026\11" and "name.eml"; a file directly in the folder has no subfolder.
+function Split-MailRelative([string] $Relative) {
+    $cut = $Relative.LastIndexOf('\')
+    if ($cut -lt 0) { return @('', $Relative) }
+    @($Relative.Substring(0, $cut), $Relative.Substring($cut + 1))
+}
+
+function Join-MailRelative([string] $Sub, [string] $Leaf) { if ($Sub) { "$Sub\$Leaf" } else { $Leaf } }
+
+# Renames a file given relative to $Dir to the name $Target in the same folder; returns its new relative path.
+function Rename-MailRelative([string] $Dir, [string] $Relative, [string] $Target) {
+    $sub, $leaf = Split-MailRelative $Relative
+    Join-MailRelative $sub (Rename-MailFile $(if ($sub) { Join-MailPath $Dir $sub } else { $Dir }) $leaf $Target)
+}
+
+# Folders created during this run, so a month folder is not asked for again for every message.
+$script:MailMadeDirs = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+
+function Confirm-MailDir([string] $Path) {
+    if ($script:MailMadeDirs.Add($Path)) { New-C4KDirectory $Path }
+}
+
+# The month folders of a mail folder, newest first ("2026\11", "2026\10"…). Only year\month folders count: other
+# subfolders are other mail folders ("INBOX\spam").
+function Get-MailMonthDirs([string] $Dir) {
+    $months = [System.Collections.Generic.List[string]]::new()
+    foreach ($year in @(Get-C4KChildItem $Dir)) {
+        if ($year.kind -ne 'directory' -or $year.name -notmatch '^\d{4}$') { continue }
+        foreach ($month in @(Get-C4KChildItem ([string] $year.path))) {
+            if ($month.kind -eq 'directory' -and $month.name -match '^\d{2}$') { $months.Add("$($year.name)\$($month.name)") }
+        }
+    }
+    $months.Sort([StringComparer]::Ordinal)
+    $months.Reverse()
+    , $months.ToArray()
+}
+
+# The synced messages of a local folder ("[uid N].eml" at the end; "[stary]" files are not ours), in its month folders
+# and, from before 1.2, directly in it. Listing errors propagate, so a folder that cannot be listed is skipped for this
+# tick instead of looking empty. Returns @{ files = uid -> path relative to $Dir; dupes = uid -> all paths when one uid
+# has several files }; paths in ordinal order.
 function Get-MailLocalFiles([string] $Dir) {
     $files = @{}
     $dupes = @{}
     $names = [System.Collections.Generic.List[string]]::new()
     foreach ($entry in @(Get-C4KChildItem $Dir)) {
         if ($entry.kind -eq 'file' -and $entry.name -match $script:MailUidPattern) { $names.Add([string] $entry.name) }
+        elseif ($entry.kind -eq 'directory' -and $entry.name -match '^\d{4}$') {
+            foreach ($month in @(Get-C4KChildItem ([string] $entry.path))) {
+                if ($month.kind -ne 'directory' -or $month.name -notmatch '^\d{2}$') { continue }
+                foreach ($file in @(Get-C4KChildItem ([string] $month.path))) {
+                    if ($file.kind -eq 'file' -and $file.name -match $script:MailUidPattern) { $names.Add("$($entry.name)\$($month.name)\$($file.name)") }
+                }
+            }
+        }
     }
     $names.Sort([StringComparer]::Ordinal)
     foreach ($name in $names) {
@@ -386,15 +459,31 @@ function Rename-MailFile([string] $Dir, [string] $Name, [string] $Target) {
     $free
 }
 
+# Downloads a message into its month folder; returns whether it is unread.
 function Save-MailMessage([hashtable] $Account, [string] $Server, [string] $Dir, $Header, [hashtable] $Files, [hashtable] $State) {
     $uid = [long] $Header.uid
     $flags = @($Header.flags)
     $seen = $flags -contains 'seen'
-    $name = Get-MailFreeName $Dir ($(if ($seen) { '' } else { $script:MailUnread }) + [string] $Header.fileName)
-    [void] (Save-C4KMail $Account $Server $uid (Join-MailPath $Dir $name))
-    $Files[$uid] = $name
+    $month = Get-MailMonthDir ([string] $Header.fileName)
+    $target = if ($month) { Join-MailPath $Dir $month } else { $Dir }
+    if ($month) { Confirm-MailDir $target }
+    $name = Get-MailFreeName $target ($(if ($seen) { '' } else { $script:MailUnread }) + [string] $Header.fileName)
+    [void] (Save-C4KMail $Account $Server $uid (Join-MailPath $target $name))
+    $Files[$uid] = Join-MailRelative $month $name
     Set-MailFlagged $State $Server $uid ($flags -contains 'flagged')
+    Set-MailAttachment $State $Server $uid ([bool] $Header.attachments)
     -not $seen
+}
+
+# A file of the flat layout (before 1.2) moves into its month folder; returns its new path relative to $Dir.
+function Move-MailToMonth([string] $Dir, [string] $Name) {
+    $month = Get-MailMonthDir $Name
+    if (-not $month) { return $Name }
+    $target = Join-MailPath $Dir $month
+    Confirm-MailDir $target
+    $free = Get-MailFreeName $target $Name
+    Move-C4KItem (Join-MailPath $Dir $Name) (Join-MailPath $target $free)
+    "$month\$free"
 }
 
 # One uid with several files: when they are only the read and the unread variant of one name, keep the one that
@@ -402,10 +491,12 @@ function Save-MailMessage([hashtable] $Account, [string] $Server, [string] $Dir,
 function Resolve-MailDuplicate([string] $Dir, [long] $Uid, [bool] $Seen, [hashtable] $Local) {
     if (-not $Local.dupes.ContainsKey($Uid)) { return }
     $names = @($Local.dupes[$Uid])
-    $bases = @($names | ForEach-Object { if ($_.StartsWith($script:MailUnread)) { $_.Substring($script:MailUnread.Length) } else { $_ } } | Select-Object -Unique)
+    $leaves = @($names | ForEach-Object { Get-MailLeaf $_ })
+    $bases = @($leaves | ForEach-Object { if ($_.StartsWith($script:MailUnread)) { $_.Substring($script:MailUnread.Length) } else { $_ } } | Select-Object -Unique)
     if ($names.Count -ne 2 -or $bases.Count -ne 1) { return }
-    $keep = if ($Seen) { $bases[0] } else { $script:MailUnread + $bases[0] }
-    if ($names -cnotcontains $keep) { return }
+    $keepLeaf = if ($Seen) { $bases[0] } else { $script:MailUnread + $bases[0] }
+    $keep = @($names | Where-Object { (Get-MailLeaf $_) -ceq $keepLeaf }) | Select-Object -First 1
+    if (-not $keep) { return }
     foreach ($name in $names) { if ($name -cne $keep) { Remove-C4KItem (Join-MailPath $Dir $name) } }
     $Local.files[$Uid] = $keep
     $Local.dupes.Remove($Uid)
@@ -441,8 +532,17 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
 
     if ($entry.special -eq 'drafts') { Push-MailDrafts $dir $Account $server $entry $State }
 
+    $script:MailMadeDirs.Clear() # a month folder deleted since the last tick is made again
     $local = Get-MailLocalFiles $dir
     $files = $local.files
+
+    # Files of the flat layout (before 1.2) move into their month folders, as many as this tick's time allows; the
+    # rest follows in the next ticks. A uid with several files waits until Resolve-MailDuplicate has settled it.
+    foreach ($uid in @($files.Keys)) {
+        if ($files[$uid].Contains('\') -or $local.dupes.ContainsKey($uid)) { continue }
+        if (Test-MailBudgetSpent $Budget) { $out.more = $true; break }
+        $files[$uid] = Move-MailToMonth $dir $files[$uid]
+    }
     # Envelopes are fetched only for what this tick can still download (lowest uids first).
     $limit = [Math]::Max(1, [Math]::Min($script:MailMaxFetches, $script:MailMaxFetches - $Budget.fetches))
     $sync = Sync-C4KMail -Account $Account -Folder $server -UidValidity $entry.uidValidity -LastUid $entry.lastUid -ModSeq $entry.modSeq -Since $Since -KnownUids $known.ToArray() -Limit $limit
@@ -451,7 +551,7 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
         # The server renumbered the folder: keep the old files under "[stary]" and start again.
         foreach ($uid in @($files.Keys)) {
             $names = if ($local.dupes.ContainsKey($uid)) { @($local.dupes[$uid]) } else { @($files[$uid]) }
-            foreach ($name in $names) { [void] (Rename-MailFile $dir $name ($name.Substring(0, $name.Length - 4) + ' [stary].eml')) }
+            foreach ($name in $names) { $leaf = Get-MailLeaf $name; [void] (Rename-MailRelative $dir $name ($leaf.Substring(0, $leaf.Length - 4) + ' [stary].eml')) }
         }
         $local = @{ files = @{}; dupes = @{} }
         $files = $local.files
@@ -460,6 +560,7 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
         $entry.modSeq = 0
         $entry.backfill = $true
         foreach ($key in @($State.flagged | Where-Object { $_.StartsWith($server + '/') })) { [void] $State.flagged.Remove($key) }
+        foreach ($key in @($State.attachments | Where-Object { $_.StartsWith($server + '/') })) { [void] $State.attachments.Remove($key) }
     }
     $entry.uidValidity = [long] $sync.uidValidity
     $entry.modSeq = [long] $sync.modSeq
@@ -472,6 +573,7 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
         $local.dupes.Remove($uid)
         [void] $known.Remove($uid)
         Set-MailFlagged $State $server $uid $false
+        Set-MailAttachment $State $server $uid $false
     }
 
     # Without CONDSTORE these are the current flags of every known message: rename only on a real change.
@@ -483,11 +585,12 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
         Resolve-MailDuplicate $dir $uid $seen $local
         if (-not $files.ContainsKey($uid)) { continue }
         $name = $files[$uid]
-        $unread = $name.StartsWith($script:MailUnread)
+        $leaf = Get-MailLeaf $name
+        $unread = $leaf.StartsWith($script:MailUnread)
         $target = $null
-        if ($seen -and $unread) { $target = $name.Substring($script:MailUnread.Length) }
-        elseif (-not $seen -and -not $unread) { $target = $script:MailUnread + $name }
-        if ($target) { $files[$uid] = Rename-MailFile $dir $name $target }
+        if ($seen -and $unread) { $target = $leaf.Substring($script:MailUnread.Length) }
+        elseif (-not $seen -and -not $unread) { $target = $script:MailUnread + $leaf }
+        if ($target) { $files[$uid] = Rename-MailRelative $dir $name $target }
     }
 
     $draftUids = @($State.drafts.Values | ForEach-Object { [long] $_.uid })
@@ -531,6 +634,8 @@ function Sync-MailFolder([string] $Folder, [hashtable] $Account, [hashtable] $St
 
     # The first download of a folder ends when nothing is left: from then on new unread mail notifies.
     if (-not $out.more) { $entry.backfill = $false }
+    $entry.total = $files.Count
+    $entry.unread = @($files.Values | Where-Object { (Get-MailLeaf $_).StartsWith($script:MailUnread) }).Count
     $out
 }
 

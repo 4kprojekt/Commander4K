@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration for the release workflow: the uploaded artifact is the content of dist/release.
+     Copy it into the SignPath project (Artifact configurations → default). -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <zip-file path="Commander4K-*.zip" max-matches="unbounded">
+      <pe-file path="Commander4K.exe">
+        <authenticode-sign />
+      </pe-file>
+    </zip-file>
+    <msi-file path="Commander4K-*.msi" max-matches="unbounded">
+      <pe-file path="Commander4K.exe">
+        <authenticode-sign />
+      </pe-file>
+      <authenticode-sign />
+    </msi-file>
+  </zip-file>
+</artifact-configuration>

@@ -143,14 +143,16 @@ public sealed class MailService : IMailBackend, IAsyncDisposable
             {
                 // A large first sync gets more time: about 2 KB of envelope per message.
                 op.AllowFor(fresh.Count * 2048L);
+                // The body structure (no content) tells whether the message carries files, so the list can show a paperclip.
                 var items = MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope | MessageSummaryItems.Flags
-                    | MessageSummaryItems.Size | MessageSummaryItems.InternalDate;
+                    | MessageSummaryItems.Size | MessageSummaryItems.InternalDate | MessageSummaryItems.BodyStructure;
                 foreach (var s in await folder.FetchAsync(fresh, new FetchRequest(items), op.Token).ConfigureAwait(false))
                 {
                     var date = s.Envelope?.Date ?? s.InternalDate ?? _time.GetUtcNow();
                     var from = s.Envelope?.From.Mailboxes.FirstOrDefault()?.ToString() ?? "";
                     var subject = s.Envelope?.Subject ?? "";
-                    headers.Add(new MailHeader(s.UniqueId.Id, date, from, subject, ToFlags(s.Flags), (long)(s.Size ?? 0), MailFileNames.For(date, from, subject, s.UniqueId.Id)));
+                    var files = s.Body is not null && s.BodyParts.Any(p => p.IsAttachment || !string.IsNullOrEmpty(p.FileName));
+                    headers.Add(new MailHeader(s.UniqueId.Id, date, from, subject, ToFlags(s.Flags), (long)(s.Size ?? 0), MailFileNames.For(date, from, subject, s.UniqueId.Id), files));
                 }
             }
 

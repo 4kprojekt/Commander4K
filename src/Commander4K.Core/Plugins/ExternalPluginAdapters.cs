@@ -578,7 +578,7 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
         var folder = CardString(result, "folder") ?? entry.Path;
         var items = result.TryGetProperty("items", out var list) && list.ValueKind == JsonValueKind.Array
             ? [.. list.EnumerateArray()
-                .Where(i => CardString(i, "path") is { } path && IsInFolder(path, folder))
+                .Where(i => CardString(i, "path") is { } path && IsUnderFolder(path, folder))
                 .Take(MaxListItems)
                 .Select(i => new ListPreviewItem(CardString(i, "path")!, CardString(i, "title") ?? Path.GetFileName(CardString(i, "path")!),
                     CardString(i, "subtitle"), CardString(i, "snippet"), CardString(i, "meta"), CardString(i, "group"), Strings(i, "tags")))]
@@ -597,8 +597,12 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
                 .Take(8)
                 .Select(f => new ListPreviewFilter(f.TryGetProperty("tag", out var tag) && tag.ValueKind == JsonValueKind.String ? tag.GetString() ?? string.Empty : string.Empty, CardString(f, "label")!))]
             : new List<ListPreviewFilter>();
+        var more = result.TryGetProperty("more", out var m) && CardString(m, "target") is { } moreTarget
+            ? new PreviewAction(CardString(m, "label") ?? moreTarget, moreTarget)
+            : null;
         return new ListPreview(folder, items, CardString(result, "title"), tabs, filters, CardString(result, "search"), CardString(result, "status"),
-            CardString(result, "statusRight"), CardString(result, "selected"), CardString(result, "empty"), CardString(result, "badge"));
+            CardString(result, "statusRight"), CardString(result, "selected"), CardString(result, "empty"), CardString(result, "badge"),
+            more, CardString(result, "searchTarget"), result.TryGetProperty("query", out var q) && q.ValueKind == JsonValueKind.String ? q.GetString() : null);
     }
 
     /// <summary>
@@ -627,11 +631,12 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
             ? [.. list.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).Take(16)]
             : [];
 
-    /// <summary>A path directly inside <paramref name="folder"/> (the list moves the panel's cursor there, so it must be in that folder).</summary>
-    private static bool IsInFolder(string path, string folder)
+    /// <summary>A path inside <paramref name="folder"/> or its subfolders (the list moves the panel there), never outside or with <c>..</c>.</summary>
+    private static bool IsUnderFolder(string path, string folder)
     {
-        var cut = path.TrimEnd('\\', '/').LastIndexOfAny(['\\', '/']);
-        return cut > 0 && string.Equals(path[..cut].TrimEnd('\\', '/'), folder.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+        var root = folder.TrimEnd('\\', '/');
+        return path.Length > root.Length + 1 && path.StartsWith(root, StringComparison.OrdinalIgnoreCase) && path[root.Length] is '\\' or '/'
+            && !path[(root.Length + 1)..].Split('\\', '/').Any(part => part is "" or "." or "..");
     }
 
     /// <summary>

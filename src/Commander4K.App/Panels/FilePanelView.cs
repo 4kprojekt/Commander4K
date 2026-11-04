@@ -17,7 +17,13 @@ namespace Commander4K.App.Panels;
 
 public sealed record AuthenticationRequest(PanelTab Tab, VfsAuthenticationRequiredException Exception);
 
-public sealed record PanelModeRequest(FilePanelView Panel, bool Preview);
+/// <summary>What entering a folder shows: always the files, the folder's own view when its c4k.dir has one, or always a view.</summary>
+public enum FolderViewMode
+{
+    Files,
+    Auto,
+    View,
+}
 
 /// <summary>One side of the dual-pane layout: tab strip, path bar, owner-drawn list and status line.</summary>
 public sealed class FilePanelView : ViewBase
@@ -31,6 +37,8 @@ public sealed class FilePanelView : ViewBase
     /// <summary>Tabs whose view belongs to their folder (plugin manager, settings, skins): Pliki/Podgląd switches between them.</summary>
     private readonly HashSet<PanelTab> _folderViewTabs = [];
 
+    private readonly Stack<(IPanelModeView View, bool IsFolderView)> _returnModes = [];
+
     /// <summary>The mode on screen is the view of the panel's folder (a c4k.dir panel, a built-in folder view).</summary>
     private bool _modeIsFolderView;
 
@@ -39,19 +47,18 @@ public sealed class FilePanelView : ViewBase
     private bool _isActive;
     private string? _tabsKey;
     private bool _statusScheduled;
-    private bool _updatingModeSwitch;
 
     private Border _tabBorder = null!;
     private StackPanel _tabStrip = null!;
     private Border _pathBorder = null!;
     private TextBox _pathBox = null!;
-    private TextBlock _filesModeLabel = null!;
-    private ToggleSwitch _modeSwitch = null!;
-    private TextBlock _previewModeLabel = null!;
+    /// <summary>The Pliki · Auto · Widok switch on the path bar (rebuilt when the mode or the skin changes).</summary>
+    private ContentControl _modeSwitch = null!;
     private Border _statusBorder = null!;
     private Decorator _emptyFolderSetup = null!;
     private SkinBrushes? _emptyFolderSkin;
     private Panel _content = null!;
+    private readonly BusyOverlay _loadingCard = new();
     private TextBlock _status = null!;
     private TextBlock _statusMarked = null!;
     private StackPanel _statusMarkedBox = null!;
@@ -119,10 +126,45 @@ public sealed class FilePanelView : ViewBase
     public void ShowMode(IPanelModeView view, bool folderView = false)
     {
         ShowSuggestion(null);
+        DisposeReturnModes();
         CloseMode();
         _modeIsFolderView = folderView;
         AttachMode(view);
         UpdateModeButtons();
+    }
+
+    /// <summary>Shows a temporary mode over the current one; closing it restores the current mode.</summary>
+    public void ShowModeReturningToCurrent(IPanelModeView view)
+    {
+        ShowSuggestion(null);
+        if (Mode is { } current)
+        {
+            _content.Children.Remove(current.View);
+            _returnModes.Push((current, _modeIsFolderView));
+        }
+
+        _modeIsFolderView = false;
+        AttachMode(view);
+        UpdateModeButtons();
+    }
+
+    /// <summary>Key of the tab that holds the quick view.</summary>
+    public const string QuickViewKey = "quickview";
+
+    /// <summary>The quick view tab is on screen.</summary>
+    public bool QuickViewShown => _pluginTabIds.GetValueOrDefault(ActiveTab) == QuickViewKey && Mode is PreviewPanelView;
+
+    /// <summary>Removes the quick view tab, whichever tab is selected.</summary>
+    public void CloseQuickViewTab()
+    {
+        var tab = _tabs.FirstOrDefault(t => _pluginTabIds.GetValueOrDefault(t) == QuickViewKey);
+        if (tab is null || _tabs.Count == 1)
+        {
+            return;
+        }
+
+        SelectTab(_tabs.IndexOf(tab));
+        CloseActiveTab();
     }
 
     /// <summary>A new tab on <paramref name="path"/> showing <paramref name="view"/>, the folder's own view.</summary>
@@ -174,7 +216,7 @@ public sealed class FilePanelView : ViewBase
         _content.Children.Add(view.View);
         Canvas.IsVisible = false;
         _statusBorder.IsVisible = false;
-        _pathBox.Text = "⚙ " + view.Title;
+        _pathBox.Text = (view.TabIcon ?? "⚙") + " " + view.Title;
         _pathBox.IsReadOnly = true;
         UpdateModeButtons();
         if (view is ITitledModeView titled)
@@ -183,7 +225,12 @@ public sealed class FilePanelView : ViewBase
             {
                 if (Mode == view)
                 {
-                    _pathBox.Text = "⚙ " + view.Title;
+                    _pathBox.Text = (view.TabIcon ?? "⚙") + " " + view.Title;
+                }
+
+                if (TabsKey() != _tabsKey)
+                {
+                    RebuildTabs();
                 }
             };
         }
@@ -199,7 +246,22 @@ public sealed class FilePanelView : ViewBase
 
         if (_folderViewTabs.Contains(ActiveTab) && _pluginTabModes.GetValueOrDefault(ActiveTab) == view)
         {
+            if (_pluginTabIds.GetValueOrDefault(ActiveTab) == QuickViewKey && _tabs.Count > 1)
+            {
+                CloseActiveTab();
+                return;
+            }
+
             DetachPluginTabMode();
+            return;
+        }
+
+        if (_returnModes.TryPop(out var previous))
+        {
+            CloseCurrentMode(view);
+            _modeIsFolderView = previous.IsFolderView;
+            AttachMode(previous.View);
+            UpdateModeButtons();
             return;
         }
 
@@ -210,9 +272,21 @@ public sealed class FilePanelView : ViewBase
     {
         if (Mode is not { } view)
         {
+            DisposeReturnModes();
             return;
         }
 
+        DisposeReturnModes();
+        CloseCurrentMode(view);
+        Canvas.IsVisible = true;
+        _statusBorder.IsVisible = true;
+        _pathBox.IsReadOnly = false;
+        _pathBox.Text = ActiveTab.Path;
+        UpdateModeButtons();
+    }
+
+    private void CloseCurrentMode(IPanelModeView view)
+    {
         _wiredModes.Remove(view);
         _modeIsFolderView = false;
         Mode = null;
@@ -227,11 +301,15 @@ public sealed class FilePanelView : ViewBase
         }
 
         _ = view.DisposeModeAsync();
-        Canvas.IsVisible = true;
-        _statusBorder.IsVisible = true;
-        _pathBox.IsReadOnly = false;
-        _pathBox.Text = ActiveTab.Path;
-        UpdateModeButtons();
+    }
+
+    private void DisposeReturnModes()
+    {
+        while (_returnModes.TryPop(out var previous))
+        {
+            _wiredModes.Remove(previous.View);
+            _ = previous.View.DisposeModeAsync();
+        }
     }
 
     private void DetachPluginTabMode()
@@ -324,6 +402,8 @@ public sealed class FilePanelView : ViewBase
     /// <summary>Raised when another tab becomes the active one (the quick preview follows it).</summary>
     public event Action? ActiveTabChanged;
 
+    public event Action<FilePanelView>? TabSelected;
+
     public event Action? NewTabRequested;
 
     public event Action<PanelTab>? PluginTabSelected;
@@ -345,9 +425,6 @@ public sealed class FilePanelView : ViewBase
     /// <summary>The ▾ button on the path bar: the window shows the location menu (drives, This PC, network, connections).</summary>
     public event Action<FilePanelView>? LocationMenuRequested;
 
-    /// <summary>The panel's files/preview switch was toggled.</summary>
-    public event Action<PanelModeRequest>? ModeRequested;
-
     /// <summary>Configure the current empty folder as a special folder.</summary>
     public event Action<string>? ConfigureEmptyFolderRequested;
 
@@ -360,37 +437,6 @@ public sealed class FilePanelView : ViewBase
         var root = CreateLayout();
         _pathBox.KeyDown += OnPathKeyDown;
         _pathBox.GotFocus += (_, _) => Activated?.Invoke(this);
-        _modeSwitch.IsCheckedChanged += (_, _) =>
-        {
-            if (_updatingModeSwitch)
-            {
-                return;
-            }
-
-            var on = _modeSwitch.IsChecked == true;
-            if (_folderViewTabs.Contains(ActiveTab) && _pluginTabModes.TryGetValue(ActiveTab, out var tabView))
-            {
-                // A folder tab: Pliki = the folder's files, Podgląd = its view (plugin manager, settings, skins).
-                if (on)
-                {
-                    ActivatePluginTabMode(ActiveTab, tabView);
-                }
-                else
-                {
-                    DetachPluginTabMode();
-                }
-
-                return;
-            }
-
-            if (!on && IsFolderView)
-            {
-                CloseMode();
-                return;
-            }
-
-            ModeRequested?.Invoke(new(this, Preview: on));
-        };
         ApplySkin(_skins.Current);
         RebuildTabs();
         OnTabChanged();
@@ -419,12 +465,7 @@ public sealed class FilePanelView : ViewBase
                             new Border().Ref(out _accentEdge).Width(3).Col(0),
                             new TextBox().Ref(out _pathBox).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(7, 2)
                                 .VerticalContentAlignment(VerticalAlignment.Center),
-                            new TextBlock().Ref(out _filesModeLabel).Col(2).Text(Loc.T("Pliki"))
-                                .VerticalAlignment(VerticalAlignment.Center).Margin(6, 0),
-                            new ToggleSwitch().Focusable(false).Ref(out _modeSwitch).Col(3).Width(42).MinHeight(24)
-                                .HorizontalAlignment(HorizontalAlignment.Center)
-                                .VerticalAlignment(VerticalAlignment.Center),
-                            new TextBlock().Ref(out _previewModeLabel).Col(4).Text(Loc.T("Podgląd"))
+                            new ContentControl().Ref(out _modeSwitch).Col(2).Focusable(false)
                                 .VerticalAlignment(VerticalAlignment.Center).Margin(6, 0),
                             // One click to switch this panel elsewhere: drives, This PC, network, saved and new connections.
                             new Button().Focusable(false).Ref(out _locationButton).Col(5).Content("▾").Padding(10, 0).MinWidth(32)
@@ -433,6 +474,7 @@ public sealed class FilePanelView : ViewBase
                                 .OnClick(click => LocationMenuRequested?.Invoke(this)))),
                     new Panel().Ref(out _content).Row(2).Children(
                         Canvas,
+                        _loadingCard,
                         new Decorator().Ref(out _emptyFolderSetup).IsVisible(false)),
                     new Border()
                         .Ref(out _statusBorder)
@@ -531,12 +573,21 @@ public sealed class FilePanelView : ViewBase
         tab.Detach();
         tab.Changed -= OnAnyTabChanged;
         _tabs.RemoveAt(_activeIndex);
-        SelectTab(Math.Min(_activeIndex, _tabs.Count - 1));
+        _activeIndex = Math.Min(_activeIndex, _tabs.Count - 1); // SelectTab reads ActiveTab first
+        SelectTab(_activeIndex);
     }
 
     public void SelectTab(int index)
     {
-        DetachPluginTabMode();
+        if (_folderViewTabs.Contains(ActiveTab) && Mode == _pluginTabModes.GetValueOrDefault(ActiveTab))
+        {
+            DetachPluginTabMode();
+        }
+        else if (Mode is PreviewPanelView { IsPinned: true } || _modeIsFolderView)
+        {
+            CloseMode();
+        }
+
         _activeIndex = Math.Clamp(index, 0, _tabs.Count - 1);
         Canvas.Tab = ActiveTab;
         ActiveTabChanged?.Invoke();
@@ -552,6 +603,7 @@ public sealed class FilePanelView : ViewBase
             }
         }
 
+        TabSelected?.Invoke(this);
         if (_tabStrip is not null)
         {
             RebuildTabs();
@@ -571,7 +623,15 @@ public sealed class FilePanelView : ViewBase
         switch (entry.Kind)
         {
             case VfsEntryKind.ParentLink:
-                _ = ActiveTab.NavigateAsync(entry.Path, ActiveTab.Title);
+                if (FolderEntering is not null)
+                {
+                    FolderEntering(entry);
+                }
+                else
+                {
+                    _ = ActiveTab.NavigateAsync(entry.Path, ActiveTab.Title);
+                }
+
                 break;
             case VfsEntryKind.Action:
                 ActionRequested?.Invoke(entry);
@@ -646,12 +706,21 @@ public sealed class FilePanelView : ViewBase
         }
 
         UpdateEmptyFolderSetup();
+        UpdateLoadingCard();
         UpdateStatus();
         // Changed fires on every cursor move and streamed batch: rebuild the tab buttons only when they would differ.
         if (_tabStrip.Children.Count > 0 && TabsKey() != _tabsKey)
         {
             RebuildTabs();
         }
+    }
+
+    /// <summary>The same loading card the plugin modes show, over the list while a folder is being read.</summary>
+    private void UpdateLoadingCard()
+    {
+        var tab = ActiveTab;
+        var count = Math.Max(0, tab.Entries.Count - (tab.Entries.Count > 0 && tab.Entries[0].Kind == VfsEntryKind.ParentLink ? 1 : 0));
+        _loadingCard.Set(tab.IsLoading && Mode is null, Loc.T("Wczytywanie… {0:N0}   [Esc – Anuluj]", count));
     }
 
     private void UpdateEmptyFolderSetup()
@@ -709,11 +778,17 @@ public sealed class FilePanelView : ViewBase
     }
 
     private string TabTitle(PanelTab tab) =>
-        _folderViewTabs.Contains(tab) && _pluginTabModes.TryGetValue(tab, out var view) ? view.Title
+        tab.FolderViewOrigin is { Length: > 0 } origin ? origin
+        : _pluginTabModes.TryGetValue(tab, out var view) ? view.Title
         : _pluginTabIds.TryGetValue(tab, out var pluginId) ? _host.FindPanel(pluginId)?.Title ?? tab.Title
         : tab.Title;
 
-    private string TabsKey() => _activeIndex + "|" + _skins.Current.Skin.Id + "|" + string.Join('\n', _tabs.Select(TabTitle));
+    private string TabIcon(PanelTab tab) => _pluginTabModes.GetValueOrDefault(tab)?.TabIcon ?? "📁";
+
+    private static string TabToolTip(PanelTab tab) =>
+        tab.FolderViewPlugin is { Length: > 0 } plugin ? plugin + "\n" + tab.Path : tab.Path;
+
+    private string TabsKey() => _activeIndex + "|" + _skins.Current.Skin.Id + "|" + string.Join('\n', _tabs.Select(tab => TabTitle(tab) + "\0" + tab.FolderViewPlugin + "\0" + tab.Path));
 
     /// <summary>Counts on the left; the marked set (if any) on the right, in the marking colour.</summary>
     private (string Main, string? Marked) StatusText(PanelTab tab)
@@ -801,8 +876,9 @@ public sealed class FilePanelView : ViewBase
         {
             var index = i;
             var selected = i == _activeIndex;
-            _tabStrip.Children.Add(new Button().Focusable(false)
-                .Content(TabTitle(_tabs[i]))
+            var tab = _tabs[i];
+            var button = new Button().Focusable(false)
+                .Content(TabIcon(tab) + " " + TabTitle(tab))
                 .Padding(10, 2)
                 .Margin(0, 0, 2, 0)
                 .CornerRadius(new CornerRadius(b.Skin.Chrome.CornerRadius, b.Skin.Chrome.CornerRadius, 0, 0))
@@ -810,7 +886,9 @@ public sealed class FilePanelView : ViewBase
                 .Foreground(selected ? b.CursorForeground : b.HeaderForeground)
                 .FontFamily(b.FontFamily)
                 .FontSize(b.FontSize - 1)
-                .OnClick(_ => SelectTab(index)));
+                .OnClick(_ => SelectTab(index));
+            ToolTip.SetTip(button, TabToolTip(tab));
+            _tabStrip.Children.Add(button);
         }
 
         _tabStrip.Children.Add(new Button().Focusable(false).Content("+").Width(24).Height(24).Padding(0).FontSize(14)
@@ -832,7 +910,7 @@ public sealed class FilePanelView : ViewBase
                 .FontWeight(selected ? FontWeight.SemiBold : FontWeight.Normal).VerticalAlignment(VerticalAlignment.Center)
                 .Foreground(selected ? b.WindowForeground : b.MutedForeground);
             var content = new StackPanel().Orientation(Orientation.Horizontal).Spacing(6).Children(
-                new TextBlock().Text("▱").FontSize(small).Foreground(selected ? b.DirectoryForeground : b.MutedForeground).VerticalAlignment(VerticalAlignment.Center),
+                new TextBlock().Text(TabIcon(_tabs[i])).FontSize(small).Foreground(selected ? b.DirectoryForeground : b.MutedForeground).VerticalAlignment(VerticalAlignment.Center),
                 title);
             if (selected && _tabs.Count > 1)
             {
@@ -842,7 +920,7 @@ public sealed class FilePanelView : ViewBase
                 content.Children.Add(close);
             }
 
-            _tabStrip.Children.Add(new Button().Focusable(false)
+            var button = new Button().Focusable(false)
                 .Content(content)
                 .Height(24)
                 .Padding(8, 0)
@@ -850,7 +928,9 @@ public sealed class FilePanelView : ViewBase
                 .BorderThickness(new Thickness(1))
                 .BorderBrush(selected ? b.PanelBorder : Brushes.Transparent)
                 .Background(selected ? b.PanelBackground : Brushes.Transparent)
-                .OnClick(_ => SelectTab(index)));
+                .OnClick(_ => SelectTab(index));
+            ToolTip.SetTip(button, TabToolTip(_tabs[i]));
+            _tabStrip.Children.Add(button);
         }
 
         var add = new Button().Focusable(false).Content("+").Width(24).Height(24).Padding(0).FontSize(14).HorizontalContentAlignment(HorizontalAlignment.Center)
@@ -863,6 +943,7 @@ public sealed class FilePanelView : ViewBase
     private void ApplySkin(SkinBrushes b)
     {
         Canvas.Brushes = b;
+        _loadingCard.ApplySkin(b);
         Mode?.ApplySkin(b);
         if (_pathBox is null)
         {
@@ -902,12 +983,7 @@ public sealed class FilePanelView : ViewBase
         _locationButton.Foreground = b.HeaderForeground;
         _locationButton.FontSize = b.FontSize;
         ToolTip.SetTip(_locationButton, Loc.T("Zmień lokalizację panelu: dyski, Ten komputer, sieć, połączenia SSH/FTP (Alt+F1 / Alt+F2)"));
-        _modeSwitch.FontFamily = b.FontFamily;
-        _modeSwitch.FontSize = modern ? Math.Max(12, b.FontSize) : b.FontSize;
-        ToolTip.SetTip(_modeSwitch, Loc.T("Przełącz między listą plików a podglądem"));
-        _filesModeLabel.FontFamily = b.FontFamily;
-        _previewModeLabel.FontFamily = b.FontFamily;
-        _filesModeLabel.FontSize = _previewModeLabel.FontSize = modern ? Math.Max(11, b.FontSize - 1) : b.FontSize;
+        ToolTip.SetTip(_modeSwitch, Loc.T("Pliki: zawsze lista plików · Auto: widok z c4k.dir folderu lub nadrzędnego, a bez niego pliki · Widok: zawsze widok folderu"));
 
         UpdateModeButtons();
         ApplyChrome();
@@ -925,19 +1001,63 @@ public sealed class FilePanelView : ViewBase
             return;
         }
 
-        var brushes = _skins.Current;
-        var showingPreview = Mode is PreviewPanelView || IsFolderView;
-
         // A mode that is not a folder's view (a plugin panel opened on its own, the browser) has no files to switch to.
-        var switchable = Mode is null || showingPreview || _folderViewTabs.Contains(ActiveTab);
-        _modeSwitch.IsVisible = _filesModeLabel.IsVisible = _previewModeLabel.IsVisible = switchable;
-        _updatingModeSwitch = true;
-        _modeSwitch.IsChecked = showingPreview;
-        _updatingModeSwitch = false;
-        _filesModeLabel.Foreground = showingPreview ? brushes.MutedForeground : brushes.HeaderForeground;
-        _previewModeLabel.Foreground = showingPreview ? brushes.HeaderForeground : brushes.MutedForeground;
-        _filesModeLabel.FontWeight = showingPreview ? FontWeight.Normal : FontWeight.SemiBold;
-        _previewModeLabel.FontWeight = showingPreview ? FontWeight.SemiBold : FontWeight.Normal;
+        var showingPreview = Mode is PreviewPanelView || IsFolderView;
+        _modeSwitch.IsVisible = Mode is null || showingPreview || _folderViewTabs.Contains(ActiveTab);
+
+        // A plugin's own folder view has its "Pliki (Esc)" button: the path bar and the switch add nothing there.
+        _pathBorder.IsVisible = Mode is not PreviewPanelView { IsPinnedFolder: true };
+
+        // A folder tab (plugin manager, settings, skins) is its view or its files; elsewhere the panel's folder mode.
+        var folderTab = _folderViewTabs.Contains(ActiveTab);
+        var selected = folderTab ? (Mode is not null ? 2 : 0) : (int)FolderMode;
+        var segmented = Ds.Segmented(_skins.Current, [Loc.T("Pliki"), Loc.T("Auto"), Loc.T("Widok")], selected, OnFolderModePicked, onToolbar: true);
+        if (segmented.Child is Panel buttons)
+        {
+            foreach (var button in buttons.Children.OfType<Button>())
+            {
+                button.Focusable = false; // panel chrome never takes the keyboard from the list
+            }
+        }
+
+        _modeSwitch.Content = segmented;
+    }
+
+    /// <summary>What entering a folder shows in this panel (Pliki · Auto · Widok on the path bar).</summary>
+    public FolderViewMode FolderMode
+    {
+        get => ActiveTab.FolderMode;
+        set
+        {
+            ActiveTab.FolderMode = value;
+            UpdateModeButtons();
+        }
+    }
+
+    /// <summary>Pliki · Auto · Widok was clicked; the window applies it to the folder on screen.</summary>
+    public event Action<FilePanelView>? FolderModeRequested;
+
+    private void OnFolderModePicked(int index)
+    {
+        var mode = (FolderViewMode)index;
+        if (_folderViewTabs.Contains(ActiveTab) && _pluginTabModes.TryGetValue(ActiveTab, out var tabView))
+        {
+            // A folder tab: Pliki = the folder's files, Auto/Widok = its view (plugin manager, settings, skins).
+            if (mode == FolderViewMode.Files)
+            {
+                DetachPluginTabMode();
+            }
+            else
+            {
+                ActivatePluginTabMode(ActiveTab, tabView);
+            }
+
+            return;
+        }
+
+        FolderMode = mode;
+        FolderModeRequested?.Invoke(this);
+        UpdateModeButtons();
     }
 
     /// <summary>Active panel: modern skins tint the path bar and show the accent edge; retro skins use the cursor colours.</summary>

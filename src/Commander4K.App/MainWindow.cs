@@ -256,8 +256,9 @@ public sealed class MainWindow : Window
             };
             p.NewTabRequested += () => _ = ChooseNewTabAsync(p);
             p.PluginTabSelected += tab => ShowPluginTab(p, tab);
+            p.TabSelected += panel => _ = RestoreTabFolderModeAsync(panel);
             p.LocationMenuRequested += sender => _ = ShowDriveMenuAsync(sender).AsTask();
-            p.ModeRequested += request => SetPanelMode(request.Panel, request.Preview);
+            p.FolderModeRequested += panel => _ = ApplyFolderModeAsync(panel);
             p.ConfigureEmptyFolderRequested += folderPath =>
             {
                 SetActive(p);
@@ -373,6 +374,14 @@ public sealed class MainWindow : Window
         if (host.Settings.LeftPath is null && host.Settings.RightPath is null)
         {
             _right.ShowMode(CreatePreview(_left));
+        }
+
+        foreach (var panel in new[] { _left, _right })
+        {
+            if (panel.Mode is null)
+            {
+                _ = ShowStartupFolderViewAsync(panel);
+            }
         }
 
         ApplyColumns();
@@ -897,12 +906,40 @@ public sealed class MainWindow : Window
     /// else (SFTP with a key), open a page or run a script; otherwise, and with Shift+Enter, the folder opens as files.
     /// Only disks, shares and SFTP/FTP are checked — one stat per Enter, abandoned after 2 s on a hung share.
     /// </summary>
-    private async Task EnterFolderAsync(FilePanelView panel, VfsEntry folder)
+    /// <remarks>
+    /// The panel's Pliki · Auto · Widok switch decides: Pliki never reads c4k.dir, Auto shows the folder's view when it has
+    /// one, Widok shows a view always — a card saying there is none when the folder has no view.
+    /// </remarks>
+    private async Task EnterFolderAsync(FilePanelView panel, VfsEntry folder, bool inheritParentView = false, PanelTab? expectedTab = null)
     {
+        var focusName = folder.Kind == VfsEntryKind.ParentLink ? panel.ActiveTab.Title : null;
+        if (folder.Kind == VfsEntryKind.ParentLink)
+        {
+            var relativePath = VfsPath.StripScheme(folder.Path).TrimEnd('\\', '/');
+            var separator = relativePath.LastIndexOfAny(['\\', '/']);
+            folder = new VfsEntry(relativePath[(separator + 1)..], folder.Path, VfsEntryKind.Directory);
+        }
+
+        var mode = panel.FolderMode;
         FolderConfig? config = null;
-        if (VfsPath.GetScheme(folder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
+        if (mode != FolderViewMode.Files && VfsPath.GetScheme(folder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
         {
             config = await Task.Run(() => _host!.ReadFolderConfigAsync(folder.Path, CancellationToken.None));
+        }
+
+        if (config is null && mode == FolderViewMode.Auto && inheritParentView)
+        {
+            var inherited = await FindAncestorFolderViewAsync(folder.Path);
+            if (expectedTab is not null && panel.ActiveTab != expectedTab)
+            {
+                return;
+            }
+
+            if (inherited is { } view)
+            {
+                await RunFolderActionAsync(panel, view.Folder, view.Config, view.Action);
+                return;
+            }
         }
 
         if (config?.Error is { } error)
@@ -910,15 +947,152 @@ public sealed class MainWindow : Window
             Notify(Loc.T("{0}: {1}", config.FilePath, error), isError: true);
         }
 
-        // A file with only a "preview" view shows that view on Enter too; an explicit "enter": "files" keeps the files.
-        if ((config?.Enter ?? (config?.Preview is { Kind: FolderActionKind.View or FolderActionKind.Panel } preview ? preview : null))
-            is not { IsPlainFiles: false } action)
+        // A file with only a "preview" view shows that view on Enter too; an explicit "enter": "files" keeps the files
+        // (Widok then still shows the "preview" view when there is one).
+        static FolderAction? Shown(FolderAction? candidate) => candidate is { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel } ? candidate : null;
+        var action = mode switch
         {
-            await panel.NavigateAsync(folder.Path);
+            FolderViewMode.Files => null,
+            FolderViewMode.View => config?.Enter is { IsPlainFiles: false } enter ? enter : Shown(config?.Preview),
+            _ => config?.Enter ?? Shown(config?.Preview),
+        };
+        if (action is { IsPlainFiles: false })
+        {
+            await RunFolderActionAsync(panel, folder, config!, action);
             return;
         }
 
-        await RunFolderActionAsync(panel, folder, config!, action);
+        if (expectedTab is not null && panel.ActiveTab != expectedTab)
+        {
+            return;
+        }
+
+        if (!SamePath(panel.ActiveTab.Path, folder.Path))
+        {
+            await panel.NavigateAsync(folder.Path, focusName);
+        }
+
+        if (mode == FolderViewMode.View)
+        {
+            var path = folder.Path;
+            panel.ShowMode(new NoFolderView(_skins!.Current, folder.Name, () => _ = ConfigureFolderViewAsync(path, panel)), folderView: true);
+            SetActive(panel);
+        }
+    }
+
+    private async Task<(VfsEntry Folder, FolderConfig Config, FolderAction Action)?> FindAncestorFolderViewAsync(string path)
+    {
+        if (!_host!.Settings.FolderConfigs
+            || VfsPath.GetScheme(path) is not (VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp"))
+        {
+            return null;
+        }
+
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var current = path;
+        while (true)
+        {
+            var parent = _host!.Router.GetParentPath(current);
+            if (parent is null || SamePath(parent, current))
+            {
+                return null;
+            }
+
+            current = parent;
+            FolderConfig? config;
+            try
+            {
+                config = await Task.Run(() => _host.ReadFolderConfigAsync(current, budget.Token), budget.Token);
+            }
+            catch (OperationCanceledException) when (budget.IsCancellationRequested)
+            {
+                Notify(Loc.T("Nie udało się sprawdzić nadrzędnych widoków folderu w wyznaczonym czasie."), isError: true);
+                return null;
+            }
+
+            if (config is null)
+            {
+                continue;
+            }
+
+            if (config.Error is { } error)
+            {
+                Notify(Loc.T("{0}: {1}", config.FilePath, error), isError: true);
+                return null;
+            }
+
+            var action = config.Enter ?? (config.Preview is { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel } preview
+                ? preview
+                : null);
+            if (action is not { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel })
+            {
+                return null;
+            }
+
+            var relativePath = VfsPath.StripScheme(config.Folder).TrimEnd('\\', '/');
+            var separator = relativePath.LastIndexOfAny(['\\', '/']);
+            var name = relativePath[(separator + 1)..];
+            return (new VfsEntry(name, config.Folder, VfsEntryKind.Directory), config, action);
+        }
+    }
+
+    /// <summary>
+    /// Start-up in Auto or Widok: a panel restored into a folder with its own view shows it, as if the folder had just
+    /// been entered. Only views and plugin panels — a script, a page or a redirect still waits for an explicit Enter.
+    /// </summary>
+    private async Task ShowStartupFolderViewAsync(FilePanelView panel)
+    {
+        var path = panel.ActiveTab.Path;
+        if (panel.FolderMode == FolderViewMode.Files || VfsPath.GetScheme(path) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
+        {
+            return;
+        }
+
+        var config = await Task.Run(() => _host!.ReadFolderConfigAsync(path, CancellationToken.None));
+        if (config is not { Error: null } || (config.Enter ?? config.Preview) is not { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel }
+            || panel.Mode is not null || !SamePath(panel.ActiveTab.Path, path))
+        {
+            return; // no view, or the user went elsewhere meanwhile
+        }
+
+        var active = _active;
+        await EnterFolderAsync(panel, new VfsEntry(panel.ActiveTab.Title, path, VfsEntryKind.Directory));
+        SetActive(active); // showing a view activates its panel; start-up keeps the panel that was active
+    }
+
+    private static bool SamePath(string a, string b) =>
+        string.Equals(a.TrimEnd('\\', '/'), b.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Pliki · Auto · Widok clicked: the folder on screen is shown again the way the new mode enters folders.</summary>
+    private async Task ApplyFolderModeAsync(FilePanelView panel)
+    {
+        SetActive(panel);
+        panel.ActiveTab.SetFolderViewInfo(null, null);
+        if (panel.Mode is not null)
+        {
+            panel.CloseMode(); // a view of this folder, or the quick view of the other panel: the mode replaces it
+        }
+
+        if (panel.FolderMode != FolderViewMode.Files)
+        {
+            var tab = panel.ActiveTab;
+            await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true);
+        }
+    }
+
+    private async Task RestoreTabFolderModeAsync(FilePanelView panel)
+    {
+        var tab = panel.ActiveTab;
+        if (panel.PluginTabId(tab) is not null)
+        {
+            return;
+        }
+
+        tab.SetFolderViewInfo(null, null);
+        if (tab.FolderMode != FolderViewMode.Files)
+        {
+            await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true, expectedTab: tab);
+        }
     }
 
     /// <summary>Enter (or a double click) on <c>c4k.dir</c> in the file list: the folder's view replaces the files.</summary>
@@ -1382,6 +1556,7 @@ public sealed class MainWindow : Window
                 }
 
                 _ = panel.NavigateAsync(folder.Path);
+                panel.ActiveTab.SetFolderViewInfo(folder.Name, PluginDisplayName(action.Plugin, panelId));
                 await OpenPanelInAsync(panelId, folder.Path, panel, action.Options, folderView: true);
                 return;
 
@@ -1394,6 +1569,7 @@ public sealed class MainWindow : Window
 
             case FolderActionKind.View:
                 _ = panel.NavigateAsync(folder.Path);
+                panel.ActiveTab.SetFolderViewInfo(folder.Name, action.Plugin is null ? null : PluginDisplayName(action.Plugin));
                 panel.ShowMode(CreatePreview(panel, new PreviewPanelView.PinnedFolder(folder, config, action)));
                 SetActive(panel);
                 return;
@@ -1404,6 +1580,18 @@ public sealed class MainWindow : Window
 
     private bool IsInstalled(string pluginId) =>
         _host!.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+
+    private string? PluginDisplayName(string? pluginId, string? panelId = null)
+    {
+        if (pluginId is null)
+        {
+            return null;
+        }
+
+        return _host!.DiscoveredPlugins.FirstOrDefault(p => string.Equals(p.Manifest?.Id, pluginId, StringComparison.OrdinalIgnoreCase))?.Manifest?.Name
+            ?? _host.FindPanel(panelId ?? pluginId)?.Title
+            ?? pluginId;
+    }
 
     /// <summary>
     /// Runs a command from a <c>c4k.dir</c>. The first time (and after every change of the file) the user sees the
@@ -1536,6 +1724,11 @@ public sealed class MainWindow : Window
             else if (_host!.Router.TryResolve(target, out _) && !IsForeignUri(target))
             {
                 var entry = await Task.Run(() => _host.Router.GetEntryAsync(target, CancellationToken.None));
+                if (entry is null)
+                {
+                    Notify(Loc.T("Nie znaleziono {0}.", target), isError: true);
+                    return;
+                }
 
                 // A folder with its own view, opened from a folder view (a dashboard picked on a dashboard), opens in
                 // place so Back returns to the dashboard it came from.
@@ -1552,14 +1745,19 @@ public sealed class MainWindow : Window
 
                 if (listPanel.Mode is PreviewPanelView { IsPinned: true })
                 {
+                    var messagePreview = PreviewPluginResolver.Resolve(_host.PreviewPlugins, entry.Value);
+                    if (listPanel.Mode is PreviewPanelView { IsPinnedFolder: true }
+                        && messagePreview is Core.Plugins.ExternalPreviewPlugin { OpensOnEnter: true })
+                    {
+                        listPanel.ShowModeReturningToCurrent(CreatePreview(listPanel, pinnedFile: entry.Value));
+                        SetActive(listPanel);
+                        return;
+                    }
+
                     listPanel.CloseMode();
                 }
 
-                if (entry is null)
-                {
-                    Notify(Loc.T("Nie znaleziono {0}.", target), isError: true);
-                }
-                else if (entry.Value.IsContainer)
+                if (entry.Value.IsContainer)
                 {
                     await EnterFolderAsync(listPanel, entry.Value);
                 }
@@ -3812,6 +4010,10 @@ public sealed class MainWindow : Window
         }
 
         items.Add(new PickerItem(string.Empty, null, "separator", IsSeparator: true));
+        items.Add(new PickerItem(
+            BrowserPlugin.Instance.Manifest.Name,
+            Loc.T("Przeglądarka WWW (WebView2) z paskiem adresu."),
+            CommandIds.PanelPrefix + BrowserPlugin.PluginId));
         items.AddRange(_host.PanelPlugins.Select(plugin =>
             new PickerItem(plugin.Title, plugin.Description, CommandIds.PanelPrefix + plugin.Id, plugin.Manifest.Name)));
 
@@ -3838,6 +4040,13 @@ public sealed class MainWindow : Window
     private void ShowPluginTab(FilePanelView panel, PanelTab tab)
     {
         var pluginId = panel.PluginTabId(tab);
+        if (pluginId == BrowserPlugin.PluginId)
+        {
+            panel.SetPluginTabMode(tab, new BrowserPanelView(_host!, _host!.HostFor(BrowserPlugin.Instance.Manifest), null, _skins!.Current, Notify, RunShortcut));
+            SetActive(panel);
+            return;
+        }
+
         if (pluginId is null || _host!.FindPanel(pluginId) is not { } plugin)
         {
             Notify(Loc.T("Nie znaleziono panelu pluginu dla tej zakładki."), isError: true);
@@ -3874,43 +4083,45 @@ public sealed class MainWindow : Window
     private (FilePanelView Target, FilePanelView Source) ModeTarget() =>
         _active.Mode is null ? (Other, _active) : (_active, Other);
 
+    private (FilePanelView Target, FilePanelView Source) PreviewTarget() =>
+        _active.Mode is PreviewPanelView { HasList: true } ? (Other, _active) : ModeTarget();
+
     /// <summary>Ctrl+Q: quick view of the entry under the cursor, in the opposite panel; focus stays on the file list.</summary>
     private void TogglePreview()
     {
         // A plugin's list (the mail account) stays; its selection is previewed in the other panel instead of under it.
-        var (target, source) = _active.Mode is PreviewPanelView { HasList: true } ? (Other, _active) : ModeTarget();
+        var (target, source) = PreviewTarget();
+        if (target.QuickViewShown)
+        {
+            target.CloseQuickViewTab();
+            return;
+        }
+
         if (target.Mode is PreviewPanelView)
         {
             target.CloseMode();
             return;
         }
 
-        target.ShowMode(CreatePreview(source));
-        SetActive(source);
+        ShowQuickView(target, source);
     }
 
-    private void SetPanelMode(FilePanelView panel, bool preview)
+    /// <summary>The quick view is a tab of the target panel: opened once, later calls select it.</summary>
+    private void ShowQuickView(FilePanelView target, FilePanelView source)
     {
-        if (!preview)
+        if (target.SelectFolderViewTab(FilePanelView.QuickViewKey) is null)
         {
-            panel.CloseMode();
-            SetActive(panel);
-            return;
-        }
-
-        var source = panel == _left ? _right : _left;
-        if (panel.Mode is not PreviewPanelView)
-        {
-            panel.ShowMode(CreatePreview(source));
+            target.AddFolderViewTab(target.ActiveTab.Path, FilePanelView.QuickViewKey, CreatePreview(source));
         }
 
         SetActive(source);
     }
+
 
     /// <summary>F2: choose what the opposite panel shows — files, quick view or any plugin panel.</summary>
     private async ValueTask ShowPanelModesAsync(CommandInvocation _)
     {
-        var (target, _) = ModeTarget();
+        var (target, _) = PreviewTarget();
         var side = target == _left ? Loc.T("lewy") : Loc.T("prawy");
         var choice = await new PickerDialog(_skins!.Current, Loc.T("Tryb panelu ({0})", side), PanelModeItems(group: null), Loc.T("Co ma pokazywać {0} panel?", side)).ShowAsync(this);
         if (choice is not null)
@@ -3936,17 +4147,24 @@ public sealed class MainWindow : Window
     /// <summary>Shows a mode from <see cref="PanelModeItems"/> in the panel opposite the active one.</summary>
     private async Task ApplyPanelModeAsync(string value)
     {
-        var (target, _) = ModeTarget();
+        var (target, source) = PreviewTarget();
         switch (value)
         {
             case "mode:files":
-                target.CloseMode();
+                if (target.QuickViewShown)
+                {
+                    target.CloseQuickViewTab();
+                }
+                else
+                {
+                    target.CloseMode();
+                }
                 SetActive(target);
                 break;
             case "mode:preview":
-                if (target.Mode is not PreviewPanelView)
+                if (!target.QuickViewShown || source.Mode is PreviewPanelView { HasList: true })
                 {
-                    TogglePreview();
+                    ShowQuickView(target, source);
                 }
 
                 break;

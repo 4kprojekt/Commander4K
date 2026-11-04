@@ -83,7 +83,7 @@ public sealed class ScopedMailHost(PluginManifest manifest, VfsRouter router, IM
         Gate("mail.saveAttachment", $"{path}#{index.ToString(CultureInfo.InvariantCulture)} → {targetPath}", [Read, Write], async () =>
         {
             var message = await LoadAsync(path, cancellationToken).ConfigureAwait(false);
-            var entity = message.Attachments.ElementAtOrDefault(index)
+            var entity = MailDrafts.AttachmentsOf(message).ElementAtOrDefault(index)
                 ?? throw new ArgumentException($"Attachment {index} not found.", nameof(index));
 
             // The target is the plugin's explicit choice; the attachment's own (untrusted) name is never used for a path.

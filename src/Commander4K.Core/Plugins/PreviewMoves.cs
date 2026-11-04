@@ -47,9 +47,13 @@ public static class PreviewMoves
             return false;
         }
 
-        var root = from.Take(Math.Max(1, from.Count - Levels)).ToList();
+        // A message in a month folder (Odebrane\2026\11\x.eml) counts from its mail folder, as if it lay directly in it.
+        var levels = from.Count >= 3 && IsDigits(from[^2], 2) && IsDigits(from[^3], 4) ? Levels + 2 : Levels;
+        var root = from.Take(Math.Max(1, from.Count - levels)).ToList();
         return to.Count > root.Count && root.Zip(to).All(p => string.Equals(p.First, p.Second, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool IsDigits(string segment, int length) => segment.Length == length && segment.All(char.IsAsciiDigit);
 
     private static List<string> Segments(string path) => [.. path.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries)];
 }

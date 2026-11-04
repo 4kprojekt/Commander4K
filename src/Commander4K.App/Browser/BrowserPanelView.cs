@@ -152,7 +152,9 @@ public sealed class BrowserPanelView : DockPanel, IPanelModeView, ITitledModeVie
         ApplySkin(brushes);
     }
 
-    public string Title => "🌐 " + (Core?.DocumentTitle is { Length: > 0 } title ? title : CurrentUrl ?? Loc.T("Przeglądarka"));
+    public string Title => Core?.DocumentTitle is { Length: > 0 } title ? title : CurrentUrl ?? Loc.T("Przeglądarka");
+
+    public string? TabIcon => "🌐";
 
     public Control View => this;
 

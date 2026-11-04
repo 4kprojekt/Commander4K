@@ -26,6 +26,16 @@ public sealed class PreviewMovesTests
     public void Other_places_are_refused(string to) => Assert.False(PreviewMoves.IsAcceptable(From, to));
 
     [Fact]
+    public void A_month_folder_counts_from_its_mail_folder()
+    {
+        const string inMonth = @"C:\Users\a\Poczta\Firma\Odebrane\2026\11\x.eml";
+        Assert.True(PreviewMoves.IsAcceptable(inMonth, @"C:\Users\a\Poczta\Firma\Szkice\draft.eml"));
+        Assert.True(PreviewMoves.IsAcceptable(inMonth, @"C:\Users\a\Poczta\Firma\Kosz\2026\11\x.eml"));
+        Assert.False(PreviewMoves.IsAcceptable(inMonth, @"C:\Users\a\x.eml"));
+        Assert.False(PreviewMoves.IsAcceptable(@"C:\Users\a\Poczta\Firma\Odebrane\Projekt\11\x.eml", @"C:\Users\a\x.eml"));
+    }
+
+    [Fact]
     public void The_scheme_must_match()
     {
         Assert.True(PreviewMoves.IsAcceptable("sftp://host/Poczta/Firma/Odebrane/x.eml", "sftp://host/Poczta/Firma/Szkice/y.eml"));

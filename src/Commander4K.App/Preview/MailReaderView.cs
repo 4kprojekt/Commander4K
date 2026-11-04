@@ -1,5 +1,9 @@
+using System.Net;
+using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Commander4K.App.Theming;
@@ -12,11 +16,11 @@ namespace Commander4K.App.Preview;
 /// A <see cref="MailPreview"/> as the reader of the design "Tryb panelu — klient poczty": the plugin's actions with the
 /// Treść · Tekst · Źródło switch, the subject, the sender with an avatar, attachment tiles, the text and a quick reply.
 /// </summary>
-internal static class MailReaderView
+internal static partial class MailReaderView
 {
     /// <param name="actionButton">Builds a button for an action; the values function supplies form values (the quick reply's text).</param>
     public static Control Build(MailPreview mail, IReadOnlyList<PreviewAction> actions, SkinBrushes b,
-        Func<PreviewAction, Func<IReadOnlyDictionary<string, string>>?, Control> actionButton)
+        Func<PreviewAction, Func<IReadOnlyDictionary<string, string>>?, Control> actionButton, Action<string>? openLink = null)
     {
         var root = new DockPanel();
         var body = new ContentControl();
@@ -41,7 +45,7 @@ internal static class MailReaderView
             bar.Children.Add(button);
         }
 
-        var switcher = Ds.Segmented(b, views, 0, index => body.Content = Content(mail, b, index), onToolbar: true);
+        var switcher = Ds.Segmented(b, views, 0, index => body.Content = Content(mail, b, index, openLink), onToolbar: true);
         switcher.VerticalAlignment = VerticalAlignment.Center;
         var barGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         barGrid.Children.Add(bar);
@@ -72,7 +76,7 @@ internal static class MailReaderView
         }
 
         page.Children.Add(new Border { Height = 1, Background = b.PanelBorder });
-        body.Content = Content(mail, b, 0);
+        body.Content = Content(mail, b, 0, openLink);
         page.Children.Add(body);
         if (mail.QuickReplyTarget is { } replyTarget)
         {
@@ -203,22 +207,15 @@ internal static class MailReaderView
     }
 
     /// <summary>Treść: paragraphs at reading size; Tekst: the text as sent, monospaced; Źródło: the message source.</summary>
-    private static Control Content(MailPreview mail, SkinBrushes b, int view)
+    private static Control Content(MailPreview mail, SkinBrushes b, int view, Action<string>? openLink)
     {
         if (view == 0)
         {
             var paragraphs = new StackPanel { MaxWidth = 680, HorizontalAlignment = HorizontalAlignment.Left };
-            foreach (var paragraph in mail.Body.Replace("\r\n", "\n", StringComparison.Ordinal).Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
+            var body = Entity().IsMatch(mail.Body) ? WebUtility.HtmlDecode(mail.Body) : mail.Body;
+            foreach (var paragraph in body.Replace("\r\n", "\n", StringComparison.Ordinal).Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
             {
-                paragraphs.Children.Add(new SelectableTextBlock
-                {
-                    Text = paragraph.Trim('\n'),
-                    FontSize = 14,
-                    LineHeight = 23,
-                    Foreground = paragraph.StartsWith('>') ? b.MutedForeground : b.FileForeground,
-                    TextWrapping = TextWrapping.Wrap,
-                    Margin = new Thickness(0, 0, 0, 12),
-                });
+                paragraphs.Children.Add(Paragraph(paragraph.Trim('\n'), paragraph.StartsWith('>') ? b.MutedForeground : b.FileForeground, b, openLink));
             }
 
             return paragraphs;
@@ -236,6 +233,95 @@ internal static class MailReaderView
         return view == 1
             ? text
             : new Border { Padding = new Thickness(14, 12), BorderBrush = b.PanelBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Background = b.HeaderBackground, Child = text };
+    }
+
+    [GeneratedRegex(@"&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);")]
+    private static partial Regex Entity();
+
+    [GeneratedRegex(@"(?:https?://|www\.)[^\s<>""]+", RegexOptions.IgnoreCase)]
+    private static partial Regex Url();
+
+    /// <summary>A paragraph whose http(s) addresses are underlined and open on a click (not after a drag that selects text).</summary>
+    private static SelectableTextBlock Paragraph(string text, IBrush foreground, SkinBrushes b, Action<string>? openLink)
+    {
+        var block = new SelectableTextBlock
+        {
+            FontSize = 14,
+            LineHeight = 23,
+            Foreground = foreground,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        var links = new List<(int Start, int End, string Url)>();
+        var last = 0;
+        foreach (Match match in Url().Matches(text))
+        {
+            var url = match.Value.TrimEnd('.', ',', ';', ':', '!', '?', '\'', '"');
+            while (url.EndsWith(')') && url.Count(c => c == ')') > url.Count(c => c == '('))
+            {
+                url = url[..^1].TrimEnd('.', ',', ';', ':', '!', '?');
+            }
+
+            if (url.Length <= 8)
+            {
+                continue;
+            }
+
+            if (match.Index > last)
+            {
+                block.Inlines!.Add(new Run(text[last..match.Index]));
+            }
+
+            block.Inlines!.Add(new Run(url) { Foreground = b.Accent, TextDecorations = TextDecorations.Underline });
+            var href = url.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? "https://" + url : url;
+            links.Add((match.Index, match.Index + url.Length, href));
+            last = match.Index + url.Length;
+        }
+
+        if (links.Count == 0)
+        {
+            block.Text = text;
+            return block;
+        }
+
+        if (last < text.Length)
+        {
+            block.Inlines!.Add(new Run(text[last..]));
+        }
+
+        string? UrlAt(PointerEventArgs e)
+        {
+            var hit = block.TextLayout.HitTestPoint(e.GetPosition(block));
+            if (!hit.IsInside)
+            {
+                return null;
+            }
+
+            foreach (var (start, end, url) in links)
+            {
+                if (hit.TextPosition >= start && hit.TextPosition < end)
+                {
+                    return url;
+                }
+            }
+
+            return null;
+        }
+
+        Point? pressed = null;
+        block.PointerPressed += (_, e) => pressed = e.GetCurrentPoint(block).Properties.IsLeftButtonPressed ? e.GetPosition(block) : null;
+        block.PointerMoved += (_, e) => block.Cursor = UrlAt(e) is null ? null : new Cursor(StandardCursorType.Hand);
+        block.PointerReleased += (_, e) =>
+        {
+            if (pressed is { } from && openLink is not null && Math.Abs(e.GetPosition(block).X - from.X) < 4 && Math.Abs(e.GetPosition(block).Y - from.Y) < 4
+                && UrlAt(e) is { } url)
+            {
+                openLink(url);
+            }
+
+            pressed = null;
+        };
+        return block;
     }
 
     private static Control QuickReply(MailPreview mail, string target, SkinBrushes b, Func<PreviewAction, Func<IReadOnlyDictionary<string, string>>?, Control> actionButton)

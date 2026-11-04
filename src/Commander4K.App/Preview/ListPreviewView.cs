@@ -21,23 +21,37 @@ internal sealed class ListPreviewView : DockPanel
     private readonly SkinBrushes _b;
     private readonly Action<ListPreviewItem> _selected;
     private readonly Action<ListPreviewItem> _opened;
+    private readonly Action<ListPreviewItem>? _revealed;
     private readonly TextBox _search;
     private readonly StackPanel _rows = new();
     private readonly ScrollViewer _scroll;
     private readonly List<(ListPreviewItem Item, Border Row)> _visible = [];
     private readonly double _rowHeight;
+    private readonly Action<string>? _searchPlugin;
+    private readonly Func<PreviewAction, Control> _actionButton;
+    private Avalonia.Threading.DispatcherTimer? _searchDelay;
     private int _filter;
     private string? _selectedPath;
 
+    /// <summary>What the next list of the same folder takes over: the typed search (its focus too), the filter and the scroll.</summary>
+    public sealed record Carry(TextBox Search, bool SearchFocused, int Filter, Vector Scroll);
+
     /// <param name="actionButton">Builds a button for one of the plugin's actions (the host binds its shortcut).</param>
+    /// <param name="searchPlugin">Runs the plugin's search (<see cref="ListPreview.SearchTarget"/>) with the typed text.</param>
+    /// <param name="carry">The previous list of the same folder (another page, search results): its field, filter and scroll stay.</param>
     public ListPreviewView(ListPreview list, IReadOnlyList<PreviewAction> actions, SkinBrushes brushes, string? selectedPath,
-        Action<ListPreviewItem> selected, Action<ListPreviewItem> opened, Func<PreviewAction, Control> actionButton)
+        Action<ListPreviewItem> selected, Action<ListPreviewItem> opened, Func<PreviewAction, Control> actionButton,
+        Action<string>? searchPlugin = null, Carry? carry = null, Action<ListPreviewItem>? revealed = null)
     {
+        _revealed = revealed;
         _list = list;
         _b = brushes;
         _selected = selected;
         _opened = opened;
         _selectedPath = selectedPath;
+        _actionButton = actionButton;
+        _searchPlugin = list.SearchTarget is null ? null : searchPlugin;
+        _filter = carry?.Filter ?? 0;
         _rowHeight = Math.Round(56 * brushes.FontSize / 13);
 
         if (list.Tabs is { Count: > 0 } tabs)
@@ -61,8 +75,9 @@ internal sealed class ListPreviewView : DockPanel
             Children.Add(tabBar);
         }
 
-        _search = new TextBox { PlaceholderText = list.SearchPlaceholder ?? Loc.T("Szukaj"), FontSize = 12, VerticalContentAlignment = VerticalAlignment.Center };
-        _search.TextChanged += (_, _) => Rebuild(keepScroll: false);
+        _search = carry?.Search ?? new TextBox { FontSize = 12, VerticalContentAlignment = VerticalAlignment.Center, Text = list.Query ?? string.Empty };
+        _search.PlaceholderText = list.SearchPlaceholder ?? Loc.T("Szukaj");
+        _search.TextChanged += OnSearchChanged;
         var bar = new WrapPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         var searchField = Ds.SearchField(brushes, _search, 26, "⌕", Ds.Kbd(brushes, "Ctrl+F"));
         searchField.MinWidth = 180;
@@ -71,7 +86,8 @@ internal sealed class ListPreviewView : DockPanel
         bar.Children.Add(searchField);
         if (list.Filters is { Count: > 1 } filters)
         {
-            var segmented = Ds.Segmented(brushes, [.. filters.Select(f => f.Label)], 0, index =>
+            _filter = Math.Clamp(_filter, 0, filters.Count - 1);
+            var segmented = Ds.Segmented(brushes, [.. filters.Select(f => f.Label)], _filter, index =>
             {
                 _filter = index;
                 Rebuild(keepScroll: false);
@@ -101,6 +117,64 @@ internal sealed class ListPreviewView : DockPanel
         _scroll = new ScrollViewer { Content = _rows, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Padding = new Thickness(0, 2, 0, 6) };
         Children.Add(_scroll);
         Rebuild(keepScroll: false);
+
+        if (carry is { } previous)
+        {
+            // Another page or the answer to a search: the user stays where they were, still typing.
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _scroll.Offset = previous.Scroll;
+                if (previous.SearchFocused)
+                {
+                    _search.Focus();
+                    _search.CaretIndex = _search.Text?.Length ?? 0;
+                }
+            }, Avalonia.Threading.DispatcherPriority.Loaded);
+        }
+
+        // Typed on while the plugin was answering: ask again for what the field holds now.
+        if (_searchPlugin is not null && (_search.Text ?? string.Empty).Trim() != (list.Query ?? string.Empty).Trim())
+        {
+            ScheduleSearch();
+        }
+    }
+
+    /// <summary>Hands the search field, filter and scroll to the next list of the same folder; this view lets go of the field.</summary>
+    public Carry Release()
+    {
+        _searchDelay?.Stop();
+        _search.TextChanged -= OnSearchChanged;
+        var focused = _search.IsFocused;
+        if (_search.Parent is Panel parent)
+        {
+            parent.Children.Remove(_search);
+        }
+
+        return new Carry(_search, focused, _filter, _scroll.Offset);
+    }
+
+    public string Folder => _list.Folder;
+
+    private void OnSearchChanged(object? sender, TextChangedEventArgs e)
+    {
+        Rebuild(keepScroll: false); // the rows on screen narrow down at once
+        if (_searchPlugin is not null)
+        {
+            ScheduleSearch();
+        }
+    }
+
+    /// <summary>The plugin searches everything (other pages, other folders) once typing pauses for 350 ms.</summary>
+    private void ScheduleSearch()
+    {
+        _searchDelay?.Stop();
+        _searchDelay = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        _searchDelay.Tick += (_, _) =>
+        {
+            _searchDelay?.Stop();
+            _searchPlugin?.Invoke((_search.Text ?? string.Empty).Trim());
+        };
+        _searchDelay.Start();
     }
 
     /// <summary>The row selected now (after search and filters), or <c>null</c>.</summary>
@@ -116,6 +190,12 @@ internal sealed class ListPreviewView : DockPanel
             if (e.Key == Key.F && e.KeyModifiers == KeyModifiers.Control)
             {
                 FocusSearch();
+                return true;
+            }
+
+            if (e.Key == Key.Enter && e.KeyModifiers == KeyModifiers.Control && _revealed is { } reveal && Selected is { } current)
+            {
+                reveal(current);
                 return true;
             }
 
@@ -252,6 +332,14 @@ internal sealed class ListPreviewView : DockPanel
             });
         }
 
+        if (_list.More is { } more && shown.Count > 0)
+        {
+            var button = _actionButton(more);
+            button.HorizontalAlignment = HorizontalAlignment.Center;
+            button.Margin = new Thickness(0, 10, 0, 6);
+            _rows.Children.Add(button);
+        }
+
         if (!keepScroll)
         {
             _scroll.Offset = default;
@@ -310,6 +398,13 @@ internal sealed class ListPreviewView : DockPanel
             }
         };
         row.DoubleTapped += (_, _) => _opened(item);
+        if (_revealed is { } reveal)
+        {
+            var menuItem = new MenuItem { Header = Loc.T("Pokaż w folderze (Ctrl+Enter)") };
+            menuItem.Click += (_, _) => reveal(item);
+            row.ContextMenu = new ContextMenu { ItemsSource = new[] { menuItem } };
+        }
+
         Paint(row, item, selected);
         return row;
     }

@@ -27,7 +27,7 @@ namespace Commander4K.App.Preview;
 /// new cursor position or folder cancels the running load at once. Markdown and text can be edited (F4) and saved
 /// (Ctrl+S) through the plugin's host, which checks fs.write and audits the write.
 /// </summary>
-public sealed class PreviewPanelView : Grid, IPanelModeView
+public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
 {
     private const int MaxFolderRows = 300;
     private static readonly TimeSpan PreviewProgressInterval = TimeSpan.FromMilliseconds(250);
@@ -63,9 +63,6 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     }
     private readonly Button _saveButton;
     private readonly ContentControl _content = new();
-    private readonly TextBlock _status;
-    private readonly Border _statusBar;
-    private readonly WaveDots _busy = new() { IsVisible = false, Margin = new Thickness(0, 0, 8, 0) };
     private SkinBrushes _brushes;
     private string? _loadedKey;
     private CancellationTokenSource? _loading;
@@ -157,7 +154,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _caretInfo.Margin = new Thickness(10, 0, 0, 0);
         _caretInfo.IsVisible = false;
         // A folder's own view always offers the way back (←, Alt+←, Backspace) and the way to its files (Esc).
-        _backButton = new Button().Content("←").Padding(8, 2).FontSize(12).Margin(0, 0, 6, 0).IsVisible(pinned is not null).OnClick(async _ => await BackAsync());
+        _backButton = new Button().Content("←").Padding(8, 2).FontSize(12).Margin(0, 0, 6, 0).IsVisible(false).OnClick(async _ => await BackAsync());
         ToolTip.SetTip(_backButton, Loc.T("Wstecz (Alt+←, Backspace)"));
         _viewSwitch.VerticalAlignment = VerticalAlignment.Center;
         _viewSwitch.Margin = new Thickness(8, 0, 0, 0);
@@ -169,13 +166,10 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             _caretInfo.Col(3),
             _saveButton.Col(4),
             FilesButton = new Button().Col(5).Content(pinned is null && _pinnedFile is null ? Loc.T("Zamknij (Esc)") : Loc.T("📄 Pliki (Esc)")).Padding(8, 2).FontSize(12).Margin(4, 0, 0, 0).OnClick(_ => CloseRequested?.Invoke())));
-        _status = new TextBlock().VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
-        _statusBar = new Border().Row(2).Child(new Grid().Cols("Auto,*").Children(_busy.VerticalAlignment(VerticalAlignment.Center), _status.Col(1)));
 
-        RowDefinitions = new RowDefinitions("Auto,*,Auto");
         Children.Add(_header);
         Children.Add(_content.Row(1));
-        Children.Add(_statusBar);
+        AttachChrome();
         PointerPressed += (_, _) => Activated?.Invoke();
 
         ApplySkin(brushes);
@@ -246,7 +240,33 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     /// <summary>The other panel: while it shows the quick view of this panel, a list shows no preview of its own.</summary>
     public Func<FilePanelView>? Opposite { get; init; }
 
-    public string Title => _pinned is { } pinned ? pinned.Config.Title ?? pinned.Folder.Name : _pinnedFile?.Name ?? Loc.T("Podgląd");
+    public string? TabIcon => _pinned is not null || _pinnedFile is not null ? "🗂" : "👁";
+
+    public string Title => _pinned is { } pinned ? WithAccount(pinned.Config.Title ?? pinned.Folder.Name, pinned.Action.Options) : _pinnedFile?.Name ?? Loc.T("Podgląd");
+
+    /// <summary>A plugin account's own name (the options' "user") in brackets, so folders of several accounts differ.</summary>
+    private static string WithAccount(string title, string? optionsJson)
+    {
+        if (optionsJson is null)
+        {
+            return title;
+        }
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(optionsJson);
+            if (document.RootElement.TryGetProperty("user", out var user) && user.ValueKind == System.Text.Json.JsonValueKind.String
+                && user.GetString() is { Length: > 0 } account && !title.Contains(account, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{title} ({account})";
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+        }
+
+        return title;
+    }
 
     public Control View => this;
 
@@ -344,6 +364,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
 
         _backButton.IsEnabled = _history.CanGoBack;
+        _backButton.IsVisible = _history.CanGoBack;
     }
 
     public void ApplySkin(SkinBrushes brushes)
@@ -374,15 +395,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         _caretInfo.Foreground = brushes.MutedForeground;
         _caretInfo.FontSize = 12;
 
-        _statusBar.Background = brushes.StatusBackground;
-        _statusBar.BorderBrush = brushes.PanelBorder;
-        _statusBar.BorderThickness = new Thickness(0, modern ? 1 : 0, 0, 0);
-        _statusBar.Height = modern ? 26 : double.NaN;
-        _statusBar.Padding = modern ? new Thickness(12, 0) : new Thickness(8, 2);
-        _status.Foreground = brushes.StatusForeground;
-        _status.FontFamily = brushes.FontFamily;
-        _status.FontSize = modern ? Math.Max(11, brushes.FontSize - 1) : brushes.FontSize - 1;
-        _busy.Foreground = brushes.StatusForeground;
+        ApplyChromeSkin(brushes);
         if (_history.Trail.Count > 0)
         {
             RefreshTrail();
@@ -533,7 +546,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
 
         var tab = _source.ActiveTab;
-        var entry = tab.CurrentEntry;
+        var entry = tab.PreviewEntry;
         var key = $"{tab.Path}|{entry?.Path}";
         // A folder still loading (a slow share, net:// discovering hosts) does not stop the preview: the entry under
         // the cursor is already known, and the key keeps new batches from reloading it.
@@ -674,6 +687,13 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
                 }
 
                 (action, section) = (config?.Preview, "preview");
+
+                // The app's own pages (settings, skins, plugin manager) open only on Enter or from the menu, never
+                // because the cursor rests on their folder: the quick view shows that folder like any other.
+                if (action is { Plugin: null } && FolderViewIds.IsAppView(action.View))
+                {
+                    action = null;
+                }
             }
 
             if (_loading != cts)
@@ -1087,12 +1107,20 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     {
         var tab = _source.ActiveTab;
         var kept = _list?.Selected?.Path;
-        var cursor = SamePath(tab.Path, list.Folder) ? tab.CurrentEntry?.Path : null;
+        var cursor = tab.PreviewEntry?.Path;
         var selected = new[] { kept, list.Selected, cursor }.FirstOrDefault(path => path is not null && list.Items.Any(i => SamePath(i.Path, path)));
-        _list = new ListPreviewView(list, actions, _brushes, selected, item => FollowListItem(list.Folder, item), OpenListItem, action => ActionControl(action, null));
+
+        // Another page or search results of the same folder keep the typed search, the filter and the scroll.
+        var carry = _list is { } previous && SamePath(previous.Folder, list.Folder) ? previous.Release() : null;
+        _list?.Release();
+        var receiver = _receiver;
+        _list = new ListPreviewView(list, actions, _brushes, selected, FollowListItem, OpenListItem, action => ActionControl(action, null),
+            query => _ = RunActionAsync(new BoundAction(new PreviewAction(Loc.T("Szukaj"), list.SearchTarget!), receiver, null,
+                () => new Dictionary<string, string>(StringComparer.Ordinal) { ["query"] = query })),
+            carry, RevealListItem);
         if (_list.Selected is { } first)
         {
-            FollowListItem(list.Folder, first);
+            FollowListItem(first);
         }
 
         if (list.Status is not null || list.StatusRight is not null)
@@ -1158,6 +1186,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
 
     private void DropList()
     {
+        _list?.Release(); // also stops a search still waiting for a pause in typing
         _list = null;
         _listLayout?.Children.Clear();
         _listLayout = null;
@@ -1178,27 +1207,24 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
     }
 
-    /// <summary>The panel's cursor goes to the row's file (the folder is opened first if needed); previews follow the cursor.</summary>
-    private void FollowListItem(string folder, ListPreviewItem item)
+    /// <summary>The preview follows the row's file; the panel stays in the plugin's own folder (the file may lie in a subfolder).</summary>
+    private void FollowListItem(ListPreviewItem item)
     {
         var tab = _source.ActiveTab;
-        var name = item.Path.TrimEnd('\\', '/')[(item.Path.TrimEnd('\\', '/').LastIndexOfAny(['\\', '/']) + 1)..];
-        if (!SamePath(tab.Path, folder) || tab.IsLoading)
-        {
-            _ = tab.NavigateAsync(folder, name);
-            return;
-        }
+        var trimmed = item.Path.TrimEnd('\\', '/');
+        var name =  trimmed[(trimmed.LastIndexOfAny(['\\', '/']) + 1)..];
+        var known = tab.Entries.FirstOrDefault(e => SamePath(e.Path, item.Path));
+        tab.SetPreviewOverride(known.Path is null ? new VfsEntry(name, item.Path, VfsEntryKind.File) : known);
+    }
 
-        for (var i = 0; i < tab.Entries.Count; i++)
-        {
-            if (SamePath(tab.Entries[i].Path, item.Path))
-            {
-                tab.MoveCursor(i);
-                return;
-            }
-        }
-
-        _ = tab.RefreshAsync(); // a file the listing does not have yet (just synced): list again
+    /// <summary>Ctrl+Enter or the row's menu: the panel goes to the folder holding the file, cursor on it.</summary>
+    private void RevealListItem(ListPreviewItem item)
+    {
+        var trimmed = item.Path.TrimEnd('\\', '/');
+        var cut = trimmed.LastIndexOfAny(['\\', '/']);
+        var folder = trimmed[..Math.Max(cut, 0)];
+        _ = _source.NavigateAsync(folder, trimmed[(cut + 1)..]);
+        CloseRequested?.Invoke();
     }
 
     /// <summary>Enter or a double click on a row: the file opens like Enter in the file list.</summary>
@@ -1220,7 +1246,13 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
             SetStatus(status);
         }
 
-        return MailReaderView.Build(mail, actions, _brushes, ActionControl);
+        return MailReaderView.Build(mail, actions, _brushes, ActionControl, url =>
+        {
+            if (OpenTile is { } open)
+            {
+                _ = open(new PreviewTile(url, Target: url), _entry);
+            }
+        });
     }
 
     /// <summary>
@@ -1474,7 +1506,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         }
 
         _acting = true;
-        var status = _status.Text;
+        var status = StatusText;
         var busy = Loc.T("{0}: {1}…", receiver.Plugin.DisplayName, action.Label);
         SetStatus(busy, busy: true);
         try
@@ -1515,7 +1547,7 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
         {
             _acting = false;
             // Whatever happened, the "working…" line goes away unless something newer already replaced it.
-            if (_status.Text == busy)
+            if (StatusText == busy)
             {
                 SetStatus(status);
             }
@@ -2170,13 +2202,6 @@ public sealed class PreviewPanelView : Grid, IPanelModeView
     private sealed class CallbackProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);
-    }
-
-    /// <summary>Status line text; <paramref name="busy"/> shows the wave dots in front of it.</summary>
-    private void SetStatus(string? text, bool busy = false)
-    {
-        _status.Text = text;
-        _busy.IsVisible = busy;
     }
 }
 

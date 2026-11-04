@@ -15,6 +15,9 @@ public interface IPanelModeView
 
     Control View { get; }
 
+    /// <summary>The icon of the mode's tab and path bar; <c>null</c> keeps the default.</summary>
+    string? TabIcon => null;
+
     bool IsActivePanel { set; }
 
     void ApplySkin(SkinBrushes brushes);

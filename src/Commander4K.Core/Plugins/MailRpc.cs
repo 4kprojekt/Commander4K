@@ -77,6 +77,7 @@ public static class MailRpc
                         flags = FlagNames(h.Flags),
                         size = h.Size,
                         fileName = h.FileName,
+                        attachments = h.HasAttachments,
                     }).ToList(),
                     flagChanges = sync.FlagChanges.Select(c => new { uid = c.Uid, flags = FlagNames(c.Flags) }).ToList(),
                     removed = sync.Removed,

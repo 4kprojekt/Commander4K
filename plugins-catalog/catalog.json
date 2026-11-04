@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-03",
+  "updated": "2026-11-04",
   "baseUrl": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/",
   "plugins": [
     {
@@ -372,7 +372,7 @@
     {
       "id": "official.mail",
       "name": "Poczta",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "author": "4Kprojekt",
       "runtime": "powershell",
       "description": {
@@ -396,19 +396,19 @@
         },
         {
           "path": "compose.ps1",
-          "sha256": "6c03e30cf25bf6fa562e09db1960e9679d2b9b19fa1f44fa27a7389c00a55405"
+          "sha256": "bff496b87e3c720957a0d9ca09dedb201143f142e577fd7488ad21662026b987"
         },
         {
           "path": "main.ps1",
-          "sha256": "ce70340bfacf60f360b49c61ffc3c3b160f6864a08d8a99e9dc4604089da52e3"
+          "sha256": "9369826ff1e9603179089561e917c9b2d82373dfbb5ecdd1b043d099485039c4"
         },
         {
           "path": "plugin.json",
-          "sha256": "f4e76b9983868e6466cb7c59e26b19dddac80b3058a5cfb30608846a661c07d6"
+          "sha256": "40dc5980a175c9afe62f79d9446997cec88dab020cee17e4ab7afd8d9ba9ca65"
         },
         {
           "path": "sync.ps1",
-          "sha256": "70328e06fb01e85903c1e7ad350ea98c5dcfa4645ae247938fbf7b1fd981f02b"
+          "sha256": "701f388c8a9f08e7bfc6c0db0c1afcb9564458566fe3de6463ab377ccbd44955"
         }
       ],
       "previewExtensions": [

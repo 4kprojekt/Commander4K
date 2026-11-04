@@ -27,7 +27,7 @@ public sealed record PluginPanelServices(
 /// Renders an <see cref="IPanelPlugin"/> session inside a file panel: filter box, actions, the tree table, a details
 /// pane for the row under the cursor and a status line. Loading always runs on the thread pool and can be cancelled.
 /// </summary>
-public sealed class PluginPanelView : Grid, IPanelModeView
+public sealed class PluginPanelView : ModeViewBase, IPanelModeView
 {
     private readonly IPanelPlugin _plugin;
     private readonly IPanelSession _session;
@@ -40,12 +40,10 @@ public sealed class PluginPanelView : Grid, IPanelModeView
     private readonly Control _searchField;
     private readonly Grid _body = new();
     private readonly GridSplitter _splitter = new();
-    private readonly Border _statusBar;
+    private const int LongSectionItems = 25;
     private PanelDetails? _shownDetails;
     private string? _detailsMessage;
     private bool? _detailsAtSide;
-    private readonly TextBlock _status;
-    private readonly WaveDots _busy = new() { IsVisible = false, Margin = new Thickness(6, 0, 0, 0) };
     private readonly Border _header;
     private readonly Border _detailsBorder;
     private readonly DispatcherTimer _detailsDelay;
@@ -92,13 +90,10 @@ public sealed class PluginPanelView : Grid, IPanelModeView
             right.Col(2)));
 
         _detailsBorder = new Border().Child(new ScrollViewer().Content(_details));
-        _status = new TextBlock().VerticalAlignment(VerticalAlignment.Center).TextTrimming(TextTrimming.CharacterEllipsis);
-        _statusBar = new Border().MinHeight(26).Padding(12, 0).Child(new Grid().Cols("Auto,*").Children(_busy.VerticalAlignment(VerticalAlignment.Center), _status.Col(1)));
 
-        RowDefinitions = new RowDefinitions("Auto,*,Auto");
         Children.Add(_header);
         Children.Add(_body.Row(1));
-        Children.Add(_statusBar.Row(2));
+        AttachChrome();
         _body.Children.Add(_table);
         _body.Children.Add(_splitter);
         _body.Children.Add(_detailsBorder);
@@ -155,6 +150,8 @@ public sealed class PluginPanelView : Grid, IPanelModeView
 
     public string Title => _plugin.Title;
 
+    public string? TabIcon => "⚙";
+
     public string PluginId => _plugin.Id;
 
     /// <summary>The plugin session, for sending files to the panel or taking files from it (F5).</summary>
@@ -187,12 +184,7 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         _detailsBorder.Background = brushes.PanelBackground;
         _detailsBorder.BorderBrush = brushes.PanelBorder;
         _splitter.Background = brushes.PanelBorder;
-        _statusBar.Background = brushes.StatusBackground;
-        _statusBar.BorderBrush = brushes.PanelBorder;
-        _statusBar.BorderThickness = new Thickness(0, brushes.IsModern ? 1 : 0, 0, 0);
-        _status.Foreground = brushes.StatusForeground;
-        _status.FontSize = Math.Max(11, brushes.FontSize - 1);
-        _busy.Foreground = brushes.StatusForeground;
+        ApplyChromeSkin(brushes);
         Background = brushes.PanelBackground;
         foreach (var button in _header.GetLogicalDescendants().OfType<Button>())
         {
@@ -250,6 +242,20 @@ public sealed class PluginPanelView : Grid, IPanelModeView
 
         foreach (var section in _shownDetails.Sections)
         {
+            if (section.Items.Count > LongSectionItems)
+            {
+                // Hundreds of per-row controls (DLLs, threads) froze the UI on every cursor move; one text block is cheap.
+                var text = new SelectableTextBlock
+                {
+                    Text = string.Join('\n', section.Items.Select(i => $"{i.Key}  {i.Value}")),
+                    FontSize = 12,
+                    Foreground = b.FileForeground,
+                    TextWrapping = TextWrapping.Wrap,
+                };
+                _details.Children.Add(new StackPanel { Spacing = 8, Children = { Ds.SectionHeading(b, section.Title), text } });
+                continue;
+            }
+
             var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 12, RowSpacing = 4 };
             var row = 0;
             foreach (var (key, value) in section.Items)
@@ -387,18 +393,16 @@ public sealed class PluginPanelView : Grid, IPanelModeView
 
                 if (task.Exception is { } error)
                 {
-                    SetStatus("⚠ " + error.InnerException?.Message);
-                    _status.Foreground = _brushes.Error;
+                    ShowError("⚠ " + error.InnerException?.Message);
                     return;
                 }
 
-                _status.Foreground = _brushes.StatusForeground;
-                Apply(task.Result);
+                Apply(task.Result, quiet);
             }),
             TaskScheduler.Default);
     }
 
-    private void Apply(PanelSnapshot snapshot)
+    private void Apply(PanelSnapshot snapshot, bool quiet)
     {
         var cursorId = CurrentRow?.Row.Id;
         _snapshot = snapshot;
@@ -414,7 +418,12 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         _table.Marked.IntersectWith(snapshot.Rows.Select(r => r.Id));
         Rebuild(cursorId);
         SetStatus(snapshot.Status ?? $"{snapshot.Rows.Count} pozycji");
-        ScheduleDetails();
+
+        // The timer refresh must not rebuild (and re-query) the details of the row that is already shown.
+        if (!(quiet && _shownDetails is not null && cursorId is not null && CurrentRow?.Row.Id == cursorId))
+        {
+            ScheduleDetails();
+        }
     }
 
     /// <summary>Flattens the tree: filter (matches plus their ancestors, all expanded), sort within siblings, expand state.</summary>
@@ -652,12 +661,5 @@ public sealed class PluginPanelView : Grid, IPanelModeView
         {
             return null;
         }
-    }
-
-    /// <summary>Status line text; <paramref name="busy"/> shows the wave dots in front of it.</summary>
-    private void SetStatus(string? text, bool busy = false)
-    {
-        _status.Text = text;
-        _busy.IsVisible = busy;
     }
 }

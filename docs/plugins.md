@@ -206,7 +206,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `net.request` | `{ url, method?, headers?, body?, contentType?, bodyFile?, multipart?: { field, path, fileName? } }` (http/https, response max 5 MB) | `{ status, headers, body }` (any status) | `net`; `bodyFile`/`multipart` also need `fs.read` or a [read grant](#receiving-and-providing-files) for that path |
 | `job.progress` | `{ jobId, done, total, bytes?, text? }` — a **notification** (no `id`, no answer) | — | — |
 | `mail.folders` | `{ account }` | `[{ serverName, localName, separator, special, uidValidity, count, unread }]` | `mail` |
-| `mail.sync` | `{ account, folder, uidValidity, lastUid, modSeq, since?, knownUids?, limit? }` (`limit` = at most that many new messages, the lowest uids first) | `{ uidValidity, uidValidityChanged, modSeq, new: [{ uid, date, from, subject, flags, size, fileName }], flagChanges: [{ uid, flags }], removed: [uid], hasMore }` (`hasMore`: more new messages remain beyond `limit`) | `mail` |
+| `mail.sync` | `{ account, folder, uidValidity, lastUid, modSeq, since?, knownUids?, limit? }` (`limit` = at most that many new messages, the lowest uids first) | `{ uidValidity, uidValidityChanged, modSeq, new: [{ uid, date, from, subject, flags, size, fileName, attachments }], flagChanges: [{ uid, flags }], removed: [uid], hasMore }` (`hasMore`: more new messages remain beyond `limit`; `attachments`: the message carries files, from its body structure) | `mail` |
 | `mail.fetch` | `{ account, folder, uid, path }` (downloads the message to `path`) | `{ bytes }` | `mail` + `fs.write` |
 | `mail.setFlags` | `{ account, folder, uids, add?, remove? }` | `null` | `mail` |
 | `mail.move` | `{ account, folder, uids, target }` | `null` | `mail` |
@@ -432,11 +432,12 @@ An action may add `icon` (one of `mail inbox sent drafts trash archive junk fold
 
 ### Lists with a preview
 
-`{ kind: "list", folder, items: [{ path, title, subtitle?, snippet?, meta?, group?, tags? }], title?, tabs?: [{ label, target, count?, selected?, icon? }], filters?: [{ tag, label }], search?, status?, statusRight?, selected?, empty? }` shows the files of `folder` as two-line rows (design "Tryb panelu — klient poczty"). Every `path` must be a file directly in `folder`; other rows are dropped.
+`{ kind: "list", folder, items: [{ path, title, subtitle?, snippet?, meta?, group?, tags? }], title?, tabs?: [{ label, target, count?, selected?, icon? }], filters?: [{ tag, label }], search?, status?, statusRight?, selected?, empty?, more?: { label, target }, searchTarget?, query? }` shows the files under `folder` as two-line rows (design "Tryb panelu — klient poczty"). Every `path` must be a file in `folder` or one of its subfolders (the mail plugin keeps messages in `year\month` folders); other rows are dropped.
 
 - Selecting a row (click, ↑↓, PgUp/PgDn, Home/End) puts the panel's cursor on that file. The preview under the list follows the cursor like Ctrl+Q, so it shows whatever preview the file has: yours, another plugin's or a built-in one. When the opposite panel shows the quick view of this panel, the list has no preview of its own and the selected file appears there.
 - Enter or a double click opens the file like Enter in the file list.
 - Search (Ctrl+F) matches `title`, `subtitle` and `snippet`; a filter shows the rows whose `tags` contain its `tag` (empty `tag` = all). The tags `unread` (bold, a dot), `flagged` and `attachment` (icons) also change the row. Rows with the same `group` follow one heading.
+- Large folders: send one page and `more` (a button under the last row; answer with the longer list). With `searchTarget` the search field asks you: 350 ms after typing stops, that action runs with `values: { query }` and you answer with the matches and `query` set, so search reaches rows you did not send. The field, the filter and the scroll stay while you answer.
 - A tab's `target` runs like an action (`Get-C4KActionTarget 'folder' @{ name = ... }`); answer with the other list. `actions` appear beside the search field.
 
 ### Message reader

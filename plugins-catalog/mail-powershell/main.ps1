@@ -8,20 +8,23 @@
 
 # ---- the account folder: view, card, new message ----
 
-# Unread and total counts per local folder, counted from the files (a "● " prefix = unread); no server call. A folder
-# that cannot be listed has $null counts.
+# Unread and total counts per local folder as the last sync counted them (a "● " prefix = unread); no server call and,
+# once synced, no listing of the month folders. A folder that cannot be listed has $null counts.
 function Get-MailFolderCounts([string] $Path, $State) {
     $rows = [System.Collections.Generic.List[hashtable]]::new()
     $order = @($State.folders.Keys | Sort-Object { if ($State.folders[$_].special -eq 'inbox') { 0 } else { 1 } }, { [string] $State.folders[$_].local })
     foreach ($server in $order) {
         $entry = $State.folders[$server]
-        $row = @{ local = [string] $entry.local; special = [string] $entry.special; total = $null; unread = $null }
-        try {
-            $files = (Get-MailLocalFiles (Join-MailPath $Path $entry.local)).files
-            $row.total = $files.Count
-            $row.unread = @($files.Values | Where-Object { $_.StartsWith($script:MailUnread) }).Count
+        $row = @{ local = [string] $entry.local; special = [string] $entry.special; total = $entry.total; unread = $entry.unread }
+        if ($null -eq $row.total) {
+            # Not counted by a sync yet (an older state.json): count the files once.
+            try {
+                $files = (Get-MailLocalFiles (Join-MailPath $Path $entry.local)).files
+                $row.total = $files.Count
+                $row.unread = @($files.Values | Where-Object { (Get-MailLeaf $_).StartsWith($script:MailUnread) }).Count
+            }
+            catch { Write-C4KLog "mail folder $($entry.local) of $Path not listed: $($_.Exception.Message)" }
         }
-        catch { Write-C4KLog "mail folder $($entry.local) of $Path not listed: $($_.Exception.Message)" }
         $rows.Add($row)
     }
     , $rows.ToArray()
@@ -36,8 +39,11 @@ function Get-MailAccountProblem([string] $Path, $Config, $State) {
     $null
 }
 
-# The account folder opened with Enter: folders with counts, last check, problems, progress and two buttons.
-function Get-MailAccountView([string] $Path, $Options) {
+$script:MailPage = 200
+
+# The account folder opened with Enter: one mail folder as a list with its folders as tabs, newest $Limit messages
+# (Wczytaj starsze adds a page), or the matches of $Query in every month of the folder.
+function Get-MailAccountView([string] $Path, $Options, [int] $Limit = $script:MailPage, [string] $Query = '') {
     $config = Get-MailAccountConfig $Path $Options
     $state = Read-MailState $Path
     $md = [System.Collections.Generic.List[string]]::new()
@@ -75,8 +81,14 @@ function Get-MailAccountView([string] $Path, $Options) {
     $folder = Join-MailPath $Path $shown
     $server = $null
     foreach ($key in $state.folders.Keys) { if ($state.folders[$key].local -eq $shown) { $server = $key } }
-    $items = Get-MailListItems $folder $server $state
-    $unread = @($items | Where-Object { $_.tags -contains 'unread' }).Count
+    $Query = $Query.Trim()
+    $page = Get-MailListItems $folder $server $state $Limit $Query
+    $items = $page.items
+    $entry = if ($server) { $state.folders[$server] } else { $null }
+    $total = if ($entry -and $null -ne $entry.total) { [int] $entry.total } else { $items.Count }
+    $unread = if ($entry -and $null -ne $entry.unread) { [int] $entry.unread } else { @($items | Where-Object { $_.tags -contains 'unread' }).Count }
+    $status = if ($Query) { "$($items.Count) pasujących do " + '„' + $Query + '”' + $(if ($page.more) { ' (pierwsze ' + $items.Count + ')' } else { '' }) }
+    else { "$total wiadomości, $unread nieprzeczytane" + $(if ($page.more) { " · pokazano $($items.Count)" } else { '' }) }
 
     $last = Get-MailInstant $state.lastSuccess
     $problem = Get-MailAccountProblem $Path $config $state
@@ -89,19 +101,25 @@ function Get-MailAccountView([string] $Path, $Options) {
         @{ label = 'Nowa wiadomość'; target = (Get-C4KActionTarget 'new' @{ account = $Path }); shortcut = 'N'; icon = 'new' }
         @{ label = 'Sprawdź teraz'; target = (Get-C4KActionTarget 'check' @{ account = $Path }); shortcut = 'F5'; icon = 'refresh'; style = 'icon' }
     )
-    @{
+    $result = @{
         kind = 'list'
         folder = $folder
         title = $shown
         tabs = @($tabs)
-        filters = @(@{ tag = ''; label = 'Wszystkie' }, @{ tag = 'unread'; label = 'Nieprzeczytane' }, @{ tag = 'flagged'; label = 'Oflagowane' })
+        filters = @(@{ tag = ''; label = 'Wszystkie' }, @{ tag = 'unread'; label = 'Nieprzeczytane' }, @{ tag = 'attachment'; label = 'Z załącznikami' }, @{ tag = 'flagged'; label = 'Oflagowane' })
         search = "Szukaj w: $shown"
+        searchTarget = (Get-C4KActionTarget 'search' @{ account = $Path })
+        query = $Query
         items = $items
-        empty = 'Ten folder jest pusty.'
-        status = "$($items.Count) wiadomości, $unread nieprzeczytane"
+        empty = $(if ($Query) { 'Nic w „' + $shown + '” nie pasuje do „' + $Query + '”.' } else { 'Ten folder jest pusty.' })
+        status = $status
         statusRight = $right
         actions = $actions
     }
+    if ($page.more -and -not $Query) {
+        $result.more = @{ label = "Wczytaj starsze ($script:MailPage)"; target = (Get-C4KActionTarget 'page' @{ account = $Path; limit = [string] ($Limit + $script:MailPage) }) }
+    }
+    $result
 }
 
 function Get-MailFolderIcon([string] $Special) {
@@ -126,19 +144,43 @@ function Set-MailShownFolder([string] $Path, [string] $Local) {
     Set-C4KStorage 'shownFolders' $folders
 }
 
-$script:MailListMax = 500
+$script:MailSearchMax = 500
 $script:MailSyncedName = '^(\d{4}-\d{2}-\d{2}) (\d{2})(\d{2}) (.+?) - (.*?)(?: \(\d+\))? \[uid (\d+)\]\.eml$'
 $script:MailDraftName = '^(\d{4}-\d{2}-\d{2}) (\d{2})(\d{2}) (.*?)(?: \(\d+\))?\.eml$'
 
 # The rows of a mail folder, newest first, read from the file names alone (date, sender, subject, unread prefix) and the
-# flagged set in state.json: no message is opened, so a folder of thousands lists at once.
-function Get-MailListItems([string] $Folder, [string] $Server, $State) {
+# flagged and attachment sets in state.json: no message is opened. Month folders are listed newest first only until
+# $Limit rows are collected; a search ($Query, sender or subject, case and accents ignored) walks every month and keeps
+# at most 500 matches. Returns @{ items; more } (more = older rows or matches were left out).
+function Get-MailListItems([string] $Folder, [string] $Server, $State, [int] $Limit, [string] $Query) {
+    $rows = [System.Collections.Generic.List[hashtable]]::new()
+    $max = if ($Query) { $script:MailSearchMax } else { $Limit }
+    $more = $false
+    try {
+        # Directly in the folder: local drafts and files not moved into a month folder yet.
+        Add-MailListRows $rows @(Get-C4KChildItem $Folder) $Server $State $Query
+        $months = Get-MailMonthDirs $Folder
+        for ($i = 0; $i -lt $months.Count; $i++) {
+            # Months are newest first: once a page is full, older months cannot hold a newer message.
+            if ($rows.Count -ge $max) { $more = $true; break }
+            Add-MailListRows $rows @(Get-C4KChildItem (Join-MailPath $Folder $months[$i])) $Server $State $Query
+        }
+    }
+    catch { Write-C4KLog "mail list of $Folder failed: $($_.Exception.Message)" }
+    if ($rows.Count -gt $max) { $more = $true }
+    $sorted = @($rows | Sort-Object { $_.sort } -Descending | Select-Object -First $max)
+    foreach ($row in $sorted) { $row.Remove('sort') }
+    @{ items = $sorted; more = $more }
+}
+
+function Test-MailMatches([string] $Text, [string] $Query) {
+    [cultureinfo]::InvariantCulture.CompareInfo.IndexOf($Text, $Query, [Globalization.CompareOptions]'IgnoreCase, IgnoreNonSpace') -ge 0
+}
+
+function Add-MailListRows($Rows, $Entries, [string] $Server, $State, [string] $Query) {
     $culture = [cultureinfo]::GetCultureInfo('pl-PL')
     $today = (Get-Date).Date
-    $rows = [System.Collections.Generic.List[hashtable]]::new()
-    try { $entries = @(Get-C4KChildItem $Folder) }
-    catch { Write-C4KLog "mail list of $Folder failed: $($_.Exception.Message)"; return , @() }
-    foreach ($entry in $entries) {
+    foreach ($entry in $Entries) {
         if ($entry.kind -ne 'file' -or -not ([string] $entry.name).EndsWith('.eml', [StringComparison]::OrdinalIgnoreCase)) { continue }
         $name = [string] $entry.name
         $unread = $name.StartsWith($script:MailUnread)
@@ -152,9 +194,11 @@ function Get-MailListItems([string] $Folder, [string] $Server, $State) {
             $date = [datetime]::ParseExact("$($Matches[1]) $($Matches[2])$($Matches[3])", 'yyyy-MM-dd HHmm', [cultureinfo]::InvariantCulture)
             $from = 'Szkic'; $subject = $Matches[4]
         }
+        if ($Query -and -not (Test-MailMatches $from $Query) -and -not (Test-MailMatches $subject $Query)) { continue }
         $tags = [System.Collections.Generic.List[string]]::new()
         if ($unread) { $tags.Add('unread') }
         if ($uid -and $Server -and $State.flagged -and $State.flagged.Contains("$Server/$uid")) { $tags.Add('flagged') }
+        if ($uid -and $Server -and $State.attachments -and $State.attachments.Contains("$Server/$uid")) { $tags.Add('attachment') }
         $group = 'Wcześniej'
         $meta = ''
         if ($date) {
@@ -162,11 +206,8 @@ function Get-MailListItems([string] $Folder, [string] $Server, $State) {
             $group = if ($days -le 0) { 'Dziś' } elseif ($days -eq 1) { 'Wczoraj' } else { 'Wcześniej' }
             $meta = if ($days -le 1) { $date.ToString('HH:mm') } elseif ($date.Year -eq $today.Year) { $date.ToString('ddd dd.MM', $culture) } else { $date.ToString('dd.MM.yyyy') }
         }
-        $rows.Add(@{ path = [string] $entry.path; title = $from; subtitle = $subject; meta = $meta; group = $group; tags = $tags.ToArray(); sort = $(if ($date) { $date.Ticks } else { 0 }) })
+        $Rows.Add(@{ path = [string] $entry.path; title = $from; subtitle = $subject; meta = $meta; group = $group; tags = $tags.ToArray(); sort = $(if ($date) { $date.Ticks } else { 0 }) })
     }
-    $sorted = @($rows | Sort-Object { $_.sort } -Descending | Select-Object -First $script:MailListMax)
-    foreach ($row in $sorted) { $row.Remove('sort') }
-    , $sorted
 }
 
 # The dashboard card: files and state.json only, never a mail.* call.
@@ -517,6 +558,7 @@ function New-MailMessageActions($Ctx, $Mail, [bool] $Unread) {
         if ($Ctx.special -ne 'archive' -and (Get-MailSpecialFolder $Ctx 'archive')) { $actions.Add(@{ label = 'Archiwizuj'; target = (Get-C4KActionTarget 'archive'); shortcut = 'A'; icon = 'archive'; style = 'icon' }) }
         if ($Unread) { $actions.Add(@{ label = 'Oznacz jako przeczytaną'; target = (Get-C4KActionTarget 'read'); shortcut = 'M'; icon = 'mail'; style = 'icon' }) }
         else { $actions.Add(@{ label = 'Oznacz jako nieprzeczytaną'; target = (Get-C4KActionTarget 'unread'); shortcut = 'U'; icon = 'unread'; style = 'icon' }) }
+        if (@($Mail.attachments).Count -gt 1) { $actions.Add(@{ label = 'Zapisz wszystkie załączniki w drugim panelu'; target = (Get-C4KActionTarget 'saveAll'); icon = 'download'; style = 'icon' }) }
         # Without a Trash folder the server would expunge: permanent removal is offered only inside Kosz.
         if ($Ctx.special -eq 'trash' -or (Get-MailSpecialFolder $Ctx 'trash')) { $actions.Add(@{ label = 'Usuń'; target = (Get-C4KActionTarget 'delete'); shortcut = 'Delete'; icon = 'delete'; style = 'icon' }) }
     }
@@ -542,8 +584,13 @@ function Get-MailMessageResult([string] $Path, [bool] $MarkRead, [string] $Note,
     $unread = $name.StartsWith($script:MailUnread)
     if ($MarkRead -and $unread -and $ctx -and $ctx.uid -and $ctx.server) {
         try {
-            Set-C4KMailFlags $ctx.account $ctx.server @($ctx.uid) @('seen')
+            Set-C4KMailFlags -Account $ctx.account -Folder $ctx.server -Uids @([long] $ctx.uid) -Add @('seen')
             $Path = Join-MailPath $ctx.dir (Rename-MailFile $ctx.dir $name $name.Substring($script:MailUnread.Length))
+            if ($ctx.state -and $ctx.state.folders[$ctx.server] -and $null -ne $ctx.state.folders[$ctx.server].unread) {
+                $ctx.state.folders[$ctx.server].unread = [Math]::Max(0, [int] $ctx.state.folders[$ctx.server].unread - 1)
+                Save-MailState $ctx.root $ctx.state
+            }
+            Request-MailCheck $ctx.root # the next tick counts the folder again (tabs, card)
             $ctx = Get-MailContext $Path
             $unread = $false
         }
@@ -626,6 +673,8 @@ function Move-MailLocalFile($Ctx, [string] $Path, [string] $TargetServer, $Heade
     $target = $state.folders[$TargetServer]
     $name = Get-MailLeaf $Path
     $targetDir = Join-MailPath $Ctx.root $target.local
+    $month = Get-MailMonthDir ([string] $Header.fileName)
+    if ($month) { $targetDir = Join-MailPath $targetDir $month }
     New-C4KDirectory $targetDir
     $prefix = if ($name.StartsWith($script:MailUnread)) { $script:MailUnread } else { '' }
     $free = Get-MailFreeName $targetDir ($prefix + [string] $Header.fileName)
@@ -682,8 +731,13 @@ function Invoke-MailUnread($Ctx, [string] $Path) {
     if (-not $Ctx -or -not $Ctx.uid -or -not $Ctx.server) { throw 'Ta wiadomość nie pochodzi z synchronizacji konta.' }
     $name = Get-MailLeaf $Path
     if (-not $name.StartsWith($script:MailUnread)) {
-        Set-C4KMailFlags $Ctx.account $Ctx.server @($Ctx.uid) @() @('seen')
+        Set-C4KMailFlags -Account $Ctx.account -Folder $Ctx.server -Uids @([long] $Ctx.uid) -Remove @('seen')
         $Path = Join-MailPath $Ctx.dir (Rename-MailFile $Ctx.dir $name ($script:MailUnread + $name))
+        if ($Ctx.state -and $Ctx.state.folders[$Ctx.server] -and $null -ne $Ctx.state.folders[$Ctx.server].unread) {
+            $Ctx.state.folders[$Ctx.server].unread = [int] $Ctx.state.folders[$Ctx.server].unread + 1
+            Save-MailState $Ctx.root $Ctx.state
+        }
+        Request-MailCheck $Ctx.root
     }
     Get-MailMessageResult $Path $false $null $null
 }
@@ -702,6 +756,21 @@ function Invoke-MailSaveAttachment([string] $Path, $ActionArgs) {
     Show-C4KNotification "Zapisano: $name" -Target $target
 }
 
+# Every attachment into the folder of the other file panel, under free names; one notification for all.
+function Invoke-MailSaveAllAttachments([string] $Path) {
+    $mail = Read-C4KMail $Path
+    $attachments = @($mail.attachments)
+    if ($attachments.Count -eq 0) { throw 'Ta wiadomość nie ma załączników.' }
+    $other = [string] (Get-C4KContext).otherPath
+    if (-not $other) { throw 'Otwórz w drugim panelu folder, do którego zapisać załączniki.' }
+    foreach ($attachment in $attachments) {
+        $index = [int] $attachment.index
+        $name = Get-MailFreeFileName $other (Get-MailSafeFileName ([string] $attachment.fileName) $index)
+        Save-C4KMailAttachment $Path $index (Join-MailPath $other $name)
+    }
+    Show-C4KNotification "Zapisano załączniki: $($attachments.Count) → $other" -Target $other
+}
+
 function Invoke-MailMessageAction([string] $Path, [string] $Action, $ActionArgs, $Values) {
     $ctx = Get-MailContext $Path
     # Buttons of a draft's form.
@@ -714,6 +783,7 @@ function Invoke-MailMessageAction([string] $Path, [string] $Action, $ActionArgs,
         'read' { return Invoke-MailRead $ctx $Path }
         'quickReply' { return Invoke-MailQuickReply $Path $ctx $Values }
         'saveAttachment' { Invoke-MailSaveAttachment $Path $ActionArgs; return $null }
+        'saveAll' { Invoke-MailSaveAllAttachments $Path; return $null }
     }
     throw ('Nieznana akcja: ' + $Action)
 }
@@ -776,6 +846,15 @@ Register-C4KHandler 'preview.action' {
     elseif ($p.action -eq 'folder') {
         Set-MailShownFolder $path ([string] $p.args['name'])
         return Get-MailAccountView $path $p.options
+    }
+    elseif ($p.action -eq 'page') {
+        $limit = 0
+        if (-not [int]::TryParse([string] $p.args['limit'], [ref] $limit) -or $limit -lt $script:MailPage) { $limit = $script:MailPage }
+        return Get-MailAccountView $path $p.options ([Math]::Min($limit, 20000))
+    }
+    elseif ($p.action -eq 'search') {
+        $query = if ($p.values -is [System.Collections.IDictionary]) { [string] $p.values['query'] } else { '' }
+        return Get-MailAccountView $path $p.options $script:MailPage $query
     }
     elseif ($p.action -eq 'new') {
         try { return New-MailBlankDraft $path $p.options }

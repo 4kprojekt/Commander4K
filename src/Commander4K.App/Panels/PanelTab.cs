@@ -42,6 +42,24 @@ public sealed class PanelTab
 
     public string Path { get; private set; }
 
+    public FolderViewMode FolderMode { get; set; } = FolderViewMode.Auto;
+
+    public string? FolderViewOrigin { get; private set; }
+
+    public string? FolderViewPlugin { get; private set; }
+
+    public void SetFolderViewInfo(string? folder, string? plugin)
+    {
+        if (FolderViewOrigin == folder && FolderViewPlugin == plugin)
+        {
+            return;
+        }
+
+        FolderViewOrigin = folder;
+        FolderViewPlugin = plugin;
+        Changed?.Invoke();
+    }
+
     public List<VfsEntry> Entries { get; private set; } = [];
 
     public HashSet<string> Marked { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -70,6 +88,19 @@ public sealed class PanelTab
 
     public VfsEntry? CurrentEntry => Cursor >= 0 && Cursor < Entries.Count ? Entries[Cursor] : null;
 
+    private VfsEntry? _previewOverride;
+    private string? _overridePath;
+
+    /// <summary>What previews follow: a file a plugin's list selected without leaving this folder, until the folder or cursor changes; otherwise the cursor row.</summary>
+    public VfsEntry? PreviewEntry => _previewOverride is { } shown && _overridePath == Path ? shown : CurrentEntry;
+
+    public void SetPreviewOverride(VfsEntry entry)
+    {
+        _previewOverride = entry;
+        _overridePath = Path;
+        Changed?.Invoke();
+    }
+
     public string Title
     {
         get
@@ -93,7 +124,15 @@ public sealed class PanelTab
     /// <summary>Raised when the location asks for credentials; the window shows a login dialog and retries.</summary>
     public event Action<PanelTab, VfsAuthenticationRequiredException>? AuthenticationRequired;
 
-    public Task NavigateAsync(string path, string? focusName = null) => LoadAsync(path, focusName, preserveState: false);
+    public Task NavigateAsync(string path, string? focusName = null)
+    {
+        if (!string.Equals(Path, path, StringComparison.OrdinalIgnoreCase))
+        {
+            SetFolderViewInfo(null, null);
+        }
+
+        return LoadAsync(path, focusName, preserveState: false);
+    }
 
     /// <summary>Re-lists the current location off-screen and swaps the result in, keeping cursor and marks.</summary>
     public Task RefreshAsync() => LoadAsync(Path, CurrentEntry?.Name, preserveState: true);
@@ -150,6 +189,7 @@ public sealed class PanelTab
 
     public void MoveCursor(int index)
     {
+        _previewOverride = null;
         Cursor = Math.Clamp(index, 0, Math.Max(0, Entries.Count - 1));
         Changed?.Invoke();
     }

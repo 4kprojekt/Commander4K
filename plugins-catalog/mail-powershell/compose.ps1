@@ -15,21 +15,28 @@ function Get-MailParent([string] $Path) {
     if ($cut -le 0) { $null } else { $trimmed.Substring(0, $cut) }
 }
 
-# The account a message file belongs to: the nearest ancestor (up to three levels) whose c4k.dir names this plugin.
-# $null when there is none. state is $null when state.json cannot be read.
+# The account a message file belongs to: the nearest ancestor (up to four levels above its mail folder) whose c4k.dir
+# names this plugin. $null when there is none. state is $null when state.json cannot be read. dir is the file's own
+# folder (a month folder "2026\11" or, for drafts and older files, the mail folder); mail is the mail folder and local
+# its name relative to the account ("INBOX", "INBOX\spam").
 function Get-MailContext([string] $FilePath) {
     $dir = Get-MailParent $FilePath
     if (-not $dir) { return $null }
-    $root = Get-MailParent $dir
+    $mail = $dir
+    $year = Get-MailParent $dir
+    if ((Get-MailLeaf $dir) -match '^\d{2}$' -and $year -and (Get-MailLeaf $year) -match '^\d{4}$') { $mail = Get-MailParent $year }
+    if (-not $mail) { return $null }
+    $root = Get-MailParent $mail
     $options = $null
-    for ($i = 0; $i -lt 3 -and $root; $i++) {
+    for ($i = 0; $i -lt 4 -and $root; $i++) {
         $options = Get-MailAccountConfig $root $null
         if ($options) { break }
         $root = Get-MailParent $root
     }
     if (-not $options) { return $null }
     $state = Read-MailState $root
-    $ctx = @{ root = $root; options = $options; dir = $dir; local = (Get-MailLeaf $dir); state = $state; server = $null; special = $null; uid = $null; account = (New-MailAccountParam $options $true) }
+    $local = $mail.Substring($root.TrimEnd('\', '/').Length + 1)
+    $ctx = @{ root = $root; options = $options; dir = $dir; mail = $mail; local = $local; state = $state; server = $null; special = $null; uid = $null; account = (New-MailAccountParam $options $true) }
     if ($state) {
         foreach ($server in $state.folders.Keys) {
             if ($state.folders[$server].local -ieq $ctx.local) { $ctx.server = $server; $ctx.special = $state.folders[$server].special; break }
