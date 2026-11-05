@@ -1,0 +1,34 @@
+name: Pages
+
+# Landing page at https://4kprojekt.github.io/Commander4K/ so search engines have a crawlable page.
+on:
+  push:
+    branches: [main]
+    paths: [site/**, docs/images/**, .github/workflows/pages.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site
+        run: |
+          mkdir -p _site/images
+          cp -r site/. _site/
+          cp docs/images/icon.png docs/images/modern-dark.png docs/images/example-dashboard.png _site/images/
+      - uses: actions/upload-pages-artifact@v3
+      - id: deployment
+        uses: actions/deploy-pages@v4

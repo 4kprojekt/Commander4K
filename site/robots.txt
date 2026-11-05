@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://4kprojekt.github.io/Commander4K/sitemap.xml
