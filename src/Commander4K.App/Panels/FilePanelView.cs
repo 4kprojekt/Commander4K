@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
@@ -56,6 +57,7 @@ public sealed class FilePanelView : ViewBase
     private TextBox _pathBox = null!;
     /// <summary>The Pliki · Auto · Widok switch on the path bar (rebuilt when the mode or the skin changes).</summary>
     private ContentControl _modeSwitch = null!;
+    private Control? _viewDot;
     private Border _statusBorder = null!;
     private Decorator _emptyFolderSetup = null!;
     private SkinBrushes? _emptyFolderSkin;
@@ -713,6 +715,7 @@ public sealed class FilePanelView : ViewBase
         UpdateEmptyFolderSetup();
         UpdateLoadingCard();
         UpdateStatus();
+        UpdateViewDot();
         // Changed fires on every cursor move and streamed batch: rebuild the tab buttons only when they would differ.
         if (_tabStrip.Children.Count > 0 && TabsKey() != _tabsKey)
         {
@@ -808,6 +811,11 @@ public sealed class FilePanelView : ViewBase
         if (tab.Status is { } status)
         {
             return (status, null);
+        }
+
+        if (tab.Marked.Count == 0 && tab.CurrentEntry is { } current && FileIcons.IsFolderConfig(current))
+        {
+            return (Loc.T("Enter — pokaż widok folderu · F4 — edytuj · Shift+Enter — otwórz jako tekst"), null);
         }
 
         int files = 0, containers = 0;
@@ -1033,6 +1041,31 @@ public sealed class FilePanelView : ViewBase
         }
 
         _modeSwitch.Content = segmented;
+        UpdateViewDot();
+    }
+
+    /// <summary>A dot on "Widok" while the listed folder has its own c4k.dir: the switch has a view to show.</summary>
+    private void UpdateViewDot()
+    {
+        if ((_modeSwitch?.Content as Border)?.Child is not Panel buttons || buttons.Children.OfType<Button>().LastOrDefault() is not { } view)
+        {
+            return;
+        }
+
+        if (_viewDot is null || view.Content is not StackPanel)
+        {
+            _viewDot = new Ellipse { Width = 6, Height = 6, Fill = _skins.Current.Accent, VerticalAlignment = VerticalAlignment.Center };
+            view.Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 5,
+                Children = { new TextBlock { Text = view.Content as string, VerticalAlignment = VerticalAlignment.Center }, _viewDot },
+            };
+        }
+
+        var has = ActiveTab.Entries.Any(entry => FileIcons.IsFolderConfig(entry));
+        _viewDot.IsVisible = has;
+        ToolTip.SetTip(view, has ? Loc.T("Ten folder ma własny widok (c4k.dir)") : null);
     }
 
     /// <summary>What entering a folder shows in this panel (Pliki · Auto · Widok on the path bar).</summary>

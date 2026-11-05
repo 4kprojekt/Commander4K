@@ -406,7 +406,7 @@ public sealed class PluginPanelView : ModeViewBase, IPanelModeView
                 }
 
                 Apply(task.Result, quiet);
-            }),
+            }, DispatcherPriority.Background), // after a frame with the dots: building the rows runs on the UI thread
             TaskScheduler.Default);
     }
 

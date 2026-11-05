@@ -663,6 +663,7 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
         }
 
         _title.Text = target.Name;
+        SetStatus(Loc.T("Wczytywanie…"), busy: true); // the dots show while c4k.dir is read, not only once a plugin is picked
 
         // A folder may say how it wants to be shown (c4k.dir); the file is read only for folders on the way here.
         Func<IPluginHost, IProgress<PreviewContent>, CancellationToken, Task<PreviewContent>>? folderView = null;
@@ -741,6 +742,13 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
 
             if (_loading == cts)
             {
+                // Building the controls runs on the UI thread: let one frame with the dots out first.
+                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                if (_loading != cts)
+                {
+                    return;
+                }
+
                 ClearPendingPreviewProgress();
                 // "Edit right away" applies once per loaded file; F4 still switches back to the formatted view.
                 _editing = Inner(result) is MarkdownPreview { CanEdit: true } && _app.Settings.MarkdownEditByDefault;

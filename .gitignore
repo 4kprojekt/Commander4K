@@ -17,3 +17,10 @@ __pycache__/
 # Local tool output (graph, subagent workspaces)
 graphify-out/
 .superpowers/
+
+# AI agent tooling: Playwright MCP snapshots, Claude Code local settings and
+# worktrees, and .mcp.json (it carries the Commander4K MCP token)
+.playwright-mcp/
+.claude/settings.local.json
+.claude/worktrees/
+.mcp.json

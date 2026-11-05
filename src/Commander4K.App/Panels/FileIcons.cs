@@ -13,7 +13,7 @@ internal static class FileIcons
 {
     private const double Grid = 16;
 
-    public enum Kind : byte { Up, Folder, File, Executable, Archive, Image, Drive, Network, Lan, Internet, Router, Nas, Web, Add }
+    public enum Kind : byte { Up, Folder, File, Executable, Archive, Image, Drive, Network, Lan, Internet, Router, Nas, Web, Add, FolderView }
 
     private static readonly Dictionary<Kind, (Geometry Stroke, Geometry? Fill, double FillOpacity)> Shapes = new()
     {
@@ -33,6 +33,8 @@ internal static class FileIcons
         [Kind.Nas] = (Group(Rounded(2, 1.75, 12, 5, 1), Rounded(2, 9.25, 12, 5, 1), Path("M4.5 4.25h.1 M7.5 4.25h.1 M4.5 11.75h.1 M7.5 11.75h.1")), null, 0),
         [Kind.Web] = (Group(new EllipseGeometry(new Rect(1.5, 1.5, 13, 13)), Path("M1.75 8h12.5 M8 1.75c-2 2-2 10.5 0 12.5 M8 1.75c2 2 2 10.5 0 12.5")), null, 0),
         [Kind.Add] = (Path("M8 3v10 M3 8h10"), null, 0),
+        [Kind.FolderView] = (Group(Rounded(1.75, 1.75, 5.5, 5.5, 1), Rounded(8.75, 1.75, 5.5, 5.5, 1), Rounded(1.75, 8.75, 5.5, 5.5, 1), Rounded(8.75, 8.75, 5.5, 5.5, 1)),
+            Group(Rounded(1.75, 1.75, 5.5, 5.5, 1), Rounded(8.75, 8.75, 5.5, 5.5, 1)), 0.3),
     };
 
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -52,6 +54,11 @@ internal static class FileIcons
 
     public static Kind For(in VfsEntry entry)
     {
+        if (IsFolderConfig(entry))
+        {
+            return Kind.FolderView;
+        }
+
         if (entry.Kind != VfsEntryKind.ParentLink
             && entry.Path.Equals("net://?lan", StringComparison.OrdinalIgnoreCase))
         {
@@ -108,6 +115,10 @@ internal static class FileIcons
 
     private static bool ContainsAny(string value, params string[] terms) =>
         terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The folder's own <c>c4k.dir</c>: Enter on it shows the folder's view.</summary>
+    public static bool IsFolderConfig(in VfsEntry entry) =>
+        entry.Kind == VfsEntryKind.File && entry.Name.Equals(Core.Folders.FolderConfig.FileName, StringComparison.OrdinalIgnoreCase);
 
     public static bool IsExecutable(string name) => ExecutableExtensions.Contains(System.IO.Path.GetExtension(name));
 

@@ -858,7 +858,9 @@ public sealed class FileViewportCanvas : Control
             };
         }
 
-        return entry.Kind == VfsEntryKind.Action ? string.Empty : FormatSize(entry.Size);
+        return entry.Kind == VfsEntryKind.Action ? string.Empty
+            : FileIcons.IsFolderConfig(entry) ? Loc.T("<WIDOK>")
+            : FormatSize(entry.Size);
     }
 
     public static string FormatSize(long bytes)
@@ -891,6 +893,11 @@ public sealed class FileViewportCanvas : Control
         if ((entry.Flags & (VfsEntryFlags.Hidden | VfsEntryFlags.System)) != 0)
         {
             return b.HiddenForeground;
+        }
+
+        if (FileIcons.IsFolderConfig(entry))
+        {
+            return b.Accent;
         }
 
         return entry.Kind switch

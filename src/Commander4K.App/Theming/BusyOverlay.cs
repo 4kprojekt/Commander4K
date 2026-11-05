@@ -8,8 +8,8 @@ namespace Commander4K.App.Theming;
 
 /// <summary>
 /// The one "loading" card every panel mode (file preview, folder view, plugin panel, mail) shows in the middle of its
-/// content area: wave dots and a short text. It never takes input, and appears only after a short delay so quick
-/// loads do not flash it.
+/// content area: wave dots and a short text. It never takes input. A new view (nothing on screen yet) shows it at once;
+/// later loads wait a short delay so quick ones do not flash it over the content.
 /// </summary>
 public sealed class BusyOverlay : Border
 {
@@ -19,6 +19,7 @@ public sealed class BusyOverlay : Border
     private readonly TextBlock _text = new() { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 420 };
     private readonly DispatcherTimer _delay = new() { Interval = Delay };
     private bool _wanted;
+    private bool _usedBefore;
 
     public BusyOverlay()
     {
@@ -49,6 +50,13 @@ public sealed class BusyOverlay : Border
         }
 
         _text.Text = string.IsNullOrEmpty(text) ? "…" : text;
+        if (!_usedBefore)
+        {
+            _usedBefore = true;
+            IsVisible = true;
+            return;
+        }
+
         if (!IsVisible && !_delay.IsEnabled)
         {
             _delay.Start();
