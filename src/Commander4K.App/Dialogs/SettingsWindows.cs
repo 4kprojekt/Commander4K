@@ -34,15 +34,17 @@ public sealed class SettingsView : FolderModeView
     private readonly Action<string> _onChanged;
     private readonly Action<string> _openInPanel;
     private readonly Func<Task> _checkForUpdates;
+    private readonly Action _openMcpConnect;
     private TextBox _search = null!;
     private StackPanel _content = null!;
     private StackPanel _nav = null!;
     private TextBlock _keyStatus = null!;
 
-    public SettingsView(AppHost host, SkinBrushes brushes, Action<string> onChanged, Func<Task> checkForUpdates, Action<string> openInPanel, string? query = null)
+    public SettingsView(AppHost host, SkinBrushes brushes, Action<string> onChanged, Func<Task> checkForUpdates, Action<string> openInPanel, Action openMcpConnect, string? query = null)
         : base(brushes)
     {
         _host = host;
+        _openMcpConnect = openMcpConnect;
         _onChanged = onChanged;
         _openInPanel = openInPanel;
         _checkForUpdates = checkForUpdates;
@@ -405,6 +407,14 @@ public sealed class SettingsView : FolderModeView
             case SettingKind.Toggle:
                 var toggle = new ToggleSwitch().IsChecked((bool?)setting.Get(_host.Settings)).OnContent(Loc.T("Wł.")).OffContent(Loc.T("Wył."));
                 toggle.IsCheckedChanged += (_, _) => Commit(setting, toggle.IsChecked == true);
+                if (setting.Key == "mcp.enabled")
+                {
+                    // The connection instructions live in their own window; reachable here once the server is on.
+                    return new StackPanel().Orientation(Orientation.Horizontal).Spacing(12).Children(
+                        Ds.Button(Brushes, Loc.T("Instrukcje połączenia…"), _openMcpConnect).VerticalAlignment(VerticalAlignment.Center),
+                        toggle);
+                }
+
                 return toggle;
 
             case SettingKind.Choice:

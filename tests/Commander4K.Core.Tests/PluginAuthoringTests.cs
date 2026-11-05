@@ -28,61 +28,6 @@ public sealed class PluginAuthoringTests : IDisposable
         }
     }
 
-    [Fact]
-    public void Files_are_found_after_file_lines_in_several_styles()
-    {
-        var answer = $"""
-            Here is the plugin.
-
-            File: plugin.json
-            ```json
-            {Manifest}
-            ```
-
-            **File:** `main.py`
-            ```python
-            import c4k
-            c4k.serve()
-            ```
-
-            ### Plik: data/words.txt
-
-            ```
-            hello
-            ```
-
-            Some explanation that mentions File: nothing.
-            ```python
-            print("not a file of the plugin")
-            ```
-            """;
-
-        var files = PluginAuthoring.ParseFiles(answer);
-
-        Assert.Equal(["plugin.json", "main.py", "data/words.txt"], files.Select(f => f.Path));
-        Assert.Contains("c4k.serve()", files[1].Content, StringComparison.Ordinal);
-        Assert.Equal("hello\n", files[2].Content);
-    }
-
-    [Fact]
-    public void Fence_info_paths_and_repeated_files_keep_the_last_version()
-    {
-        var answer = """
-            ```python title="main.py"
-            print(1)
-            ```
-            Corrected:
-            ```python file=main.py
-            print(2)
-            ```
-            """;
-
-        var file = Assert.Single(PluginAuthoring.ParseFiles(answer));
-
-        Assert.Equal("main.py", file.Path);
-        Assert.Equal("print(2)\n", file.Content);
-    }
-
     [Theory]
     [InlineData("main.py", true)]
     [InlineData("lib/util.py", true)]
@@ -126,17 +71,6 @@ public sealed class PluginAuthoringTests : IDisposable
             [new GeneratedFile("plugin.json", Manifest.Replace("ai.hello", "builtin.hello", StringComparison.Ordinal)), new GeneratedFile("main.py", "x")], _root, _ => null));
         Assert.Throws<InvalidOperationException>(() => PluginAuthoring.Prepare([new GeneratedFile("main.py", "x")], _root, _ => null));
         Assert.False(Directory.Exists(_root));
-    }
-
-    [Fact]
-    public void Prompt_carries_guide_context_format_and_wish()
-    {
-        var prompt = PluginAuthoring.BuildPrompt("GUIDE", "CONTEXT", "EXAMPLE", "list big files");
-
-        Assert.Contains("<plugin-guide>\nGUIDE", prompt.ReplaceLineEndings("\n"), StringComparison.Ordinal);
-        Assert.Contains("CONTEXT", prompt, StringComparison.Ordinal);
-        Assert.Contains("File: <relative path>", prompt, StringComparison.Ordinal);
-        Assert.EndsWith("list big files\n</user-wish>", prompt.ReplaceLineEndings("\n").TrimEnd(), StringComparison.Ordinal);
     }
 
     [Fact]

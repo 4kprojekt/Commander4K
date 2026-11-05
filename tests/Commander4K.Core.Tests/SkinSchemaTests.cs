@@ -17,28 +17,6 @@ public sealed class SkinSchemaTests
     }
 
     [Fact]
-    public void Prompt_for_chat_embeds_schema_example_and_description()
-    {
-        var prompt = SkinPrompt.ForChat("sepia jak stary terminal");
-
-        Assert.Contains("sepia jak stary terminal", prompt, StringComparison.Ordinal);
-        Assert.Contains("\"norton-commander\"", prompt, StringComparison.Ordinal);
-        Assert.Contains("\"functionKeyLabelBackground\"", prompt, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Prompt_for_chat_starts_from_the_given_skin_and_states_the_schema_rules()
-    {
-        var prompt = SkinPrompt.ForChat(null, BuiltInSkins.ModernDark);
-
-        Assert.Contains("\"$schema\"", prompt, StringComparison.Ordinal);
-        Assert.Contains("\"required\"", prompt, StringComparison.Ordinal);
-        Assert.Contains($"\"{BuiltInSkins.ModernDarkId}\"", prompt, StringComparison.Ordinal);
-        Assert.DoesNotContain("\"norton-commander\"", prompt, StringComparison.Ordinal);
-        Assert.Contains("Hard requirements", prompt, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void Extract_takes_the_json_out_of_a_pasted_chat_answer()
     {
         var json = SkinJson.Serialize(BuiltInSkins.NortonCommander);
@@ -62,14 +40,64 @@ public sealed class SkinSchemaTests
     }
 
     [Fact]
-    public void Json_only_prompt_carries_the_idea_the_schema_and_the_output_contract()
+    public void Read_accepts_a_skin_written_the_way_other_assistants_write_it()
     {
-        var prompt = SkinPrompt.ForJsonOnly("neon pink");
+        // PascalCase and snake_case keys, "colors" for palette, short and rgb() colours, quoted numbers,
+        // lower-case enum values, no typography, and a field the model does not have.
+        var palette = JsonNode.Parse(SkinJson.Serialize(BuiltInSkins.ModernDark))!["palette"]!.AsObject();
+        var colors = new JsonObject();
+        foreach (var (name, value) in palette)
+        {
+            colors[char.ToUpperInvariant(name[0]) + name[1..]] = value?.DeepClone();
+        }
 
-        Assert.Contains("neon pink", prompt);
-        Assert.Contains("\"palette\"", prompt);
-        Assert.Contains("ONE valid JSON object", prompt);
-        Assert.DoesNotContain(": null", prompt);
+        colors["Accent"] = "#0af";
+        colors["CursorBackground"] = "rgb(30, 60, 90)";
+        colors["panel_border"] = "334455";
+        colors.Remove("PanelBorder");
+        colors["glowColor"] = "#ffffff";
+        var answer = new JsonObject
+        {
+            ["id"] = "neon",
+            ["name"] = "Neon",
+            ["colors"] = colors,
+            ["chrome"] = new JsonObject { ["borderStyle"] = "double", ["themeVariant"] = "dark", ["cornerRadius"] = "6" },
+        };
+
+        var read = SkinJson.Read("Here is your skin:\n```json\n" + answer.ToJsonString() + "\n```", fixId: false);
+
+        Assert.Null(read.Error);
+        var skin = read.Skin!;
+        Assert.Equal("Neon", skin.DisplayName);
+        Assert.Equal(RgbColor.Parse("#00AAFF"), skin.Palette.Accent);
+        Assert.Equal(RgbColor.Parse("#1E3C5A"), skin.Palette.CursorBackground);
+        Assert.Equal(RgbColor.Parse("#334455"), skin.Palette.PanelBorder);
+        Assert.Equal(PanelBorderStyle.Double, skin.Chrome.BorderStyle);
+        Assert.Equal("Dark", skin.Chrome.ThemeVariant);
+        Assert.Equal(6, skin.Chrome.CornerRadius);
+        Assert.False(string.IsNullOrWhiteSpace(skin.Typography.FontFamily));
+        Assert.Contains(read.Notes, note => note.Contains("glowColor", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Read_lists_every_problem_in_plain_words_with_its_place()
+    {
+        var json = JsonNode.Parse(SkinJson.Serialize(BuiltInSkins.ModernDark))!.AsObject();
+        json["palette"]!["accent"] = "very blue";
+        json["palette"]!.AsObject().Remove("cursorBackground");
+        json["typography"]!["fontSize"] = "big";
+
+        var read = SkinJson.Read(json.ToJsonString(), fixId: false);
+
+        Assert.Null(read.Skin);
+        Assert.Contains("palette.accent", read.Error, StringComparison.Ordinal);
+        Assert.Contains("palette.cursorBackground", read.Error, StringComparison.Ordinal);
+        Assert.Contains("typography.fontSize", read.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("Commander4K", read.Error, StringComparison.Ordinal);
+
+        var broken = SkinJson.Read("{ \"id\": \"x\", \"palette\": { \"accent\": \"#fff\" ", fixId: false);
+        Assert.Null(broken.Skin);
+        Assert.DoesNotContain("Commander4K", broken.Error, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -119,7 +119,7 @@ public interface IPluginHost
     Task OpenFolderAsync(string path);
     /// <summary>
     /// Searches the web in the internal browser. <paramref name="engine"/>: <c>null</c> = the user's search engine, or
-    /// an id (<c>google</c>, <c>bing</c>, <c>duckduckgo</c>); any other value (such as the former <c>"assistant"</c>)
+    /// an id (<c>google</c>, <c>bing</c>, <c>duckduckgo</c>); any other value
     /// means the user's search engine.
     /// </summary>
     Task SearchWebAsync(string query, string? engine = null);

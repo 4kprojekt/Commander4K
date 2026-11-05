@@ -334,9 +334,9 @@ public sealed class AppHost : IAsyncDisposable
 
     private Plugins.BuiltIn.Remote.SshMonitor? _sshMonitor;
 
-    /// <summary>Card sources for a dashboard, over the preview plugins loaded right now.</summary>
+    /// <summary>Card sources for a dashboard, over the preview and panel plugins loaded right now.</summary>
     public Plugins.BuiltIn.Dashboard.CardResolver CreateCardResolver() =>
-        new(PreviewPlugins, HostFor, ReadFolderConfigAsync, id => PluginCatalog.Find(id) is not null, ApiCards, SshMonitor);
+        new(PreviewPlugins, PanelPlugins, HostFor, ReadFolderConfigAsync, id => PluginCatalog.Find(id) is not null, ApiCards, SshMonitor);
 
     private readonly IReadOnlyList<SettingDescriptor> _baseSettings;
 

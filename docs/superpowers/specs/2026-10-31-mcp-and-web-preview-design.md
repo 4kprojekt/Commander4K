@@ -2,6 +2,8 @@
 
 Data: 2026-10-31. Status: projekt do zatwierdzenia.
 
+> **⚠ Nieaktualne (2026-11-05).** Projekt został wdrożony i jest tylko zapisem historii. Zakłada, że czat w aplikacji (`AiChatWindow`, dostawcy w `Core/Ai`) zostaje, ale on też już nie istnieje. Usunięto również prompty kopiowane do schowka (generator skórek, „Przetłumacz interfejs z AI”), `AiAppContext` (teraz `McpAppContext`) i `AiPluginInstaller` (teraz `PluginInstaller`). Commander4K nie ma własnego AI, a modele działają z nim wyłącznie jako klienci MCP. Aktualny stan opisują `CLAUDE.md` oraz `docs/plugins.md`.
+
 ## Po co
 
 Dziś AI spoza aplikacji pracuje z Commander4K przez panel przeglądarki: aplikacja wpisuje prompt (stan aplikacji, przewodnik po wtyczkach) w pole czatu Gemini/ChatGPT (`PageScripts.TypeIntoChat`), a potem zbiera wtyczkę z bloków kodu na stronie (`PageScripts.ReadCodeBlocks`, `PluginAuthoring.FromBlocks`). To jest kruche (zależy od DOM-u cudzych stron) i jednokierunkowe — model nie widzi skutków, nie poprawi wtyczki sam.

@@ -1,5 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using Avalonia.Threading;
 using Commander4K.App.Composition;
 using Commander4K.Core.Localization;
@@ -135,27 +133,8 @@ public sealed class McpHost : IAsyncDisposable
         }
     }
 
-    /// <summary>The command that registers this server with Claude Code.</summary>
-    public string ClaudeCommand() =>
-        $"claude mcp add --transport http commander4k {Url} --header \"Authorization: Bearer {CurrentToken()}\"";
-
-    /// <summary>The same as an entry for a project's <c>.mcp.json</c>.</summary>
-    public string McpJsonSnippet()
-    {
-        var json = new JsonObject
-        {
-            ["mcpServers"] = new JsonObject
-            {
-                ["commander4k"] = new JsonObject
-                {
-                    ["type"] = "http",
-                    ["url"] = Url,
-                    ["headers"] = new JsonObject { ["Authorization"] = "Bearer " + CurrentToken() },
-                },
-            },
-        };
-        return json.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-    }
+    /// <summary>Connection instructions for Claude Code and the other MCP clients, with the current port and token.</summary>
+    public IReadOnlyList<McpClientConfig> ClientConfigs() => McpClientConfigs.For(Url, CurrentToken());
 
     /// <summary>Replaces the token; requests with the old one are refused from now on.</summary>
     public async Task NewTokenAsync()
@@ -230,7 +209,7 @@ public sealed class McpHost : IAsyncDisposable
 
     private void StartServer(int port)
     {
-        var server = new McpServer(_dispatcher, () => _prompts, AppVersion.Current.ToString());
+        var server = new McpServer(_dispatcher, () => _prompts, AppVersion.Current.ToString(), () => McpPluginKnowledge.Instructions(_host));
         var http = new McpHttpServer(server, () => _token);
         Status = http.Start(port);
         if (Status != McpStartResult.Started)

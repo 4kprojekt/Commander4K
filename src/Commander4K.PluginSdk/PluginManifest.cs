@@ -59,6 +59,7 @@ public sealed record PanelActionContribution(string Id, string Title, string? Sh
 
 /// <param name="Accepts">The panel can receive files sent from a file panel (F5); see <c>IPanelSession.GetReceiversAsync</c>.</param>
 /// <param name="Provides">The panel can provide files for a file panel (F5 from the plugin panel).</param>
+/// <param name="Card">The plugin answers <c>panel.card</c>, so dashboards can show this panel as a live card.</param>
 public sealed record PanelContribution(
     string Id,
     string Title,
@@ -67,7 +68,8 @@ public sealed record PanelContribution(
     int? RefreshSeconds = null,
     IReadOnlyList<PanelActionContribution>? Actions = null,
     bool Accepts = false,
-    bool Provides = false);
+    bool Provides = false,
+    bool Card = false);
 
 /// <param name="Extensions">File extensions handled, with the dot (".csv"); <c>"/"</c> means folders.</param>
 /// <param name="WebRoot">Folder inside the plugin (relative) with the HTML/JS shown for <c>kind: "web"</c> results.</param>

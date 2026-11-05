@@ -31,11 +31,13 @@ public sealed class FilePanelView : ViewBase
     private readonly AppHost _host;
     private readonly SkinManager _skins;
     private readonly List<PanelTab> _tabs = [];
-    private readonly Dictionary<PanelTab, string> _pluginTabIds = [];
-    private readonly Dictionary<PanelTab, IPanelModeView> _pluginTabModes = [];
 
-    /// <summary>Tabs whose view belongs to their folder (plugin manager, settings, skins): Pliki/Podgląd switches between them.</summary>
-    private readonly HashSet<PanelTab> _folderViewTabs = [];
+    /// <summary>
+    /// Tabs whose content is not the file list. A tab is a folder plus what it shows: its files (no entry here), a
+    /// panel plugin opened by itself, or the folder's own view (<see cref="TabContent.FolderBound"/>: plugin manager,
+    /// settings, skins, the quick view), which the Pliki · Auto · Widok switch toggles with the files.
+    /// </summary>
+    private readonly Dictionary<PanelTab, TabContent> _tabContents = [];
 
     private readonly Stack<(IPanelModeView View, bool IsFolderView)> _returnModes = [];
 
@@ -152,12 +154,12 @@ public sealed class FilePanelView : ViewBase
     public const string QuickViewKey = "quickview";
 
     /// <summary>The quick view tab is on screen.</summary>
-    public bool QuickViewShown => _pluginTabIds.GetValueOrDefault(ActiveTab) == QuickViewKey && Mode is PreviewPanelView;
+    public bool QuickViewShown => ContentOf(ActiveTab)?.Key == QuickViewKey && Mode is PreviewPanelView;
 
     /// <summary>Removes the quick view tab, whichever tab is selected.</summary>
     public void CloseQuickViewTab()
     {
-        var tab = _tabs.FirstOrDefault(t => _pluginTabIds.GetValueOrDefault(t) == QuickViewKey);
+        var tab = _tabs.FirstOrDefault(t => ContentOf(t)?.Key == QuickViewKey);
         if (tab is null || _tabs.Count == 1)
         {
             return;
@@ -172,9 +174,7 @@ public sealed class FilePanelView : ViewBase
     public void AddFolderViewTab(string path, string key, IPanelModeView view)
     {
         var tab = CreateTab(path);
-        _pluginTabIds.Add(tab, key);
-        _folderViewTabs.Add(tab);
-        _pluginTabModes[tab] = view;
+        _tabContents.Add(tab, new TabContent(key, FolderBound: true) { View = view });
         SelectTab(_tabs.Count - 1);
         _ = tab.NavigateAsync(path);
     }
@@ -184,7 +184,7 @@ public sealed class FilePanelView : ViewBase
     {
         for (var i = 0; i < _tabs.Count; i++)
         {
-            if (_folderViewTabs.Contains(_tabs[i]) && _pluginTabIds.GetValueOrDefault(_tabs[i]) == key && _pluginTabModes.TryGetValue(_tabs[i], out var view))
+            if (ContentOf(_tabs[i]) is { FolderBound: true, View: { } view } content && content.Key == key)
             {
                 SelectTab(i);
                 if (Mode != view)
@@ -199,9 +199,12 @@ public sealed class FilePanelView : ViewBase
         return null;
     }
 
+    /// <summary>The view on screen belongs to the panel's folder (its c4k.dir, an app page) rather than being opened by itself.</summary>
+    public bool ShowsFolderView => IsFolderView;
+
     /// <summary>The view on screen belongs to the folder: the switch toggles between it and the files.</summary>
     private bool IsFolderView =>
-        Mode is not null && (_modeIsFolderView || (_folderViewTabs.Contains(ActiveTab) && _pluginTabModes.GetValueOrDefault(ActiveTab) == Mode));
+        Mode is not null && (_modeIsFolderView || (ContentOf(ActiveTab) is { FolderBound: true } content && content.View == Mode));
 
     private void AttachMode(IPanelModeView view)
     {
@@ -249,9 +252,9 @@ public sealed class FilePanelView : ViewBase
             return;
         }
 
-        if (_folderViewTabs.Contains(ActiveTab) && _pluginTabModes.GetValueOrDefault(ActiveTab) == view)
+        if (ContentOf(ActiveTab) is { FolderBound: true } content && content.View == view)
         {
-            if (_pluginTabIds.GetValueOrDefault(ActiveTab) == QuickViewKey && _tabs.Count > 1)
+            if (content.Key == QuickViewKey && _tabs.Count > 1)
             {
                 CloseActiveTab();
                 return;
@@ -296,12 +299,10 @@ public sealed class FilePanelView : ViewBase
         _modeIsFolderView = false;
         Mode = null;
         _content.Children.Remove(view.View);
-        var pluginTab = _pluginTabModes.FirstOrDefault(pair => pair.Value == view).Key;
+        var pluginTab = _tabContents.FirstOrDefault(pair => pair.Value.View == view).Key;
         if (pluginTab is not null)
         {
-            _pluginTabModes.Remove(pluginTab);
-            _pluginTabIds.Remove(pluginTab);
-            _folderViewTabs.Remove(pluginTab);
+            _tabContents.Remove(pluginTab);
             RebuildTabs();
         }
 
@@ -319,7 +320,7 @@ public sealed class FilePanelView : ViewBase
 
     private void DetachPluginTabMode()
     {
-        if (Mode is null || !_pluginTabModes.Values.Contains(Mode))
+        if (Mode is null || !_tabContents.Values.Any(content => content.View == Mode))
         {
             return;
         }
@@ -355,11 +356,13 @@ public sealed class FilePanelView : ViewBase
 
     public IReadOnlyList<PanelTab> Tabs => _tabs;
 
-    public string? PluginTabId(PanelTab tab) => _pluginTabIds.GetValueOrDefault(tab);
+    public string? PluginTabId(PanelTab tab) => ContentOf(tab)?.Key;
+
+    private TabContent? ContentOf(PanelTab tab) => _tabContents.GetValueOrDefault(tab);
 
     public void CancelPluginTab(PanelTab tab)
     {
-        if (!_pluginTabIds.ContainsKey(tab))
+        if (!_tabContents.ContainsKey(tab))
         {
             return;
         }
@@ -370,8 +373,7 @@ public sealed class FilePanelView : ViewBase
             return;
         }
 
-        _pluginTabIds.Remove(tab);
-        if (_pluginTabModes.Remove(tab, out var mode))
+        if (_tabContents.Remove(tab, out var removed) && removed.View is { } mode)
         {
             if (Mode == mode)
             {
@@ -521,20 +523,20 @@ public sealed class FilePanelView : ViewBase
     public void AddPluginTab(string path, string pluginId)
     {
         var tab = CreateTab(path);
-        _pluginTabIds.Add(tab, pluginId);
+        _tabContents.Add(tab, new TabContent(pluginId, FolderBound: false));
         SelectTab(_tabs.Count - 1);
         _ = tab.NavigateAsync(path);
     }
 
     public void SetPluginTabMode(PanelTab tab, IPanelModeView mode)
     {
-        if (!_pluginTabIds.ContainsKey(tab))
+        if (ContentOf(tab) is not { } content)
         {
             _ = mode.DisposeModeAsync();
             return;
         }
 
-        _pluginTabModes[tab] = mode;
+        content.View = mode;
         if (tab == ActiveTab)
         {
             ActivatePluginTabMode(tab, mode);
@@ -560,7 +562,7 @@ public sealed class FilePanelView : ViewBase
         }
 
         var tab = ActiveTab;
-        if (_pluginTabModes.Remove(tab, out var mode))
+        if (_tabContents.Remove(tab, out var content) && content.View is { } mode)
         {
             if (Mode == mode)
             {
@@ -572,9 +574,7 @@ public sealed class FilePanelView : ViewBase
             }
         }
 
-        _pluginTabIds.Remove(tab);
-        _folderViewTabs.Remove(tab);
-        _wiredModes.RemoveWhere(m => !_pluginTabModes.ContainsValue(m) && m != Mode);
+        _wiredModes.RemoveWhere(m => !_tabContents.Values.Any(c => c.View == m) && m != Mode);
         tab.Detach();
         tab.Changed -= OnAnyTabChanged;
         _tabs.RemoveAt(_activeIndex);
@@ -584,7 +584,7 @@ public sealed class FilePanelView : ViewBase
 
     public void SelectTab(int index)
     {
-        if (_folderViewTabs.Contains(ActiveTab) && Mode == _pluginTabModes.GetValueOrDefault(ActiveTab))
+        if (ContentOf(ActiveTab) is { FolderBound: true } leaving && Mode == leaving.View)
         {
             DetachPluginTabMode();
         }
@@ -596,9 +596,9 @@ public sealed class FilePanelView : ViewBase
         _activeIndex = Math.Clamp(index, 0, _tabs.Count - 1);
         Canvas.Tab = ActiveTab;
         ActiveTabChanged?.Invoke();
-        if (_pluginTabIds.ContainsKey(ActiveTab))
+        if (ContentOf(ActiveTab) is { } entering)
         {
-            if (_pluginTabModes.TryGetValue(ActiveTab, out var mode))
+            if (entering.View is { } mode)
             {
                 ActivatePluginTabMode(ActiveTab, mode);
             }
@@ -740,7 +740,7 @@ public sealed class FilePanelView : ViewBase
             && !tab.Path.Contains("://", StringComparison.Ordinal);
         var empty = !tab.IsLoading && tab.Error is null && tab.Entries.All(entry =>
             entry.Kind is VfsEntryKind.ParentLink or VfsEntryKind.Action);
-        _emptyFolderSetup.IsVisible = isDiskOrShare && empty && Mode is null && !_pluginTabIds.ContainsKey(tab);
+        _emptyFolderSetup.IsVisible = isDiskOrShare && empty && Mode is null && !_tabContents.ContainsKey(tab);
         if (_emptyFolderSetup.IsVisible && _emptyFolderSkin != _skins.Current)
         {
             _emptyFolderSkin = _skins.Current;
@@ -782,14 +782,15 @@ public sealed class FilePanelView : ViewBase
         }, TimeSpan.FromMilliseconds(250), DispatcherPriority.Background);
     }
 
+    /// <summary>The title of what the tab shows: the folder for the file list, the content's own title for anything else.</summary>
     private string TabTitle(PanelTab tab) =>
         tab.FolderViewOrigin is { Length: > 0 } origin ? origin
-        : _pluginTabModes.TryGetValue(tab, out var view) ? view.Title
-        : tab == ActiveTab && Mode is { } activeMode && activeMode is ITitledModeView ? activeMode.Title
-        : _pluginTabIds.TryGetValue(tab, out var pluginId) ? _host.FindPanel(pluginId)?.Title ?? tab.Title
+        : ContentOf(tab)?.View is { } view ? view.Title
+        : tab == ActiveTab && Mode is { } activeMode ? activeMode.Title
+        : ContentOf(tab) is { } content ? _host.FindPanel(content.Key)?.Title ?? tab.Title
         : tab.Title;
 
-    private string TabIcon(PanelTab tab) => _pluginTabModes.GetValueOrDefault(tab)?.TabIcon ?? "📁";
+    private string TabIcon(PanelTab tab) => ContentOf(tab)?.View?.TabIcon ?? "📁";
 
     private static string TabToolTip(PanelTab tab) =>
         tab.FolderViewPlugin is { Length: > 0 } plugin ? plugin + "\n" + tab.Path : tab.Path;
@@ -1002,6 +1003,11 @@ public sealed class FilePanelView : ViewBase
     private void UpdateModeButtons()
     {
         ModeChanged?.Invoke();
+        if (_tabStrip is not null && TabsKey() != _tabsKey)
+        {
+            RebuildTabs(); // the tab is titled by its content, which just changed
+        }
+
         if (_modeSwitch is null)
         {
             return;
@@ -1009,13 +1015,13 @@ public sealed class FilePanelView : ViewBase
 
         // A mode that is not a folder's view (a plugin panel opened on its own, the browser) has no files to switch to.
         var showingPreview = Mode is PreviewPanelView || IsFolderView;
-        _modeSwitch.IsVisible = Mode is null || showingPreview || _folderViewTabs.Contains(ActiveTab);
+        _modeSwitch.IsVisible = Mode is null || showingPreview || ContentOf(ActiveTab)?.FolderBound == true;
 
         // A plugin's own folder view has its "Pliki (Esc)" button: the path bar and the switch add nothing there.
         _pathBorder.IsVisible = Mode is not PreviewPanelView { IsPinnedFolder: true };
 
         // A folder tab (plugin manager, settings, skins) is its view or its files; elsewhere the panel's folder mode.
-        var folderTab = _folderViewTabs.Contains(ActiveTab);
+        var folderTab = ContentOf(ActiveTab)?.FolderBound == true;
         var selected = folderTab ? (Mode is not null ? 2 : 0) : (int)FolderMode;
         var segmented = Ds.Segmented(_skins.Current, [Loc.T("Pliki"), Loc.T("Auto"), Loc.T("Widok")], selected, OnFolderModePicked, onToolbar: true);
         if (segmented.Child is Panel buttons)
@@ -1046,7 +1052,7 @@ public sealed class FilePanelView : ViewBase
     private void OnFolderModePicked(int index)
     {
         var mode = (FolderViewMode)index;
-        if (_folderViewTabs.Contains(ActiveTab) && _pluginTabModes.TryGetValue(ActiveTab, out var tabView))
+        if (ContentOf(ActiveTab) is { FolderBound: true, View: { } tabView })
         {
             // A folder tab: Pliki = the folder's files, Auto/Widok = its view (plugin manager, settings, skins).
             if (mode == FolderViewMode.Files)
@@ -1084,4 +1090,13 @@ public sealed class FilePanelView : ViewBase
         _accentEdge.Background = b.Accent;
         _accentEdge.IsVisible = b.IsModern && _isActive;
     }
+}
+
+/// <summary>What a <see cref="FilePanelView"/> tab shows instead of its file list.</summary>
+/// <param name="Key">The panel plugin id, a folder view key, or <see cref="FilePanelView.QuickViewKey"/>.</param>
+/// <param name="FolderBound">The view belongs to the tab's folder (Pliki · Widok toggles it with the files); otherwise it was opened by itself.</param>
+internal sealed record TabContent(string Key, bool FolderBound)
+{
+    /// <summary><c>null</c> until the plugin panel's view is created (<see cref="FilePanelView.SetPluginTabMode"/>).</summary>
+    public IPanelModeView? View { get; set; }
 }

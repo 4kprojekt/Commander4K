@@ -89,8 +89,7 @@ public sealed class SkinsView : Panels.FolderModeView
         body.Children.Add(Ds.Muted(b, Loc.T("Własne skórki: pliki JSON w folderze {0} (schemat: {1}).", _host.Config.SkinsDirectory, SkinSchema.FileName)));
 
         var footer = Ds.Footer(b, null,
-            Ds.Button(b, Loc.T("✨ Stwórz nową z AI…"), async () => await CreateWithAiAsync()),
-            Ds.Button(b, Loc.T("✏ Edytuj…"), async () => await EditAsync(current, asDraft: false)),
+            Ds.Button(b, Loc.T("✏ Edytuj…"), async () => await EditAsync(current)),
             Ds.Button(b, Loc.T("🔄 Przeładuj"), async () => await _host.ReloadSkinsAsync().ContinueWith(_ => Avalonia.Threading.Dispatcher.UIThread.Post(Build))),
             Ds.Button(b, Loc.T("Pokaż pliki"), RequestClose, ButtonKind.Primary));
         return Ds.Frame(Ds.WindowHeader(b, Loc.T("Skórki"), Loc.T("Kolory, krój pisma i ramki całej aplikacji. Kliknięcie skórki od razu ją włącza.")), footer, Scroll(body));
@@ -123,31 +122,14 @@ public sealed class SkinsView : Panels.FolderModeView
                     .Background(new SolidColorBrush(SkinBrushes.ToColor(c))).BorderBrush(border).BorderThickness(new Thickness(1)))]);
     }
 
-    private async Task CreateWithAiAsync()
+    private async Task EditAsync(Skin? skin)
     {
         if (OwnerWindow is not { } owner)
         {
             return;
         }
 
-        var draft = await new SkinAiPromptDialog(_skins).ShowAsync(owner);
-        if (draft is null)
-        {
-            _skins.Preview(_skins.Current.Skin);
-            return;
-        }
-
-        await EditAsync(draft, asDraft: true);
-    }
-
-    private async Task EditAsync(Skin? skin, bool asDraft)
-    {
-        if (OwnerWindow is not { } owner)
-        {
-            return;
-        }
-
-        await new SkinEditorDialog(_host, _skins, skin, asDraft).ShowAsync(owner);
+        await new SkinEditorDialog(_host, _skins, skin).ShowAsync(owner);
         Build();
     }
 }

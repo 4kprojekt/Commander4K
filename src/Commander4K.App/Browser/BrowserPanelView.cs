@@ -5,7 +5,6 @@ using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
 using Avalonia.Media;
-using Commander4K.App.Ai;
 using Commander4K.App.Composition;
 using Commander4K.App.Panels;
 using Commander4K.App.Theming;

@@ -30,7 +30,8 @@ public sealed class McpConnectWindow : ToolWindow
     private TextBox _port = null!;
     private TextBlock _status = null!;
     private SelectableTextBlock _command = null!;
-    private SelectableTextBlock _snippet = null!;
+    private TextBlock _where = null!;
+    private int _client; // Kept across ApplySkin rebuilds.
     private StackPanel _roots = null!;
     private StackPanel _recent = null!;
     private bool _refreshPending;
@@ -56,7 +57,7 @@ public sealed class McpConnectWindow : ToolWindow
         _port = new TextBox().Width(100).Text(settings.Port.ToString(CultureInfo.InvariantCulture));
         _status = new TextBlock().TextWrapping(TextWrapping.Wrap).Foreground(b.FileForeground);
         _command = Code();
-        _snippet = Code();
+        _where = Muted(string.Empty);
         _roots = new StackPanel().Spacing(4);
         _recent = new StackPanel().Spacing(2);
 
@@ -69,16 +70,18 @@ public sealed class McpConnectWindow : ToolWindow
                 _port,
                 SmallButton(Loc.T("Zastosuj port"), () => _ = ApplyPortAsync())),
             _status,
-            Heading(Loc.T("Polecenie dla Claude Code")).Margin(0, 8, 0, 0),
-            Muted(Loc.T("Uruchom je raz w terminalu; potem „claude mcp list” pokazuje commander4k. Token daje dostęp do aplikacji — nie udostępniaj go.")),
+            Heading(Loc.T("Podłącz agenta")).Margin(0, 8, 0, 0),
+            Muted(Loc.T("Wybierz klienta MCP i wklej tekst tam, gdzie wskazuje opis. Token daje dostęp do aplikacji — nie udostępniaj go. Po zmianie portu lub tokenu podłącz agenta ponownie.")),
+            Ds.Segmented(b, [.. _mcp.ClientConfigs().Select(c => c.Name)], _client, index =>
+            {
+                _client = index;
+                Refresh();
+            }),
+            _where,
             Box(_command),
             new StackPanel().Orientation(Orientation.Horizontal).Spacing(8).Children(
-                SmallButton(Loc.T("Kopiuj polecenie"), () => _ = CopyAsync(_mcp.ClaudeCommand())),
+                SmallButton(Loc.T("Kopiuj"), () => _ = CopyAsync(CurrentClient().Text)),
                 SmallButton(Loc.T("Nowy token"), () => _mcp.NewToken())),
-            Heading(Loc.T("Wpis do .mcp.json")).Margin(0, 8, 0, 0),
-            Muted(Loc.T("Dla projektu, który ma łączyć się z Commander4K bez polecenia „claude mcp add”.")),
-            Box(_snippet),
-            SmallButton(Loc.T("Kopiuj wpis"), () => _ = CopyAsync(_mcp.McpJsonSnippet())),
             Heading(Loc.T("Foldery dostępne dla AI")).Margin(0, 8, 0, 0),
             Muted(Loc.T("Narzędzia plikowe działają tylko w tych folderach i ich podfolderach. Do folderów wtyczek, config/, data/ i folderu programu MCP nie ma dostępu (widzi tylko nazwy plików).")),
             _roots,
@@ -117,10 +120,15 @@ public sealed class McpConnectWindow : ToolWindow
         var b = Brushes;
         var settings = _host.Settings.Mcp;
         _enabled.IsChecked = settings.Enabled; // Changed elsewhere (settings window); equal values are ignored.
+        if (!_port.IsFocused)
+        {
+            _port.Text = settings.Port.ToString(CultureInfo.InvariantCulture);
+        }
         _status.Text = _mcp.StatusText();
         _status.Foreground = _mcp.Status is McpStartResult.PortBusy or McpStartResult.Failed ? b.Error : b.FileForeground;
-        _command.Text = _mcp.ClaudeCommand();
-        _snippet.Text = _mcp.McpJsonSnippet();
+        var client = CurrentClient();
+        _where.Text = client.Where;
+        _command.Text = client.Text;
 
         _roots.Children.Clear();
         if (settings.AllowedRoots.Count == 0)
@@ -153,6 +161,8 @@ public sealed class McpConnectWindow : ToolWindow
                 Cell(Outcome(call.Outcome), 4, call.Outcome == AuditOutcome.Allowed ? b.MutedForeground : b.Error)));
         }
     }
+
+    private McpClientConfig CurrentClient() => _mcp.ClientConfigs()[_client];
 
     private static string Outcome(AuditOutcome outcome) => outcome switch
     {

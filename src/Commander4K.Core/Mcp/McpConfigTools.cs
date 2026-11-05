@@ -71,22 +71,14 @@ public static partial class McpConfigTools
     /// <summary>Parses a skin for check_skin/save_skin: the skin and its validator warnings, or an error for the model.</summary>
     public static (Skin? Skin, IReadOnlyList<string> Warnings, string? Error) ParseSkin(string json)
     {
-        Skin skin;
-        try
+        // The same reader as a pasted skin: repairs are reported as warnings, so the model sees what it should fix.
+        var read = SkinJson.Read(json, fixId: false);
+        if (read.Skin is not { } skin)
         {
-            skin = SkinJson.Deserialize(json);
-        }
-        catch (JsonException ex)
-        {
-            return (null, [], "The skin JSON is not valid: " + ex.Message + " Call get_skin_guide for the schema.");
+            return (null, [], "The skin JSON is not valid:\n" + read.Error + "\nCall get_skin_guide for the schema.");
         }
 
-        if (!IsSkinId(skin.Id))
-        {
-            return (null, [], $"The skin id '{skin.Id}' must be lower-case letters, digits and hyphens (max 64), e.g. \"solarized-dark\".");
-        }
-
-        return (skin, SkinValidator.Validate(skin), null);
+        return (skin, [.. read.Notes, .. SkinValidator.Validate(skin)], null);
     }
 
     public static IReadOnlyList<McpTool> Create(McpConfigContext context) =>

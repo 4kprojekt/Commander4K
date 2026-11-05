@@ -19,8 +19,6 @@ public static class CommandIds
     /// <summary>Windows Explorer context menu for the selection (Shift+F10, Menu key).</summary>
     public const string ContextMenu = "cm_ContextMenu";
 
-    /// <summary>Prompt and checks for translating the UI into a new language with an AI chat.</summary>
-    public const string Translate = "cm_Translate";
 
     /// <summary>Settings filtered to plugin columns (Git, EXIF, SHA-256).</summary>
     public const string Columns = "cm_Columns";

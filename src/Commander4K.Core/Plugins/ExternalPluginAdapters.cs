@@ -46,7 +46,7 @@ public sealed class ExternalCommandPlugin(ExternalPlugin plugin) : ICommandPlugi
 }
 
 /// <summary>One <c>contributes.panels</c> entry of an external plugin as an <see cref="IPanelPlugin"/>.</summary>
-public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution panel) : IPanelPlugin
+public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution panel) : IPanelCardPlugin
 {
     /// <summary><c>&lt;pluginId&gt;/&lt;panelId&gt;</c>: a plugin may contribute several panels.</summary>
     public string Id => $"{plugin.Manifest.Id}/{panel.Id}";
@@ -61,7 +61,33 @@ public sealed class ExternalPanelPlugin(ExternalPlugin plugin, PanelContribution
 
     public bool RequiresArgument => panel.RequiresArgument;
 
+    /// <summary>The manifest declares <c>"card": true</c>: the plugin draws its own widget (<c>panel.card</c>).</summary>
+    public bool HasCard => panel.Card;
+
     public IPanelSession CreateSession(PanelRequest request, IPluginHost host) => new Session(plugin, panel, host);
+
+    /// <summary>
+    /// <c>panel.card { panel, entry?, context, options?, previous? }</c>, answered like <c>preview.card</c>. Panels
+    /// without <c>"card": true</c> get the plain card: the title and a button that opens the panel.
+    /// </summary>
+    public async Task<PreviewCard> LoadCardAsync(PreviewCardRequest request, IPluginHost host, CancellationToken cancellationToken)
+    {
+        if (!panel.Card)
+        {
+            return new PreviewCard(null, Description, "🧩", CardStatus.None, [], [new CardAction(Loc.T("Otwórz"), CardActions.OpenPanel(Id))]);
+        }
+
+        using var optionsDocument = request.OptionsJson is null ? null : JsonDocument.Parse(request.OptionsJson);
+        var result = await plugin.CallAsync("panel.card", new
+        {
+            panel = panel.Id,
+            entry = request.Target is { } entry ? ExternalPlugin.EntryDto(entry) : null,
+            context = ExternalPlugin.Context(host),
+            options = optionsDocument?.RootElement,
+            previous = request.Previous is { } previous ? ExternalPreviewPlugin.CardDto(previous) : null,
+        }, cancellationToken).ConfigureAwait(false);
+        return await ExternalPreviewPlugin.ParseCardAsync(result, host, cancellationToken).ConfigureAwait(false);
+    }
 
     private sealed class Session(ExternalPlugin plugin, PanelContribution panel, IPluginHost host) : IPanelSession
     {
@@ -751,7 +777,7 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
     }
 
     /// <summary>The previous card as the plugin returned it (thumbnails become their count).</summary>
-    private static object CardDto(PreviewCard card) => new
+    internal static object CardDto(PreviewCard card) => new
     {
         title = card.Title,
         subtitle = card.Subtitle,

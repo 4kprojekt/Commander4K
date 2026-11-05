@@ -2,7 +2,7 @@
 
 A plugin adds **commands** (menu bar, command palette, key bindings), **panels** (a tree/table shown inside a file panel, with a details pane and actions), **previews** (the quick view, `Ctrl+Q`, for chosen file types). You can write one in **Python, Node.js, PowerShell 7, .NET or any executable**. Each plugin runs as a separate process and talks to Commander4K over a small JSON-RPC protocol.
 
-The protocol is deliberately small and explicit so that both people and AI assistants can write plugins from this document alone. The quickest start is the plugin manager (*Wtyczki ▸ Menedżer wtyczek…*, `Ctrl+N`), which copies a working example in your language into the plugins folder.
+The protocol is deliberately small and explicit so that both people and MCP clients such as Claude Code can write plugins from this document alone. The quickest start is the plugin manager (*Wtyczki ▸ Menedżer wtyczek…*, `Ctrl+N`), which copies a working example in your language into the plugins folder.
 
 The SDK is open source (MIT, [`plugins-sdk/`](../plugins-sdk)). Each client is one dependency-free file.
 
@@ -32,7 +32,7 @@ Why it matters:
 Parsing text you have already read (JSON, XML, TOML, regular expressions) is fine with your language's standard library.
 
 Commander4K checks plugin code for these bypasses:
-- the AI installer refuses such code and offers to send the assistant a fix request;
+- `check_plugin` and `install_plugin` (MCP) refuse such code and say what to change;
 - the plugin manager lists every place (details, "Zgodność z SDK") and warns before enabling the plugin.
 
 ## Security model
@@ -101,6 +101,8 @@ The schema is in [`plugin.schema.json`](plugin.schema.json).
 | `category` | The menu path under *Wtyczki*. A `/` creates a submenu. |
 | `shortcut` | Panel actions only, e.g. `Enter`, `F3`, `Ctrl+R`, `Delete`. |
 
+A `contributes.panels` entry may set `accepts`, `provides` (files to and from the other panel, see [Receiving and providing files](#receiving-and-providing-files)) and `card` (a dashboard widget, `panel.card`).
+
 Commands get the keymap id `plugin:<pluginId>:<commandId>`, and panels get `panel:<pluginId>/<panelId>`. Users can bind them in the settings (`Ctrl+,`).
 
 ### Permissions
@@ -150,6 +152,7 @@ Ask for the fewest permissions that do the job.
 | `panel.receive` | `{ panel, receiver, jobId, files, context }` | `{ text?, results?: [{ path, ok, error? }] }`. One call for the whole selection; no time limit. |
 | `panel.providers` | `{ panel, rowIds, context }` | `[{ id, title, description? }]`. Panels with `provides` only; answer within 5 s. |
 | `panel.provide` | `{ panel, provider, jobId, rowIds, context }` | `{ files: [{ name, text? \| base64? \| url? \| error? }], text? }`. No time limit; the whole reply must stay under 16 MB. |
+| `panel.card` | `{ panel, entry: { … } \| null, context, options, previous }` | Only for panels with `"card": true` in `contributes.panels`. The panel's dashboard widget, answered exactly like `preview.card` (same items, actions and `previous`). `entry` is the tile's `open`, when it has one. A tile names it `"card": "<plugin id>/<panel id>"`; panels without `"card": true` get a plain card with their description and an Open button (`c4k:panel/<id>`). |
 | `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options, pinned }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }`. Or `{ kind: "web", page, state? }` (an HTML page from the preview's `webRoot`, see "Web previews"). A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). A preview may also return `{ kind: "chart", title, description?, chart }` (see `preview.card` for `chart`) or a form: `{ kind: "form", title, fields: [{ id, label, value, multiline? }], files: [{ name, path, size }], buttons: [{ label, target, shortcut? }], message?, messageError? }`. Any result may carry `path` (an absolute path other than the entry's): you renamed or moved the entry (a message marked read) or the view is now about another file (the draft of a reply), and the app follows that path for later renders, actions and form edits. Any result may carry `actions: [{ label, target, shortcut? }]`, shown as a bar of buttons above the content; a `shortcut` (`"R"`, `"Ctrl+Enter"`) works while the preview's panel is active (plain keys not while the user types in a form field). A `target` is what a tile target is, or `c4k:plugin/<action>?k=v` (build it with `action_target`), which calls your `preview.action`. `pinned` is `true` when the user opened the entry with Enter (the view stays on it, so it is the place for buttons) and `false` in the quick view that follows the cursor. With `"enter": true` in `contributes.previews`, Enter on a matching file opens this pinned view over the panel when your preview is the highest-priority match; Shift+Enter still opens the file with Windows, and Esc returns to the files. |
 | `preview.action` | `{ preview, entry, options, action, args, values? }` | `null` (the app renders the entry again) or a new result in the `preview.render` shape. A `c4k:plugin/…` button or a dashboard card action (the card is read again afterwards); `args` holds the target's query, `values` the form fields when the button belongs to a form. |
 | `preview.formChanged` | `{ preview, entry, options, values }` | `null`. The form's field values, sent 800 ms after the user stops typing and always before a button's `preview.action`, so you can keep a draft. |
@@ -184,7 +187,7 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `ui.navigate` | `{ path, focus? }` | `null` | — |
 | `ui.openUrl` | `{ url }` | `null` | — (http/https only; opens the app's built-in browser panel, audited) |
 | `ui.openFolder` | `{ path }` | `null` | — (the user is asked where to open it: Explorer or the active panel; nothing is created; audited) |
-| `ui.search` | `{ query, engine? }` | `null` | — (`engine`: omitted = the user's search engine, or `google`, `bing`, `duckduckgo`; any other value, such as the former `"assistant"`, uses the user's search engine; use it e.g. to let the user look up an error) |
+| `ui.search` | `{ query, engine? }` | `null` | — (`engine`: omitted = the user's search engine, or `google`, `bing`, `duckduckgo`; any other value uses the user's search engine; use it e.g. to let the user look up an error) |
 | `ui.copyText` | `{ text }` | `null` | — (clipboard, write only) |
 | `storage.get` | `{ key }` | any JSON value or `null` | — (the plugin's own data) |
 | `storage.set` | `{ key, value }` (`null` removes; max 1 MB per plugin) | `null` | — |
@@ -581,7 +584,32 @@ These are in [`examples/plugins`](../examples/plugins), and the app embeds them 
 - Colours come from `c4k.skin` as CSS variables and follow `c4k.on("skin")`. `Ctrl+F` stays in the page and focuses the search box.
 - Printing renders every page at 150 dpi into a container that only `@media print` shows, calls `window.print()` and empties it on `afterprint`.
 
-When the quick view cannot recognise a file (only hex is left), it offers to ask an AI what the format is. It can then have an AI write a preview plugin for that type, from a sample of the file.
+When the quick view cannot recognise a file (only hex is left), it offers official previews from the catalog and a prompt for Claude Code (over MCP) that explains the format or writes a preview plugin for that type, from a sample of the file.
+
+## Panels: everything is a folder
+
+Each side of the window is a row of tabs, and **a tab is a folder plus what it shows**. What it shows is a plugin:
+
+| Content | Title on the tab | Sends to the other panel (F5 here) | Receives from the other panel (F5 there) |
+|---|---|---|---|
+| File list (the default) | The folder's name | Marked files and folders (copy, move with F6) | Files and folders, written into its folder |
+| Preview or a folder's own view (`c4k.dir` `view` or `plugin` preview: gallery, dashboard, notes, mail, Steam…) | The folder's name; the path bar shows the view's title (`title` in `c4k.dir`) | Nothing (Esc shows the files, then F5) | Files, written into the folder under the view |
+| Plugin panel (`builtin.sysinfo`, `builtin.taskmanager`, `builtin.powershell`, plugin panels) | The folder's name when bound to it, otherwise the panel's title | With `provides`: the selected rows as files (`panel.provide`) | With `accepts`: the files, handed to the plugin (`panel.receive`) |
+| Browser, app pages (settings, skins) | The page's title | Nothing | Nothing |
+
+F6 (move) works only between folders: into or out of a plugin panel it is refused. The app decides all this from what the content declares (`accepts`, `provides`), never from the plugin's own checks, and a refused transfer says why in the status bar.
+
+**Bound to a folder, or opened by itself.** A content is either the folder's own (its `c4k.dir` names it in `preview` or `enter`, or it is an app page such as the plugin manager on `data/plugins`) or opened ad hoc (F2, the command palette, a shortcut such as `Ctrl+Alt+I`). Any panel can be bound to a folder; this folder opens the system information on Enter:
+
+```json
+{ "title": "Ten komputer", "enter": { "panel": "builtin.sysinfo" } }
+```
+
+**Files ↔ view.** The path bar of a file list has *Pliki · Auto · Widok*, kept per tab. *Pliki* never reads `c4k.dir`; *Auto* shows the folder's view when its `c4k.dir` has one; *Widok* always shows a view ("Brak zdefiniowanego podglądu" when there is none). On a folder's own view the same switch, or Esc, shows the folder's files in the default file list plugin, and *Auto*/*Widok* brings the view back. A content opened by itself has no switch: Esc closes it. `Shift+Enter` always enters a folder as plain files.
+
+**Every panel is a widget.** A dashboard tile can show any panel as a card: `{ "title": "System", "card": "builtin.sysinfo" }`, `"builtin.taskmanager"`, or `"<plugin id>/<panel id>"` for plugin panels with `"card": true` (they answer `panel.card`). `"card": true` on a folder whose `c4k.dir` opens a panel shows that panel's widget. The card's Open button (`c4k:panel/<id>`) opens the panel opposite the dashboard.
+
+**For AI clients (MCP).** `get_context` describes each panel's content in one line: what it is, whether it is bound to the folder, and what it provides or receives. `set_panel_mode` switches a panel between `files`, `preview` and `panel:<id>`; `load_plugin_panel` loads a panel's rows; `dashboard_guide` lists the panels that draw widgets. Write a folder's `c4k.dir` with `write_file` (or `save_dashboard` for dashboards) to bind a view to it.
 
 ## Folder files (`c4k.dir`)
 
@@ -593,7 +621,7 @@ Each action is a built-in view name, a plugin id, or an object with one target:
 |---|---|---|
 | `view` | `"gallery"`, `"dashboard"`, `"notes"`, `"markdown"`, `"files"` | Built-in views: image thumbnails (made in the background and kept in the folder's hidden `.thumbnail.c4k`, named `<image>.<size>-<mtime>.webp`, stale ones deleted), tiles from `tiles`, Markdown notes with their links, a Markdown file (`file`, README.md by default), the plain list. `"settings"`, `"skins"` and `"plugins"` are the app's own pages (settings, skins, plugin manager): the app writes them into `config/`, `config/skins/` and the plugins folder when those have no `c4k.dir`, and Pliki/Podgląd switches between the page and the files. |
 | `plugin` (+ `preview`) | `{ "plugin": "official.steam-library" }` | The plugin's preview (`contributes.previews`, `extensions: ["/"]`) renders the folder, with `options`. On Enter it fills the panel; Esc returns to the files. |
-| `panel` (+ `plugin`) | `{ "plugin": "examples.git", "panel": "log" }` | Opens a panel plugin with the folder as `argument` and `options`. |
+| `panel` (+ `plugin`) | `{ "panel": "builtin.sysinfo" }`, `{ "plugin": "examples.git", "panel": "log" }` | Opens a panel plugin with the folder as `argument` and `options`: a built-in panel by its id, a plugin's panel by `plugin` + `panel` (or `"<plugin>/<panel>"`). |
 | `open` (+ `user`, `keyFile`) | `{ "open": "sftp://me@nas.lan/srv", "keyFile": "~/.ssh/id_ed25519" }` | Goes there instead; relative paths are resolved against the folder. |
 | `url` | `{ "url": "https://grafana.lan" }` | The page in the panel browser. |
 | `run` | `{ "run": { "command": "build.ps1", "args": ["-Release"], "cwd": "src" } }` | Runs a command. The user sees it first and trusts this exact file content; a changed or copied `c4k.dir` asks again. |
@@ -657,7 +685,7 @@ A dashboard tile with `"card"` is a live card drawn by a preview instead of a pl
 }
 ```
 
-- `card`: `true` = the preview Ctrl+Q would pick for `open`, including that folder's own `c4k.dir`; or a name: `files`, `gallery`, `notes`, `markdown`, `dashboard`, `api`, `ssh`, the widgets `clock`, `note`, `disks`, or a plugin id (`plugin` or `plugin/preview`). A named card ignores the target's `c4k.dir`. A card that points at a folder with a dashboard shows that dashboard's title and tiles, and a click opens it in place: ← (Alt+←, Backspace) goes back, the breadcrumbs jump, and Esc shows the files of the folder on screen.
+- `card`: `true` = the preview Ctrl+Q would pick for `open`, including that folder's own `c4k.dir`; or a name: `files`, `gallery`, `notes`, `markdown`, `dashboard`, `api`, `ssh`, the widgets `clock`, `note`, `disks`, a panel id (`builtin.sysinfo`, `builtin.taskmanager`, `plugin/panel`; see [Panels](#panels-everything-is-a-folder)), or a plugin id (`plugin` or `plugin/preview`). A named card ignores the target's `c4k.dir`. A card that points at a folder with a dashboard shows that dashboard's title and tiles, and a click opens it in place: ← (Alt+←, Backspace) goes back, the breadcrumbs jump, and Esc shows the files of the folder on screen.
 - `refresh`: `10s`, `5m`, `1h` (at least 2 s), only while the dashboard is visible. Without it the card is read once and has "Odśwież".
 - `size`: the tile's footprint on the dashboard grid, columns × rows: `small` 1×1 (default), `wide` 2×1, `tall` 1×2, `large` 2×2, `huge` 3×2, `full` (the whole row, 1 high). The grid has as many columns as fit the panel (at least 240 px each) and places tiles in order, filling a hole beside a taller tile with the next small ones; spans wider than the grid shrink to it. A taller card shows more text lines, a taller chart and bigger thumbnails. The ⤢ button over a tile (shown on hover, next to ↑ ↓ ×) cycles the sizes and writes `size` into the `c4k.dir`. `options`: passed to the card's preview.
 - `heading: true` makes a tile a section heading across the whole row (title in accent capitals, `subtitle` as a muted line, a rule below); it groups the tiles after it. A card whose answer has exactly one value (an `api` card with one field, for example) is drawn as a KPI: the number large, coloured by its status, the label under it.
@@ -667,7 +695,7 @@ A dashboard tile with `"card"` is a live card drawn by a preview instead of a pl
 - Consent: `api` cards with methods other than GET/HEAD and every `ssh` card wait until the user trusts this `c4k.dir` (the same trust as `run`; a changed file asks again), and only on disks and shares.
 - `ssh` runs one fixed, read-only command (uname, `/proc`, `df`) with the saved login or keys; non-Linux servers show their status only. `options.keyFile` (and `options.user`) pick the key; like every path in the file, a relative `keyFile` is resolved against the folder and `~` is the user's profile.
 
-The official catalog has preview plugins with cards: `official.json-preview`, `official.openapi-preview`, `official.html-preview`, `official.pe-info` (EXE/DLL: architecture, version, signer, execution level, missing DLLs) and `official.archive-info` (file count, unpacked size, compression, package id and version). For your own, see `preview.card` in the protocol table.
+The official catalog has preview plugins with cards: `official.json-preview`, `official.openapi-preview`, `official.html-preview`, `official.pe-info` (EXE/DLL: architecture, version, signer, execution level, missing DLLs) and `official.archive-info` (file count, unpacked size, compression, package id and version). For your own, see `preview.card` (previews) and `panel.card` (panels) in the protocol table.
 
 ### Example: mail ("Poczta")
 
@@ -697,17 +725,9 @@ The card reads only the message files and `.mail/state.json`; *Sprawdź teraz* s
 
 To add a plugin, put its folder in `plugins-catalog/` (official) or `examples/plugins/`, add an entry (`id`, `name`, `runtime`, `description` per language, `tags`, an `example` c4k.dir, `path`), then run `pwsh ./plugins-catalog/Update-Catalog.ps1` to fill in the files and hashes. `PluginCatalogTests` fails if the catalog is out of date.
 
-## Writing a plugin with an AI assistant
+## Writing a plugin by hand
 
-Commander4K helps with this (*Konfiguracja ▸ Napisz wtyczkę z AI*); there is no AI inside the app itself:
-
-- **Claude Code over MCP:** Claude Code connected to Commander4K can write the plugin itself with the MCP tools `get_plugin_guide`, `check_plugin` and `install_plugin`. Otherwise "Napisz wtyczkę z AI" copies the request for Claude Code. See [Writing plugins with Claude Code over MCP](#writing-plugins-with-claude-code-over-mcp).
-
-Either way the installer checks the paths and the manifest, shows the permissions before writing anything, and puts the plugin into `plugins/<id>` **disabled**. You enable it in the plugin manager after reviewing it. It also adds the SDK client when the answer leaves it out.
-
-The answer must give every file as a line `File: <relative path>` followed by one fenced code block with the complete file.
-
-To do it by hand, give the assistant this file, one example plugin and a description of what you want. Ask it to:
+Commander4K has no AI of its own. To have a model write a plugin, connect Claude Code (or another MCP client) and let it use `get_plugin_guide`, `check_plugin` and `install_plugin`: see the next section. By hand:
 
 1. declare the smallest possible `permissions`;
 2. send all file, process, network and program work through the app API listed above, never through the language's own file or process functions;
@@ -726,6 +746,8 @@ claude mcp add --transport http commander4k http://127.0.0.1:47800/mcp --header 
 ```
 
 It also shows the same server as a `.mcp.json` entry for a project. Use `127.0.0.1` exactly: the listener is bound to that address and HTTP.sys rejects requests whose `Host` header says `localhost`. Every request needs the bearer token. "Nowy token" replaces it, and the old token stops working at once. The server listens on loopback only and refuses browser origins other than localhost. The badge shows "AI podłączone (n)" while clients are connected, and says so when the port is in use.
+
+**What the client knows at once.** The `initialize` answer carries server instructions built for that session: the built-in panels and every enabled plugin with the call that uses it (`run_plugin_command` for commands, `load_plugin_panel` for panels, `render_preview` and the `c4k.dir` line for previews, the dashboard card names), so the client uses installed plugins without being told. `list_plugins` gives the current state later.
 
 **Tools.** Each tool has a mode, set per tool in the settings (`Ctrl+,`, search "mcp"): allow, ask or block. The defaults are:
 
@@ -757,7 +779,7 @@ A blocked tool is still listed, with "(Disabled by the user in Commander4K.)" at
 
 **Confirmations.** A tool in "ask" mode opens a dialog in Commander4K: "Tak", "Nie" or "Tak do końca sesji" (yes for this tool and client until the server stops or you press "Cofnij zgody z tej sesji"). Esc, Enter and closing the dialog mean "Nie"; in the install and enable dialogs of `install_plugin` and `enable_plugin`, Enter and Esc mean "Anuluj". The `write_file` dialog shows the start of the text to be written (up to 2000 characters), or "binary, N bytes" for base64; that preview is not written to the audit log. Only one dialog is shown at a time, and parallel calls wait their turn. A call that the client cancels, or that is still waiting when the server stops, closes its dialog as "Nie". A declined call returns "The user declined this action in Commander4K." The client name in the dialog and the log is what the client reported about itself; do not rely on it.
 
-**Configuration, translations and skins.** The client is the model, so these tools call no AI API: they hand out what the clipboard prompts ("Przetłumacz interfejs z AI", "Generuj skórkę z AI") contain, check the answer and save it. They take no paths: files are named only from a checked language code (`de`, `pt-BR`) or skin id (`solarized-dark`), and `config/` stays closed to the file tools. Some settings are read-only over MCP, whatever the mode and even after "Tak do końca sesji": everything under MCP (server, port, allowed folders, tool modes) and the plugin catalog and update addresses. `list_settings` marks them, and `set_setting` answers that they can only be changed in the settings window. External tools (`tools.json`) and saved connections are not reachable either.
+**Configuration, translations and skins.** The client is the model and the app has no AI of its own: these tools hand out the instructions (translation kit, skin brief and schema), check the answer and save it. They take no paths: files are named only from a checked language code (`de`, `pt-BR`) or skin id (`solarized-dark`), and `config/` stays closed to the file tools. Some settings are read-only over MCP, whatever the mode and even after "Tak do końca sesji": everything under MCP (server, port, allowed folders, tool modes) and the plugin catalog and update addresses. `list_settings` marks them, and `set_setting` answers that they can only be changed in the settings window. External tools (`tools.json`) and saved connections are not reachable either.
 
 **Audit.** Every call is written to `data/logs/plugins-YYYYMMDD.log` as `mcp:<client>` with the tool, a summary and the outcome. The connect window lists the last 50 calls.
 

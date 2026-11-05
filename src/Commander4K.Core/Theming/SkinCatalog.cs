@@ -76,15 +76,18 @@ public sealed class SkinCatalog
 
                     try
                     {
-                        await using var stream = File.OpenRead(file);
-                        var skin = await JsonSerializer.DeserializeAsync(stream, ConfigJsonContext.Default.Skin, cancellationToken)
-                            .ConfigureAwait(false);
-                        if (skin is not null)
+                        // A file saved straight from another assistant's answer loads as leniently as a pasted one.
+                        var read = SkinJson.Read(await File.ReadAllTextAsync(file, cancellationToken).ConfigureAwait(false), fixId: false);
+                        if (read.Skin is { } skin)
                         {
                             skins.Add(skin);
                         }
+                        else
+                        {
+                            errors.Add((file, read.Error ?? string.Empty));
+                        }
                     }
-                    catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     {
                         errors.Add((file, ex.Message));
                     }

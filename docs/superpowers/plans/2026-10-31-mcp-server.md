@@ -1,5 +1,7 @@
 # MCP Server (Plan A) Implementation Plan
 
+> **⚠ Nieaktualne (2026-11-05).** Plan został wykonany i jest tylko zapisem historii. Opisuje stan, w którym aplikacja miała jeszcze własne AI: czat, dostawców, okno „Użyj Claude Code”, prompty kopiowane do schowka, `AiAppContext`, `AiPluginInstaller` i `PluginAuthoring.ParseFiles`. Tego już nie ma: Commander4K nie ma własnego AI, a modele działają z nim wyłącznie jako klienci MCP. Aktualny stan opisują `CLAUDE.md` oraz `docs/plugins.md` w sekcji „Writing plugins with Claude Code over MCP”. Nie wdrażaj tego planu ponownie.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove AI-through-the-browser and make Commander4K an MCP server (Streamable HTTP on loopback) that Claude Code can use to read app state, drive panels, work with files inside allowed folders, use plugins and write/install plugins — every tool gated by allow/ask/block.

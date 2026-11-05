@@ -157,6 +157,14 @@ public sealed class PluginPanelView : ModeViewBase, IPanelModeView
     /// <summary>The plugin session, for sending files to the panel or taking files from it (F5).</summary>
     public IPanelSession Session => _session;
 
+    public Core.Plugins.PanelModeKind Kind => Core.Plugins.PanelModeKind.Plugin;
+
+    /// <summary>From the manifest (<c>provides</c>) or the built-in session.</summary>
+    public bool CanProvide => _session.CanProvide;
+
+    /// <summary>From the manifest (<c>accepts</c>) or the built-in session.</summary>
+    public bool CanReceive => _session.CanReceive;
+
     /// <summary>Marked rows, or the row under the cursor — what an action that applies to rows would get.</summary>
     public IReadOnlyList<string> SelectedRowIds =>
         _table.Marked.Count > 0 ? [.. _table.Marked] : CurrentRow is { } row ? [row.Row.Id] : [];

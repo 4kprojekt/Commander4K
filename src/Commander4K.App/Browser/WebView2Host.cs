@@ -10,7 +10,7 @@ namespace Commander4K.App.Browser;
 /// Hosts a WebView2 (Edge) controller in a native child window. Avalonia owns the child HWND (position, visibility);
 /// this control creates the controller on it and keeps its bounds in sync. The controller is closed when the control
 /// leaves the visual tree. One <see cref="CoreWebView2Environment"/> per profile folder is shared by all instances, so
-/// sign-ins (Gemini, ChatGPT…) survive closing the panel and restarting the app.
+/// sign-ins survive closing the panel and restarting the app.
 /// </summary>
 public sealed partial class WebView2Host : NativeControlHost
 {

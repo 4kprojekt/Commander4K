@@ -49,6 +49,12 @@ public static class CardActions
 {
     /// <summary>Reads the card again.</summary>
     public const string Refresh = "c4k:refresh";
+
+    /// <summary>Prefix of <see cref="OpenPanel"/> targets.</summary>
+    public const string PanelPrefix = "c4k:panel/";
+
+    /// <summary>Opens the panel <paramref name="panelId"/> (<c>builtin.sysinfo</c>, <c>&lt;plugin&gt;/&lt;panel&gt;</c>) opposite the dashboard.</summary>
+    public static string OpenPanel(string panelId) => PanelPrefix + panelId;
 }
 
 public enum ChartKind
@@ -96,6 +102,15 @@ public sealed record ChartData(ChartKind Kind, IReadOnlyList<ChartSeries> Series
 
 /// <summary>A preview that can also draw itself as a card on a dashboard.</summary>
 public interface IPreviewCardPlugin : IPreviewPlugin
+{
+    Task<PreviewCard> LoadCardAsync(PreviewCardRequest request, IPluginHost host, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// A panel that can also draw itself as a card on a dashboard (<c>"card": "builtin.sysinfo"</c>), so every panel can
+/// be a widget. <see cref="PreviewCardRequest.Target"/> is the tile's <c>open</c> entry, or <c>null</c>.
+/// </summary>
+public interface IPanelCardPlugin : IPanelPlugin
 {
     Task<PreviewCard> LoadCardAsync(PreviewCardRequest request, IPluginHost host, CancellationToken cancellationToken);
 }

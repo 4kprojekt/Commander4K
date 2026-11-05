@@ -57,6 +57,20 @@ public sealed class McpServerTests
     }
 
     [Fact]
+    public async Task Initialize_carries_the_instructions_built_for_each_session()
+    {
+        var installed = "official.mail";
+        var server = new McpServer(new FakeTools(), () => [], "1", () => "Installed plugins: " + installed);
+
+        var first = await server.HandleAsync(Request(1, "initialize", new() { ["protocolVersion"] = "2025-06-18" }), server.CreateSession(), TestContext.Current.CancellationToken);
+        installed = "official.git-repo";
+        var second = await server.HandleAsync(Request(1, "initialize", new() { ["protocolVersion"] = "2025-06-18" }), server.CreateSession(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Installed plugins: official.mail", (string?)first!["result"]!["instructions"]);
+        Assert.Equal("Installed plugins: official.git-repo", (string?)second!["result"]!["instructions"]);
+    }
+
+    [Fact]
     public async Task Unknown_protocol_version_gets_the_latest()
     {
         var (server, session, _) = Create();

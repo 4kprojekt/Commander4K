@@ -12,7 +12,7 @@ public sealed record SourceFinding(string File, int Line, string Api, string Ins
 /// <summary>
 /// Finds plugin code that talks to the system without the SDK (files, processes, network, registry, or writes to stdout,
 /// which is the protocol channel). A plugin runs as the user's process, so this cannot enforce anything; it is a lint
-/// that the AI installer, the AI fix request and the plugin manager use to point at what to change. The SDK client
+/// that the installer, check_plugin/install_plugin (MCP) and the plugin manager use to point at what to change. The SDK client
 /// files themselves are skipped; comment lines are ignored.
 /// </summary>
 public static partial class PluginSourceCheck
@@ -199,7 +199,7 @@ public static partial class PluginSourceCheck
         return Scan(files);
     }
 
-    /// <summary>A follow-up request for the assistant that wrote the plugin.</summary>
+    /// <summary>What the MCP client that wrote the plugin should change (check_plugin, install_plugin).</summary>
     public static string FixRequest(IReadOnlyList<SourceFinding> findings) =>
         "The plugin bypasses the Commander4K SDK. All file, process, network and system work must go through the SDK client " +
         "(c4k), and nothing may be written to stdout. Fix these places and send ALL files again in the same format " +

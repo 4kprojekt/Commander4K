@@ -1,4 +1,3 @@
-using Commander4K.App.Ai;
 using Commander4K.App.Composition;
 using Commander4K.Core.Mcp;
 using Commander4K.Core.Plugins;
@@ -147,7 +146,7 @@ public static class McpPrompts
                 return $"File: {path}\nThe file does not exist.";
             }
 
-            var sample = await Task.Run(() => AiAppContext.DescribeFileAsync(host, found, ct), ct);
+            var sample = await Task.Run(() => McpAppContext.DescribeFileAsync(host, found, ct), ct);
             Audit(AuditOutcome.Allowed);
             return sample;
         }

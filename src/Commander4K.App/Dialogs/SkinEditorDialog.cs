@@ -15,106 +15,6 @@ using Commander4K.Core.Theming;
 namespace Commander4K.App.Dialogs;
 
 /// <summary>
-/// "Create with AI" without an API key: the user describes the skin, the dialog copies a prompt (idea + schema + a strict
-/// "JSON only" contract), the user pastes it into any assistant and pastes the answer back here. The answer is trimmed
-/// to its JSON object and validated; a valid skin completes the dialog.
-/// </summary>
-public sealed class SkinAiPromptDialog : DialogWindow<Skin?>
-{
-    private readonly SkinManager _skins;
-    private readonly TextBox _description;
-    private readonly TextBox _answer;
-    private readonly TextBlock _status;
-    private readonly StackPanel _step2;
-
-    public SkinAiPromptDialog(SkinManager skins) : base(Loc.T("Stwórz nową skórkę z AI"), skins.Current, 640)
-    {
-        _skins = skins;
-        _description = new TextBox().AcceptsReturn(true).TextWrapping(TextWrapping.Wrap).Height(90)
-            .PlaceholderText(Loc.T("np. „cyberpunk: neonowy róż i cyjan na granatowym tle” albo „sepia jak stary terminal”"));
-        _answer = new TextBox().AcceptsReturn(true).TextWrapping(TextWrapping.NoWrap).Height(150)
-            .FontFamily(Brushes.MonospaceFamily).FontSize(12)
-            .PlaceholderText(Loc.T("Wklej tutaj odpowiedź asystenta — wystarczy cały tekst, JSON zostanie wykryty…"));
-        _answer.TextChanged += (_, _) => Check();
-        _status = new TextBlock().TextWrapping(TextWrapping.Wrap).FontSize(12);
-        _step2 = new StackPanel().Spacing(6).IsVisible(false).Children(
-            new TextBlock().TextWrapping(TextWrapping.Wrap).FontWeight(FontWeight.SemiBold)
-                .Text(Loc.T("Prompt jest w schowku. Wklej go do ulubionego asystenta (Gemini, ChatGPT, Claude…), a jego odpowiedź wklej poniżej.")),
-            _answer,
-            Ds.Button(Brushes, Loc.T("📋 Wklej ze schowka"), async () => await PasteAsync()).HorizontalAlignment(HorizontalAlignment.Left),
-            _status);
-
-        SetBody(
-            Label(Loc.T("Opisz, jak ma wyglądać skórka:")),
-            _description,
-            Ds.Button(Brushes, Loc.T("📋 Przygotuj i skopiuj prompt"), async () => await PrepareAsync(), ButtonKind.Primary).Margin(0, 6, 0, 0),
-            _step2,
-            ButtonRow((Loc.T("Anuluj"), () => Complete(null), false)));
-        _skins.Changed += ApplySkin;
-        Closed += (_, _) => _skins.Changed -= ApplySkin;
-        Opened += (_, _) => _description.Focus();
-    }
-
-    protected override void OnKeyDown(KeyEventArgs e)
-    {
-        if (e.Key == Key.Escape)
-        {
-            Complete(null);
-            e.Handled = true;
-            return;
-        }
-
-        base.OnKeyDown(e);
-    }
-
-    private void ApplySkin(SkinBrushes brushes) => Ds.ApplySurface(this, brushes, WindowSurface.Raised);
-
-    private async Task PrepareAsync()
-    {
-        await DesktopShell.CopyToClipboardAsync(this, SkinPrompt.ForJsonOnly(_description.Text));
-        _step2.IsVisible = true;
-        SetStatus(Loc.T("Czekam na odpowiedź…"), Brushes.MutedForeground);
-        _answer.Focus();
-    }
-
-    private async Task PasteAsync()
-    {
-        if (Clipboard is { } clipboard && await clipboard.TryGetTextAsync() is { Length: > 0 } text)
-        {
-            _answer.Text = text;
-        }
-        else
-        {
-            SetStatus(Loc.T("Schowek nie zawiera tekstu."), Brushes.Error);
-        }
-    }
-
-    private void Check()
-    {
-        if (string.IsNullOrWhiteSpace(_answer.Text))
-        {
-            return;
-        }
-
-        if (SkinJson.TryRead(_answer.Text, fixId: true, out var skin, out var error))
-        {
-            _skins.Preview(skin);
-            Complete(skin);
-        }
-        else
-        {
-            SetStatus(error, Brushes.Error);
-        }
-    }
-
-    private void SetStatus(string text, IBrush foreground)
-    {
-        _status.Text = text;
-        _status.Foreground = foreground;
-    }
-}
-
-/// <summary>
 /// Skin editor: a form generated from the skin JSON Schema with a live preview. A skin can be picked, copied as the base
 /// of a new one or pasted from the clipboard (JSON found inside any text); saving writes it into config/skins.
 /// </summary>
@@ -135,19 +35,14 @@ public sealed class SkinEditorDialog : DialogWindow<Skin?>
     private readonly ScrollViewer _scroll;
     private Skin? _valid;
 
-    public SkinEditorDialog(AppHost host, SkinManager skins, Skin? start = null, bool asDraft = false) : base(Loc.T("Edytor skórki"), skins.Current, 760)
+    public SkinEditorDialog(AppHost host, SkinManager skins, Skin? start = null) : base(Loc.T("Edytor skórki"), skins.Current, 760)
     {
         _host = host;
         _skins = skins;
         _original = skins.Current.Skin;
         start ??= _original;
-        if (asDraft)
-        {
-            start = start with { Id = UniqueId(start.Id) };
-        }
-
         var items = host.Skins.Skins.Select(s => new ComboBoxItem { Content = s.DisplayName + " (" + s.Id + ")", Tag = s }).ToList();
-        if (asDraft || items.All(i => !((Skin)i.Tag!).Id.Equals(start.Id, StringComparison.OrdinalIgnoreCase)))
+        if (items.All(i => !((Skin)i.Tag!).Id.Equals(start.Id, StringComparison.OrdinalIgnoreCase)))
         {
             items.Insert(0, new ComboBoxItem { Content = Loc.T("(nowa) {0}", start.DisplayName), Tag = start });
         }
@@ -282,13 +177,18 @@ public sealed class SkinEditorDialog : DialogWindow<Skin?>
             return;
         }
 
-        if (SkinJson.TryRead(text, fixId: true, out var skin, out var error))
+        var read = SkinJson.Read(text, fixId: true);
+        if (read.Skin is { } skin)
         {
             LoadSkin(skin);
+            if (read.Notes.Count > 0)
+            {
+                SetStatus((_status.Text is { Length: > 0 } checkedText ? checkedText + "\n" : string.Empty) + "ℹ " + string.Join("\nℹ ", read.Notes), Brushes.Warning);
+            }
         }
         else
         {
-            SetStatus(error, Brushes.Error);
+            SetStatus(read.Error ?? string.Empty, Brushes.Error);
         }
     }
 

@@ -490,6 +490,9 @@ public static class McpDashboardTools
           start of the text file in `open`), `disks` (used/free space of this PC's disks, or of the disk holding `open`; every minute;
           amber ≥ 90 %, red ≥ 95 %).
         - A plugin id (`official.json-preview` or `plugin/preview`) — the plugin draws the card for `open`; see the list at the end.
+        - A panel id (`builtin.sysinfo`: OS, memory with a chart, system disk, uptime; `builtin.taskmanager`: processes and the
+          biggest by memory; `plugin/panel` for plugin panels with `"card": true`) — every panel is a widget, no `open` needed; its Open
+          button opens the panel beside the dashboard. `card: true` on a folder whose c4k.dir opens a panel shows that panel's widget.
 
         A card whose answer has exactly one value is drawn as a KPI: the number large (coloured by its status), the label under it.
         So an `api` card with one field makes a clean KPI tile; give it `size: small` and a short title.

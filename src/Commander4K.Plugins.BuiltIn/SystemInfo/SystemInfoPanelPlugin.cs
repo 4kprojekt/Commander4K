@@ -19,7 +19,7 @@ namespace Commander4K.Plugins.BuiltIn.SystemInfo;
 /// network, security, hot-fixes, start-up programs, environment. Sections are gathered in parallel and each one
 /// fails independently (e.g. without administrator rights), so one missing source never hides the others.
 /// </summary>
-public sealed class SystemInfoPanelPlugin : IPanelPlugin
+public sealed class SystemInfoPanelPlugin : IPanelCardPlugin
 {
     public const string PluginId = "builtin.sysinfo";
 
@@ -34,6 +34,34 @@ public sealed class SystemInfoPanelPlugin : IPanelPlugin
     public string Description => Loc.T("System operacyjny, sprzęt, procesor, pamięć, dyski, sieć, bezpieczeństwo, aktualizacje, autostart.");
 
     public IPanelSession CreateSession(PanelRequest request, IPluginHost host) => new Session();
+
+    /// <summary>The dashboard widget: processor, memory in use (a chart that grows on each refresh), system disk, uptime.</summary>
+    public async Task<PreviewCard> LoadCardAsync(PreviewCardRequest request, IPluginHost host, CancellationToken cancellationToken)
+    {
+        var info = await host.GetSystemInfoAsync(cancellationToken).ConfigureAwait(false);
+        var memory = GC.GetGCMemoryInfo();
+        var total = memory.TotalAvailableMemoryBytes > 0 ? memory.TotalAvailableMemoryBytes : info.TotalMemoryBytes;
+        var used = total > 0 ? Math.Clamp((double)memory.MemoryLoadBytes / total, 0, 1) : 0;
+        var uptime = TimeSpan.FromMilliseconds(Environment.TickCount64);
+        var items = new List<CardItem>
+        {
+            new CardValue(Loc.T("Procesor"), Loc.T("{0} wątków, {1}", info.ProcessorCount, info.Architecture)),
+            new CardValue(Loc.T("Czas pracy"), Loc.T("{0} d {1} h {2} min", uptime.Days, uptime.Hours, uptime.Minutes)),
+            new CardProgress(Loc.T("Pamięć"), used, Loc.T("{0} z {1}", Bytes(memory.MemoryLoadBytes), Bytes(total))),
+        };
+        var systemRoot = Path.GetPathRoot(Environment.SystemDirectory);
+        if (info.Drives.FirstOrDefault(d => string.Equals(d.Name, systemRoot, StringComparison.OrdinalIgnoreCase)) is { TotalBytes: > 0 } drive)
+        {
+            var free = drive.FreeBytes ?? 0;
+            items.Add(new CardProgress(drive.Name.TrimEnd('\\'), Math.Clamp((double)(drive.TotalBytes.Value - free) / drive.TotalBytes.Value, 0, 1),
+                Loc.T("{0} wolne z {1}", Bytes(free), Bytes(drive.TotalBytes.Value))));
+        }
+
+        var chart = request.Previous?.Items.OfType<CardChart>().FirstOrDefault()?.Chart ?? new ChartData(ChartKind.Line, [], "%", 0, 100);
+        items.Add(new CardChart(chart.Append(Loc.T("Pamięć"), new ChartPoint(DateTimeOffset.UtcNow.ToUnixTimeSeconds(), Math.Round(used * 100, 1)))));
+        return new PreviewCard(null, info.MachineName, "🖥", used >= 0.9 ? CardStatus.Warning : CardStatus.Ok, items,
+            [new CardAction(Loc.T("Otwórz"), CardActions.OpenPanel(PluginId)), new CardAction(Loc.T("Odśwież"), CardActions.Refresh)]);
+    }
 
     private sealed class Session : IPanelSession
     {

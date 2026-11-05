@@ -58,6 +58,7 @@
               "refreshSeconds": { "type": "integer", "minimum": 1 },
               "accepts": { "type": "boolean", "default": false, "description": "The panel can receive files sent from a file panel with F5; the host asks it which receivers fit the selection." },
               "provides": { "type": "boolean", "default": false, "description": "The panel can provide the selected rows as files for a file panel." },
+              "card": { "type": "boolean", "default": false, "description": "The plugin answers panel.card, so a dashboard tile with \"card\": \"<plugin id>/<panel id>\" shows this panel as a live widget." },
               "actions": {
                 "type": "array",
                 "items": {

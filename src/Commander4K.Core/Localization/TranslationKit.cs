@@ -8,8 +8,8 @@ namespace Commander4K.Core.Localization;
 public sealed record TranslationIssue(string Key, string Problem);
 
 /// <summary>
-/// Everything needed to add a language without touching code: a prompt for an AI chat (Claude.ai, ChatGPT…) that
-/// carries the English file as the reference, and a checker for the file that comes back.
+/// Everything an MCP client needs to add a language without touching code (get_translation_kit, translate_ui): the
+/// instructions with the English file as the reference, and a checker for the entries that come back.
 /// </summary>
 public static partial class TranslationKit
 {
@@ -111,36 +111,6 @@ public static partial class TranslationKit
 
         return max + 1;
     }
-
-    /// <summary>Report for the files in <c>config/i18n</c> (shown in the translation window).</summary>
-    public static string Report(string configDirectory)
-    {
-        var folder = Path.Combine(configDirectory, Loc.FolderName);
-        var files = Directory.Exists(folder) ? Directory.GetFiles(folder, "*.json").Where(f => !Path.GetFileName(f).StartsWith('_')).ToList() : [];
-        if (files.Count == 0)
-        {
-            return Loc.T("Brak plików w {0}.", folder);
-        }
-
-        var text = new StringBuilder();
-        foreach (var file in files)
-        {
-            var code = Path.GetFileNameWithoutExtension(file).ToLowerInvariant();
-            var issues = Check(File.ReadAllText(file), code);
-            var missing = issues.Count(i => i.Problem == Loc.T("brak tłumaczenia (zostanie oryginał)"));
-            text.AppendLine(issues.Count == 0
-                ? Loc.T("✓ {0}: w porządku", Path.GetFileName(file))
-                : Loc.T("⚠ {0}: {1} uwag (w tym {2} brakujących tłumaczeń)", Path.GetFileName(file), issues.Count, missing));
-            foreach (var issue in issues.Where(i => i.Problem != Loc.T("brak tłumaczenia (zostanie oryginał)")).Take(20))
-            {
-                text.AppendLine($"    „{Shorten(issue.Key)}”: {issue.Problem}");
-            }
-        }
-
-        return text.ToString();
-    }
-
-    private static string Shorten(string text) => text.Length <= 60 ? text : text[..57] + "…";
 
     private static HashSet<string> Placeholders(string text) =>
         [.. PlaceholderPattern().Matches(text.Replace("{{", string.Empty, StringComparison.Ordinal).Replace("}}", string.Empty, StringComparison.Ordinal))

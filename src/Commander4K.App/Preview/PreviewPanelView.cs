@@ -242,6 +242,9 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
 
     public string? TabIcon => _pinned is not null || _pinnedFile is not null ? "🗂" : "👁";
 
+    /// <summary>The panel's folder stays its folder: F5 into it copies into that folder.</summary>
+    public Core.Plugins.PanelModeKind Kind => Core.Plugins.PanelModeKind.Preview;
+
     public string Title => _pinned is { } pinned ? WithAccount(pinned.Config.Title ?? pinned.Folder.Name, pinned.Action.Options) : _pinnedFile?.Name ?? Loc.T("Podgląd");
 
     /// <summary>A plugin account's own name (the options' "user") in brackets, so folders of several accounts differ.</summary>
@@ -1648,7 +1651,7 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
 
         if (ShowUnknownPreviewOptions is { } options)
         {
-            content.Children.Add(BannerButton(Loc.T("Przygotuj prompt dla asystenta AI"), () => options(file), primary: true));
+            content.Children.Add(BannerButton(Loc.T("Przygotuj prompt dla Claude Code (MCP)"), () => options(file), primary: true));
         }
 
         return new Border

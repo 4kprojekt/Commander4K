@@ -14,7 +14,7 @@ public static class DefaultKeymap
     ];
 
     /// <summary>Commands that no longer exist (the docked palettes); their bindings are dropped from existing keymap.json files.</summary>
-    public static IReadOnlyList<string> RemovedCommands { get; } = ["cm_TogglePalettes", "cm_Palettes", "cm_AddFavorite", "cm_AskAi", "cm_AiProviders", "cm_AiWritePlugin", "panel:builtin.logs"];
+    public static IReadOnlyList<string> RemovedCommands { get; } = ["cm_TogglePalettes", "cm_Palettes", "cm_AddFavorite", "cm_AskAi", "cm_AiProviders", "cm_AiWritePlugin", "cm_Translate", "panel:builtin.logs"];
 
     public static IReadOnlyDictionary<string, string> Bindings { get; } = new Dictionary<string, string>
     {

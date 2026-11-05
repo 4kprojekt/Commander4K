@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using Avalonia.Threading;
-using Commander4K.App.Ai;
 using Commander4K.App.Composition;
 using Commander4K.App.Browser;
 using Commander4K.App.Dialogs;
@@ -36,7 +35,7 @@ public static class McpAppTools
     public static IReadOnlyList<McpTool> Create(
         MainWindow window,
         AppHost host,
-        AiAppContext context,
+        McpAppContext context,
         Func<IReadOnlyList<string>> allowedRoots,
         Func<IReadOnlyList<string>> protectedRoots)
     {
@@ -44,12 +43,12 @@ public static class McpAppTools
         return Tools(window, host, context, Access);
     }
 
-    private static IReadOnlyList<McpTool> Tools(MainWindow window, AppHost host, AiAppContext context, Func<McpAccess> access) =>
+    private static IReadOnlyList<McpTool> Tools(MainWindow window, AppHost host, McpAppContext context, Func<McpAccess> access) =>
     [
         new McpTool(
             new McpToolDefinition(
                 "get_context",
-                "Describes Commander4K right now: both panels (path, mode, cursor, marked entries, a sample of the listing — contents only for folders inside the allowed folders), plugin runtimes and installed plugins.",
+                "Describes Commander4K right now: both panels (path, content — file list or the plugin shown, bound to its folder or not, what it sends to and receives from the other panel —, cursor, marked entries, a sample of the listing — contents only for folders inside the allowed folders), plugin runtimes and installed plugins. The panel model is in get_plugin_guide, section \"Panels: everything is a folder\".",
                 McpSchema.Object(),
                 McpToolMode.Allow),
             async (_, _) =>
@@ -220,13 +219,13 @@ public static class McpAppTools
         return new McpToolResult(count == 0 ? $"No commands match '{filter}'." : text.ToString());
     }
 
-    private static McpToolResult Guide(AiAppContext context, string? runtime, string? example)
+    private static McpToolResult Guide(McpAppContext context, string? runtime, string? example)
     {
-        var names = AiAppContext.ExampleNames();
+        var names = McpAppContext.ExampleNames();
         string? exampleText;
         if (example is { Length: > 0 })
         {
-            exampleText = AiAppContext.Example(example);
+            exampleText = McpAppContext.Example(example);
             if (exampleText is null)
             {
                 return McpToolResult.Error($"Unknown example '{example}'. Available examples: {string.Join(", ", names)}.");
@@ -239,7 +238,7 @@ public static class McpAppTools
                 return McpToolResult.Error($"Unknown runtime '{runtime}'. Use one of: {string.Join(", ", PluginManagerPanel.Templates.Keys)}.");
             }
 
-            exampleText = AiAppContext.Example(template);
+            exampleText = McpAppContext.Example(template);
         }
         else
         {
@@ -716,7 +715,7 @@ public static class McpAppTools
         _ => "unknown format",
     };
 
-    private static async Task<McpToolResult> InstallAsync(MainWindow window, AiAppContext context, McpCall call, CancellationToken ct)
+    private static async Task<McpToolResult> InstallAsync(MainWindow window, McpAppContext context, McpCall call, CancellationToken ct)
     {
         var hasFiles = call.Arguments["files"] is JsonArray;
         var folder = call.Optional("folder");
@@ -760,7 +759,7 @@ public static class McpAppTools
 
         // The installer's own dialog (name, permissions, files, target folder) is the user's confirmation.
         var result = await Dispatcher.UIThread.InvokeAsync(() =>
-            AiPluginInstaller.InstallAsync(window, window.McpBrushes, context, files, () => Task.CompletedTask, limits: limits, forMcp: true));
+            PluginInstaller.InstallAsync(window, window.McpBrushes, context, files, () => Task.CompletedTask, limits: limits, forMcp: true));
         if (result.Installed)
         {
             return new McpToolResult(result.Message);

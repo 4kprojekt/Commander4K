@@ -19,11 +19,13 @@ public delegate Task CardActionHandler(string action, IReadOnlyDictionary<string
 public sealed record CardSource(CardLoader Load, bool NeedsTrust, string? Unavailable, CardActionHandler? Invoke = null);
 
 /// <summary>
-/// Decides which preview draws a dashboard tile as a card: a built-in view, the API or SSH card, a plugin, or — for
-/// <c>"card": true</c> — what Ctrl+Q would show for the target, including the target folder's own <c>c4k.dir</c>.
+/// Decides which preview draws a dashboard tile as a card: a built-in view, the API or SSH card, a preview or panel
+/// plugin (<see cref="IPanelCardPlugin"/>: every panel can be a widget), or — for <c>"card": true</c> — what Ctrl+Q
+/// would show for the target, including the target folder's own <c>c4k.dir</c>.
 /// </summary>
 public sealed class CardResolver(
     IReadOnlyList<IPreviewPlugin> previews,
+    IReadOnlyList<IPanelPlugin> panels,
     Func<PluginManifest, IPluginHost> hostFor,
     Func<string, CancellationToken, Task<FolderConfig?>> readFolderConfig,
     Func<string, bool> inCatalog,
@@ -114,6 +116,11 @@ public sealed class CardResolver(
         if (found.IsContainer && VfsPath.GetScheme(target) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
         {
             var own = await readFolderConfig(target, cancellationToken).ConfigureAwait(false);
+            if ((own?.Preview ?? own?.Enter) is { IsPlainFiles: false, Kind: FolderActionKind.Panel, PanelId: { } panelId } panelAction)
+            {
+                return PluginCard(panelId, null, tile with { Options = tile.Options ?? panelAction.Options });
+            }
+
             if (own?.Preview is { IsPlainFiles: false, Kind: FolderActionKind.View } action)
             {
                 if (action.Plugin is { } pluginId)
@@ -169,12 +176,23 @@ public sealed class CardResolver(
     /// <summary>A card named by plugin id (<c>plugin</c> or <c>plugin/preview</c>); a missing plugin offers to install it.</summary>
     private CardSource PluginCard(string name, string? target, FolderTile tile)
     {
+        // A panel named exactly (builtin.sysinfo, <plugin>/<panel>) wins over a preview of the same plugin.
+        if (panels.FirstOrDefault(p => string.Equals(p.Id, name, StringComparison.OrdinalIgnoreCase)) is { } panel)
+        {
+            return PanelCard(panel, target, tile);
+        }
+
         var slash = name.IndexOf('/', StringComparison.Ordinal);
         var (pluginId, previewId) = slash < 0 ? (name, null) : (name[..slash], name[(slash + 1)..]);
         var plugin = previews
             .Where(p => string.Equals(p.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(p => previewId is not null && p.Id.EndsWith("/" + previewId, StringComparison.OrdinalIgnoreCase))
             .FirstOrDefault();
+        if (plugin is null && slash < 0 && panels.FirstOrDefault(p => p is IPanelCardPlugin && string.Equals(p.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase)) is { } pluginPanel)
+        {
+            return PanelCard(pluginPanel, target, tile);
+        }
+
         if (plugin is null)
         {
             var action = inCatalog(pluginId)
@@ -197,6 +215,22 @@ public sealed class CardResolver(
                 ? await PreviewCard(plugin, found, tile, target).Load(previous, ct).ConfigureAwait(false)
                 : ErrorCard(Loc.T("Nie znaleziono {0}.", target));
         }, false, null, Actions(plugin, ct => hostFor(_folders.Manifest).GetEntryAsync(target, ct), tile));
+    }
+
+    /// <summary>A panel's widget; a panel without one gets its description and a button that opens it.</summary>
+    private CardSource PanelCard(IPanelPlugin panel, string? target, FolderTile tile)
+    {
+        if (panel is not IPanelCardPlugin cards)
+        {
+            return Fixed(new PreviewCard(null, tile.Subtitle ?? panel.Description, tile.Icon ?? "🧩", CardStatus.None, [],
+                [new CardAction(Loc.T("Otwórz"), CardActions.OpenPanel(panel.Id))]));
+        }
+
+        return new CardSource(async (previous, ct) =>
+        {
+            var entry = target is null ? null : await hostFor(_folders.Manifest).GetEntryAsync(target, ct).ConfigureAwait(false);
+            return await cards.LoadCardAsync(new PreviewCardRequest(entry, tile.Options, previous), hostFor(panel.Manifest), ct).ConfigureAwait(false);
+        }, false, null);
     }
 
     private CardSource PreviewCard(IPreviewPlugin plugin, VfsEntry entry, FolderTile tile, string target) =>

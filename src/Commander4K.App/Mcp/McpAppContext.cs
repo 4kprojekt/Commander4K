@@ -9,15 +9,14 @@ using Commander4K.Core.Plugins;
 using Commander4K.Core.Updates;
 using Commander4K.PluginSdk;
 
-namespace Commander4K.App.Ai;
+namespace Commander4K.App.Mcp;
 
 /// <summary>
-/// What AI assistants are told about the running app: both panels (path, mode, cursor, marks, a sample of the
-/// listing), plugin runtimes and installed plugins — plus the plugin guide, an example and the SDK clients for
-/// writing plugins. Shared by the in-app chat (system prompt and the <c>get_context</c> tool) and the browser panel
-/// (typed into Gemini/ChatGPT/Claude on request). The text is English on purpose: it is a prompt, not UI.
+/// What MCP clients are told about the running app (<c>get_context</c>, prompts): both panels (path, content, cursor,
+/// marks, a sample of the listing), plugin runtimes and installed plugins — plus the plugin guide, an example and the
+/// SDK clients for writing plugins. The text is English on purpose: it is for the model, not UI.
 /// </summary>
-public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FilePanelView Other, bool ActiveIsLeft)> panels)
+public sealed class McpAppContext(AppHost host, Func<(FilePanelView Active, FilePanelView Other, bool ActiveIsLeft)> panels)
 {
     private const int ListingSample = 40;
     private const int MarkedSample = 50;
@@ -26,7 +25,7 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
 
     /// <summary>Markdown snapshot of the app state. Safe from any thread (panel state is read on the UI thread).</summary>
     /// <param name="showListing">Which panel locations may show their contents (cursor, marks, listing sample); the
-    /// paths themselves are always shown. <c>null</c> = all of them (the in-app chat). MCP passes its allowed folders.</param>
+    /// paths themselves are always shown. <c>null</c> = all of them (callers that checked the folders already). MCP passes its allowed folders.</param>
     public string Describe(Func<string, bool>? showListing = null)
     {
         if (!Dispatcher.UIThread.CheckAccess())
@@ -65,7 +64,7 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
 
     /// <summary>
     /// The plugin guide (docs/plugins.md: protocol, SDK reference, manifest). The JSON schema is left out — the guide
-    /// describes every manifest field — which keeps the request short enough for web chat boxes.
+    /// describes every manifest field — which keeps the answer short.
     /// </summary>
     public string PluginGuide() => Resource("docs/plugins.md");
 
@@ -101,7 +100,7 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
     /// <summary>Folder names of the example plugins embedded in the app.</summary>
     public static IReadOnlyList<string> ExampleNames() =>
     [
-        .. typeof(AiAppContext).Assembly.GetManifestResourceNames()
+        .. typeof(McpAppContext).Assembly.GetManifestResourceNames()
             .Select(n => n.Replace('\\', '/'))
             .Where(n => n.StartsWith("examples/", StringComparison.OrdinalIgnoreCase) && n.IndexOf('/', "examples/".Length) > 0)
             .Select(n => n["examples/".Length..n.IndexOf('/', "examples/".Length)])
@@ -112,14 +111,14 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
     private static string ExampleText(string template, string runtime)
     {
         var prefix = $"examples/{template}/";
-        var assembly = typeof(AiAppContext).Assembly;
+        var assembly = typeof(McpAppContext).Assembly;
         var text = new StringBuilder($"Example plugin \"{template}\" ({runtime}) in the required output format:\n\n");
         foreach (var name in assembly.GetManifestResourceNames().Where(n => n.Replace('\\', '/').StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).Order())
         {
             var relative = name.Replace('\\', '/')[prefix.Length..];
             if (PluginAuthoring.SdkClients.Values.Contains(relative, StringComparer.OrdinalIgnoreCase))
             {
-                // The SDK client is added by the installer; main.* shows how it is used. Keeps the prompt short enough for web chats.
+                // The SDK client is added by the installer; main.* shows how it is used. Keeps the answer short.
                 text.Append("File: ").Append(relative).AppendLine(" — the SDK client, added by the app; do not write it.").AppendLine();
                 continue;
             }
@@ -140,7 +139,7 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
     /// <summary>The whole request for writing a plugin: guide, current state, example and the user's wish.</summary>
 
     /// <summary>
-    /// What the assistant needs to know about an unknown file: name, size and the first bytes (hex and, when it looks
+    /// What an MCP client needs to know about an unknown file: name, size and the first bytes (hex and, when it looks
     /// like text, as text). Read through the router off the UI thread; the user asked for it by clicking.
     /// </summary>
     public static async Task<string> DescribeFileAsync(AppHost host, VfsEntry entry, CancellationToken cancellationToken = default)
@@ -179,12 +178,26 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
     public PluginDraft PrepareInstall(IReadOnlyList<GeneratedFile> files, PluginLimits? limits = null) =>
         PluginAuthoring.Prepare(files, Path.Combine(host.DataDirectory, "plugins"), SdkClient, limits);
 
+    /// <summary>The panel's content plugin and what it exchanges with the other panel (docs/plugins.md "Panels").</summary>
+    private static string Content(FilePanelView panel) => panel.Mode switch
+    {
+        null => "file list (sends its marked files; receives files with F5/F6)",
+        { } mode => $"{mode.Title}, {mode.Kind switch
+        {
+            Core.Plugins.PanelModeKind.Preview => "preview of the panel's folder (files sent here land in that folder)",
+            Core.Plugins.PanelModeKind.Plugin => "plugin panel",
+            _ => "view that takes no files",
+        }}, {(panel.ShowsFolderView ? "bound to the folder (its c4k.dir; the Pliki/Widok switch shows the files)" : "opened by itself")}"
+            + (mode.CanProvide ? "; provides files (F5 here)" : string.Empty)
+            + (mode.CanReceive ? "; receives files (F5 from the other panel)" : string.Empty),
+    };
+
     private static void Panel(StringBuilder text, string role, string side, FilePanelView panel, bool isActive, Func<string, bool>? showListing)
     {
         var tab = panel.ActiveTab;
         text.AppendLine($"## {role} panel ({side}{(isActive ? ", has focus" : string.Empty)})")
             .AppendLine($"- Path: {tab.Path}")
-            .AppendLine($"- Mode: {(panel.Mode is { } mode ? mode.Title + " (shown over the file list)" : "file list")}");
+            .AppendLine($"- Content: {Content(panel)}");
         if (panel.Tabs.Count > 1)
         {
             text.AppendLine($"- Tabs: {string.Join(" | ", panel.Tabs.Select(t => t.Path))}");
@@ -227,7 +240,7 @@ public sealed class AiAppContext(AppHost host, Func<(FilePanelView Active, FileP
 
     private static string? TryResource(string name)
     {
-        var assembly = typeof(AiAppContext).Assembly;
+        var assembly = typeof(McpAppContext).Assembly;
         // Resources from subfolders keep the OS separator in their names (examples/x\y.py); compare both sides with '/'.
         var wanted = name.Replace('\\', '/');
         var actual = assembly.GetManifestResourceNames().FirstOrDefault(n => string.Equals(n.Replace('\\', '/'), wanted, StringComparison.OrdinalIgnoreCase));

@@ -168,7 +168,7 @@ public static class Ds
     }
 
     /// <summary>
-    /// The band under a window's content (footer, chat composer): <c>headerBackground</c> on modern skins, a 1 px rule
+    /// The band under a window's content (footer): <c>headerBackground</c> on modern skins, a 1 px rule
     /// above, 12/18 px padding.
     /// </summary>
     public static Border Band(SkinBrushes b, Control child) => new()

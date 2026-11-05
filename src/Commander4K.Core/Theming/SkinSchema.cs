@@ -13,7 +13,7 @@ public static class SkinSchema
     private const string ColorPattern = "^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$";
     private const string ColorDescription = "Colour as #RRGGBB or #AARRGGBB (hex).";
 
-    /// <summary>Documentation schema for editors and for pasting into a chat with an assistant.</summary>
+    /// <summary>Documentation schema for editors and for MCP clients (get_skin_guide).</summary>
     public static JsonNode Create() => Export();
 
     public static string CreateJson() => Create().ToJsonString(new JsonSerializerOptions { WriteIndented = true });

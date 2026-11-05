@@ -55,7 +55,8 @@ public sealed class McpSession
 }
 
 /// <summary>Transport-independent MCP (2025-06-18) server: tools and prompts over JSON-RPC.</summary>
-public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPrompt>> prompts, string serverVersion)
+/// <param name="instructions">Server instructions for each new session (the installed plugins); <c>null</c> = a short default.</param>
+public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPrompt>> prompts, string serverVersion, Func<string>? instructions = null)
 {
     private const string LatestProtocol = "2025-06-18";
     private static readonly string[] SupportedProtocols = [LatestProtocol, "2025-03-26"];
@@ -170,7 +171,7 @@ public sealed class McpServer(IMcpToolHandler tools, Func<IReadOnlyList<McpPromp
                 ["prompts"] = new JsonObject { ["listChanged"] = false },
             },
             ["serverInfo"] = new JsonObject { ["name"] = "commander4k", ["version"] = serverVersion },
-            ["instructions"] = "Commander4K is a dual-pane file manager. Tools act on the user's panels and files; "
+            ["instructions"] = instructions?.Invoke() ?? "Commander4K is a dual-pane file manager. Tools act on the user's panels and files; "
                 + "the user may be asked to confirm some calls.",
         };
     }

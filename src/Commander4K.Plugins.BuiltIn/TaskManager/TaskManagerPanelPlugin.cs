@@ -14,7 +14,7 @@ namespace Commander4K.Plugins.BuiltIn.TaskManager;
 /// details covering the executable (version, signature-relevant metadata), command line, resources (memory, handles,
 /// GDI/USER objects, threads) and the loaded libraries (DLLs) with their versions.
 /// </summary>
-public sealed class TaskManagerPanelPlugin : IPanelPlugin
+public sealed class TaskManagerPanelPlugin : IPanelCardPlugin
 {
     public const string PluginId = "builtin.taskmanager";
 
@@ -29,6 +29,25 @@ public sealed class TaskManagerPanelPlugin : IPanelPlugin
     public string Description => Loc.T("Drzewo procesów z podprocesami, CPU, pamięć, zasoby i powiązane biblioteki DLL.");
 
     public IPanelSession CreateSession(PanelRequest request, IPluginHost host) => new Session(host);
+
+    /// <summary>The dashboard widget: process count, working set in total and the processes using the most memory.</summary>
+    public async Task<PreviewCard> LoadCardAsync(PreviewCardRequest request, IPluginHost host, CancellationToken cancellationToken)
+    {
+        var processes = await host.ListProcessesAsync(cancellationToken).ConfigureAwait(false);
+        var items = new List<CardItem>
+        {
+            new CardValue(Loc.T("Procesy"), processes.Count.ToString(CultureInfo.CurrentCulture)),
+            new CardValue(Loc.T("Pamięć robocza"), SystemInfoPanelPlugin.Bytes(processes.Sum(p => p.WorkingSetBytes))),
+        };
+        items.AddRange(processes
+            .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Name: g.Count() > 1 ? $"{g.Key} ×{g.Count()}" : g.Key, Bytes: g.Sum(p => p.WorkingSetBytes)))
+            .OrderByDescending(g => g.Bytes)
+            .Take(5)
+            .Select(g => new CardValue(g.Name, SystemInfoPanelPlugin.Bytes(g.Bytes))));
+        return new PreviewCard(null, null, "📊", CardStatus.None, items,
+            [new CardAction(Loc.T("Otwórz"), CardActions.OpenPanel(PluginId)), new CardAction(Loc.T("Odśwież"), CardActions.Refresh)]);
+    }
 
     private sealed class Session(IPluginHost host) : IPanelSession
     {

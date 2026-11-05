@@ -26,7 +26,7 @@ public sealed class SkinManager
 
     public event Action<SkinBrushes>? Changed;
 
-    /// <summary>Shows a skin without remembering it (live preview in the picker and the AI generator).</summary>
+    /// <summary>Shows a skin without remembering it (live preview in the picker, the editor and save_skin).</summary>
     public void Preview(Skin skin)
     {
         Current = new SkinBrushes(skin, _host?.Settings.Density);

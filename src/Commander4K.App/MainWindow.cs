@@ -7,7 +7,6 @@ using Avalonia.Markup.Declarative;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using Commander4K.App.Ai;
 using Commander4K.App.Mcp;
 using Commander4K.Core.Mcp;
 using Commander4K.App.Browser;
@@ -365,7 +364,7 @@ public sealed class MainWindow : Window
         host.Remote.HostKeyValidator = ValidateHostKey;
         host.MailPasswordPrompt = AskMailPasswordAsync;
         host.MailCertificatePrompt = ConfirmMailCertificateAsync;
-        // Mermaid diagrams in previews and the AI chat render in a hidden WebView2 parented to this window.
+        // Mermaid diagrams in previews render in a hidden WebView2 parented to this window.
         MermaidRenderer.Configure(() => TryGetPlatformHandle()?.Handle ?? 0, host.DataDirectory);
         _jobsTimer.Start();
         skins.Changed += ApplySkin;
@@ -509,7 +508,7 @@ public sealed class MainWindow : Window
             case SkinsViewKey:
                 return new SkinsView(_host!, _skins!);
             default:
-                var settings = new SettingsView(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, url => OpenBrowser(url, _active), query);
+                var settings = new SettingsView(_host!, _skins!.Current, OnSettingChanged, CheckForUpdatesNowAsync, url => OpenBrowser(url, _active), OpenMcpConnect, query);
                 settings.DetachedFromVisualTree += (_, _) => RebuildMenu(); // key bindings shown in the menu may have changed
                 return settings;
         }
@@ -566,6 +565,12 @@ public sealed class MainWindow : Window
             case var mcp when mcp.StartsWith("mcp", StringComparison.Ordinal):
                 // mcp.enabled / mcp.port / mcp.roots and the per-tool modes (mcp:<tool>): new snapshot, restart if needed.
                 _ = ApplyMcpAsync();
+                if (mcp == "mcp.enabled" && _host!.Settings.Mcp.Enabled)
+                {
+                    // Switching the server on is the moment the user needs the command for Claude Code.
+                    OpenMcpConnect();
+                }
+
                 break;
         }
     }
@@ -635,20 +640,22 @@ public sealed class MainWindow : Window
     internal IReadOnlyList<McpTool> McpTools(Func<IReadOnlyList<string>> allowedRoots, Func<IReadOnlyList<string>> protectedRoots) =>
     [
         .. McpFileTools.Create(_host!.Router),
-        .. McpPluginTools.Create(AiAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit,
+        .. McpPluginTools.Create(McpAppContext.SdkClient, Path.Combine(_host.DataDirectory, "plugins"), _host.Audit,
             id => _host.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, id, StringComparison.OrdinalIgnoreCase))),
-        .. McpAppTools.Create(this, _host, AiContext, allowedRoots, protectedRoots),
+        .. McpAppTools.Create(this, _host, McpContext, allowedRoots, protectedRoots),
         .. McpConfigTools.Create(McpConfigContext()),
         .. McpDashboardTools.Create(_host.Router, McpCardPreviews),
         .. McpSkinTools.Create(this, _host, () => _skins!),
     ];
 
-    /// <summary>The installed previews that draw dashboard cards, as the MCP dashboard tools list them.</summary>
+    /// <summary>The installed previews and panels that draw dashboard cards, as the MCP dashboard tools list them.</summary>
     private IReadOnlyList<McpCardPreview> McpCardPreviews() =>
     [
         .. _host!.PreviewPlugins.OfType<Core.Plugins.ExternalPreviewPlugin>().Where(p => p.Contribution.Card)
             .Select(p => new McpCardPreview(p.Id, p.DisplayName, p.Manifest.Description,
                 [.. p.Contribution.Extensions.Select(e => e == "/" ? "folders" : e)])),
+        .. _host.PanelPlugins.OfType<IPanelCardPlugin>().Where(p => p is not Core.Plugins.ExternalPanelPlugin { HasCard: false })
+            .Select(p => new McpCardPreview(p.Id, p.Title, p.Description, [])),
     ];
 
     /// <summary>What the configuration tools change: the same settings, key bindings and skins as the settings window.</summary>
@@ -873,7 +880,7 @@ public sealed class MainWindow : Window
         return browser;
     }
 
-    /// <summary><see cref="IPluginHost.SearchWebAsync"/>: an engine id, otherwise (also the former "assistant") the user's search engine.</summary>
+    /// <summary><see cref="IPluginHost.SearchWebAsync"/>: an engine id, otherwise the user's search engine.</summary>
     private Task SearchWebAsync(string query, string? engine)
     {
         var resolved = SearchEngines.Get(engine, _host!.Settings.SearchEngine);
@@ -1704,6 +1711,10 @@ public sealed class MainWindow : Window
             {
                 await OpenPluginManagerAsync();
             }
+            else if (target.StartsWith(CardActions.PanelPrefix, StringComparison.Ordinal))
+            {
+                await ExecuteCommandAsync(CommandIds.PanelPrefix + target[CardActions.PanelPrefix.Length..]);
+            }
             else if (target.StartsWith("c4k:setup/", StringComparison.Ordinal))
             {
                 await ConfigureFolderPluginAsync(target["c4k:setup/".Length..], folder);
@@ -2016,7 +2027,7 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var result = await AiPluginInstaller.InstallAsync(this, _skins!.Current, AiContext, files, OpenPluginManagerAsync, fromCatalog: true, enable: true);
+        var result = await PluginInstaller.InstallAsync(this, _skins!.Current, McpContext, files, OpenPluginManagerAsync, fromCatalog: true, enable: true);
         Notify(result.Message);
     }
 
@@ -2033,7 +2044,7 @@ public sealed class MainWindow : Window
         {
             try
             {
-                sample = await Task.Run(() => AiAppContext.DescribeFileAsync(host, entry));
+                sample = await Task.Run(() => McpAppContext.DescribeFileAsync(host, entry));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsProviderNotFoundException
                 or VfsAuthenticationRequiredException or NotSupportedException or TimeoutException or OperationCanceledException)
@@ -2065,10 +2076,10 @@ public sealed class MainWindow : Window
         await new UnknownPreviewPromptsDialog(_skins!.Current, entry, context, () => _mcp?.ConnectionDetails, EnsureMcpRunningAsync, OpenMcpConnect).ShowAsync(this);
     }
 
-    /// <summary>What the AI chat is told about the app.</summary>
-    internal AiAppContext AiContext => _aiContext ??= new AiAppContext(_host!, () => (_active, Other, _active == _left));
+    /// <summary>What MCP clients are told about the app.</summary>
+    internal McpAppContext McpContext => _mcpContext ??= new McpAppContext(_host!, () => (_active, Other, _active == _left));
 
-    private AiAppContext? _aiContext;
+    private McpAppContext? _mcpContext;
 
     private Task OpenPluginManagerAsync() => OpenFolderViewAsync(PluginsViewKey);
 
@@ -2698,14 +2709,13 @@ public sealed class MainWindow : Window
          .Register(CommandIds.View, Loc.T("Podgląd"), ViewCurrent)
          .Register(CommandIds.QuickView, Loc.T("Szybki podgląd"), TogglePreview)
          .Register(CommandIds.PanelModes, Loc.T("Tryb panelu (pliki, podgląd, panele wtyczek)"), ShowPanelModesAsync)
-         .Register(CommandIds.Browser, Loc.T("Przeglądarka (WWW, wyszukiwarki, asystenci AI)"), () => OpenBrowser(null))
+         .Register(CommandIds.Browser, Loc.T("Przeglądarka (WWW, wyszukiwarki)"), () => OpenBrowser(null))
          .Register(CommandIds.McpConnect, Loc.T("Połącz Claude Code lub innego klienta MCP z Commander4K"), OpenMcpConnect)
          .Register(CommandIds.Edit, Loc.T("Edycja"), EditCurrentAsync)
          .Register(CommandIds.Copy, Loc.T("Kopiuj"), _ => TransferAsync(TransferMode.Copy))
          .Register(CommandIds.Move, Loc.T("Przenieś"), _ => TransferAsync(TransferMode.Move))
          .Register(CommandIds.ContextMenu, Loc.T("Menu kontekstowe Windows dla zaznaczonych plików"), () => ShowContextMenu(_active, null, fromKeyboard: true))
          .Register(CommandIds.Columns,Loc.T("Kolumny: Git, zdjęcia (EXIF), SHA-256"), () => OpenSettings(Loc.T("kolumna")))
-         .Register(CommandIds.Translate, Loc.T("Przetłumacz interfejs z AI (nowy język)"), _ => new ValueTask(new TranslationDialog(_host!, _skins!.Current).ShowAsync(this)))
          .Register(CommandIds.Pack,Loc.T("Spakuj do archiwum (ZIP, TAR, TAR.GZ)"), PackAsync)
          .Register(CommandIds.Unpack, Loc.T("Rozpakuj archiwum"), UnpackAsync)
          .Register(CommandIds.MakeDirectory, Loc.T("Nowy katalog"), MakeDirectoryAsync)
@@ -2903,14 +2913,14 @@ public sealed class MainWindow : Window
             }
 
             // F5 from a plugin panel that provides files copies them out; moving out of (or into) a plugin is not a thing.
-            if (_active.Mode is PluginPanelView && string.Equals(commandId, CommandIds.Move, StringComparison.OrdinalIgnoreCase))
+            if (_active.Mode?.Kind == Core.Plugins.PanelModeKind.Plugin && string.Equals(commandId, CommandIds.Move, StringComparison.OrdinalIgnoreCase))
             {
                 Notify(MoveNotSupported);
                 return;
             }
 
             if (_active.Mode is not null && FileCommands.Contains(commandId)
-                && !(_active.Mode is PluginPanelView { Session.CanProvide: true } && string.Equals(commandId, CommandIds.Copy, StringComparison.OrdinalIgnoreCase)))
+                && !(_active.Mode.CanProvide && string.Equals(commandId, CommandIds.Copy, StringComparison.OrdinalIgnoreCase)))
             {
                 Notify(ModeActive);
                 return;
@@ -3144,14 +3154,8 @@ public sealed class MainWindow : Window
 
     private static string ModeActive => Loc.T("Aktywny panel pokazuje wtyczkę — zamknij go (Esc), aby działać na plikach.");
 
-    /// <summary>For <see cref="Core.Plugins.PanelTransferRouting"/>: only a preview (Ctrl+Q, pinned folder view) still shows the panel's folder.</summary>
-    private static Core.Plugins.PanelModeKind KindOf(IPanelModeView? mode) => mode switch
-    {
-        null => Core.Plugins.PanelModeKind.Files,
-        PreviewPanelView => Core.Plugins.PanelModeKind.Preview,
-        PluginPanelView => Core.Plugins.PanelModeKind.Plugin,
-        _ => Core.Plugins.PanelModeKind.Other,
-    };
+    /// <summary>For <see cref="Core.Plugins.PanelTransferRouting"/>: what each mode says it is (<see cref="IPanelModeView.Kind"/>).</summary>
+    private static Core.Plugins.PanelModeKind KindOf(IPanelModeView? mode) => mode?.Kind ?? Core.Plugins.PanelModeKind.Files;
 
     /// <summary>The other panel still shows a folder files can be written to (file list, quick view or pinned folder view).</summary>
     private static bool ShowsFolder(FilePanelView panel) => KindOf(panel.Mode) is Core.Plugins.PanelModeKind.Files or Core.Plugins.PanelModeKind.Preview;
@@ -3165,9 +3169,9 @@ public sealed class MainWindow : Window
     {
         var route = Core.Plugins.PanelTransferRouting.Decide(
             KindOf(_active.Mode),
-            _active.Mode is PluginPanelView { Session.CanProvide: true },
+            _active.Mode?.CanProvide == true,
             KindOf(Other.Mode),
-            Other.Mode is PluginPanelView { Session.CanReceive: true },
+            Other.Mode?.CanReceive == true,
             mode == TransferMode.Move);
         switch (route)
         {
@@ -4146,7 +4150,7 @@ public sealed class MainWindow : Window
         {
             new(Loc.T("Pliki"), Loc.T("lista plików (zamyka tryb panelu)"), "mode:files", "lista katalog", Group: group, Icon: PickerIcons.Files),
             new(Loc.T("Podgląd (Ctrl+Q)"), Loc.T("markdown z edycją, tekst, obrazy, rozmiary folderów — dla pliku pod kursorem"), "mode:preview", "quick view markdown", Group: group, Icon: PickerIcons.Preview),
-            new(Loc.T("Przeglądarka (Ctrl+Alt+W)"), Loc.T("strony WWW, wyszukiwarki, ChatGPT / Gemini / Claude — logowanie jest zapamiętywane"), "mode:browser", "www internet web ai", Group: group, Icon: PickerIcons.Web),
+            new(Loc.T("Przeglądarka (Ctrl+Alt+W)"), Loc.T("strony WWW i wyszukiwarki — logowanie jest zapamiętywane"), "mode:browser", "www internet web ai", Group: group, Icon: PickerIcons.Web),
         };
         items.AddRange(_host!.PanelPlugins.Select(p => new PickerItem(
             p.Title, group is null ? p.Description : Loc.T("Wtyczka"), "mode:" + CommandIds.PanelPrefix + p.Id, p.Manifest.Name + " " + p.Description, Group: group, Icon: PickerIcons.Panel)));

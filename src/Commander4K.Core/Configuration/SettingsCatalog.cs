@@ -51,7 +51,7 @@ public static class SettingsCatalog
     public static IReadOnlyList<SettingDescriptor> Create(Func<IReadOnlyList<SettingChoice>> skinChoices, Func<IReadOnlyList<SettingChoice>>? languageChoices = null) =>
     [
         new("language", Language, Loc.T("Język interfejsu"),
-            Loc.T("„Automatycznie” wybiera język Windows, jeśli jest tłumaczenie (inaczej angielski). Własne tłumaczenia: pliki config/i18n/<kod>.json — komenda „Przetłumacz interfejs z AI” przygotowuje prompt."),
+            Loc.T("„Automatycznie” wybiera język Windows, jeśli jest tłumaczenie (inaczej angielski). Własne tłumaczenia: pliki config/i18n/<kod>.json — nowy język przygotuje Claude Code przez MCP (prompt translate_ui)."),
             SettingKind.Choice, s => s.Language, (s, v) => s.Language = (string)v!, ["language", "jezyk", "tlumaczenie", "translation", "english", "polski"])
         {
             Choices = languageChoices ?? (() => [new(Loc.Auto, Loc.T("Automatycznie")), new("pl", "Polski"), new("en", "English")]),

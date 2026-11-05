@@ -34,6 +34,7 @@ public sealed class DashboardTests : IAsyncDisposable
 
         _resolver = new CardResolver(
             [_folder, new MarkdownPreviewPlugin(), new TextPreviewPlugin()],
+            [new Commander4K.Plugins.BuiltIn.SystemInfo.SystemInfoPanelPlugin(), new Commander4K.Plugins.BuiltIn.TaskManager.TaskManagerPanelPlugin()],
             manifest => new ScopedPluginHost(manifest, new NullPluginUi(), _router, _http, _audit),
             (path, ct) => FolderConfig.ReadAsync(_router, path, TimeSpan.FromSeconds(2), ct),
             id => id == "official.steam-library",
@@ -56,6 +57,19 @@ public sealed class DashboardTests : IAsyncDisposable
         var config = Dashboard("""{ "title": "Plain", "open": "plain" }""");
 
         Assert.Null(await _resolver.ResolveAsync(config, config.Preview!.Tiles[0], TestToken));
+    }
+
+    [Fact]
+    public async Task Panel_plugins_are_widgets_by_id_and_through_a_folder_that_opens_them()
+    {
+        var system = await LoadAsync("""{ "title": "System", "card": "builtin.sysinfo" }""");
+        Assert.Contains(system.Items, item => item is CardProgress { Label: "Pamięć" });
+        Assert.Contains(system.Actions, action => action.Target == CardActions.OpenPanel("builtin.sysinfo"));
+
+        Directory.CreateDirectory(Path.Combine(_root, "tasks"));
+        File.WriteAllText(Path.Combine(_root, "tasks", FolderConfig.FileName), """{ "enter": { "panel": "builtin.taskmanager" } }""");
+        var tasks = await LoadAsync("""{ "title": "Procesy", "open": "tasks", "card": true }""");
+        Assert.Contains(tasks.Items, item => item is CardValue { Label: "Procesy" });
     }
 
     [Fact]
