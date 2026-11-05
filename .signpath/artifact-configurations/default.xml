@@ -1,15 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SignPath artifact configuration for the release workflow: the uploaded artifact is the content of dist/release.
-     Copy it into the SignPath project (Artifact configurations → default). -->
+     Copy it into the SignPath project (Artifact configurations → default).
+     fileVersion is X.Y.Z.0 from the tag (passed by release.yml); the product version carries +<commit>, so the file version is pinned. -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="fileVersion" required="true" />
+  </parameters>
   <zip-file>
     <zip-file path="Commander4K-*.zip" max-matches="unbounded">
-      <pe-file path="Commander4K.exe">
+      <pe-file path="Commander4K.exe" product-name="Commander4K" file-version="${fileVersion}">
         <authenticode-sign />
       </pe-file>
     </zip-file>
     <msi-file path="Commander4K-*.msi" max-matches="unbounded">
-      <pe-file path="Commander4K.exe">
+      <pe-file path="Commander4K.exe" product-name="Commander4K" file-version="${fileVersion}">
         <authenticode-sign />
       </pe-file>
       <authenticode-sign />

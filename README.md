@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Built with AI](https://img.shields.io/badge/built%20with-AI%20(Claude%20Code)-8A2BE2.svg)](#built-with-ai)
 
+**Commander4K** by [4Kprojekt](https://4kprojekt.pl) · website: <https://4kprojekt.github.io/Commander4K/> · [download](https://github.com/4kprojekt/Commander4K/releases/latest)
+
 ## Everything is a folder.
 
 A mailbox, a photo gallery, an SFTP server, a Linux box over SSH, this PC's hardware, a dashboard of live cards: in Commander4K each of them is a folder. A small JSON file in the folder, `c4k.dir`, says what the folder is. `Ctrl+Q` shows its `preview`, `Enter` runs its `enter`, and `Shift+Enter` always opens the plain file list.
@@ -332,6 +334,15 @@ From [Releases](https://github.com/4kprojekt/Commander4K/releases), pick your ar
 Every download is listed in `SHA256SUMS.txt`, and the built-in updater refuses files that don't match.
 
 The binaries are not code-signed yet, so Windows SmartScreen may warn on first start ("More info" → "Run anyway").
+
+### Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/) (applied for; until it is granted, releases are unsigned). Only `Commander4K.exe` and the MSI built by the [release workflow](.github/workflows/release.yml) from this repository are signed.
+
+- Committers and reviewers: [4kprojekt](https://github.com/4kprojekt)
+- Approvers: [4kprojekt](https://github.com/4kprojekt)
+
+Privacy: Commander4K sends no telemetry. On its own it only reads the release list of this GitHub repository (update check, setting `checkForUpdates`) and the official plugin catalog (setting `pluginCatalogUrl`). Everything else on the network — LAN browsing, SFTP/FTP, mail, the browser panel, plugins — happens only when you ask for it.
 
 ## Custom skins
 

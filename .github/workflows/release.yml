@@ -31,6 +31,15 @@ jobs:
       # Code signing through SignPath (free certificate for open source, https://signpath.org).
       # Skipped until the secret SIGNPATH_API_TOKEN and the variables SIGNPATH_ORGANIZATION_ID / SIGNPATH_PROJECT_SLUG exist;
       # the artifact configuration is .signpath/artifact-configurations/default.xml.
+      # v1.2.3-beta.1 → 1.2.3.0, the FileVersion the SDK writes into Commander4K.exe.
+      - name: File version
+        id: version
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: |
+          $v = [version](('${{ github.ref_name }}'.TrimStart('v') -split '[-+]')[0])
+          "file=$($v.Major).$($v.Minor).$([math]::Max($v.Build, 0)).0" >> $env:GITHUB_OUTPUT
+
       - name: Upload unsigned packages
         id: unsigned
         if: env.SIGNPATH_API_TOKEN != ''
@@ -51,6 +60,8 @@ jobs:
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY || 'release-signing' }}
           artifact-configuration-slug: default
           github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          parameters: |
+            fileVersion: "${{ steps.version.outputs.file }}"
           wait-for-completion: true
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: dist/release
