@@ -388,8 +388,8 @@ public sealed record FolderConfig
             using var reader = new StreamReader(stream, Encoding.UTF8);
             return Parse(folder, await reader.ReadToEndAsync(limit.Token).ConfigureAwait(false));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException or VfsProviderNotFoundException or NotSupportedException or TimeoutException or FormatException
-            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        // Any failure (SocketException for an unknown host, SSH.NET's own types…) means "no file": callers navigate anyway.
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return null;
         }

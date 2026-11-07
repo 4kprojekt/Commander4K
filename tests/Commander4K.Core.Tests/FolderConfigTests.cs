@@ -8,6 +8,15 @@ namespace Commander4K.Core.Tests;
 public sealed class FolderConfigTests
 {
     [Fact]
+    public async Task A_connection_error_reads_as_no_file()
+    {
+        var provider = new FakeVfsProvider { GetEntryFailure = new System.Net.Sockets.SocketException(11001) };
+        var router = new Vfs.VfsRouter(new Execution.ResilientAsyncExecutor(), [provider]);
+
+        Assert.Null(await FolderConfig.ReadAsync(router, "mem://host/home", TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public void App_views_are_views_not_plugin_ids()
     {
         var config = FolderConfig.Parse(@"C:\App\config", """{ "preview": "settings", "enter": { "view": "plugins" } }""");

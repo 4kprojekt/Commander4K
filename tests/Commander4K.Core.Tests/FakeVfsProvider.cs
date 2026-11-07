@@ -46,8 +46,11 @@ internal sealed class FakeVfsProvider : IVfsProviderPlugin
         }
     }
 
+    /// <summary>Thrown by <see cref="GetEntryAsync"/>, e.g. a connection error.</summary>
+    public Exception? GetEntryFailure { get; set; }
+
     public ValueTask<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken) =>
-        ValueTask.FromResult<VfsEntry?>(null);
+        GetEntryFailure is { } failure ? ValueTask.FromException<VfsEntry?>(failure) : ValueTask.FromResult<VfsEntry?>(null);
 
     public string? GetParentPath(string path)
     {

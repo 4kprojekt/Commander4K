@@ -783,7 +783,8 @@ public sealed class PickerDialog : DialogWindow<PickerItem?>
         var folded = new char[text.Length];
         for (var i = 0; i < text.Length; i++)
         {
-            var one = Core.Configuration.SettingsCatalog.Normalize(text[i].ToString());
+            // A lone surrogate half (emoji) is invalid input for Unicode normalization.
+            var one = char.IsSurrogate(text[i]) ? text[i].ToString() : Core.Configuration.SettingsCatalog.Normalize(text[i].ToString());
             folded[i] = one.Length == 1 ? one[0] : char.ToLowerInvariant(text[i]);
         }
 
