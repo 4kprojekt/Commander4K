@@ -1,0 +1,162 @@
+using Commander4K.Core.Folders;
+using Commander4K.PluginSdk;
+
+namespace Commander4K.Core.Tests;
+
+public sealed class C4kFolderTests
+{
+    private const string Folder = @"C:\Items";
+
+    private static C4kFolder Build(params (string, string)[] files) => C4kReader.Build(Folder, files);
+
+    [Fact]
+    public void Build_orders_names_naturally_ignoring_case()
+    {
+        var folder = Build(("10-b.c4k", "{}"), ("2-a.c4k", "{}"), ("B.C4K", "{}"));
+
+        Assert.Equal(["2-a", "10-b", "B"], folder.Items.Select(i => i.Name));
+    }
+
+    [Fact]
+    public void Build_caps_at_50_and_counts_skipped()
+    {
+        var folder = Build([.. Enumerable.Range(0, 60).Select(i => ($"{i:D2}.c4k", "{}"))]);
+
+        Assert.Equal(50, folder.Items.Count);
+        Assert.Equal(10, folder.Skipped);
+    }
+
+    [Fact]
+    public void Broken_file_keeps_neighbours()
+    {
+        var folder = Build(("a.c4k", "{}"), ("b.c4k", "{ nope"), ("c.c4k", "{}"));
+
+        Assert.Equal(3, folder.Items.Count);
+        Assert.Single(folder.Items, i => i.Error is not null);
+        Assert.Equal(C4kLayout.Dashboard, folder.Layout);
+    }
+
+    [Fact]
+    public void Single_broken_file_reports_error()
+    {
+        var folder = Build(("a.c4k", "[1]"));
+
+        Assert.Equal(C4kLayout.Single, folder.Layout);
+        Assert.NotNull(folder.Single!.Error);
+        Assert.NotNull(folder.Error);
+    }
+
+    [Fact]
+    public void Layout_by_count()
+    {
+        Assert.Equal(C4kLayout.None, Build().Layout);
+        Assert.Equal(C4kLayout.Single, Build(("a.c4k", "{}")).Layout);
+        Assert.Equal(C4kLayout.Dashboard, Build(("a.c4k", "{}"), ("b.c4k", "{}")).Layout);
+    }
+
+    [Fact]
+    public void Parse_reads_plugin_options_and_size()
+    {
+        var item = C4kItem.Parse(Folder, "x.c4k", """
+            { // comment
+              "title": "Mail", "plugin": "official.mail", "preview": "account", "size": "wide", "refresh": "5m",
+              "options": { "user": "a@b.c" },
+            }
+            """);
+
+        Assert.Null(item.Error);
+        Assert.Equal("Mail", item.Title);
+        Assert.Equal("official.mail", item.Plugin);
+        Assert.Equal("account", item.PreviewId);
+        Assert.Equal(TileSize.Wide, item.Size);
+        Assert.Equal(TimeSpan.FromMinutes(5), item.Refresh);
+        Assert.Contains("a@b.c", item.Options);
+        Assert.Equal("x", item.Name);
+        Assert.Equal("x", C4kItem.Parse(Folder, "x.c4k", "{}").Title);
+        Assert.Equal(FolderActionKind.View, item.Kind);
+    }
+
+    [Fact]
+    public void Parse_resolves_folder_key_against_file_folder()
+    {
+        var item = C4kItem.Parse(@"C:\Accounts\work", "x.c4k", """{ "folder": "../acc" }""");
+
+        Assert.Equal(@"C:\Accounts\acc", item.ContextFolder);
+        Assert.Equal(@"C:\Accounts\work", C4kItem.Parse(@"C:\Accounts\work", "y.c4k", "{}").ContextFolder);
+    }
+
+    [Fact]
+    public void Bad_card_field_sets_error_and_keeps_card()
+    {
+        var item = C4kItem.Parse(Folder, "x.c4k", """{ "card": true, "size": "giant" }""");
+
+        Assert.NotNull(item.Error);
+        Assert.Equal(FolderTile.AutoCard, item.Card);
+    }
+
+    [Fact]
+    public void IsItemFile_rejects_directories_dotfiles_and_oversize()
+    {
+        Assert.True(C4kReader.IsItemFile(new VfsEntry("a.C4K", @"C:\a.C4K", VfsEntryKind.File, 10)));
+        Assert.False(C4kReader.IsItemFile(new VfsEntry(".thumbnail.c4k", @"C:\.thumbnail.c4k", VfsEntryKind.Directory)));
+        Assert.False(C4kReader.IsItemFile(new VfsEntry(".c4k", @"C:\.c4k", VfsEntryKind.File, 10)));
+        Assert.False(C4kReader.IsItemFile(new VfsEntry("big.c4k", @"C:\big.c4k", VfsEntryKind.File, 300 * 1024)));
+        Assert.False(C4kReader.IsItemFile(new VfsEntry("x.txt", @"C:\x.txt", VfsEntryKind.File, 10)));
+    }
+
+    [Fact]
+    public async Task ReadAsync_lists_only_c4k_files()
+    {
+        var dir = Directory.CreateTempSubdirectory("c4k-items");
+        try
+        {
+            File.WriteAllText(Path.Combine(dir.FullName, "b.c4k"), """{ "title": "B" }""");
+            File.WriteAllText(Path.Combine(dir.FullName, "a.c4k"), "{}");
+            File.WriteAllText(Path.Combine(dir.FullName, "note.txt"), "x");
+            Directory.CreateDirectory(Path.Combine(dir.FullName, ".thumbnail.c4k"));
+            var router = new Vfs.VfsRouter(new Execution.ResilientAsyncExecutor(), [new DiskProvider()]);
+
+            var folder = await C4kReader.ReadAsync(router, dir.FullName, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            Assert.Equal(["a", "b"], folder!.Items.Select(i => i.Name));
+            Assert.Equal("B", folder.Items[1].Title);
+            Assert.Null(await C4kReader.ReadAsync(router, Directory.CreateTempSubdirectory("c4k-empty").FullName, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            dir.Delete(true);
+        }
+    }
+
+    private sealed class DiskProvider : IVfsProviderPlugin
+    {
+        public string Id => "test.disk";
+
+        public string DisplayName => "Disk";
+
+        public PluginManifest Manifest { get; } = new("test.disk", "Disk", "1.0.0", "tests", "Disk", [PluginPermissions.FileRead]);
+
+        public IReadOnlyList<string> Schemes { get; } = ["file"];
+
+        public VfsCapabilities Capabilities => VfsCapabilities.Read;
+
+        public async IAsyncEnumerable<VfsEntry> EnumerateAsync(string path, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            foreach (var f in Directory.EnumerateFileSystemEntries(path))
+            {
+                var info = new FileInfo(f);
+                var isDir = (info.Attributes & FileAttributes.Directory) != 0;
+                yield return new VfsEntry(info.Name, f, isDir ? VfsEntryKind.Directory : VfsEntryKind.File, isDir ? -1 : info.Length);
+            }
+        }
+
+        public ValueTask<VfsEntry?> GetEntryAsync(string path, CancellationToken cancellationToken) => ValueTask.FromResult<VfsEntry?>(null);
+
+        public string? GetParentPath(string path) => Path.GetDirectoryName(path);
+
+        public string Combine(string directoryPath, string name) => Path.Combine(directoryPath, name);
+
+        public ValueTask<Stream> OpenReadAsync(string path, CancellationToken cancellationToken) => ValueTask.FromResult<Stream>(File.OpenRead(path));
+    }
+}
