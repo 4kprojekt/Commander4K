@@ -24,11 +24,10 @@ public sealed class DashboardTests : IAsyncDisposable
     {
         Directory.CreateDirectory(Path.Combine(_root, "photos"));
         File.WriteAllBytes(Path.Combine(_root, "photos", "a.png"), [137, 80, 78, 71]);
-        File.WriteAllText(Path.Combine(_root, "photos", FolderConfig.FileName), """{ "preview": "gallery" }""");
+        File.WriteAllText(Path.Combine(_root, "photos", "photos.c4k"), """{ "view": "gallery" }""");
         Directory.CreateDirectory(Path.Combine(_root, "servers"));
-        File.WriteAllText(Path.Combine(_root, "servers", FolderConfig.FileName), """
-            { "title": "Serwery", "enter": { "view": "dashboard", "tiles": [ { "title": "VPS", "open": "x" } ] } }
-            """);
+        File.WriteAllText(Path.Combine(_root, "servers", "1 vps.c4k"), """{ "title": "VPS", "open": "x" }""");
+        File.WriteAllText(Path.Combine(_root, "servers", "2 nas.c4k"), """{ "title": "NAS", "open": "y" }""");
         Directory.CreateDirectory(Path.Combine(_root, "plain"));
         File.WriteAllText(Path.Combine(_root, "plain", "a.txt"), "x");
 
@@ -36,7 +35,7 @@ public sealed class DashboardTests : IAsyncDisposable
             [_folder, new MarkdownPreviewPlugin(), new TextPreviewPlugin()],
             [new Commander4K.Plugins.BuiltIn.SystemInfo.SystemInfoPanelPlugin(), new Commander4K.Plugins.BuiltIn.TaskManager.TaskManagerPanelPlugin()],
             manifest => new ScopedPluginHost(manifest, new NullPluginUi(), _router, _http, _audit),
-            (path, ct) => FolderConfig.ReadAsync(_router, path, TimeSpan.FromSeconds(2), ct),
+            (path, ct) => C4kReader.ReadAsync(_router, path, TimeSpan.FromSeconds(2), ct),
             id => id == "official.steam-library",
             new ApiCards(new Commander4K.Core.Security.SecretStore(Path.Combine(_root, "secrets.json"))),
             new SshMonitor(new RemoteTransferVfsPlugin(), _audit));
@@ -54,9 +53,7 @@ public sealed class DashboardTests : IAsyncDisposable
     [Fact]
     public async Task Plain_tiles_resolve_to_null()
     {
-        var config = Dashboard("""{ "title": "Plain", "open": "plain" }""");
-
-        Assert.Null(await _resolver.ResolveAsync(config, config.Preview!.Tiles[0], TestToken));
+        Assert.Null(await _resolver.ResolveAsync(Item("""{ "title": "Plain", "open": "plain" }"""), TestToken));
     }
 
     [Fact]
@@ -67,7 +64,7 @@ public sealed class DashboardTests : IAsyncDisposable
         Assert.Contains(system.Actions, action => action.Target == CardActions.OpenPanel("builtin.sysinfo"));
 
         Directory.CreateDirectory(Path.Combine(_root, "tasks"));
-        File.WriteAllText(Path.Combine(_root, "tasks", FolderConfig.FileName), """{ "enter": { "panel": "builtin.taskmanager" } }""");
+        File.WriteAllText(Path.Combine(_root, "tasks", "tasks.c4k"), """{ "panel": "builtin.taskmanager" }""");
         var tasks = await LoadAsync("""{ "title": "Procesy", "open": "tasks", "card": true }""");
         Assert.Contains(tasks.Items, item => item is CardValue { Label: "Procesy" });
     }
@@ -93,7 +90,7 @@ public sealed class DashboardTests : IAsyncDisposable
     [Fact]
     public void Clock_widget_converts_to_the_named_zone()
     {
-        var tile = new FolderTile("Tokio", null, null, null, null, null, null) { Card = WidgetCards.Clock };
+        var tile = Item("""{ "title": "Tokio", "card": "clock" }""");
         using var options = System.Text.Json.JsonDocument.Parse("""{ "timeZone": "Asia/Tokyo" }""");
 
         var card = WidgetCards.ClockCard(tile, options.RootElement.Clone(), new DateTimeOffset(2026, 11, 1, 12, 0, 0, TimeSpan.Zero));
@@ -103,7 +100,7 @@ public sealed class DashboardTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Auto_card_follows_target_c4k_dir_preview()
+    public async Task Auto_card_follows_target_c4k_view()
     {
         var card = await LoadAsync("""{ "title": "Foto", "open": "photos", "card": true }""");
 
@@ -123,12 +120,12 @@ public sealed class DashboardTests : IAsyncDisposable
     {
         var card = await LoadAsync("""{ "title": "S", "open": "servers", "card": true }""");
 
-        Assert.Equal("Serwery", card.Title);
-        Assert.Equal("VPS", Assert.Single(card.Items.OfType<CardText>()).Text);
+        Assert.Equal("servers", card.Title);
+        Assert.Equal("VPS · NAS", Assert.Single(card.Items.OfType<CardText>()).Text);
     }
 
     [Fact]
-    public async Task Named_card_ignores_target_c4k_dir()
+    public async Task Named_card_ignores_target_c4k()
     {
         var card = await LoadAsync("""{ "title": "Foto", "open": "photos", "card": "files" }""");
 
@@ -139,28 +136,28 @@ public sealed class DashboardTests : IAsyncDisposable
     [Fact]
     public async Task Post_api_and_ssh_need_trust_get_does_not()
     {
-        var config = Dashboard("""
-            { "title": "Get", "card": "api", "api": { "url": "https://example.com/a" } },
-            { "title": "Post", "card": "api", "api": { "url": "https://example.com/a", "method": "POST" } },
-            { "title": "Ssh", "open": "sftp://kamil@vps.example.com/", "card": "ssh" }
-            """);
+        var items = new[]
+        {
+            Item("""{ "title": "Get", "card": "api", "api": { "url": "https://example.com/a" } }"""),
+            Item("""{ "title": "Post", "card": "api", "api": { "url": "https://example.com/a", "method": "POST" } }"""),
+            Item("""{ "title": "Ssh", "open": "sftp://kamil@vps.example.com/", "card": "ssh" }"""),
+        };
 
-        var sources = await Task.WhenAll(config.Preview!.Tiles.Select(t => _resolver.ResolveAsync(config, t, TestToken)));
+        var sources = await Task.WhenAll(items.Select(t => _resolver.ResolveAsync(t, TestToken)));
 
         Assert.Equal([false, true, true], sources.Select(s => s!.NeedsTrust));
         Assert.All(sources, s => Assert.Null(s!.Unavailable));
     }
 
     [Fact]
-    public async Task Side_effect_request_from_a_nested_c4k_dir_never_runs()
+    public async Task Side_effect_request_from_a_nested_c4k_never_runs()
     {
         Directory.CreateDirectory(Path.Combine(_root, "nested"));
-        File.WriteAllText(Path.Combine(_root, "nested", FolderConfig.FileName), """
-            { "preview": { "view": "api", "api": { "url": "http://127.0.0.1:9/delete", "method": "DELETE" } } }
+        File.WriteAllText(Path.Combine(_root, "nested", "api.c4k"), """
+            { "view": "api", "api": { "url": "http://127.0.0.1:9/delete", "method": "DELETE" } }
             """);
-        var config = Dashboard("""{ "title": "N", "open": "nested", "card": true }""");
 
-        var source = await _resolver.ResolveAsync(config, config.Preview!.Tiles[0], TestToken);
+        var source = await _resolver.ResolveAsync(Item("""{ "title": "N", "open": "nested", "card": true }"""), TestToken);
 
         Assert.False(string.IsNullOrEmpty(source!.Unavailable));
     }
@@ -171,21 +168,19 @@ public sealed class DashboardTests : IAsyncDisposable
     [InlineData("\"official.steam-library\"")]
     public async Task Cards_on_remote_logins_need_trust_and_do_not_connect(string card)
     {
-        var config = Dashboard($$"""{ "title": "R", "open": "sftp://kamil@192.0.2.1/home", "card": {{card}} }""");
+        var item = Item($$"""{ "title": "R", "open": "sftp://kamil@192.0.2.1/home", "card": {{card}} }""");
 
-        var source = await _resolver.ResolveAsync(config, config.Preview!.Tiles[0], TestToken).WaitAsync(TimeSpan.FromSeconds(2), TestToken);
+        var source = await _resolver.ResolveAsync(item, TestToken).WaitAsync(TimeSpan.FromSeconds(2), TestToken);
 
         Assert.True(source!.NeedsTrust);
     }
 
     [Fact]
-    public async Task Ssh_card_on_sftp_folder_config_is_unavailable()
+    public async Task Ssh_card_in_an_sftp_folder_is_unavailable()
     {
-        var config = FolderConfig.Parse("sftp://kamil@vps.example.com/home", """
-            { "preview": { "view": "dashboard", "tiles": [ { "title": "Ssh", "open": "sftp://kamil@vps.example.com/", "card": "ssh" } ] } }
-            """);
+        var item = C4kItem.Parse("sftp://kamil@vps.example.com/home", "ssh.c4k", """{ "title": "Ssh", "open": "sftp://kamil@vps.example.com/", "card": "ssh" }""");
 
-        var source = await _resolver.ResolveAsync(config, config.Preview!.Tiles[0], TestToken);
+        var source = await _resolver.ResolveAsync(item, TestToken);
 
         Assert.False(string.IsNullOrEmpty(source!.Unavailable));
     }
@@ -212,24 +207,88 @@ public sealed class DashboardTests : IAsyncDisposable
     [Fact]
     public void Dashboard_view_keeps_shortcuts_as_today()
     {
-        var config = Dashboard("""{ "title": "Docs", "url": "https://example.com" }, { "title": "Foto", "open": "photos", "card": true }""");
+        var folder = Folder(("1.c4k", """{ "title": "Docs", "url": "https://example.com" }"""), ("2.c4k", """{ "title": "Foto", "open": "photos", "card": true }"""));
 
-        var dashboard = FolderViews.Dashboard(config, config.Preview!, "preview");
+        var dashboard = FolderViews.Dashboard(folder);
 
         Assert.Equal(2, dashboard.Slots.Count);
         Assert.Equal("https://example.com", dashboard.Slots[0].Shortcut.Target);
         Assert.Equal("🌐", dashboard.Slots[0].Shortcut.Icon);
         Assert.Equal(Path.Combine(_root, "photos"), dashboard.Slots[1].Shortcut.Target);
-        Assert.Equal(FolderTile.AutoCard, dashboard.Slots[1].Tile.Card);
+        Assert.Equal(FolderTile.AutoCard, dashboard.Slots[1].Item.Card);
     }
 
-    private FolderConfig Dashboard(string tiles) =>
-        FolderConfig.Parse(_root, $$"""{ "preview": { "view": "dashboard", "tiles": [ {{tiles}} ] } }""");
+    [Fact]
+    public void Dashboard_slots_follow_item_order()
+    {
+        var folder = Folder(("10-c.c4k", """{ "title": "C", "url": "https://c" }"""), ("2-b.c4k", """{ "title": "B", "url": "https://b" }"""), ("1-a.c4k", """{ "title": "A", "url": "https://a" }"""));
+
+        var dashboard = FolderViews.Dashboard(folder);
+
+        Assert.Equal(["A", "B", "C"], dashboard.Slots.Select(s => s.Shortcut.Title));
+        Assert.Equal([0, 1, 2], dashboard.Slots.Select(s => s.Index));
+    }
+
+    [Fact]
+    public void Run_item_links_to_its_file()
+    {
+        var folder = Folder(("1.c4k", """{ "title": "Build", "run": { "command": "build.ps1" } }"""), ("2.c4k", """{ "title": "B", "url": "https://b" }"""));
+
+        Assert.Equal(FolderViews.RunTarget(Path.Combine(_root, "1.c4k")), FolderViews.Dashboard(folder).Slots[0].Shortcut.Target);
+    }
+
+    [Fact]
+    public void Skipped_files_show_notice()
+    {
+        var files = Enumerable.Range(0, C4kReader.MaxItems + 2).Select(i => ($"{i:D3}.c4k", """{ "url": "https://x" }""")).ToList();
+
+        var dashboard = FolderViews.Dashboard(C4kReader.Build(_root, files));
+
+        Assert.Equal(C4kReader.MaxItems, dashboard.Slots.Count);
+        Assert.Contains("2", dashboard.Description!, StringComparison.Ordinal);
+        Assert.Null(FolderViews.Dashboard(Folder(("1.c4k", "{}"), ("2.c4k", "{}"))).Description);
+    }
+
+    [Fact]
+    public async Task Item_with_error_gets_error_card_and_others_live()
+    {
+        var folder = Folder(("1.c4k", """{ "title": "Bad", "open": "plain", "card": true, "refresh": "fast" }"""), ("2.c4k", """{ "title": "Notatka", "card": "note", "options": { "text": "żyje" } }"""));
+
+        var bad = await (await _resolver.ResolveAsync(folder.Items[0], TestToken))!.Load(null, TestToken);
+        var live = await (await _resolver.ResolveAsync(folder.Items[1], TestToken))!.Load(null, TestToken);
+
+        Assert.Equal(CardStatus.Error, bad.Status);
+        Assert.Equal("żyje", Assert.Single(live.Items.OfType<CardText>()).Text);
+    }
+
+    [Fact]
+    public void Gallery_ignores_c4k_files()
+    {
+        VfsEntry Entry(string name) => new(name, Path.Combine(_root, name), VfsEntryKind.File, 10);
+        var listing = new[] { Entry("a.md"), Entry("b.md"), Entry("c.md"), Entry("1.c4k"), Entry("2.c4k"), Entry("3.c4k"), Entry("4.c4k") };
+
+        Assert.True(NotesOverview.LooksLikeNotes(listing));
+        Assert.DoesNotContain(listing, FolderViews.IsImage);
+    }
+
+    [Fact]
+    public async Task Dashboard_view_unknown_view_message_mentions_c4k()
+    {
+        var host = new ScopedPluginHost(_folder.Manifest, new NullPluginUi(), _router, _http, _audit);
+        using var thumbnails = new ThumbnailStore();
+
+        var content = await FolderViews.LoadAsync(Item("""{ "view": "dashboard" }"""), new VfsEntry("x", _root, VfsEntryKind.Directory), host, thumbnails, null, TestToken);
+
+        Assert.Contains(".c4k", Assert.IsType<MessagePreview>(content).Message, StringComparison.Ordinal);
+    }
+
+    private C4kItem Item(string json) => C4kItem.Parse(_root, "item.c4k", json);
+
+    private C4kFolder Folder(params (string, string)[] files) => C4kReader.Build(_root, files);
 
     private async Task<PreviewCard> LoadAsync(string tile)
     {
-        var config = Dashboard(tile);
-        var source = await _resolver.ResolveAsync(config, config.Preview!.Tiles[0], TestToken);
+        var source = await _resolver.ResolveAsync(Item(tile), TestToken);
         return await source!.Load(null, TestToken);
     }
 }

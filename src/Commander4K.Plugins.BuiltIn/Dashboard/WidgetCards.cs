@@ -32,7 +32,7 @@ public static class WidgetCards
     };
 
     /// <param name="target">The tile's resolved <c>open</c>: the note file or the disk to show; <c>null</c> = none.</param>
-    public static async Task<PreviewCard> LoadAsync(string card, FolderTile tile, string? target, IPluginHost host, DateTimeOffset now, CancellationToken cancellationToken)
+    public static async Task<PreviewCard> LoadAsync(string card, C4kItem tile, string? target, IPluginHost host, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var options = Options(tile.Options);
         switch (card.ToLowerInvariant())
@@ -49,7 +49,7 @@ public static class WidgetCards
     }
 
     /// <summary>Time in the tile's <c>options.timeZone</c> (IANA or Windows id), local time otherwise.</summary>
-    public static PreviewCard ClockCard(FolderTile tile, JsonElement? options, DateTimeOffset now)
+    public static PreviewCard ClockCard(C4kItem tile, JsonElement? options, DateTimeOffset now)
     {
         var zoneName = String(options, "timeZone");
         var items = new List<CardItem>();
@@ -75,15 +75,15 @@ public static class WidgetCards
         }
 
         var title = shown.ToString("HH:mm", CultureInfo.InvariantCulture);
-        return new PreviewCard(title, tile.Subtitle ?? zoneName, tile.Icon ?? "🕒", CardStatus.None, items, []);
+        return new PreviewCard(title, tile.Description ?? zoneName, tile.Icon ?? "🕒", CardStatus.None, items, []);
     }
 
     /// <summary><c>options.text</c>, or the first part of the text file in <c>open</c>.</summary>
-    private static async Task<PreviewCard> NoteCardAsync(FolderTile tile, JsonElement? options, string? target, IPluginHost host, CancellationToken cancellationToken)
+    private static async Task<PreviewCard> NoteCardAsync(C4kItem tile, JsonElement? options, string? target, IPluginHost host, CancellationToken cancellationToken)
     {
         if (String(options, "text") is { } text)
         {
-            return new PreviewCard(null, tile.Subtitle, tile.Icon ?? "🗒", CardStatus.None, [new CardText(text)], []);
+            return new PreviewCard(null, tile.Description, tile.Icon ?? "🗒", CardStatus.None, [new CardText(text)], []);
         }
 
         if (target is null)
@@ -93,7 +93,7 @@ public static class WidgetCards
 
         var (data, length, truncated) = await PreviewReading.ReadHeadAsync(host, target, MaxNoteBytes, cancellationToken).ConfigureAwait(false);
         var content = PreviewReading.Decode(data, length).Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
-        return new PreviewCard(null, tile.Subtitle, tile.Icon ?? "🗒", CardStatus.None,
+        return new PreviewCard(null, tile.Description, tile.Icon ?? "🗒", CardStatus.None,
             [new CardText(truncated ? content + "…" : content)], [new CardAction(Loc.T("Otwórz"), target)]);
     }
 

@@ -13,21 +13,21 @@ public delegate Task<PreviewCard> CardLoader(PreviewCard? previous, Cancellation
 public delegate Task CardActionHandler(string action, IReadOnlyDictionary<string, string> arguments, CancellationToken cancellationToken);
 
 /// <summary>How a tile's card is read.</summary>
-/// <param name="NeedsTrust">The card may change something or sign in somewhere (POST, SSH): it waits for the user's trust in the <c>c4k.dir</c>.</param>
-/// <param name="Unavailable">Why such a card cannot run from where the <c>c4k.dir</c> lives; the loader is never called then.</param>
+/// <param name="NeedsTrust">The card may change something or sign in somewhere (POST, SSH): it waits for the user's trust in the <c>.c4k</c>.</param>
+/// <param name="Unavailable">Why such a card cannot run from where the <c>.c4k</c> lives; the loader is never called then.</param>
 /// <param name="Invoke">The card's <c>c4k:plugin/…</c> actions, when an <see cref="IInteractivePreviewPlugin"/> draws it for an entry.</param>
 public sealed record CardSource(CardLoader Load, bool NeedsTrust, string? Unavailable, CardActionHandler? Invoke = null);
 
 /// <summary>
 /// Decides which preview draws a dashboard tile as a card: a built-in view, the API or SSH card, a preview or panel
 /// plugin (<see cref="IPanelCardPlugin"/>: every panel can be a widget), or — for <c>"card": true</c> — what Ctrl+Q
-/// would show for the target, including the target folder's own <c>c4k.dir</c>.
+/// would show for the target, including the target folder's own <c>.c4k</c>.
 /// </summary>
 public sealed class CardResolver(
     IReadOnlyList<IPreviewPlugin> previews,
     IReadOnlyList<IPanelPlugin> panels,
     Func<PluginManifest, IPluginHost> hostFor,
-    Func<string, CancellationToken, Task<FolderConfig?>> readFolderConfig,
+    Func<string, CancellationToken, Task<C4kFolder?>> readFolder,
     Func<string, bool> inCatalog,
     ApiCards api,
     SshMonitor ssh)
@@ -37,7 +37,7 @@ public sealed class CardResolver(
     private readonly FolderPreviewPlugin _folders = previews.OfType<FolderPreviewPlugin>().FirstOrDefault() ?? new FolderPreviewPlugin();
 
     /// <returns><c>null</c> for a plain shortcut tile.</returns>
-    public async Task<CardSource?> ResolveAsync(FolderConfig config, FolderTile tile, CancellationToken cancellationToken)
+    public async Task<CardSource?> ResolveAsync(C4kItem tile, CancellationToken cancellationToken)
     {
         if (tile.Card is not { } card)
         {
@@ -49,17 +49,17 @@ public sealed class CardResolver(
             return Fixed(ErrorCard(error));
         }
 
-        var target = tile.Open is { } open ? config.Resolve(open) : null;
+        var target = tile.Open is { } open ? tile.Resolve(open) : null;
         if (string.Equals(card, FolderViewIds.Api, StringComparison.OrdinalIgnoreCase) && tile.Api is { } request)
         {
             var host = hostFor(api.Manifest);
-            return Guarded(config, request.HasSideEffects, (previous, ct) => api.LoadCardAsync(request, host, previous, ct));
+            return Guarded(tile, request.HasSideEffects, (previous, ct) => api.LoadCardAsync(request, host, previous, ct));
         }
 
         if (string.Equals(card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
         {
             return target is not null && VfsPath.GetScheme(target) == "sftp"
-                ? Guarded(config, needsTrust: true, (previous, ct) => ssh.LoadCardAsync(target, tile.Options, previous, ct, config.Resolve))
+                ? Guarded(tile, needsTrust: true, (previous, ct) => ssh.LoadCardAsync(target, tile.Options, previous, ct, tile.Resolve))
                 : Fixed(ErrorCard(Loc.T("Karta „ssh” potrzebuje „open” ze ścieżką sftp://.")));
         }
 
@@ -67,18 +67,18 @@ public sealed class CardResolver(
         // and nothing connects while the card is only being resolved.
         if (target is not null && VfsPath.GetScheme(target) is "sftp" or "ftp")
         {
-            return Guarded(config, needsTrust: true, async (previous, ct) =>
+            return Guarded(tile, needsTrust: true, async (previous, ct) =>
             {
-                var inner = await ResolveTargetAsync(config, tile, card, target, ct).ConfigureAwait(false);
+                var inner = await ResolveTargetAsync(tile, card, target, ct).ConfigureAwait(false);
                 return inner.Unavailable is { } why ? ErrorCard(why) : await inner.Load(previous, ct).ConfigureAwait(false);
             });
         }
 
-        return await ResolveTargetAsync(config, tile, card, target, cancellationToken).ConfigureAwait(false);
+        return await ResolveTargetAsync(tile, card, target, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Folder views, "card": true and plugin cards.</summary>
-    private async Task<CardSource> ResolveTargetAsync(FolderConfig config, FolderTile tile, string card, string? target, CancellationToken cancellationToken)
+    private async Task<CardSource> ResolveTargetAsync(C4kItem tile, string card, string? target, CancellationToken cancellationToken)
     {
         if (WidgetCards.IsWidget(card))
         {
@@ -97,14 +97,14 @@ public sealed class CardResolver(
         {
             return target is null
                 ? Fixed(ErrorCard(Loc.T("Karta potrzebuje „open”: ścieżki, którą pokazuje.")))
-                : await AutoAsync(config, tile, target, cancellationToken).ConfigureAwait(false);
+                : await AutoAsync(tile, target, cancellationToken).ConfigureAwait(false);
         }
 
         return PluginCard(card, target, tile);
     }
 
-    /// <summary>What Ctrl+Q would show: the target folder's own <c>c4k.dir</c> preview first, then the best preview plugin.</summary>
-    private async Task<CardSource> AutoAsync(FolderConfig config, FolderTile tile, string target, CancellationToken cancellationToken)
+    /// <summary>What Ctrl+Q would show: the target folder's own <c>.c4k</c> preview first, then the best preview plugin.</summary>
+    private async Task<CardSource> AutoAsync(C4kItem tile, string target, CancellationToken cancellationToken)
     {
         var folderHost = hostFor(_folders.Manifest);
         var entry = await folderHost.GetEntryAsync(target, cancellationToken).ConfigureAwait(false);
@@ -115,41 +115,44 @@ public sealed class CardResolver(
 
         if (found.IsContainer && VfsPath.GetScheme(target) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
         {
-            var own = await readFolderConfig(target, cancellationToken).ConfigureAwait(false);
-            if ((own?.Preview ?? own?.Enter) is { IsPlainFiles: false, Kind: FolderActionKind.Panel, PanelId: { } panelId } panelAction)
+            var own = await readFolder(target, cancellationToken).ConfigureAwait(false);
+            if (own?.Single is { IsPlainFiles: false } single)
             {
-                return PluginCard(panelId, null, tile with { Options = tile.Options ?? panelAction.Options });
-            }
-
-            if (own?.Preview is { IsPlainFiles: false, Kind: FolderActionKind.View } action)
-            {
-                if (action.Plugin is { } pluginId)
+                if (single.Kind == FolderActionKind.Panel && single.PanelId is { } panelId)
                 {
-                    return PluginCard(action.Preview is { } preview ? $"{pluginId}/{preview}" : pluginId, target, tile with { Options = tile.Options ?? action.Options });
+                    return PluginCard(panelId, null, tile with { Options = tile.Options ?? single.Options });
                 }
 
-                if (action.View is FolderViewIds.Api && action.Api is { } request)
+                if (single.Kind == FolderActionKind.View)
                 {
-                    // Trust is given to the dashboard's own file; a request that may change something, named by
-                    // another folder's c4k.dir, is never sent from here.
-                    if (request.HasSideEffects)
+                    if (single.Plugin is { } pluginId)
                     {
-                        return new CardSource((_, _) => Task.FromResult(ErrorCard(string.Empty)), false,
-                            Loc.T("Zapytanie {0} z c4k.dir innego folderu nie zostanie wysłane. Dodaj kartę API do tego dashboardu.", request.Method));
+                        return PluginCard(single.PreviewId is { } preview ? $"{pluginId}/{preview}" : pluginId, target, tile with { Options = tile.Options ?? single.Options });
                     }
 
-                    var host = hostFor(api.Manifest);
-                    return new CardSource((previous, ct) => api.LoadCardAsync(request, host, previous, ct), false, null);
-                }
+                    if (single.View is FolderViewIds.Api && single.Api is { } request)
+                    {
+                        // Trust is given to the dashboard's own file; a request that may change something, named by
+                        // another folder's .c4k, is never sent from here.
+                        if (request.HasSideEffects)
+                        {
+                            return new CardSource((_, _) => Task.FromResult(ErrorCard(string.Empty)), false,
+                                Loc.T("Zapytanie {0} z .c4k innego folderu nie zostanie wysłane. Dodaj kartę API do tego dashboardu.", request.Method));
+                        }
 
-                if (action.View is { } view && FolderCardViews.Contains(view, StringComparer.OrdinalIgnoreCase))
-                {
-                    return new CardSource((previous, ct) => FolderCards.LoadAsync(view, found, own, folderHost,
-                        new PreviewCardRequest(found, tile.Options, previous), _folders.Sizes, ct), false, null);
+                        var host = hostFor(api.Manifest);
+                        return new CardSource((previous, ct) => api.LoadCardAsync(request, host, previous, ct), false, null);
+                    }
+
+                    if (single.View is { } view && FolderCardViews.Contains(view, StringComparer.OrdinalIgnoreCase))
+                    {
+                        return new CardSource((previous, ct) => FolderCards.LoadAsync(view, found, own, folderHost,
+                            new PreviewCardRequest(found, tile.Options, previous), _folders.Sizes, ct), false, null);
+                    }
                 }
             }
 
-            if (own?.Enter is { View: FolderViewIds.Dashboard })
+            if (own is { Layout: C4kLayout.Dashboard })
             {
                 return new CardSource((previous, ct) => FolderCards.LoadAsync(FolderViewIds.Dashboard, found, own, folderHost,
                     new PreviewCardRequest(found, tile.Options, previous), _folders.Sizes, ct), false, null);
@@ -160,7 +163,7 @@ public sealed class CardResolver(
         return best is null ? Fixed(DefaultCard(tile, target)) : PreviewCard(best, found, tile, target);
     }
 
-    private async Task<PreviewCard> FolderCardAsync(string view, string target, FolderTile tile, PreviewCard? previous, CancellationToken cancellationToken)
+    private async Task<PreviewCard> FolderCardAsync(string view, string target, C4kItem tile, PreviewCard? previous, CancellationToken cancellationToken)
     {
         var host = hostFor(_folders.Manifest);
         if (await host.GetEntryAsync(target, cancellationToken).ConfigureAwait(false) is not { } entry)
@@ -168,13 +171,13 @@ public sealed class CardResolver(
             return ErrorCard(Loc.T("Nie znaleziono {0}.", target));
         }
 
-        // The markdown and dashboard cards describe the target through its own c4k.dir (which file, which tiles).
-        var own = view is FolderViewIds.Markdown or FolderViewIds.Dashboard ? await readFolderConfig(target, cancellationToken).ConfigureAwait(false) : null;
+        // The markdown and dashboard cards describe the target through its own .c4k (which file, which tiles).
+        var own = view is FolderViewIds.Markdown or FolderViewIds.Dashboard ? await readFolder(target, cancellationToken).ConfigureAwait(false) : null;
         return await FolderCards.LoadAsync(view, entry, own, host, new PreviewCardRequest(entry, tile.Options, previous), _folders.Sizes, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>A card named by plugin id (<c>plugin</c> or <c>plugin/preview</c>); a missing plugin offers to install it.</summary>
-    private CardSource PluginCard(string name, string? target, FolderTile tile)
+    private CardSource PluginCard(string name, string? target, C4kItem tile)
     {
         // A panel named exactly (builtin.sysinfo, <plugin>/<panel>) wins over a preview of the same plugin.
         if (panels.FirstOrDefault(p => string.Equals(p.Id, name, StringComparison.OrdinalIgnoreCase)) is { } panel)
@@ -218,11 +221,11 @@ public sealed class CardResolver(
     }
 
     /// <summary>A panel's widget; a panel without one gets its description and a button that opens it.</summary>
-    private CardSource PanelCard(IPanelPlugin panel, string? target, FolderTile tile)
+    private CardSource PanelCard(IPanelPlugin panel, string? target, C4kItem tile)
     {
         if (panel is not IPanelCardPlugin cards)
         {
-            return Fixed(new PreviewCard(null, tile.Subtitle ?? panel.Description, tile.Icon ?? "🧩", CardStatus.None, [],
+            return Fixed(new PreviewCard(null, tile.Description ?? panel.Description, tile.Icon ?? "🧩", CardStatus.None, [],
                 [new CardAction(Loc.T("Otwórz"), CardActions.OpenPanel(panel.Id))]));
         }
 
@@ -233,14 +236,14 @@ public sealed class CardResolver(
         }, false, null);
     }
 
-    private CardSource PreviewCard(IPreviewPlugin plugin, VfsEntry entry, FolderTile tile, string target) =>
+    private CardSource PreviewCard(IPreviewPlugin plugin, VfsEntry entry, C4kItem tile, string target) =>
         plugin is IPreviewCardPlugin cards
             ? new CardSource((previous, ct) => cards.LoadCardAsync(new PreviewCardRequest(entry, tile.Options, previous), hostFor(plugin.Manifest), ct), false, null,
                 Actions(plugin, _ => Task.FromResult<VfsEntry?>(entry), tile))
             : Fixed(DefaultCard(tile, target));
 
     /// <summary>A card button <c>c4k:plugin/…</c> goes to the preview's <c>preview.action</c> with the card's entry.</summary>
-    private CardActionHandler? Actions(IPreviewPlugin plugin, Func<CancellationToken, Task<VfsEntry?>> entry, FolderTile tile) =>
+    private CardActionHandler? Actions(IPreviewPlugin plugin, Func<CancellationToken, Task<VfsEntry?>> entry, C4kItem tile) =>
         plugin is IInteractivePreviewPlugin interactive
             ? async (action, arguments, ct) =>
             {
@@ -251,10 +254,10 @@ public sealed class CardResolver(
             }
             : null;
 
-    /// <summary>POST and SSH cards: only from a <c>c4k.dir</c> on a disk or share, where the user can trust the file.</summary>
-    private static CardSource Guarded(FolderConfig config, bool needsTrust, CardLoader load) =>
-        new(load, needsTrust, needsTrust && VfsPath.GetScheme(config.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme)
-            ? Loc.T("Ta karta działa tylko z pliku c4k.dir na dysku albo w udziale sieciowym.")
+    /// <summary>POST and SSH cards: only from a <c>.c4k</c> on a disk or share, where the user can trust the file (<see cref="C4kItem.NeedsTrust"/>).</summary>
+    private static CardSource Guarded(C4kItem item, bool needsTrust, CardLoader load) =>
+        new(load, needsTrust, needsTrust && VfsPath.GetScheme(item.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme)
+            ? Loc.T("Ta karta działa tylko z pliku .c4k na dysku albo w udziale sieciowym.")
             : null);
 
     private static CardSource Fixed(PreviewCard card) => new((_, _) => Task.FromResult(card), false, null);
@@ -262,6 +265,6 @@ public sealed class CardResolver(
     private static PreviewCard ErrorCard(string message) => new(null, message, "⚠", CardStatus.Error, [], []);
 
     /// <summary>A preview without a card form: the tile's own look with an Open button.</summary>
-    private static PreviewCard DefaultCard(FolderTile tile, string? target) =>
-        new(null, tile.Subtitle, tile.Icon, CardStatus.None, [], target is null ? [] : [new CardAction(Loc.T("Otwórz"), target)]);
+    private static PreviewCard DefaultCard(C4kItem tile, string? target) =>
+        new(null, tile.Description, tile.Icon, CardStatus.None, [], target is null ? [] : [new CardAction(Loc.T("Otwórz"), target)]);
 }

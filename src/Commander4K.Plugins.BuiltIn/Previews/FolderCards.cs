@@ -16,8 +16,8 @@ public static class FolderCards
     private const int MaxExcerpt = 300;
 
     /// <param name="view">A built-in view: files, gallery, notes, markdown or dashboard.</param>
-    /// <param name="config">The target folder's <c>c4k.dir</c>; used by the markdown and dashboard cards.</param>
-    public static async Task<PreviewCard> LoadAsync(string view, VfsEntry folder, FolderConfig? config, IPluginHost host,
+    /// <param name="own">The target folder's <c>.c4k</c> items; used by the markdown and dashboard cards.</param>
+    public static async Task<PreviewCard> LoadAsync(string view, VfsEntry folder, C4kFolder? own, IPluginHost host,
         PreviewCardRequest request, FolderSizeCache sizes, CancellationToken cancellationToken)
     {
         CardAction[] open = [new(Loc.T("Otwórz"), folder.Path)];
@@ -79,15 +79,15 @@ public static class FolderCards
 
             case FolderViewIds.Markdown:
             {
-                var file = config?.Resolve(config.Preview?.File ?? config.Enter?.File ?? "README.md") ?? FolderConfig.ChildPath(folder.Path, "README.md");
+                var file = own?.Single is { } item ? item.Resolve(item.File ?? "README.md") : FolderConfig.ChildPath(folder.Path, "README.md");
                 var (data, length, _) = await PreviewReading.ReadHeadAsync(host, file, 64 * 1024, cancellationToken).ConfigureAwait(false);
                 return new PreviewCard(null, null, "📄", CardStatus.None, [new CardText(FirstParagraph(PreviewReading.Decode(data, length)))], open);
             }
 
             case FolderViewIds.Dashboard:
             {
-                var tiles = (config?.Enter is { View: FolderViewIds.Dashboard } enter ? enter : config?.Preview)?.Tiles ?? [];
-                return new PreviewCard(config?.Title ?? folder.Name, config?.Description, "▦", CardStatus.None,
+                var tiles = own?.Items ?? [];
+                return new PreviewCard(folder.Name, null, "▦", CardStatus.None,
                 [
                     new CardValue(Loc.T("Kafelki"), Count(tiles.Count)),
                     new CardText(string.Join(" · ", tiles.Take(3).Select(t => t.Title))),

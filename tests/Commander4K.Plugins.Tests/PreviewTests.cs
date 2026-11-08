@@ -246,21 +246,19 @@ public sealed class PreviewTests : IAsyncDisposable
     [Fact]
     public async Task Dashboard_card_lists_first_three_tiles_without_loading_them()
     {
-        var config = Commander4K.Core.Folders.FolderConfig.Parse(_root, """
-            { "title": "Serwery", "description": "Moje maszyny", "preview": { "view": "dashboard", "tiles": [
-              { "title": "A", "open": "nowhere-a", "card": true },
-              { "title": "B", "open": "nowhere-b" },
-              { "title": "C", "url": "https://example.com" },
-              { "title": "D", "open": "nowhere-d" }
-            ] } }
-            """);
+        var config = Commander4K.Core.Folders.C4kReader.Build(_root,
+        [
+            ("1.c4k", """{ "title": "A", "open": "nowhere-a", "card": true }"""),
+            ("2.c4k", """{ "title": "B", "open": "nowhere-b" }"""),
+            ("3.c4k", """{ "title": "C", "url": "https://example.com" }"""),
+            ("4.c4k", """{ "title": "D", "open": "nowhere-d" }"""),
+        ]);
         var plugin = new FolderPreviewPlugin();
 
         var card = await FolderCards.LoadAsync(FolderViewIds.Dashboard, Dir(_root), config, Host(plugin.Manifest),
             new PreviewCardRequest(Dir(_root), null, null), plugin.Sizes, TestToken);
 
-        Assert.Equal("Serwery", card.Title);
-        Assert.Equal("Moje maszyny", card.Subtitle);
+        Assert.Equal(Path.GetFileName(_root), card.Title);
         Assert.Equal("4", Value(card, "Kafelki"));
         Assert.Equal("A · B · C", Assert.Single(card.Items.OfType<CardText>()).Text);
         Assert.DoesNotContain(_audit.Recent(plugin.Id), e => e.Detail.Contains("nowhere", StringComparison.Ordinal));
