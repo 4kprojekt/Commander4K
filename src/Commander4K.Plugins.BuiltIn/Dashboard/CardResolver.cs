@@ -53,13 +53,13 @@ public sealed class CardResolver(
         if (string.Equals(card, FolderViewIds.Api, StringComparison.OrdinalIgnoreCase) && tile.Api is { } request)
         {
             var host = hostFor(api.Manifest);
-            return Guarded(tile, request.HasSideEffects, (previous, ct) => api.LoadCardAsync(request, host, previous, ct));
+            return Guarded(tile, (previous, ct) => api.LoadCardAsync(request, host, previous, ct));
         }
 
         if (string.Equals(card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
         {
             return target is not null && VfsPath.GetScheme(target) == "sftp"
-                ? Guarded(tile, needsTrust: true, (previous, ct) => ssh.LoadCardAsync(target, tile.Options, previous, ct, tile.Resolve))
+                ? Guarded(tile, (previous, ct) => ssh.LoadCardAsync(target, tile.Options, previous, ct, tile.Resolve))
                 : Fixed(ErrorCard(Loc.T("Karta „ssh” potrzebuje „open” ze ścieżką sftp://.")));
         }
 
@@ -67,7 +67,7 @@ public sealed class CardResolver(
         // and nothing connects while the card is only being resolved.
         if (target is not null && VfsPath.GetScheme(target) is "sftp" or "ftp")
         {
-            return Guarded(tile, needsTrust: true, async (previous, ct) =>
+            return Guarded(tile, async (previous, ct) =>
             {
                 var inner = await ResolveTargetAsync(tile, card, target, ct).ConfigureAwait(false);
                 return inner.Unavailable is { } why ? ErrorCard(why) : await inner.Load(previous, ct).ConfigureAwait(false);
@@ -255,8 +255,8 @@ public sealed class CardResolver(
             : null;
 
     /// <summary>POST and SSH cards: only from a <c>.c4k</c> on a disk or share, where the user can trust the file (<see cref="C4kItem.NeedsTrust"/>).</summary>
-    private static CardSource Guarded(C4kItem item, bool needsTrust, CardLoader load) =>
-        new(load, needsTrust, needsTrust && VfsPath.GetScheme(item.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme)
+    private static CardSource Guarded(C4kItem item, CardLoader load) =>
+        new(load, item.NeedsTrust, item.NeedsTrust && VfsPath.GetScheme(item.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme)
             ? Loc.T("Ta karta działa tylko z pliku .c4k na dysku albo w udziale sieciowym.")
             : null);
 

@@ -173,6 +173,7 @@ public sealed class DashboardTests : IAsyncDisposable
         var source = await _resolver.ResolveAsync(item, TestToken).WaitAsync(TimeSpan.FromSeconds(2), TestToken);
 
         Assert.True(source!.NeedsTrust);
+        Assert.Equal(item.NeedsTrust, source.NeedsTrust);
     }
 
     [Fact]

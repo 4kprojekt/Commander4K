@@ -55,6 +55,27 @@ public sealed class C4kTrustTests : IDisposable
     }
 
     [Fact]
+    public void Remote_card_needs_trust_and_lists_server()
+    {
+        var item = Item("""{ "open": "sftp://kamil@vps.example.com/home", "card": true }""");
+
+        Assert.True(item.NeedsTrust);
+        Assert.Equal(["SFTP sftp://kamil@vps.example.com/home"], item.TrustSummary());
+        Assert.False(Item("""{ "open": "C:\x", "card": true }""").NeedsTrust);
+        Assert.False(Item("""{ "open": "sftp://kamil@vps.example.com/home" }""").NeedsTrust);
+    }
+
+    [Fact]
+    public void Changing_remote_card_open_revokes_trust()
+    {
+        var store = new C4kTrustStore(StorePath);
+        store.Trust(Item("""{ "open": "sftp://kamil@vps.example.com/home", "card": true }"""));
+
+        Assert.True(store.IsTrusted(Item("""{ "title": "T", "size": "wide", "open": "sftp://kamil@vps.example.com/home", "card": true }""")));
+        Assert.False(store.IsTrusted(Item("""{ "open": "sftp://kamil@evil.example.com/home", "card": true }""")));
+    }
+
+    [Fact]
     public void Summary_lists_run_post_and_ssh()
     {
         var run = Item(Run);

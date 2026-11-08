@@ -100,6 +100,11 @@ public sealed record C4kItem
                 parts.Add(new object?[] { "ssh", Open, User, KeyFile });
             }
 
+            if (IsRemoteCard && !string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add(new object?[] { "remote", Open, User, KeyFile });
+            }
+
             return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(parts))));
         }
     }
@@ -120,9 +125,17 @@ public sealed record C4kItem
         {
             lines.Add("SSH " + Resolve(server));
         }
+        else if (IsRemoteCard && Open is { } remote)
+        {
+            var path = Resolve(remote);
+            lines.Add((VfsPath.GetScheme(path) == "sftp" ? "SFTP " : "FTP ") + path);
+        }
 
         return lines;
     }
+
+    /// <summary>A card that reads an sftp/ftp target signs in with saved logins or the user's keys.</summary>
+    private bool IsRemoteCard => Card is not null && Open is { } open && VfsPath.GetScheme(Resolve(open)) is "sftp" or "ftp";
 
     public bool NeedsTrust => TrustSummary().Count > 0;
 
