@@ -2318,13 +2318,21 @@ public sealed class MainWindow : Window
         var folder = suggestion.Folder;
         var view = suggestion.Suggestion.View;
         var json = C4kWriter.Create(C4kWriter.ItemFor(view));
-        var (result, error, file) = await C4kWriter.CreateNewAsync(folder.Path, view.Plugin is null ? view.View ?? FolderViewIds.Files : PluginDisplayName(view.Plugin)!, json, TimeSpan.FromSeconds(5), CancellationToken.None);
-        _host!.FolderSuggestions.Forget(folder.Path);
-        Notify(result == FolderConfigWrite.Written
-            ? Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file)
-            : Loc.T("Nie zapisano pliku .c4k ({0}) — widok otwarty tylko teraz.", error), isError: result != FolderConfigWrite.Written);
+        var baseName = view.Plugin is null ? view.View ?? FolderViewIds.Files : PluginDisplayName(view.Plugin) ?? view.Plugin;
 
-        var item = C4kItem.Parse(folder.Path, Path.GetFileName(file) ?? view.View + C4kReader.Extension, json);
+        // Through CreateItemsAsync: the suggestion saw only a snapshot, so a .c4k past it still gets the dashboard question.
+        if (await CreateItemsAsync(folder.Path, [(baseName, json)]) is not { } written)
+        {
+            return;
+        }
+
+        if (written is [var file])
+        {
+            Notify(Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file));
+        }
+
+        // A refused write was reported by CreateItemsAsync; the view still opens this once.
+        var item = C4kItem.Parse(folder.Path, written is [var path] ? Path.GetFileName(path) : baseName + C4kReader.Extension, json);
         await RunFolderActionAsync(panel, folder, C4kReader.Build(folder.Path, [(Path.GetFileName(item.FilePath), json)]), item);
         ShowBackToFilesTour(panel);
     }
@@ -4400,9 +4408,11 @@ public sealed class MainWindow : Window
     private void CancelCurrent()
     {
         var tab = _active.ActiveTab;
-        if (tab.Origin is { } origin && _active.Mode is null && !_host!.Keymap.IsChordPending && string.IsNullOrEmpty(_commandLine.Text))
+        if (tab.Origin is { } origin && tab.Marked.Count == 0 && _active.Mode is null && !_host!.Keymap.IsChordPending && string.IsNullOrEmpty(_commandLine.Text))
         {
-            // A .c4k "open" brought the tab here (a server, another folder): Esc returns to the folder holding that file.
+            // A .c4k "open" brought the tab here (a server, another folder): Esc returns to the files of the folder holding
+            // that file. Pliki, so that re-selecting the tab or Auto does not perform the same item (and reconnect) again.
+            _active.FolderMode = FolderViewMode.Files;
             _ = tab.NavigateAsync(origin);
         }
         else if (tab.IsLoading)
