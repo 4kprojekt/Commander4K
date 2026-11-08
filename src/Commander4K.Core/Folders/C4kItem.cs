@@ -79,6 +79,53 @@ public sealed record C4kItem
 
     public bool IsPlainFiles => Kind == FolderActionKind.View && Plugin is null && (View is null || string.Equals(View, FolderViewIds.Files, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>SHA-256 over only what trust unlocks (run, api, an ssh card's server and login), so resizing or retitling keeps it.</summary>
+    public string TrustHash
+    {
+        get
+        {
+            var parts = new List<object?>();
+            if (Run is { } run)
+            {
+                parts.Add(new object?[] { "run", run.Command, run.Arguments, run.WorkingDirectory, run.Hidden });
+            }
+
+            if (Api is { } api)
+            {
+                parts.Add(new object?[] { "api", api.Method, api.Url, api.Body, api.Headers.OrderBy(h => h.Key, StringComparer.OrdinalIgnoreCase).Select(h => new[] { h.Key, h.Value }) });
+            }
+
+            if (string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add(new object?[] { "ssh", Open, User, KeyFile });
+            }
+
+            return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(parts))));
+        }
+    }
+
+    /// <summary>What trusting this file unlocks, one line each (same wording as <see cref="FolderConfig.TrustSummary"/>).</summary>
+    public IReadOnlyList<string> TrustSummary()
+    {
+        var lines = new List<string>();
+        if (Run is { } run)
+        {
+            lines.Add("run " + run);
+        }
+        else if (Api is { HasSideEffects: true } api)
+        {
+            lines.Add($"{api.Method} {api.Url}");
+        }
+        else if (string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase) && Open is { } server)
+        {
+            lines.Add("SSH " + Resolve(server));
+        }
+
+        return lines;
+    }
+
+    public bool NeedsTrust => TrustSummary().Count > 0;
+
     public string Resolve(string path) => C4kJson.Resolve(Folder, path);
 
     /// <summary>Never throws: bad JSON or a bad field sets <see cref="Error"/>.</summary>
