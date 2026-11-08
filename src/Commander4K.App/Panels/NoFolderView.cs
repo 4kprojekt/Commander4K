@@ -33,7 +33,7 @@ internal sealed class NoFolderView : FolderModeView
 
     protected override Control BuildLayout() => Ds.EmptyState(Brushes,
         Loc.T("Brak zdefiniowanego podglądu"),
-        Loc.T("Folder „{0}” nie ma w c4k.dir widoku. Esc pokazuje pliki; tryb Auto pokazuje widok tylko tam, gdzie folder go ma.", _name),
+        Loc.T("Folder „{0}” nie ma pliku .c4k z widokiem. Esc pokazuje pliki; tryb Auto pokazuje widok tylko tam, gdzie folder go ma.", _name),
         Loc.T("Skonfiguruj widok folderu…"),
         _configure);
 }

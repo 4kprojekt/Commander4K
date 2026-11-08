@@ -116,9 +116,8 @@ internal static class FileIcons
     private static bool ContainsAny(string value, params string[] terms) =>
         terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>The folder's own <c>c4k.dir</c>: Enter on it shows the folder's view.</summary>
-    public static bool IsFolderConfig(in VfsEntry entry) =>
-        entry.Kind == VfsEntryKind.File && entry.Name.Equals(Core.Folders.FolderConfig.FileName, StringComparison.OrdinalIgnoreCase);
+    /// <summary>A <c>.c4k</c> item file of the folder: Enter on it performs that item.</summary>
+    public static bool IsFolderConfig(in VfsEntry entry) => Core.Folders.C4kReader.IsItemFile(entry);
 
     public static bool IsExecutable(string name) => ExecutableExtensions.Contains(System.IO.Path.GetExtension(name));
 

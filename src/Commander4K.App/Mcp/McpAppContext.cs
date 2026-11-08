@@ -187,7 +187,7 @@ public sealed class McpAppContext(AppHost host, Func<(FilePanelView Active, File
             Core.Plugins.PanelModeKind.Preview => "preview of the panel's folder (files sent here land in that folder)",
             Core.Plugins.PanelModeKind.Plugin => "plugin panel",
             _ => "view that takes no files",
-        }}, {(panel.ShowsFolderView ? "bound to the folder (its c4k.dir; the Pliki/Widok switch shows the files)" : "opened by itself")}"
+        }}, {(panel.ShowsFolderView ? "bound to the folder (its .c4k item; the Pliki/Widok switch shows the files)" : "opened by itself")}"
             + (mode.CanProvide ? "; provides files (F5 here)" : string.Empty)
             + (mode.CanReceive ? "; receives files (F5 from the other panel)" : string.Empty),
     };

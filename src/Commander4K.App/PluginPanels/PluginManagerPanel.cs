@@ -199,7 +199,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
                 var sections = new List<PanelDetailSection> { new(Loc.T("Wtyczka z katalogu"), info) };
                 if (entry.Example is { } example)
                 {
-                    sections.Add(new(Loc.T("Przykładowy c4k.dir"), [new(FolderConfigName, example)]));
+                    sections.Add(new(Loc.T("Przykładowy plik .c4k"), [new(FolderConfigName, example)]));
                 }
 
                 return new PanelDetails(sections);
@@ -288,7 +288,7 @@ public sealed class PluginManagerPanel(AppHost app) : IPanelPlugin
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-        private const string FolderConfigName = Core.Folders.FolderConfig.FileName;
+        private const string FolderConfigName = "folder" + Core.Folders.C4kReader.Extension;
 
         private DiscoveredPlugin? Find(string rowId) =>
             rowId.StartsWith("ext:", StringComparison.Ordinal) ? app.DiscoveredPlugins.FirstOrDefault(p => p.Folder == rowId[4..]) : null;

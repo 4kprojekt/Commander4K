@@ -10,7 +10,7 @@ using Commander4K.Core.Localization;
 namespace Commander4K.App.Dialogs;
 
 /// <summary>What the user picked for a new API card.</summary>
-/// <param name="Refresh"><c>null</c> = read once; otherwise a <c>c4k.dir</c> interval such as <c>10s</c>.</param>
+/// <param name="Refresh"><c>null</c> = read once; otherwise a <c>.c4k</c> interval such as <c>10s</c>.</param>
 public sealed record ApiCardChoice(string Title, string? Refresh, IReadOnlyList<ApiField> Fields);
 
 /// <summary>

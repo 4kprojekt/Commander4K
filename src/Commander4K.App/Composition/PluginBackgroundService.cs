@@ -34,7 +34,7 @@ public sealed class PluginBackgroundService(Func<bool> enabled, AuditLog audit)
             TimeSpan interval;
             try
             {
-                interval = FolderConfig.ParseRefresh(background.Interval) ?? BackgroundTickLoop.MinInterval;
+                interval = C4kJson.ParseRefresh(background.Interval) ?? BackgroundTickLoop.MinInterval;
             }
             catch (FormatException)
             {

@@ -82,7 +82,7 @@ public static class McpAppTools
         new McpTool(
             new McpToolDefinition(
                 "navigate",
-                "Opens a folder in a panel (as plain navigation: no c4k.dir folder action runs) and waits for the listing.",
+                "Opens a folder in a panel (as plain navigation: no .c4k item runs) and waits for the listing.",
                 McpSchema.Object(
                     ("panel", "string", PanelDescription, true),
                     ("path", "string", "Folder to open (disk path, \\\\server\\share, sftp://..., zip://...).", true)),

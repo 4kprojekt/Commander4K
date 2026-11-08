@@ -217,7 +217,7 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
     /// <summary>A tile was clicked; the folder is the one whose preview (or <c>.c4k</c> items) produced it.</summary>
     public Func<PreviewTile, VfsEntry?, Task>? OpenTile { get; init; }
 
-    public Func<Plugins.BuiltIn.Dashboard.DashboardPreview, int, DashboardTileEdit, Task>? EditDashboardTile { get; init; }
+    public Func<Plugins.BuiltIn.Dashboard.DashboardPreview, int, Task>? ResizeDashboardTile { get; init; }
 
     public Func<string, BrowserPanelView>? CreateBrowserPreview { get; init; }
 
@@ -2169,11 +2169,11 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
             TileButton,
             AskFolderTrust,
             _notify,
-            async (index, edit) =>
+            async index =>
             {
-                if (EditDashboardTile is { } editTile)
+                if (ResizeDashboardTile is { } resize)
                 {
-                    await editTile(dashboard, index, edit);
+                    await resize(dashboard, index);
                     await ReloadCurrentAsync();
                 }
             });

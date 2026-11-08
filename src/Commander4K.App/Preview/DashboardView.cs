@@ -16,16 +16,6 @@ using Commander4K.Plugins.BuiltIn.Previews;
 
 namespace Commander4K.App.Preview;
 
-public enum DashboardTileEdit
-{
-    Remove,
-    MoveUp,
-    MoveDown,
-
-    /// <summary>The next size in <see cref="TileSizes.Cycle"/>.</summary>
-    Resize,
-}
-
 /// <summary>
 /// A dashboard of a folder's <c>.c4k</c> items: plain tiles look as before, card tiles become live cards read by a
 /// <see cref="CardRefreshLoop"/> while the view is shown. Cards that sign in or change something wait for the user's
@@ -46,7 +36,7 @@ public sealed class DashboardView : ScrollViewer
     private readonly DashboardPreview _dashboard;
     private readonly Func<PreviewTile, Task> _open;
     private readonly Func<PreviewTile, double, Control> _shortcut;
-    private readonly Func<int, DashboardTileEdit, Task>? _editTile;
+    private readonly Func<int, Task>? _resizeTile;
     private readonly Func<C4kItem, Task<bool>>? _askTrust;
     private readonly Action<string, bool> _notify;
     private readonly ConcurrentDictionary<int, CardSource> _sources = new();
@@ -66,7 +56,7 @@ public sealed class DashboardView : ScrollViewer
     /// <param name="notify">Status-bar message (text, is error) for card actions that fail.</param>
     public DashboardView(AppHost app, DashboardPreview dashboard, SkinBrushes brushes, Func<PreviewTile, Task> open,
         Func<PreviewTile, double, Control> shortcut, Func<C4kItem, Task<bool>>? askTrust,
-        Action<string, bool> notify, Func<int, DashboardTileEdit, Task>? editTile = null)
+        Action<string, bool> notify, Func<int, Task>? resizeTile = null)
     {
         _notify = notify;
         _app = app;
@@ -74,7 +64,7 @@ public sealed class DashboardView : ScrollViewer
         _brushes = brushes;
         _open = open;
         _shortcut = shortcut;
-        _editTile = editTile;
+        _resizeTile = resizeTile;
         _askTrust = askTrust;
         _sizes = app.BuiltInPreviews.OfType<FolderPreviewPlugin>().FirstOrDefault()?.Sizes;
         HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
@@ -217,31 +207,25 @@ public sealed class DashboardView : ScrollViewer
         }
     }
 
-    /// <summary>The tile with its edit buttons over its top-right corner, shown while the pointer is on the tile.</summary>
+    /// <summary>
+    /// The tile with its ⤢ resize button over its top-right corner, shown while the pointer is on the tile. Order is the
+    /// file names and removing a tile is deleting its file, so there is nothing else to edit here.
+    /// </summary>
     private Control WithCommands(Control tile, DashboardSlot slot)
     {
-        var commands = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 6, 6, 0),
-            Spacing = 2,
-            IsVisible = false,
-        };
         var next = TileSizes.Next(slot.Item.Size);
-        commands.Children.Add(EditButton("⤢", Loc.T("Rozmiar kafelka: {0} → {1}", SizeName(slot.Item.Size), SizeName(next)), true, slot.Index, DashboardTileEdit.Resize));
-
-        commands.Children.Add(EditButton("↑", Loc.T("Przesuń kafelek w górę"), slot.Index > 0, slot.Index, DashboardTileEdit.MoveUp));
-        commands.Children.Add(EditButton("↓", Loc.T("Przesuń kafelek w dół"), slot.Index < _dashboard.Slots.Count - 1, slot.Index, DashboardTileEdit.MoveDown));
-        commands.Children.Add(EditButton("×", Loc.T("Usuń kafelek"), true, slot.Index, DashboardTileEdit.Remove));
+        var resize = ResizeButton(Loc.T("Rozmiar kafelka: {0} → {1}", SizeName(slot.Item.Size), SizeName(next)), slot.Index);
+        resize.HorizontalAlignment = HorizontalAlignment.Right;
+        resize.VerticalAlignment = VerticalAlignment.Top;
+        resize.Margin = new Thickness(0, 6, 6, 0);
+        resize.IsVisible = false;
         var cell = new Panel { Background = Avalonia.Media.Brushes.Transparent };
         cell.Children.Add(tile);
-        cell.Children.Add(commands);
-        if (_editTile is not null)
+        cell.Children.Add(resize);
+        if (_resizeTile is not null)
         {
-            cell.PointerEntered += (_, _) => commands.IsVisible = true;
-            cell.PointerExited += (_, _) => commands.IsVisible = false;
+            cell.PointerEntered += (_, _) => resize.IsVisible = true;
+            cell.PointerExited += (_, _) => resize.IsVisible = false;
         }
 
         return cell;
@@ -254,18 +238,18 @@ public sealed class DashboardView : ScrollViewer
         return columns == 0 ? Loc.T("cała szerokość") : $"{columns}×{rows}";
     }
 
-    private Button EditButton(string label, string description, bool enabled, int index, DashboardTileEdit edit)
+    private Button ResizeButton(string description, int index)
     {
         var button = new Button
         {
-            Content = label,
+            Content = "⤢",
             Padding = new Thickness(0),
             Width = 24,
             Height = 22,
             MinWidth = 24,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            IsEnabled = enabled && _editTile is not null,
+            IsEnabled = _resizeTile is not null,
             Background = _brushes.Surface2,
             Foreground = _brushes.HeaderForeground,
             BorderBrush = _brushes.PanelBorder,
@@ -276,9 +260,9 @@ public sealed class DashboardView : ScrollViewer
         button.Click += async (_, args) =>
         {
             args.Handled = true;
-            if (_editTile is not null)
+            if (_resizeTile is not null)
             {
-                await _editTile(index, edit);
+                await _resizeTile(index);
             }
         };
         return button;

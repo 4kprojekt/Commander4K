@@ -8,7 +8,7 @@ namespace Commander4K.App.Panels;
 /// <summary>
 /// What a panel shows when it is not the file list: a plugin panel, the quick preview or a folder's own view, the
 /// browser, an app page. The file list is the default content; a mode is either bound to the panel's folder (its
-/// <c>c4k.dir</c>, the Pliki · Auto · Widok switch toggles between the two) or opened by itself (F2, a command).
+/// <c>.c4k</c> items, the Pliki · Auto · Widok switch toggles between the two) or opened by itself (F2, a command).
 /// The window routes keys and typing to the active panel's mode before the global keymap.
 /// </summary>
 /// <remarks>
