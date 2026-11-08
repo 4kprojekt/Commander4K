@@ -27,9 +27,9 @@ public enum DashboardTileEdit
 }
 
 /// <summary>
-/// A <c>c4k.dir</c> dashboard: plain tiles look as before, card tiles become live cards read by a
+/// A dashboard of a folder's <c>.c4k</c> items: plain tiles look as before, card tiles become live cards read by a
 /// <see cref="CardRefreshLoop"/> while the view is shown. Cards that sign in or change something wait for the user's
-/// trust in the file. <see cref="StopAsync"/> must be called when the view goes away.
+/// trust in their own file. <see cref="StopAsync"/> must be called when the view goes away.
 /// </summary>
 public sealed class DashboardView : ScrollViewer
 {
@@ -47,7 +47,7 @@ public sealed class DashboardView : ScrollViewer
     private readonly Func<PreviewTile, Task> _open;
     private readonly Func<PreviewTile, double, Control> _shortcut;
     private readonly Func<int, DashboardTileEdit, Task>? _editTile;
-    private readonly Func<FolderConfig, Task<bool>>? _askTrust;
+    private readonly Func<C4kItem, Task<bool>>? _askTrust;
     private readonly Action<string, bool> _notify;
     private readonly ConcurrentDictionary<int, CardSource> _sources = new();
     private readonly Dictionary<int, CardView> _cards = [];
@@ -59,14 +59,13 @@ public sealed class DashboardView : ScrollViewer
     private readonly FolderSizeCache? _sizes;
     private CardRefreshLoop? _loop;
     private SkinBrushes _brushes;
-    private volatile bool _trusted;
     private bool _stopped;
 
     /// <param name="shortcut">Draws a plain tile (the preview's usual tile look) at the given width.</param>
-    /// <param name="askTrust">Asks the user to trust the <c>c4k.dir</c>; <c>null</c> = such cards stay locked.</param>
+    /// <param name="askTrust">Asks the user to trust one item's <c>.c4k</c> file; <c>null</c> = such cards stay locked.</param>
     /// <param name="notify">Status-bar message (text, is error) for card actions that fail.</param>
     public DashboardView(AppHost app, DashboardPreview dashboard, SkinBrushes brushes, Func<PreviewTile, Task> open,
-        Func<PreviewTile, double, Control> shortcut, Func<FolderConfig, Task<bool>>? askTrust,
+        Func<PreviewTile, double, Control> shortcut, Func<C4kItem, Task<bool>>? askTrust,
         Action<string, bool> notify, Func<int, DashboardTileEdit, Task>? editTile = null)
     {
         _notify = notify;
@@ -80,12 +79,12 @@ public sealed class DashboardView : ScrollViewer
         _sizes = app.BuiltInPreviews.OfType<FolderPreviewPlugin>().FirstOrDefault()?.Sizes;
         HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
         SizeChanged += (_, _) => LayoutTiles();
-        foreach (var slot in dashboard.Slots.Where(s => s.Tile.Card is not null))
+        foreach (var slot in dashboard.Slots.Where(s => s.Item.Card is not null))
         {
             _cards[slot.Index] = new CardView(this, slot);
-            if (slot.Tile.Open is { } open2)
+            if (slot.Item.Open is { } open2)
             {
-                _targets[slot.Index] = dashboard.Config.Resolve(open2);
+                _targets[slot.Index] = slot.Item.Resolve(open2);
             }
         }
 
@@ -123,7 +122,7 @@ public sealed class DashboardView : ScrollViewer
             await loop.DisposeAsync();
         }
 
-        foreach (var slot in _dashboard.Slots.Where(s => string.Equals(s.Tile.Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase)))
+        foreach (var slot in _dashboard.Slots.Where(s => string.Equals(s.Item.Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase)))
         {
             if (_targets.TryGetValue(slot.Index, out var target))
             {
@@ -149,14 +148,10 @@ public sealed class DashboardView : ScrollViewer
         _tiles.Clear();
         foreach (var slot in _dashboard.Slots)
         {
-            var (_, rows) = TileSizes.Span(slot.Tile.Size);
+            var (_, rows) = TileSizes.Span(slot.Item.Size);
             var minHeight = UnitHeight * rows + TileGap * (rows - 1);
             Control tile;
-            if (slot.Tile.Heading)
-            {
-                tile = SectionHeading(slot.Tile);
-            }
-            else if (_cards.TryGetValue(slot.Index, out var card))
+            if (_cards.TryGetValue(slot.Index, out var card))
             {
                 tile = card.Render(minHeight);
             }
@@ -199,19 +194,17 @@ public sealed class DashboardView : ScrollViewer
         }
 
         _columns = columns;
-        var placements = TileGridLayout.Place([.. _dashboard.Slots.Select(s => s.Tile.LayoutSize)], columns);
+        var placements = TileGridLayout.Place([.. _dashboard.Slots.Select(s => s.Item.Size)], columns);
         _grid.ColumnDefinitions.Clear();
         for (var i = 0; i < columns; i++)
         {
             _grid.ColumnDefinitions.Add(new Avalonia.Controls.ColumnDefinition(1, GridUnitType.Star));
         }
 
-        // Rows holding only a section heading stay as low as their text.
-        var headingRows = placements.Where((p, i) => _dashboard.Slots[i].Tile.Heading).Select(p => p.Row).ToHashSet();
         _grid.RowDefinitions.Clear();
         for (var row = 0; row < TileGridLayout.RowCount(placements); row++)
         {
-            _grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto) { MinHeight = headingRows.Contains(row) ? 0 : UnitHeight });
+            _grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto) { MinHeight = UnitHeight });
         }
 
         for (var i = 0; i < _tiles.Count; i++)
@@ -222,26 +215,6 @@ public sealed class DashboardView : ScrollViewer
             Grid.SetColumnSpan(_tiles[i], place.ColumnSpan);
             Grid.SetRowSpan(_tiles[i], place.RowSpan);
         }
-    }
-
-    /// <summary>A section heading over the tiles after it: accent capitals, an optional muted line, a rule below.</summary>
-    private Control SectionHeading(FolderTile tile)
-    {
-        var text = new StackPanel { Spacing = 2, Margin = new Thickness(2, 10, 0, 6) };
-        var heading = Ds.SectionHeading(_brushes, tile.Icon is { Length: > 0 } icon ? icon + "  " + tile.Title : tile.Title);
-        heading.FontSize = Math.Max(11, _brushes.FontSize - 1);
-        text.Children.Add(heading);
-        if (tile.Subtitle is { Length: > 0 } subtitle)
-        {
-            text.Children.Add(Ds.Muted(_brushes, subtitle));
-        }
-
-        return new Border
-        {
-            BorderBrush = _brushes.PanelBorder,
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            Child = text,
-        };
     }
 
     /// <summary>The tile with its edit buttons over its top-right corner, shown while the pointer is on the tile.</summary>
@@ -256,11 +229,8 @@ public sealed class DashboardView : ScrollViewer
             Spacing = 2,
             IsVisible = false,
         };
-        var next = TileSizes.Next(slot.Tile.Size);
-        if (!slot.Tile.Heading)
-        {
-            commands.Children.Add(EditButton("⤢", Loc.T("Rozmiar kafelka: {0} → {1}", SizeName(slot.Tile.Size), SizeName(next)), true, slot.Index, DashboardTileEdit.Resize));
-        }
+        var next = TileSizes.Next(slot.Item.Size);
+        commands.Children.Add(EditButton("⤢", Loc.T("Rozmiar kafelka: {0} → {1}", SizeName(slot.Item.Size), SizeName(next)), true, slot.Index, DashboardTileEdit.Resize));
 
         commands.Children.Add(EditButton("↑", Loc.T("Przesuń kafelek w górę"), slot.Index > 0, slot.Index, DashboardTileEdit.MoveUp));
         commands.Children.Add(EditButton("↓", Loc.T("Przesuń kafelek w dół"), slot.Index < _dashboard.Slots.Count - 1, slot.Index, DashboardTileEdit.MoveDown));
@@ -321,7 +291,6 @@ public sealed class DashboardView : ScrollViewer
     private void Start()
     {
         var resolver = _app.CreateCardResolver();
-        var config = _dashboard.Config;
         var loop = new CardRefreshLoop();
         loop.Updated += state => Dispatcher.UIThread.Post(() =>
         {
@@ -331,9 +300,9 @@ public sealed class DashboardView : ScrollViewer
             }
         });
 
-        foreach (var slot in _dashboard.Slots.Where(s => s.Tile.Card is not null))
+        foreach (var slot in _dashboard.Slots.Where(s => s.Item.Card is not null))
         {
-            var tile = slot.Tile;
+            var tile = slot.Item;
             var index = slot.Index;
             if (string.Equals(tile.Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase) && _targets.TryGetValue(slot.Index, out var server))
             {
@@ -343,7 +312,7 @@ public sealed class DashboardView : ScrollViewer
             CardSource? source = null; // one read at a time per card (the loop guarantees it), so no lock is needed
             loop.Add(slot.Index, async (previous, ct) =>
             {
-                source ??= await resolver.ResolveAsync(config, tile, ct).ConfigureAwait(false)
+                source ??= await resolver.ResolveAsync(tile, ct).ConfigureAwait(false)
                     ?? new CardSource((_, _) => Task.FromResult(new PreviewCard(null, Loc.T("Ten kafelek nie jest kartą."), "⚠", CardStatus.Error, [], [])), false, null);
                 _sources[index] = source; // the UI thread reads it for c4k:plugin/ buttons
                 if (source.Unavailable is { } why)
@@ -351,9 +320,10 @@ public sealed class DashboardView : ScrollViewer
                     return Locked(why, unlock: false);
                 }
 
-                if (source.NeedsTrust && !(_trusted || (_trusted = _app.FolderTrust.IsTrusted(config))))
+                // Trust is per file: one card of the dashboard can be locked while the others run.
+                if (source.NeedsTrust && !_app.FolderTrust.IsTrusted(tile))
                 {
-                    return Locked(Loc.T("Ta karta łączy się z serwerem albo może coś na nim zmienić. Zezwól na ten plik c4k.dir, żeby działała."), unlock: true);
+                    return Locked(Loc.T("Ta karta łączy się z serwerem albo może coś na nim zmienić. Zezwól na plik {0}, żeby działała.", Path.GetFileName(tile.FilePath)), unlock: true);
                 }
 
                 return await source.Load(previous, ct).ConfigureAwait(false);
@@ -391,13 +361,9 @@ public sealed class DashboardView : ScrollViewer
                 _loop?.RefreshNow(index);
                 break;
             case TrustAction:
-                if (_askTrust is not null && await _askTrust(_dashboard.Config))
+                if (_askTrust is not null && _dashboard.Slots.FirstOrDefault(s => s.Index == index) is { } trusted && await _askTrust(trusted.Item))
                 {
-                    _trusted = true;
-                    foreach (var card in _cards.Keys)
-                    {
-                        _loop?.RefreshNow(card);
-                    }
+                    _loop?.RefreshNow(index);
                 }
 
                 break;
@@ -471,9 +437,9 @@ public sealed class DashboardView : ScrollViewer
         private CardState _state = new(slot.Index, null, true, null);
 
         /// <summary>Rows the tile spans: a taller card shows more lines, a bigger chart and larger thumbnails.</summary>
-        private int Rows => TileSizes.Span(slot.Tile.Size).Rows;
+        private int Rows => TileSizes.Span(slot.Item.Size).Rows;
 
-        private bool IsWide => TileSizes.Span(slot.Tile.Size).Columns is 0 or >= 2;
+        private bool IsWide => TileSizes.Span(slot.Item.Size).Columns is 0 or >= 2;
 
         public Control Render(double minHeight)
         {
@@ -516,10 +482,10 @@ public sealed class DashboardView : ScrollViewer
             var spinner = new TextBlock { Text = _state.Loading ? "⏳" : string.Empty, Foreground = brushes.MutedForeground, Margin = new Thickness(4, 0, 0, 0) };
             DockPanel.SetDock(spinner, Dock.Right);
             heading.Children.Add(spinner);
-            var isClock = string.Equals(slot.Tile.Card, WidgetCards.Clock, StringComparison.OrdinalIgnoreCase) && card?.Title is not null;
+            var isClock = string.Equals(slot.Item.Card, WidgetCards.Clock, StringComparison.OrdinalIgnoreCase) && card?.Title is not null;
             heading.Children.Add(new TextBlock
             {
-                Text = isClock ? $"{card?.Icon ?? "▪"}  {slot.Tile.Title}" : $"{card?.Icon ?? slot.Shortcut.Icon ?? "▪"}  {card?.Title ?? slot.Tile.Title}",
+                Text = isClock ? $"{card?.Icon ?? "▪"}  {slot.Item.Title}" : $"{card?.Icon ?? slot.Shortcut.Icon ?? "▪"}  {card?.Title ?? slot.Item.Title}",
                 FontWeight = FontWeight.SemiBold,
                 Foreground = brushes.FileForeground,
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -538,7 +504,7 @@ public sealed class DashboardView : ScrollViewer
                 });
             }
 
-            if ((card?.Subtitle ?? slot.Tile.Subtitle) is { Length: > 0 } subtitle)
+            if ((card?.Subtitle ?? slot.Item.Description) is { Length: > 0 } subtitle)
             {
                 body.Children.Add(new TextBlock { Text = subtitle, FontSize = brushes.FontSize - 1, Foreground = brushes.MutedForeground, TextWrapping = TextWrapping.Wrap, MaxLines = 2 * Rows + 1 });
             }

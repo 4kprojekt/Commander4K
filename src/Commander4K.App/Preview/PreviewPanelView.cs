@@ -81,8 +81,15 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
     private ScrollViewer? _livePreview;
     private DispatcherTimer? _liveDelay;
 
-    /// <summary>A folder's own view shown on entering it (<c>c4k.dir</c> <c>"enter"</c>), instead of following the cursor.</summary>
-    public sealed record PinnedFolder(VfsEntry Folder, FolderConfig Config, FolderAction Action);
+    /// <summary>A folder's own view shown on entering it (its <c>.c4k</c> items), instead of following the cursor.</summary>
+    /// <param name="Item">The item whose view is shown; <c>null</c> = the folder's dashboard (several items).</param>
+    public sealed record PinnedFolder(VfsEntry Folder, C4kFolder Config, C4kItem? Item)
+    {
+        public string Title => Item?.Title ?? Folder.Name;
+    }
+
+    /// <summary>A dashboard tile of an item that is only a view, panel or plugin: the window performs that item.</summary>
+    public const string ItemTargetPrefix = "c4k:item/";
 
     /// <summary>Folder views opened one from another (a dashboard picked on a dashboard); empty when following the cursor.</summary>
     private readonly ViewHistory<PinnedFolder> _history = new();
@@ -103,7 +110,7 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
     private readonly VfsEntry? _pinnedFile;
     private readonly CancellationTokenSource _lifetime = new();
 
-    /// <summary>The <c>c4k.dir</c> options the current plugin was loaded with; passed to its actions too.</summary>
+    /// <summary>The <c>.c4k</c> options the current plugin was loaded with; passed to its actions too.</summary>
     private string? _options;
 
     /// <summary>Who runs a content's <c>c4k:plugin/…</c> buttons: fixed when the content is rendered, never read from the view's current state.</summary>
@@ -204,10 +211,10 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
     /// <summary>Opens the official plugin catalog.</summary>
     public Func<Task>? OpenPluginCatalog { get; init; }
 
-    /// <summary>Configures a folder that does not yet have a <c>c4k.dir</c>.</summary>
+    /// <summary>Configures a folder that does not yet have a <c>.c4k</c> file.</summary>
     public Func<string, Task>? ConfigureFolderView { get; init; }
 
-    /// <summary>A tile was clicked; the folder is the one whose preview (or <c>c4k.dir</c>) produced it.</summary>
+    /// <summary>A tile was clicked; the folder is the one whose preview (or <c>.c4k</c> items) produced it.</summary>
     public Func<PreviewTile, VfsEntry?, Task>? OpenTile { get; init; }
 
     public Func<Plugins.BuiltIn.Dashboard.DashboardPreview, int, DashboardTileEdit, Task>? EditDashboardTile { get; init; }
@@ -218,8 +225,8 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
 
     /// <summary>App shortcuts pressed inside a web preview page (Avalonia never sees those keys); Esc closes the preview first.</summary>
     public Func<Core.Input.KeyStroke, bool>? RunShortcut { get; init; }
-    /// <summary>Asks the user to trust a <c>c4k.dir</c> whose cards sign in or change something (POST, SSH); locked when null.</summary>
-    public Func<FolderConfig, Task<bool>>? AskFolderTrust { get; init; }
+    /// <summary>Asks the user to trust a <c>.c4k</c> file whose card signs in or changes something (POST, SSH); locked when null.</summary>
+    public Func<C4kItem, Task<bool>>? AskFolderTrust { get; init; }
 
     /// <summary>A plugin's list is on screen: Ctrl+Q then previews its selection in the other panel.</summary>
     public bool HasList => _list is not null;
@@ -245,7 +252,7 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
     /// <summary>The panel's folder stays its folder: F5 into it copies into that folder.</summary>
     public Core.Plugins.PanelModeKind Kind => Core.Plugins.PanelModeKind.Preview;
 
-    public string Title => _pinned is { } pinned ? WithAccount(pinned.Config.Title ?? pinned.Folder.Name, pinned.Action.Options) : _pinnedFile?.Name ?? Loc.T("Podgląd");
+    public string Title => _pinned is { } pinned ? WithAccount(pinned.Title, pinned.Item?.Options) : _pinnedFile?.Name ?? Loc.T("Podgląd");
 
     /// <summary>A plugin account's own name (the options' "user") in brackets, so folders of several accounts differ.</summary>
     private static string WithAccount(string title, string? optionsJson)
@@ -273,7 +280,7 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
 
     public Control View => this;
 
-    /// <summary>Shows a folder's own view (entered through its <c>c4k.dir</c>) or a file opened with Enter, rather than following the cursor.</summary>
+    /// <summary>Shows a folder's own view (entered through its <c>.c4k</c> items) or a file opened with Enter, rather than following the cursor.</summary>
     public bool IsPinned => _pinned is not null || _pinnedFile is not null;
 
     /// <summary>A folder's own view, where another folder's view can open in place (<see cref="OpenPinnedAsync"/>).</summary>
@@ -287,10 +294,11 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
     {
         if (_pinned is { } pinned)
         {
-            var config = await Task.Run(() => _app.ReadFolderConfigAsync(pinned.Folder.Path, CancellationToken.None));
-            if (config is { Error: null } && (config.Preview ?? config.Enter) is { } action)
+            var config = await Task.Run(() => _app.ReadFolderAsync(pinned.Folder.Path, CancellationToken.None));
+            var item = pinned.Item is { } shown ? config?.Items.FirstOrDefault(i => string.Equals(i.FilePath, shown.FilePath, StringComparison.OrdinalIgnoreCase)) : null;
+            if (pinned.Item is null ? config is { Layout: C4kLayout.Dashboard } : item is { Error: null })
             {
-                _history.ReplaceCurrent(pinned with { Config = config, Action = action });
+                _history.ReplaceCurrent(pinned with { Config = config!, Item = item });
             }
 
             await LoadAsync(_pinned.Folder);
@@ -348,7 +356,7 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
         var trail = _history.Trail;
         for (var i = 0; i < trail.Count; i++)
         {
-            var name = trail[i].Config.Title ?? trail[i].Folder.Name;
+            var name = trail[i].Title;
             if (i > 0)
             {
                 _trail.Children.Add(new TextBlock { Text = " › ", Foreground = _brushes.MutedForeground, VerticalAlignment = VerticalAlignment.Center });
@@ -663,40 +671,40 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
         }
 
         _title.Text = target.Name;
-        SetStatus(Loc.T("Wczytywanie…"), busy: true); // the dots show while c4k.dir is read, not only once a plugin is picked
+        SetStatus(Loc.T("Wczytywanie…"), busy: true); // the dots show while the .c4k files are read, not only once a plugin is picked
 
-        // A folder may say how it wants to be shown (c4k.dir); the file is read only for folders on the way here.
+        // A folder may say how it wants to be shown (.c4k items); the files are read only for folders on the way here.
         Func<IPluginHost, IProgress<PreviewContent>, CancellationToken, Task<PreviewContent>>? folderView = null;
         IPreviewPlugin? plugin = null;
         // The source panel already shows this folder's view over its files: the quick view shows the files instead.
         var viewShownBySource = _pinned is null && _source.Mode is not null && string.Equals(target.Path, _source.ActiveTab.Path, StringComparison.OrdinalIgnoreCase);
         if (target.IsContainer && target.Kind is not (VfsEntryKind.Host or VfsEntryKind.ParentLink) && !viewShownBySource)
         {
-            FolderConfig? config;
-            FolderAction? action;
-            string section;
+            C4kFolder? config;
+            C4kItem? item;
+            var pinnedView = _pinned is not null;
             if (_pinned is { } pinned)
             {
-                (config, action, section) = (pinned.Config, pinned.Action, "enter");
+                (config, item) = (pinned.Config, pinned.Item);
             }
             else
             {
                 try
                 {
-                    config = await Task.Run(() => _app.ReadFolderConfigAsync(target.Path, cts.Token), cts.Token);
+                    config = await Task.Run(() => _app.ReadFolderAsync(target.Path, cts.Token), cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
                     return;
                 }
 
-                (action, section) = (config?.Preview, "preview");
+                item = config?.Single;
 
                 // The app's own pages (settings, skins, plugin manager) open only on Enter or from the menu, never
                 // because the cursor rests on their folder: the quick view shows that folder like any other.
-                if (action is { Plugin: null } && FolderViewIds.IsAppView(action.View))
+                if (item is { Plugin: null } && FolderViewIds.IsAppView(item.View))
                 {
-                    action = null;
+                    (config, item) = (null, null);
                 }
             }
 
@@ -705,16 +713,24 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
                 return;
             }
 
-            if (config?.Error is { } error)
+            if (item?.Error is { } error)
             {
-                Show(new MessagePreview(Loc.T("⚠ {0}: {1}", config.FilePath, error)));
+                Show(new MessagePreview(Loc.T("⚠ {0}: {1}", item.FilePath, error)));
                 return;
             }
 
-            if (config is not null && action is { IsPlainFiles: false })
+            if (config is { Layout: C4kLayout.Dashboard } && item is null)
             {
-                (plugin, folderView) = ResolveFolderView(config, action, section, target);
-                _title.Text = config.Title ?? target.Name;
+                var dashboard = config;
+                plugin = _app.BuiltInPreviews.OfType<Plugins.BuiltIn.Previews.FolderPreviewPlugin>().First();
+                folderView = async (host, _, ct) => WithItemTargets(await Plugins.BuiltIn.Previews.FolderViews.WithPicturesAsync(
+                    Plugins.BuiltIn.Previews.FolderViews.Dashboard(dashboard), host, ct).ConfigureAwait(false));
+                _title.Text = target.Name;
+            }
+            else if (config is not null && item is { IsPlainFiles: false })
+            {
+                (plugin, folderView) = ResolveFolderView(item, pinnedView, target);
+                _title.Text = item.Title;
             }
         }
 
@@ -780,11 +796,11 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
             });
 
     /// <summary>
-    /// What renders a <c>c4k.dir</c> action: a plugin's preview (with the file's options) or a built-in view. A plugin
+    /// What renders a <c>.c4k</c> item: a plugin's preview (with the file's options) or a built-in view. A plugin
     /// that is not installed, or not enabled yet, becomes a tile that installs or enables it.
     /// </summary>
     private (IPreviewPlugin Plugin, Func<IPluginHost, IProgress<PreviewContent>, CancellationToken, Task<PreviewContent>> Load) ResolveFolderView(
-        FolderConfig config, FolderAction action, string section, VfsEntry folder)
+        C4kItem action, bool pinned, VfsEntry folder)
     {
         var folderPlugin = _app.BuiltInPreviews.OfType<Plugins.BuiltIn.Previews.FolderPreviewPlugin>().First();
         if (action.Kind != FolderActionKind.View)
@@ -796,9 +812,9 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
                 FolderActionKind.Url => action.Url ?? string.Empty,
                 _ => action.Run?.ToString() ?? string.Empty,
             };
-            return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(new TilesPreview(config.Title ?? folder.Name,
+            return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(new TilesPreview(action.Title,
                 [new PreviewTile(Loc.T("Otwórz"), what, "↪", null, folder.Path)],
-                Loc.T("Ten podgląd z c4k.dir otwiera się po wejściu do folderu (Enter)."))));
+                Loc.T("Ten element .c4k działa po wejściu do folderu (Enter)."))));
         }
 
         if (action.Plugin is null && FolderViewIds.IsAppView(action.View))
@@ -815,28 +831,27 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
 
         if (action.Plugin is not { } pluginId)
         {
-            return (folderPlugin, (host, progress, ct) => Plugins.BuiltIn.Previews.FolderViews.LoadAsync(config, action, section, folder, host, folderPlugin.Thumbnails, progress, ct));
+            return (folderPlugin, (host, progress, ct) => Plugins.BuiltIn.Previews.FolderViews.LoadAsync(action, folder, host, folderPlugin.Thumbnails, progress, ct));
         }
 
         var external = _app.PreviewPlugins.OfType<ExternalPreviewPlugin>()
             .Where(p => string.Equals(p.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(p => action.Preview is { } id && p.Id.EndsWith("/" + id, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(p => action.PreviewId is { } id && p.Id.EndsWith("/" + id, StringComparison.OrdinalIgnoreCase))
             .FirstOrDefault();
-        var title = config.Title ?? folder.Name;
+        var title = action.Title;
         if (external is not null)
         {
-            // Installed but the folder has no settings for it yet (a hand-written or copied c4k.dir): ask for them first.
+            // Installed but the item has no settings for it yet (a hand-written or copied .c4k): ask for them first.
             if (action.Options is null && external.SupportsSetup && external.Contribution.Extensions.Contains("/"))
             {
                 return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(new FolderPluginSetupPreview(
                     Loc.T("Skonfiguruj „{0}”", external.Manifest.Name),
-                    Loc.T("Folder „{0}” ma być pokazywany przez wtyczkę „{1}”, ale c4k.dir nie ma jeszcze jej ustawień.", title, external.Manifest.Name),
+                    Loc.T("Folder „{0}” ma być pokazywany przez wtyczkę „{1}”, ale plik .c4k nie ma jeszcze jej ustawień.", title, external.Manifest.Name),
                     Loc.T("Skonfiguruj…"),
                     "c4k:setup/" + pluginId)));
             }
 
             _options = action.Options;
-            var pinned = section == "enter";
             return (external, (host, _, ct) => external.LoadWithOptionsAsync(folder, host, action.Options, pinned, ct));
         }
 
@@ -845,18 +860,18 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
         var setup = installed is not null
             ? new FolderPluginSetupPreview(
                 Loc.T("Włącz „{0}”", installed.Manifest!.Name),
-                _app.PluginBlocker(installed) ?? Loc.T("Wtyczka nie ma podglądu „{0}”.", action.Preview ?? string.Empty),
+                _app.PluginBlocker(installed) ?? Loc.T("Wtyczka nie ma podglądu „{0}”.", action.PreviewId ?? string.Empty),
                 Loc.T("Włącz i skonfiguruj…"),
                 "c4k:setup/" + pluginId)
             : entry is not null
                 ? new FolderPluginSetupPreview(
                     Loc.T("Zainstaluj „{0}”", entry.Name),
-                    Loc.T("Folder „{0}” ma być pokazywany przez wtyczkę „{1}” (c4k.dir): {2}", title, entry.Name, entry.LocalizedDescription),
+                    Loc.T("Folder „{0}” ma być pokazywany przez wtyczkę „{1}” (.c4k): {2}", title, entry.Name, entry.LocalizedDescription),
                     Loc.T("Zainstaluj i skonfiguruj…"),
                     "c4k:setup/" + pluginId)
                 : new FolderPluginSetupPreview(
                     Loc.T("Nieznana wtyczka „{0}”", pluginId),
-                    Loc.T("c4k.dir tego folderu korzysta z wtyczki, której nie ma w katalogu oficjalnych wtyczek."),
+                    Loc.T("Plik .c4k tego folderu korzysta z wtyczki, której nie ma w katalogu oficjalnych wtyczek."),
                     Loc.T("Menedżer wtyczek"),
                     "c4k:plugins");
         return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(setup));
@@ -964,7 +979,7 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
         _content.Content = view;
     }
 
-    /// <summary>Creates the app's own view (settings, skins, plugin manager) for a <c>c4k.dir</c> that names it.</summary>
+    /// <summary>Creates the app's own view (settings, skins, plugin manager) for a <c>.c4k</c> item that names it.</summary>
     public Func<string, IPanelModeView?>? CreateAppView { get; init; }
 
     private IPanelModeView? _appView;
@@ -2166,6 +2181,13 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
         return _dashboard;
     }
 
+    /// <summary>Tiles of items that are only a view, panel or plugin get a link back to their file, so a click performs the item.</summary>
+    private static PreviewContent WithItemTargets(Plugins.BuiltIn.Dashboard.DashboardPreview dashboard) =>
+        dashboard with
+        {
+            Slots = [.. dashboard.Slots.Select(s => s.Shortcut.Target is null ? s with { Shortcut = s.Shortcut with { Target = ItemTargetPrefix + s.Item.FilePath } } : s)],
+        };
+
     private void StopDashboard()
     {
         if (_dashboard is { } dashboard)
@@ -2216,8 +2238,8 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
     }
 }
 
-/// <summary>A folder whose <c>c4k.dir</c> names one of the app's own views (<see cref="FolderViewIds.AppViews"/>).</summary>
+/// <summary>A folder whose <c>.c4k</c> item names one of the app's own views (<see cref="FolderViewIds.AppViews"/>).</summary>
 public sealed record AppFolderViewPreview(string View) : PreviewContent;
 
-/// <summary>A folder's <c>c4k.dir</c> names a plugin that still needs installing, enabling or its settings.</summary>
+/// <summary>A folder's <c>.c4k</c> item names a plugin that still needs installing, enabling or its settings.</summary>
 public sealed record FolderPluginSetupPreview(string Title, string Message, string ActionText, string Target) : PreviewContent;

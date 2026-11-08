@@ -95,8 +95,12 @@ public sealed class FolderSuggestionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Folder_with_c4k_dir_yields_nothing() =>
-        Assert.Empty(await Collect(Service([new FakePreview("good", 0.9)], ["a.png", "C4K.DIR"]), Photos));
+    public async Task Folder_with_c4k_item_yields_nothing() =>
+        Assert.Empty(await Collect(Service([new FakePreview("good", 0.9)], ["a.png", "Gallery.C4K"]), Photos));
+
+    [Fact]
+    public async Task Old_c4k_dir_no_longer_counts_as_a_view() =>
+        Assert.NotEmpty(await Collect(Service([new FakePreview("good", 0.9)], ["a.png", "c4k.dir"]), Photos));
 
     [Fact]
     public async Task Muted_and_declined_folders_yield_nothing()

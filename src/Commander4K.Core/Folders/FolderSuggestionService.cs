@@ -38,7 +38,7 @@ public sealed class FolderSuggestionService(
 
     public FolderSuggestionMemory Memory => memory;
 
-    /// <summary>A folder (not a drive, share root or "..") on a disk or a share, where <c>c4k.dir</c> works.</summary>
+    /// <summary>A folder (not a drive, share root or "..") on a disk or a share, where <c>.c4k</c> files work.</summary>
     public static bool IsEligible(VfsEntry entry) =>
         entry.Kind == VfsEntryKind.Directory
         && VfsPath.GetScheme(entry.Path) is VfsPath.FileScheme or VfsPath.SmbScheme
@@ -77,7 +77,7 @@ public sealed class FolderSuggestionService(
             yield break;
         }
 
-        if (snapshot.Entries.Any(e => string.Equals(e.Name, FolderConfig.FileName, StringComparison.OrdinalIgnoreCase)))
+        if (snapshot.Entries.Any(C4kReader.IsItemFile))
         {
             Remember(key, null);
             yield break;
@@ -106,7 +106,7 @@ public sealed class FolderSuggestionService(
         }
     }
 
-    /// <summary>Drops the cached answer for <paramref name="folder"/> (its c4k.dir was just written or changed).</summary>
+    /// <summary>Drops the cached answer for <paramref name="folder"/> (a <c>.c4k</c> file was just written or changed).</summary>
     public void Forget(string folder)
     {
         var path = folder.ToUpperInvariant();
