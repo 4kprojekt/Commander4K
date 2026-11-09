@@ -644,7 +644,7 @@ public sealed class MainWindow : Window
             id => _host.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, id, StringComparison.OrdinalIgnoreCase))),
         .. McpAppTools.Create(this, _host, McpContext, allowedRoots, protectedRoots),
         .. McpConfigTools.Create(McpConfigContext()),
-        .. McpDashboardTools.Create(_host.Router, McpCardPreviews),
+        .. McpDashboardTools.Create(_host.Router, McpCardPreviews, allowedRoots, protectedRoots),
         .. McpSkinTools.Create(this, _host, () => _skins!),
     ];
 

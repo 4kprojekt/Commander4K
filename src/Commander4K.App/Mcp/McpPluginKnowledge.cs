@@ -13,9 +13,9 @@ internal static class McpPluginKnowledge
     public static string Instructions(AppHost host)
     {
         var text = new StringBuilder()
-            .AppendLine("Commander4K is a dual-pane file manager for Windows where everything is a folder: a folder's c4k.dir decides whether a panel "
+            .AppendLine("Commander4K is a dual-pane file manager for Windows where everything is a folder: a folder's .c4k files decide whether a panel "
                 + "shows its files, a gallery, a mailbox, a dashboard or a plugin panel. Tools act on the user's panels and files; some calls ask "
-                + "the user first. Start with get_context; get_plugin_guide explains panels, c4k.dir and the plugin protocol.")
+                + "the user first. Start with get_context; get_plugin_guide explains panels, .c4k files and the plugin protocol.")
             .AppendLine("Use the installed plugins below when they fit the task instead of doing the same work by hand: the user already approved "
                 + "their permissions. Commander4K has no AI of its own; you are the only model here.")
             .AppendLine()
@@ -58,7 +58,7 @@ internal static class McpPluginKnowledge
                 var files = string.Join(" ", preview.Extensions.Where(e => e != "/"));
                 text.Append($"  - preview \"{preview.Title}\": render_preview path=<{(folders && files.Length == 0 ? "folder" : "file")}> plugin=\"{id}\"")
                     .Append(files.Length > 0 ? $" for {files}" : string.Empty)
-                    .Append(folders ? $"; a folder shows it with c4k.dir {{\"preview\": {{\"plugin\": \"{m.Id}\"}}}}" : string.Empty)
+                    .Append(folders ? $"; a folder shows it with a .c4k file {{\"plugin\": \"{m.Id}\"}}" : string.Empty)
                     .Append(preview.Card ? $"; dashboard card \"{id}\"" : string.Empty)
                     .AppendLine();
             }
