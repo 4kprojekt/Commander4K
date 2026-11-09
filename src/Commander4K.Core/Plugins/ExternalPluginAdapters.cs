@@ -422,11 +422,11 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
     private const int MaxFormFields = 50;
     private const int MaxFormFiles = 200;
 
-    /// <param name="options">JSON object from the folder's <c>c4k.dir</c>, passed as <c>options</c>.</param>
+    /// <param name="options">JSON object from the folder's <c>.c4k</c> item, passed as <c>options</c>.</param>
     public Task<PreviewContent> LoadWithOptionsAsync(VfsEntry entry, IPluginHost host, string? options, CancellationToken cancellationToken) =>
         LoadWithOptionsAsync(entry, host, options, pinned: false, cancellationToken);
 
-    /// <param name="options">JSON object from the folder's <c>c4k.dir</c>, passed as <c>options</c>.</param>
+    /// <param name="options">JSON object from the folder's <c>.c4k</c> item, passed as <c>options</c>.</param>
     /// <param name="pinned"><c>true</c> for a view opened with Enter (it stays on this entry), <c>false</c> for the quick view that follows the cursor.</param>
     public async Task<PreviewContent> LoadWithOptionsAsync(VfsEntry entry, IPluginHost host, string? options, bool pinned, CancellationToken cancellationToken)
     {
@@ -674,7 +674,7 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
 
     /// <summary>
     /// <c>preview.setup</c> for a folder that is getting this preview: the plugin asks the user what it needs (through
-    /// ui.prompt, ui.confirm…) and answers <c>{ options }</c> for the folder's <c>c4k.dir</c>, or <c>null</c> when
+    /// ui.prompt, ui.confirm…) and answers <c>{ options }</c> for the folder's <c>.c4k</c> item, or <c>null</c> when
     /// the user cancelled. Interactive, so the call may take as long as the user does (up to 15 minutes).
     /// </summary>
     /// <returns>The options as JSON text; <c>null</c> = cancelled.</returns>

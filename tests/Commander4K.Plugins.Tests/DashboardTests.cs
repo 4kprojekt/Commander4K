@@ -108,6 +108,15 @@ public sealed class DashboardTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Folder_key_without_open_is_the_card_target()
+    {
+        // The mail card's form: { "plugin": "official.mail", "card": true, "folder": "Firma" }.
+        var card = await LoadAsync("""{ "title": "Foto", "plugin": "official.mail", "folder": "photos", "card": true }""");
+
+        Assert.Single(card.Items.OfType<CardThumbnails>());
+    }
+
+    [Fact]
     public async Task Auto_card_on_plain_folder_counts_files()
     {
         var card = await LoadAsync("""{ "title": "Plain", "open": "plain", "card": true }""");
@@ -216,7 +225,7 @@ public sealed class DashboardTests : IAsyncDisposable
         Assert.Equal("https://example.com", dashboard.Slots[0].Shortcut.Target);
         Assert.Equal("🌐", dashboard.Slots[0].Shortcut.Icon);
         Assert.Equal(Path.Combine(_root, "photos"), dashboard.Slots[1].Shortcut.Target);
-        Assert.Equal(FolderTile.AutoCard, dashboard.Slots[1].Item.Card);
+        Assert.Equal(C4kItem.AutoCard, dashboard.Slots[1].Item.Card);
     }
 
     [Fact]

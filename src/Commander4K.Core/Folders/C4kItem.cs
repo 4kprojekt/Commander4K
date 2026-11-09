@@ -51,7 +51,10 @@ public sealed record C4kItem
     /// <summary>Raw JSON object passed to the plugin.</summary>
     public string? Options { get; init; }
 
-    /// <summary>As a dashboard tile: <see cref="FolderTile.AutoCard"/>, a view or a plugin id; <c>null</c> = a plain shortcut.</summary>
+    /// <summary><see cref="Card"/> for <c>"card": true</c>: the preview Ctrl+Q would pick for the target.</summary>
+    public const string AutoCard = "auto";
+
+    /// <summary>As a dashboard tile: <see cref="AutoCard"/>, a view or a plugin id; <c>null</c> = a plain shortcut.</summary>
     public string? Card { get; init; }
 
     public FolderRun? Run { get; init; }
@@ -97,19 +100,19 @@ public sealed record C4kItem
 
             if (string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
             {
-                parts.Add(new object?[] { "ssh", Open, User, KeyFile });
+                parts.Add(new object?[] { "ssh", Open ?? CardTarget, User, KeyFile });
             }
 
             if (IsRemoteCard && !string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
             {
-                parts.Add(new object?[] { "remote", Open, User, KeyFile });
+                parts.Add(new object?[] { "remote", Open ?? CardTarget, User, KeyFile });
             }
 
             return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(parts))));
         }
     }
 
-    /// <summary>What trusting this file unlocks, one line each (same wording as <see cref="FolderConfig.TrustSummary"/>).</summary>
+    /// <summary>What trusting this file unlocks, one line each.</summary>
     public IReadOnlyList<string> TrustSummary()
     {
         var lines = new List<string>();
@@ -121,13 +124,12 @@ public sealed record C4kItem
         {
             lines.Add($"{api.Method} {api.Url}");
         }
-        else if (string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase) && Open is { } server)
+        else if (string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase) && CardTarget is { } server)
         {
-            lines.Add("SSH " + Resolve(server));
+            lines.Add("SSH " + server);
         }
-        else if (IsRemoteCard && Open is { } remote)
+        else if (IsRemoteCard && CardTarget is { } path)
         {
-            var path = Resolve(remote);
             lines.Add((VfsPath.GetScheme(path) == "sftp" ? "SFTP " : "FTP ") + path);
         }
 
@@ -135,7 +137,10 @@ public sealed record C4kItem
     }
 
     /// <summary>A card that reads an sftp/ftp target signs in with saved logins or the user's keys.</summary>
-    private bool IsRemoteCard => Card is not null && Open is { } open && VfsPath.GetScheme(Resolve(open)) is "sftp" or "ftp";
+    private bool IsRemoteCard => Card is not null && CardTarget is { } target && VfsPath.GetScheme(target) is "sftp" or "ftp";
+
+    /// <summary>What a card reads: <see cref="Open"/> resolved, else an explicit <c>folder</c> key (<see cref="ContextFolder"/>), else nothing.</summary>
+    public string? CardTarget => Open is { } open ? Resolve(open) : !string.Equals(ContextFolder, Folder, StringComparison.Ordinal) ? ContextFolder : null;
 
     public bool NeedsTrust => TrustSummary().Count > 0;
 
@@ -204,7 +209,7 @@ public sealed record C4kItem
             catch (FormatException ex)
             {
                 var card = root.TryGetProperty("card", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
-                item = item with { Card = string.IsNullOrEmpty(card) ? FolderTile.AutoCard : card };
+                item = item with { Card = string.IsNullOrEmpty(card) ? AutoCard : card };
                 error ??= ex.Message;
             }
 
@@ -220,7 +225,7 @@ public sealed record C4kItem
     {
         var card = root.TryGetProperty("card", out var c) ? c.ValueKind switch
         {
-            JsonValueKind.True => FolderTile.AutoCard,
+            JsonValueKind.True => AutoCard,
             JsonValueKind.False or JsonValueKind.Null => null,
             JsonValueKind.String when c.GetString() is { Length: > 0 } text => text,
             _ => throw new FormatException("\"card\" must be true or a preview name."),
@@ -243,4 +248,122 @@ public sealed record C4kItem
             ?? throw new FormatException($"Unknown \"size\" '{C4kJson.String(root, "size")}' (small, wide, tall, large, huge, full).");
         return item with { Card = card, Api = api, Refresh = refresh, Size = size };
     }
+}
+
+/// <summary>Footprint of a tile on the dashboard grid, in columns × rows.</summary>
+public enum TileSize
+{
+    /// <summary>1 × 1.</summary>
+    Small,
+
+    /// <summary>2 × 1.</summary>
+    Wide,
+
+    /// <summary>1 × 2.</summary>
+    Tall,
+
+    /// <summary>2 × 2.</summary>
+    Large,
+
+    /// <summary>3 × 2: a chart or a long list.</summary>
+    Huge,
+
+    /// <summary>Every column of the row, one row high (a banner, a note, a status line).</summary>
+    Full,
+}
+
+/// <summary>Names and spans of <see cref="TileSize"/>.</summary>
+public static class TileSizes
+{
+    /// <summary>The order the dashboard's resize button cycles through.</summary>
+    public static readonly IReadOnlyList<TileSize> Cycle = [TileSize.Small, TileSize.Wide, TileSize.Tall, TileSize.Large, TileSize.Huge, TileSize.Full];
+
+    /// <summary>Spans in grid units; <see cref="TileSize.Full"/> reports 0 columns = the whole row.</summary>
+    public static (int Columns, int Rows) Span(TileSize size) => size switch
+    {
+        TileSize.Wide => (2, 1),
+        TileSize.Tall => (1, 2),
+        TileSize.Large => (2, 2),
+        TileSize.Huge => (3, 2),
+        TileSize.Full => (0, 1),
+        _ => (1, 1),
+    };
+
+    public static string Name(TileSize size) => size.ToString().ToLowerInvariant();
+
+    /// <returns><c>null</c> for an unknown name.</returns>
+    public static TileSize? Parse(string? name) => name switch
+    {
+        null or "small" => TileSize.Small,
+        "wide" => TileSize.Wide,
+        "tall" => TileSize.Tall,
+        "large" => TileSize.Large,
+        "huge" => TileSize.Huge,
+        "full" => TileSize.Full,
+        _ => null,
+    };
+
+    public static TileSize Next(TileSize size) => Cycle[(Cycle.IndexOf(size) + 1) % Cycle.Count];
+
+    private static int IndexOf(this IReadOnlyList<TileSize> list, TileSize size)
+    {
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (list[i] == size)
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
+}
+
+/// <summary>How an API field is shown: as a value, as a point added to a chart on every refresh, or as a status colour.</summary>
+public enum ApiFieldKind
+{
+    Value,
+    Chart,
+    Status,
+}
+
+/// <summary>One field picked from an API response.</summary>
+/// <param name="Path">Path in the JSON: <c>a.b</c>, <c>items[0].name</c>, <c>$</c> for the whole value.</param>
+/// <param name="Ok">For <see cref="ApiFieldKind.Status"/>: values that mean good; empty = <c>true</c>, ok, up, healthy.</param>
+public sealed record ApiField(string Path, string? Label, ApiFieldKind As, string? Unit, IReadOnlyList<string> Ok);
+
+/// <summary>
+/// An HTTP request from a <c>.c4k</c> item. Url, header values and body may hold <c>{secret:name}</c> placeholders; the
+/// values live in the app's secret store, never in the file.
+/// </summary>
+public sealed record ApiRequest(string Url, string Method, IReadOnlyDictionary<string, string> Headers, string? Body, string? ContentType, IReadOnlyList<ApiField> Fields)
+{
+    /// <summary>Anything but GET and HEAD may change something on the server, so it needs the user's trust in the file.</summary>
+    public bool HasSideEffects => Method is not ("GET" or "HEAD");
+}
+
+public enum FolderActionKind
+{
+    /// <summary>A view: built-in (<see cref="C4kItem.View"/>) or a plugin's preview (<see cref="C4kItem.Plugin"/> + <see cref="C4kItem.PreviewId"/>).</summary>
+    View,
+
+    /// <summary>A panel plugin (<see cref="C4kItem.Panel"/>), e.g. a table of games.</summary>
+    Panel,
+
+    /// <summary>Go somewhere else: <c>sftp://user@host/dir</c> (with a key), a share, another folder.</summary>
+    Open,
+
+    /// <summary>A web page in the browser panel.</summary>
+    Url,
+
+    /// <summary>A program or script; runs only after the user trusts this <c>.c4k</c> file.</summary>
+    Run,
+}
+
+/// <summary>A program started from a <c>.c4k</c> item (a script, a build, a game launcher).</summary>
+/// <param name="WorkingDirectory">Relative to the item's folder; the folder itself by default.</param>
+/// <param name="Hidden">Run without a window (the default shows a console, so the user sees what runs).</param>
+public sealed record FolderRun(string Command, IReadOnlyList<string> Arguments, string? WorkingDirectory = null, bool Hidden = false)
+{
+    public override string ToString() => Arguments.Count == 0 ? Command : Command + " " + string.Join(" ", Arguments.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
 }

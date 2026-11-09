@@ -3,7 +3,7 @@ using Commander4K.PluginSdk;
 
 namespace Commander4K.Core.Folders;
 
-/// <summary>JSON and path helpers shared by <c>c4k.dir</c> (<see cref="FolderConfig"/>) and <c>*.c4k</c> items (<see cref="C4kItem"/>).</summary>
+/// <summary>JSON and path helpers for <c>*.c4k</c> items (<see cref="C4kItem"/>).</summary>
 public static class C4kJson
 {
     /// <summary><c>"10s"</c>, <c>"5m"</c>, <c>"1h"</c>; anything under 2 s becomes 2 s so a dashboard cannot hammer a server.</summary>

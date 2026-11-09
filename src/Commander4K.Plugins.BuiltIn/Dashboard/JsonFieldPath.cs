@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace Commander4K.Plugins.BuiltIn.Dashboard;
 
-/// <summary>Paths into JSON responses as <c>c4k.dir</c> writes them: <c>a.b</c>, <c>items[0].name</c>, <c>$</c> for the whole value.</summary>
+/// <summary>Paths into JSON responses as <c>.c4k</c> files write them: <c>a.b</c>, <c>items[0].name</c>, <c>$</c> for the whole value.</summary>
 public static partial class JsonFieldPath
 {
     public static bool TryGet(JsonElement root, string path, out JsonElement value)

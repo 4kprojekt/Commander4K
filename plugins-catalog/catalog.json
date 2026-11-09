@@ -20,7 +20,7 @@
         "biblioteka",
         "library"
       ],
-      "example": "{ \"preview\": { \"plugin\": \"official.steam-library\" }, \"enter\": { \"plugin\": \"official.steam-library\" } }",
+      "example": "{ \"plugin\": \"official.steam-library\" }",
       "path": "plugins-catalog/steam-library-powershell",
       "files": [
         {
@@ -58,7 +58,7 @@
         "gałęzie",
         "branches"
       ],
-      "example": "{ \"preview\": { \"plugin\": \"official.git-repo\" }, \"enter\": { \"plugin\": \"official.git-repo\", \"options\": { \"commits\": 30 } } }",
+      "example": "{ \"plugin\": \"official.git-repo\", \"options\": { \"commits\": 30 } }",
       "path": "plugins-catalog/git-repo-powershell",
       "files": [
         {
@@ -145,7 +145,7 @@
         "historia",
         "commit"
       ],
-      "example": "{ \"enter\": { \"plugin\": \"examples.git\", \"panel\": \"log\" } }",
+      "example": "{ \"plugin\": \"examples.git\", \"panel\": \"log\" }",
       "path": "examples/plugins/git-powershell",
       "files": [
         {
@@ -252,7 +252,7 @@
         "karta",
         "card"
       ],
-      "example": "{ \"preview\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Konfiguracja\", \"open\": \"config.json\", \"card\": true } ] } }",
+      "example": "{ \"title\": \"Konfiguracja\", \"open\": \"config.json\", \"card\": true }",
       "path": "plugins-catalog/json-preview-python",
       "files": [
         {
@@ -295,7 +295,7 @@
         "karta",
         "card"
       ],
-      "example": "{ \"preview\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"API\", \"open\": \"openapi.yaml\", \"card\": true } ] } }",
+      "example": "{ \"title\": \"API\", \"open\": \"openapi.yaml\", \"card\": true }",
       "path": "plugins-catalog/openapi-preview-python",
       "files": [
         {
@@ -348,7 +348,7 @@
         "karta",
         "card"
       ],
-      "example": "{ \"preview\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Strona\", \"open\": \"index.html\", \"card\": true } ] } }",
+      "example": "{ \"title\": \"Strona\", \"open\": \"index.html\", \"card\": true }",
       "path": "plugins-catalog/html-preview-python",
       "files": [
         {
@@ -387,7 +387,7 @@
         "smtp",
         "eml"
       ],
-      "example": "{ \"preview\": { \"plugin\": \"official.mail\", \"options\": { \"imap\": \"imap.example.com:993\", \"smtp\": \"smtp.example.com:465\", \"user\": \"ja@example.com\", \"refresh\": \"5m\", \"since\": \"3m\" } }, \"enter\": \"official.mail\" }",
+      "example": "{ \"plugin\": \"official.mail\", \"options\": { \"imap\": \"imap.example.com:993\", \"smtp\": \"smtp.example.com:465\", \"user\": \"ja@example.com\", \"refresh\": \"5m\", \"since\": \"3m\" } }",
       "path": "plugins-catalog/mail-powershell",
       "files": [
         {
@@ -435,7 +435,7 @@
         "podpis",
         "signature"
       ],
-      "example": "{ \"preview\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Program\", \"open\": \"app.exe\", \"card\": true } ] } }",
+      "example": "{ \"title\": \"Program\", \"open\": \"app.exe\", \"card\": true }",
       "path": "plugins-catalog/pe-info-python",
       "files": [
         {
@@ -506,7 +506,7 @@
         "jar",
         "whl"
       ],
-      "example": "{ \"preview\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Paczka\", \"open\": \"release.zip\", \"card\": true } ] } }",
+      "example": "{ \"title\": \"Paczka\", \"open\": \"release.zip\", \"card\": true }",
       "path": "plugins-catalog/archive-info-python",
       "files": [
         {
@@ -562,7 +562,7 @@
         "podgląd",
         "preview"
       ],
-      "example": "{ \"preview\": { \"plugin\": \"official.mikrotik-routeros\" } }",
+      "example": "{ \"plugin\": \"official.mikrotik-routeros\" }",
       "path": "plugins-catalog/mikrotik-routeros-python",
       "files": [
         {
@@ -607,7 +607,7 @@
         "podgląd",
         "preview"
       ],
-      "example": "{ \"preview\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Log aplikacji\", \"open\": \"app.log\" } ] } }",
+      "example": "{ \"title\": \"Log aplikacji\", \"open\": \"app.log\" }",
       "path": "plugins-catalog/log-viewer-python",
       "files": [
         {

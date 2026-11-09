@@ -76,6 +76,21 @@ public sealed class C4kTrustTests : IDisposable
     }
 
     [Fact]
+    public void Remote_folder_key_on_a_card_counts_like_a_remote_open()
+    {
+        var item = Item("""{ "plugin": "official.mail", "folder": "sftp://kamil@vps.example.com/mail", "card": true }""");
+
+        Assert.True(item.NeedsTrust);
+        Assert.Equal(["SFTP sftp://kamil@vps.example.com/mail"], item.TrustSummary());
+        Assert.False(Item("""{ "folder": "Firma", "card": true }""").NeedsTrust);
+        Assert.False(Item("""{ "folder": "sftp://kamil@vps.example.com/mail" }""").NeedsTrust);
+
+        var store = new C4kTrustStore(StorePath);
+        store.Trust(item);
+        Assert.False(store.IsTrusted(Item("""{ "plugin": "official.mail", "folder": "sftp://kamil@evil.example.com/mail", "card": true }""")));
+    }
+
+    [Fact]
     public void Summary_lists_run_post_and_ssh()
     {
         var run = Item(Run);

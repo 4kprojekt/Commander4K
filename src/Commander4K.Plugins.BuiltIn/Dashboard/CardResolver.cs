@@ -49,7 +49,7 @@ public sealed class CardResolver(
             return Fixed(ErrorCard(error));
         }
 
-        var target = tile.Open is { } open ? tile.Resolve(open) : null;
+        var target = tile.CardTarget;
         if (string.Equals(card, FolderViewIds.Api, StringComparison.OrdinalIgnoreCase) && tile.Api is { } request)
         {
             var host = hostFor(api.Manifest);
@@ -93,7 +93,7 @@ public sealed class CardResolver(
                 : new CardSource((previous, ct) => FolderCardAsync(card, target, tile, previous, ct), false, null);
         }
 
-        if (string.Equals(card, FolderTile.AutoCard, StringComparison.Ordinal))
+        if (string.Equals(card, C4kItem.AutoCard, StringComparison.Ordinal))
         {
             return target is null
                 ? Fixed(ErrorCard(Loc.T("Karta potrzebuje „open”: ścieżki, którą pokazuje.")))

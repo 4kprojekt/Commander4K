@@ -79,7 +79,7 @@ public static class FolderCards
 
             case FolderViewIds.Markdown:
             {
-                var file = own?.Single is { } item ? item.Resolve(item.File ?? "README.md") : FolderConfig.ChildPath(folder.Path, "README.md");
+                var file = own?.Single is { } item ? item.Resolve(item.File ?? "README.md") : C4kJson.ChildPath(folder.Path, "README.md");
                 var (data, length, _) = await PreviewReading.ReadHeadAsync(host, file, 64 * 1024, cancellationToken).ConfigureAwait(false);
                 return new PreviewCard(null, null, "📄", CardStatus.None, [new CardText(FirstParagraph(PreviewReading.Decode(data, length)))], open);
             }

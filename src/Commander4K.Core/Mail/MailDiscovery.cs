@@ -189,7 +189,7 @@ public sealed class MailDiscovery(IMailDiscoveryNetwork network, TimeSpan? attem
         .Replace("%EMAILLOCALPART%", local, StringComparison.Ordinal)
         .Replace("%EMAILDOMAIN%", domain, StringComparison.Ordinal);
 
-    /// <summary>A server c4k.dir can name: a host name, and TLS on 993/465 only, since <see cref="MailEndpoints"/> derives TLS from the port.</summary>
+    /// <summary>A server the mail .c4k item can name: a host name, and TLS on 993/465 only, since <see cref="MailEndpoints"/> derives TLS from the port.</summary>
     private static bool Acceptable(string host, int port, bool ssl, Action<string> log)
     {
         if (!IsHostName(host) || port is < 1 or > 65535)
@@ -200,7 +200,7 @@ public sealed class MailDiscovery(IMailDiscoveryNetwork network, TimeSpan? attem
 
         if (ssl != port is 993 or 465)
         {
-            log($"  {host}:{port} {(ssl ? "ssl" : "starttls")} skipped: c4k.dir uses implicit TLS on 993/465 only");
+            log($"  {host}:{port} {(ssl ? "ssl" : "starttls")} skipped: the mail .c4k uses implicit TLS on 993/465 only");
             return false;
         }
 

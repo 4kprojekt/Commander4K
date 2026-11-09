@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.schema.json",
+  "title": "Commander4K item file (*.c4k)",
+  "description": "One item: a view, a plugin, a panel, a link (open, url), a command (run) or an API request, and on a dashboard one tile. A folder with one .c4k file shows that item in its quick view and on Enter; with two or more it is a dashboard, one tile per file in natural name order (rename to reorder; at most 50 files of up to 256 KB). Shift+Enter always opens the plain file list. Comments and trailing commas are allowed.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string",
+      "description": "Title of the view or tile; the file name without .c4k by default."
+    },
+    "description": {
+      "type": "string",
+      "description": "Text under the title."
+    },
+    "icon": {
+      "type": "string",
+      "description": "An emoji shown when there is no image."
+    },
+    "image": {
+      "type": "string",
+      "description": "Picture file of the tile, relative to this file's folder."
+    },
+    "view": {
+      "$ref": "#/$defs/view"
+    },
+    "plugin": {
+      "type": "string",
+      "description": "Plugin id; installed from the official catalog when missing."
+    },
+    "preview": {
+      "type": "string",
+      "description": "The plugin's preview id (contributes.previews); the first one by default."
+    },
+    "panel": {
+      "type": "string",
+      "description": "Panel to open: a built-in id (builtin.sysinfo), the plugin's panel id with plugin, or <plugin>/<panel>."
+    },
+    "open": {
+      "type": "string",
+      "description": "Where Enter (or a click on the tile) goes: a relative folder, a file, an archive, \\\\server\\share, sftp://user@host/dir, ftp://… Esc returns to the folder holding this file. For a card also what it shows."
+    },
+    "user": {
+      "type": "string",
+      "description": "User name for open on SFTP/FTP."
+    },
+    "keyFile": {
+      "type": "string",
+      "description": "Private key for open on SFTP; ~ is the user's profile."
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "http(s) page shown in the panel browser."
+    },
+    "run": {
+      "$ref": "#/$defs/run"
+    },
+    "file": {
+      "type": "string",
+      "description": "Markdown file for the markdown view (README.md by default)."
+    },
+    "folder": {
+      "type": "string",
+      "description": "The folder the item is about (its context folder), relative to this file's folder or absolute; this file's folder by default. A card without open shows it (e.g. a mail account kept elsewhere)."
+    },
+    "options": {
+      "type": "object",
+      "description": "Passed to the plugin as options (preview.render, panel.load, preview.card)."
+    },
+    "api": {
+      "$ref": "#/$defs/api"
+    },
+    "card": {
+      "description": "On a dashboard (2+ .c4k files in a folder), show this item as a live card: true = the preview Ctrl+Q would pick for open (or folder); or a name: files, gallery, notes, markdown, dashboard, api, ssh, the widgets clock, note, disks, a panel id (builtin.sysinfo, plugin/panel), or a plugin id (plugin or plugin/preview). Without card the item is a shortcut tile.",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "refresh": {
+      "type": "string",
+      "pattern": "^[0-9]+[smh]$",
+      "description": "Read the card again every 10s, 5m, 1h… while the dashboard is visible (at least 2 s)."
+    },
+    "size": {
+      "enum": [
+        "small",
+        "wide",
+        "tall",
+        "large",
+        "huge",
+        "full"
+      ],
+      "description": "Footprint on the dashboard grid (columns × rows): small 1×1, wide 2×1, tall 1×2, large 2×2, huge 3×2, full = the whole row."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "view": {
+      "enum": [
+        "files",
+        "gallery",
+        "notes",
+        "markdown",
+        "api",
+        "settings",
+        "skins",
+        "plugins"
+      ],
+      "description": "settings, skins and plugins are the app's own pages (settings, skins, plugin manager); the app writes settings.c4k, skins.c4k and plugins.c4k into config/, config/skins/ and the plugins folder."
+    },
+    "run": {
+      "description": "A command started in the item's folder after the user trusts this file (trust covers run, api, ssh and remote card fields, so renaming the title or resizing keeps it). A .ps1 runs with PowerShell 7.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working folder relative to this folder."
+            },
+            "hidden": {
+              "type": "boolean",
+              "description": "Run without a window."
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "api": {
+      "type": "object",
+      "description": "An HTTP request. {secret:name} in a header or the body (not the url) is replaced with a secret stored by the app (never write tokens here). Methods other than GET/HEAD need the user's trust in this file.",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "HEAD",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "get",
+            "head",
+            "post",
+            "put",
+            "patch",
+            "delete"
+          ]
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "body": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path in the JSON response: a.b, items[0].name, $ for the whole value."
+              },
+              "label": {
+                "type": "string"
+              },
+              "as": {
+                "enum": [
+                  "value",
+                  "chart",
+                  "status"
+                ]
+              },
+              "unit": {
+                "type": "string"
+              },
+              "ok": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "For status: values that mean good."
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -91,7 +91,7 @@ public sealed class C4kFolderTests
         var item = C4kItem.Parse(Folder, "x.c4k", """{ "card": true, "size": "giant" }""");
 
         Assert.NotNull(item.Error);
-        Assert.Equal(FolderTile.AutoCard, item.Card);
+        Assert.Equal(C4kItem.AutoCard, item.Card);
     }
 
     [Fact]
@@ -126,6 +126,124 @@ public sealed class C4kFolderTests
         {
             dir.Delete(true);
         }
+    }
+
+    [Fact]
+    public async Task A_listing_error_reads_as_no_items()
+    {
+        var router = new Vfs.VfsRouter(new Execution.ResilientAsyncExecutor(), [new FakeVfsProvider()]);
+
+        Assert.Null(await C4kReader.ReadAsync(router, "nope://host/home", TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void Ssh_open_and_run_items()
+    {
+        var ssh = C4kItem.Parse(@"C:\Work\Server", "vps.c4k", """{ "open": "sftp://kamil@beelink.lan/home/kamil", "keyFile": "~/.ssh/id_ed25519" }""");
+        Assert.Equal(FolderActionKind.Open, ssh.Kind);
+        Assert.EndsWith(@".ssh\id_ed25519", ssh.Resolve(ssh.KeyFile!), StringComparison.Ordinal);
+        Assert.Equal("sftp://kamil@beelink.lan/home/kamil", ssh.Resolve(ssh.Open!));
+
+        var build = C4kItem.Parse(@"C:\Work\Server", "build.c4k", """{ "run": { "command": "build.ps1", "args": ["-Release"], "cwd": "src" }, "image": "../cover.png" }""");
+        Assert.Equal(FolderActionKind.Run, build.Kind);
+        Assert.Equal(("build.ps1", "src", false), (build.Run!.Command, build.Run.WorkingDirectory, build.Run.Hidden));
+        Assert.Equal("build.ps1 -Release", build.Run.ToString());
+        Assert.Equal(@"C:\Work\cover.png", build.Resolve(build.Image!));
+    }
+
+    [Theory]
+    [InlineData("examples.git", "log", "examples.git/log")]
+    [InlineData(null, "builtin.sysinfo", "builtin.sysinfo")]
+    [InlineData("x.y", "other.plugin/view", "other.plugin/view")]
+    public void Panel_ids_are_qualified_with_the_plugin(string? plugin, string panel, string expected) =>
+        Assert.Equal(expected, new C4kItem { FilePath = "x.c4k", Folder = Folder, Name = "x", Plugin = plugin, Panel = panel }.PanelId);
+
+    [Theory]
+    [InlineData(@"C:\", @"C:\a.c4k")]
+    [InlineData(@"\\nas\media\films", @"\\nas\media\films\a.c4k")]
+    [InlineData("sftp://me@host/home/me", "sftp://me@host/home/me/a.c4k")]
+    [InlineData(@"zip://C:\a.zip::/docs", @"zip://C:\a.zip::/docs/a.c4k")]
+    public void Child_paths_follow_the_location(string folder, string expected) =>
+        Assert.Equal(expected, C4kJson.ChildPath(folder, "a.c4k"));
+
+    [Fact]
+    public void Card_items_parse_api_fields()
+    {
+        var item = C4kItem.Parse(Folder, "grafana.c4k", """
+            { "card": "api", "refresh": "1m",
+              "api": {
+                "url": "https://grafana.example.com/api/health",
+                "headers": { "Authorization": "Bearer {secret:grafana}" },
+                "fields": [
+                  { "path": "database", "label": "Baza", "as": "status", "ok": ["ok"] },
+                  { "path": "version", "label": "Wersja" }
+                ]
+              } }
+            """);
+
+        Assert.Null(item.Error);
+        Assert.Equal(FolderViewIds.Api, item.Card);
+        Assert.Equal(TimeSpan.FromMinutes(1), item.Refresh);
+        var api = item.Api!;
+        Assert.Equal("GET", api.Method);
+        Assert.False(api.HasSideEffects);
+        Assert.Equal("Bearer {secret:grafana}", api.Headers["Authorization"]);
+        Assert.Equal(ApiFieldKind.Status, api.Fields[0].As);
+        Assert.Equal(["ok"], api.Fields[0].Ok);
+        Assert.Equal(ApiFieldKind.Value, api.Fields[1].As);
+        Assert.Equal("Wersja", api.Fields[1].Label);
+    }
+
+    [Fact]
+    public void Api_view_with_post_has_side_effects()
+    {
+        var item = C4kItem.Parse(Folder, "api.c4k", """{ "view": "api", "api": { "url": "https://x/y", "method": "post", "body": "{}" } }""");
+
+        Assert.Null(item.Error);
+        Assert.Equal("POST", item.Api!.Method);
+        Assert.True(item.Api.HasSideEffects);
+        Assert.Equal("{}", item.Api.Body);
+        Assert.False(item.IsPlainFiles);
+    }
+
+    [Theory]
+    [InlineData("1s", 2)]
+    [InlineData("90s", 90)]
+    [InlineData("5m", 300)]
+    [InlineData("2h", 7200)]
+    public void Refresh_is_parsed_and_clamped_to_two_seconds(string text, int seconds) =>
+        Assert.Equal(TimeSpan.FromSeconds(seconds), C4kJson.ParseRefresh(text));
+
+    [Fact]
+    public void Refresh_rejects_other_text()
+    {
+        Assert.Null(C4kJson.ParseRefresh(null));
+        Assert.Throws<FormatException>(() => C4kJson.ParseRefresh("fast"));
+        Assert.Throws<FormatException>(() => C4kJson.ParseRefresh("10"));
+        Assert.Throws<FormatException>(() => C4kJson.ParseRefresh("300000000h"));
+        Assert.Throws<FormatException>(() => C4kJson.ParseRefresh("25h"));
+    }
+
+    [Theory]
+    [InlineData("""{ "card": true, "refresh": "300000000h" }""")]
+    [InlineData("""{ "card": true, "refresh": 10 }""")]
+    [InlineData("""{ "card": true, "refresh": "fast" }""")]
+    [InlineData("""{ "card": "api", "api": { "method": "GET" } }""")]
+    [InlineData("""{ "card": "api" }""")]
+    [InlineData("""{ "card": 5 }""")]
+    [InlineData("""{ "card": "api", "api": { "url": "https://x/y", "fields": [ { "path": "a", "as": "pie" } ] } }""")]
+    [InlineData("""{ "card": true, "run": "build.ps1" }""")]
+    [InlineData("""{ "run": { "args": [] } }""")]
+    [InlineData("""{ "run": 5 }""")]
+    public void Bad_card_and_run_fields_become_item_errors(string json) =>
+        Assert.False(string.IsNullOrEmpty(C4kItem.Parse(Folder, "x.c4k", json).Error));
+
+    [Fact]
+    public void Detects_comments()
+    {
+        Assert.True(C4kWriter.HasComments("{ // note\n \"view\": \"gallery\" }"));
+        Assert.True(C4kWriter.HasComments("""{ /* a */ "view": "gallery" }"""));
+        Assert.False(C4kWriter.HasComments("""{ "url": "https://example.com/a//b" }"""));
     }
 
     private sealed class DiskProvider : IVfsProviderPlugin

@@ -4,6 +4,13 @@ using System.Text.Json.Nodes;
 
 namespace Commander4K.Core.Folders;
 
+public enum FolderConfigWrite
+{
+    Written,
+    AlreadyExists,
+    Failed,
+}
+
 /// <summary>Creates and edits <c>.c4k</c> item files.</summary>
 public static class C4kWriter
 {
@@ -93,7 +100,25 @@ public static class C4kWriter
     }
 
     /// <summary>Comments are dropped when the file is written again, so the caller warns first.</summary>
-    public static bool HasComments(string json) => FolderConfigWriter.HasComments(json);
+    public static bool HasComments(string json)
+    {
+        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json), new JsonReaderOptions { CommentHandling = JsonCommentHandling.Allow, AllowTrailingCommas = true });
+        try
+        {
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.Comment)
+                {
+                    return true;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Writes a new item file in <paramref name="folder"/> but never replaces one. A hung share is abandoned after

@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Commander4K.Core.Folders;
 
-/// <summary>Which <c>.c4k</c> files the user allowed to run commands or send requests: file path to <see cref="C4kItem.TrustHash"/>. Same file format as <see cref="FolderTrustStore"/>.</summary>
+/// <summary>Which <c>.c4k</c> files the user allowed to run commands or send requests: file path to <see cref="C4kItem.TrustHash"/>.</summary>
 public sealed class C4kTrustStore(string path)
 {
     private readonly Lock _gate = new();

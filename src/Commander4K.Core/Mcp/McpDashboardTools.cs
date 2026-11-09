@@ -194,7 +194,7 @@ public static class McpDashboardTools
             warnings.Add($"{where}: refresh every {refresh.TotalSeconds:0} s is aggressive; 30s–5m suits most cards.");
         }
 
-        if (string.Equals(card, FolderTile.AutoCard, StringComparison.Ordinal) || FolderCards.Contains(card, StringComparer.OrdinalIgnoreCase))
+        if (string.Equals(card, C4kItem.AutoCard, StringComparison.Ordinal) || FolderCards.Contains(card, StringComparer.OrdinalIgnoreCase))
         {
             if (item.Open is null)
             {
