@@ -1520,13 +1520,7 @@ public sealed class MainWindow : Window
 
             case FolderActionKind.Open when action.Open is { } open:
                 var target = action.Resolve(open);
-                if (VfsPath.GetScheme(target) is "sftp" or "ftp" && (action.KeyFile is not null || action.User is not null))
-                {
-                    // The login from the .c4k file is kept for this session only; saved connections remain the place for passwords.
-                    host.Remote.SetLogin(target, new RemoteLogin(action.User ?? RemoteTransferVfsPlugin.UserNameOf(target) ?? Environment.UserName,
-                        PrivateKeyFile: action.KeyFile is { } key ? action.Resolve(key) : null));
-                }
-
+                ApplyItemLogin(action, target);
                 var openTab = panel.ActiveTab;
                 var navigation = panel.NavigateAsync(target);
                 openTab.SetOrigin(action.Folder, target); // after NavigateAsync, which drops an origin the new path is not under
@@ -1878,6 +1872,20 @@ public sealed class MainWindow : Window
             return;
         }
 
+        if (item is { Kind: FolderActionKind.Open, Open: { } open })
+        {
+            // The ordinary tile path (a folder with its own view opens in place, a pinned view closes), with the item's login and way back.
+            var target = item.Resolve(open);
+            ApplyItemLogin(item, target);
+            await OpenTileAsync(new PreviewTile(item.Title, Target: target), folder, listPanel);
+            if (SamePath(listPanel.ActiveTab.Path, target))
+            {
+                listPanel.ActiveTab.SetOrigin(item.Folder, target);
+            }
+
+            return;
+        }
+
         if (item.Kind == FolderActionKind.View && listPanel.Mode is PreviewPanelView { IsPinnedFolder: true } pinnedView)
         {
             await pinnedView.OpenPinnedAsync(new PreviewPanelView.PinnedFolder(folderEntry, config, item));
@@ -1885,6 +1893,16 @@ public sealed class MainWindow : Window
         }
 
         await RunFolderActionAsync(listPanel, folderEntry, config, item);
+    }
+
+    /// <summary>The login from the .c4k file is kept for this session only; saved connections remain the place for passwords.</summary>
+    private void ApplyItemLogin(C4kItem item, string target)
+    {
+        if (VfsPath.GetScheme(target) is "sftp" or "ftp" && (item.KeyFile is not null || item.User is not null))
+        {
+            _host!.Remote.SetLogin(target, new RemoteLogin(item.User ?? RemoteTransferVfsPlugin.UserNameOf(target) ?? Environment.UserName,
+                PrivateKeyFile: item.KeyFile is { } key ? item.Resolve(key) : null));
+        }
     }
 
     /// <summary>An item of the folder a tile came from, read again from disk; a link to a file elsewhere finds nothing.</summary>

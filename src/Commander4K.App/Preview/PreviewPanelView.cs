@@ -730,7 +730,7 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
             else if (config is not null && item is { IsPlainFiles: false })
             {
                 (plugin, folderView) = ResolveFolderView(item, pinnedView, target);
-                _title.Text = item.Title;
+                _title.Text = Plugins.BuiltIn.Previews.FolderViews.SingleTitle(item);
             }
         }
 

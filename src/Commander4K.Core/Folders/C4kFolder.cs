@@ -1,3 +1,4 @@
+using System.IO.Enumeration;
 using System.Text;
 using Commander4K.PluginSdk;
 
@@ -45,39 +46,82 @@ public static class C4kReader
         return new C4kFolder(folder, [.. sorted.Take(MaxItems).Select(f => C4kItem.Parse(folder, f.FileName, f.Json))], Math.Max(0, sorted.Count - MaxItems));
     }
 
-    /// <returns><c>null</c> when there are no item files, on timeout, or on any failure but the caller's cancellation.</returns>
+    /// <returns>
+    /// <c>null</c> when there are no item files, on timeout, or when the folder cannot be listed. A file that cannot be
+    /// read becomes an item with <see cref="C4kItem.Error"/>, so its neighbours still show.
+    /// </returns>
     public static async Task<C4kFolder?> ReadAsync(Vfs.VfsRouter router, string folder, TimeSpan timeout, CancellationToken cancellationToken)
     {
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(timeout);
         try
         {
-            var names = new List<string>();
-            await foreach (var entry in router.OpenListing(folder, limit.Token).ReadAllAsync(limit.Token).ConfigureAwait(false))
-            {
-                if (IsItemFile(entry))
-                {
-                    names.Add(entry.Name);
-                }
-            }
-
-            if (names.Count == 0)
+            var names = await ListNamesAsync(router, folder, limit.Token).ConfigureAwait(false);
+            if (names is not { Count: > 0 })
             {
                 return null;
             }
 
             // Only the first MaxItems by name are read; the rest are counted as skipped.
-            var files = new List<(string, string)>();
+            var items = new List<C4kItem>();
             foreach (var name in names.OrderBy(n => n, NaturalComparer.Instance).Take(MaxItems))
             {
-                await using var stream = await router.OpenReadAsync(C4kJson.ChildPath(folder, name), limit.Token).ConfigureAwait(false);
-                using var text = new StreamReader(stream, Encoding.UTF8);
-                files.Add((name, await text.ReadToEndAsync(limit.Token).ConfigureAwait(false)));
+                try
+                {
+                    await using var stream = await router.OpenReadAsync(C4kJson.ChildPath(folder, name), limit.Token).ConfigureAwait(false);
+                    using var text = new StreamReader(stream, Encoding.UTF8);
+                    items.Add(C4kItem.Parse(folder, name, await text.ReadToEndAsync(limit.Token).ConfigureAwait(false)));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    items.Add(C4kItem.Parse(folder, name, string.Empty) with { Error = ex.Message });
+                }
             }
 
-            return Build(folder, files) with { Skipped = names.Count - files.Count };
+            return new C4kFolder(folder, items, names.Count - items.Count);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Disks and shares are enumerated directly for <c>*.c4k</c> names only (no entry objects for the rest, abandoned on
+    /// timeout like a stuck share); other schemes go through the provider's listing.
+    /// </summary>
+    private static async Task<List<string>?> ListNamesAsync(Vfs.VfsRouter router, string folder, CancellationToken cancellationToken)
+    {
+        if (VfsPath.GetScheme(folder) is VfsPath.FileScheme or VfsPath.SmbScheme)
+        {
+            return await Task.Run(() => ListDiskNames(folder), CancellationToken.None).WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var names = new List<string>();
+        await foreach (var entry in router.OpenListing(folder, cancellationToken).ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (IsItemFile(entry))
+            {
+                names.Add(entry.Name);
+            }
+        }
+
+        return names;
+    }
+
+    /// <returns><c>null</c> when the folder cannot be listed (never throws: it runs on a pool thread).</returns>
+    private static List<string>? ListDiskNames(string folder)
+    {
+        try
+        {
+            var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = true };
+            return [.. new FileSystemEnumerable<VfsEntry>(folder,
+                (ref FileSystemEntry e) => new VfsEntry(e.FileName.ToString(), string.Empty, VfsEntryKind.File, e.Length), options)
+            {
+                ShouldIncludePredicate = (ref FileSystemEntry e) => !e.IsDirectory && e.FileName.EndsWith(Extension, StringComparison.OrdinalIgnoreCase),
+            }.Where(IsItemFile).Select(e => e.Name)];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException)
         {
             return null;
         }

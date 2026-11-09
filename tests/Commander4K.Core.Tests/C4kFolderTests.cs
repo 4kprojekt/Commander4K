@@ -129,6 +129,76 @@ public sealed class C4kFolderTests
     }
 
     [Fact]
+    public async Task ReadAsync_keeps_neighbours_of_an_unreadable_file_and_ignores_c4kx()
+    {
+        var dir = Directory.CreateTempSubdirectory("c4k-locked");
+        try
+        {
+            File.WriteAllText(Path.Combine(dir.FullName, "a.c4k"), """{ "title": "A" }""");
+            File.WriteAllText(Path.Combine(dir.FullName, "c.c4k"), """{ "title": "C" }""");
+            File.WriteAllText(Path.Combine(dir.FullName, "d.c4kx"), "{}");
+            var locked = Path.Combine(dir.FullName, "b.c4k");
+            File.WriteAllText(locked, "{}");
+            var router = new Vfs.VfsRouter(new Execution.ResilientAsyncExecutor(), [new DiskProvider()]);
+
+            C4kFolder? folder;
+            using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                folder = await C4kReader.ReadAsync(router, dir.FullName, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            }
+
+            Assert.Equal(["a", "b", "c"], folder!.Items.Select(i => i.Name));
+            Assert.Null(folder.Items[0].Error);
+            Assert.NotNull(folder.Items[1].Error);
+            Assert.Equal("C", folder.Items[2].Title);
+        }
+        finally
+        {
+            dir.Delete(true);
+        }
+    }
+
+    [Fact]
+    public async Task ReadAsync_counts_files_beyond_the_limit_as_skipped()
+    {
+        var dir = Directory.CreateTempSubdirectory("c4k-many");
+        try
+        {
+            for (var i = 0; i < C4kReader.MaxItems + 3; i++)
+            {
+                File.WriteAllText(Path.Combine(dir.FullName, $"item{i}.c4k"), "{}");
+            }
+
+            var router = new Vfs.VfsRouter(new Execution.ResilientAsyncExecutor(), [new DiskProvider()]);
+            var folder = await C4kReader.ReadAsync(router, dir.FullName, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            Assert.Equal(C4kReader.MaxItems, folder!.Items.Count);
+            Assert.Equal(3, folder.Skipped);
+            Assert.Equal("item49", folder.Items[^1].Name);
+        }
+        finally
+        {
+            dir.Delete(true);
+        }
+    }
+
+    [Fact]
+    public async Task ReadAsync_listing_timeout_reads_as_no_items()
+    {
+        var provider = new FakeVfsProvider();
+        provider.HangOn.Add("mem://hang");
+        var router = new Vfs.VfsRouter(new Execution.ResilientAsyncExecutor(), [provider]);
+        try
+        {
+            Assert.Null(await C4kReader.ReadAsync(router, "mem://hang", TimeSpan.FromMilliseconds(200), TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            provider.Release.Set();
+        }
+    }
+
+    [Fact]
     public async Task A_listing_error_reads_as_no_items()
     {
         var router = new Vfs.VfsRouter(new Execution.ResilientAsyncExecutor(), [new FakeVfsProvider()]);

@@ -1957,7 +1957,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Equal(Path.Combine(photos, "a.jpg"), gallery.Tiles[0].Target);
 
         var dashboard = BuiltIn.Previews.FolderViews.Dashboard(config!);
-        Assert.Equal([Path.Combine(photos, "logs"), BuiltIn.Previews.FolderViews.RunTarget(Path.Combine(photos, "3 build.c4k"))], dashboard.Slots.Skip(1).Select(s => s.Shortcut.Target));
+        Assert.Equal([null, BuiltIn.Previews.FolderViews.RunTarget(Path.Combine(photos, "3 build.c4k"))], dashboard.Slots.Skip(1).Select(s => s.Shortcut.Target));
 
         Assert.Null(await Core.Folders.C4kReader.ReadAsync(_router, _folder, TimeSpan.FromSeconds(5), TestToken));
     }

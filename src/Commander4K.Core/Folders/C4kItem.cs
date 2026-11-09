@@ -100,7 +100,7 @@ public sealed record C4kItem
 
             if (string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
             {
-                parts.Add(new object?[] { "ssh", Open ?? CardTarget, User, KeyFile });
+                parts.Add(new object?[] { "ssh", Open ?? CardTarget, User, KeyFile, OptionText("user"), OptionText("keyFile") });
             }
 
             if (IsRemoteCard && !string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
@@ -110,6 +110,18 @@ public sealed record C4kItem
 
             return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(parts))));
         }
+    }
+
+    /// <summary>A text value of <see cref="Options"/> (the ssh card reads its login there).</summary>
+    private string? OptionText(string key)
+    {
+        if (Options is null)
+        {
+            return null;
+        }
+
+        using var options = JsonDocument.Parse(Options);
+        return options.RootElement.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     }
 
     /// <summary>What trusting this file unlocks, one line each.</summary>

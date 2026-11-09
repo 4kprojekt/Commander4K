@@ -69,7 +69,7 @@ public static class FolderViews
             .OrderBy(e => e.Name, StringComparer.CurrentCultureIgnoreCase)
             .Take(MaxImages)
             .ToList();
-        var title = item.Title;
+        var title = SingleTitle(item);
         var description = item.Description ?? Loc.P(images.Count, "{0} obraz|{0} obrazy|{0} obrazów");
         var tiles = images.Select(e => new PreviewTile(e.Name, Size(e.Size), "🖼", null, e.Path)).ToArray();
         progress?.Report(new TilesPreview(title, [.. tiles], description, 220));
@@ -117,20 +117,31 @@ public static class FolderViews
         return Snapshot();
     }
 
-    /// <summary>The folder's items as shortcut tiles (no I/O); the window turns card items into live cards.</summary>
+    /// <summary>Title of a view that fills the panel: the folder's name unless the file sets its own title (every gallery the app writes is <c>gallery.c4k</c>).</summary>
+    public static string SingleTitle(C4kItem item) =>
+        item.Title == item.Name ? Path.GetFileName(item.ContextFolder.TrimEnd('\\', '/')) is { Length: > 0 } name ? name : item.ContextFolder : item.Title;
+
+    /// <summary>The folder's items as shortcut tiles (no I/O); the window turns card items into live cards. Tiles left without a target are linked to their file by the window.</summary>
     public static DashboardPreview Dashboard(C4kFolder folder)
     {
         var slots = new List<DashboardSlot>();
         for (var i = 0; i < folder.Items.Count; i++)
         {
             var item = folder.Items[i];
-            var target = item.Url ?? (item.Open is { } open ? item.Resolve(open) : item.Run is not null ? RunTarget(item.FilePath) : null);
+            var target = item.Kind switch
+            {
+                FolderActionKind.Run => RunTarget(item.FilePath),
+                FolderActionKind.Url => item.Url,
+                // An open item is performed from its file (its login and the way back), a card about another folder opens that folder.
+                FolderActionKind.Open => null,
+                _ => item.Card is not null ? item.CardTarget : null,
+            };
             var subtitle = item.Description ?? (item.Run is { } run ? "▶ " + run : null);
             slots.Add(new DashboardSlot(i, item, new PreviewTile(item.Title, subtitle, item.Icon ?? (item.Run is not null ? "▶" : item.Url is not null ? "🌐" : "📁"), null, target)));
         }
 
         return new DashboardPreview(Path.GetFileName(folder.Folder.TrimEnd('\\', '/')),
-            folder.Skipped > 0 ? Loc.T("Pominięto {0} plików .c4k", folder.Skipped) : null, folder, slots);
+            folder.Skipped > 0 ? Loc.P(folder.Skipped, "Pominięto {0} plik .c4k|Pominięto {0} pliki .c4k|Pominięto {0} plików .c4k") : null, folder, slots);
     }
 
     /// <summary>Reads the tiles' own pictures (<c>image</c>); the window calls it before showing the dashboard.</summary>

@@ -224,8 +224,33 @@ public sealed class DashboardTests : IAsyncDisposable
         Assert.Equal(2, dashboard.Slots.Count);
         Assert.Equal("https://example.com", dashboard.Slots[0].Shortcut.Target);
         Assert.Equal("🌐", dashboard.Slots[0].Shortcut.Icon);
-        Assert.Equal(Path.Combine(_root, "photos"), dashboard.Slots[1].Shortcut.Target);
+        Assert.Null(dashboard.Slots[1].Shortcut.Target); // the window links an open item to its file (login, way back)
         Assert.Equal(C4kItem.AutoCard, dashboard.Slots[1].Item.Card);
+    }
+
+    [Fact]
+    public void Card_about_another_folder_opens_that_folder()
+    {
+        var folder = Folder(("mail.c4k", """{ "card": "official.mail", "folder": "Konto" }"""), ("note.c4k", """{ "view": "gallery" }"""));
+
+        var dashboard = FolderViews.Dashboard(folder);
+
+        Assert.Equal(Path.Combine(_root, "Konto"), dashboard.Slots[0].Shortcut.Target);
+        Assert.Null(dashboard.Slots[1].Shortcut.Target);
+    }
+
+    [Fact]
+    public async Task Gallery_without_a_title_is_named_after_its_folder()
+    {
+        var host = new ScopedPluginHost(_folder.Manifest, new NullPluginUi(), _router, _http, _audit);
+        using var thumbnails = new ThumbnailStore();
+        var folder = new VfsEntry("x", _root, VfsEntryKind.Directory);
+
+        var untitled = await FolderViews.LoadAsync(C4kItem.Parse(_root, "gallery.c4k", """{ "view": "gallery" }"""), folder, host, thumbnails, null, TestToken);
+        var titled = await FolderViews.LoadAsync(C4kItem.Parse(_root, "gallery.c4k", """{ "view": "gallery", "title": "Wakacje" }"""), folder, host, thumbnails, null, TestToken);
+
+        Assert.Equal(Path.GetFileName(_root.TrimEnd('\\')), Assert.IsType<TilesPreview>(untitled).Title);
+        Assert.Equal("Wakacje", Assert.IsType<TilesPreview>(titled).Title);
     }
 
     [Fact]

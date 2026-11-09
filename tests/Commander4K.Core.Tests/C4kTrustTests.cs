@@ -29,6 +29,17 @@ public sealed class C4kTrustTests : IDisposable
     }
 
     [Fact]
+    public void Ssh_card_options_login_is_part_of_trust()
+    {
+        var store = new C4kTrustStore(StorePath);
+        store.Trust(Item("""{ "card": "ssh", "open": "sftp://host/", "options": { "user": "root", "keyFile": "~/.ssh/a" } }"""));
+
+        Assert.True(store.IsTrusted(Item("""{ "card": "ssh", "open": "sftp://host/", "size": "wide", "options": { "user": "root", "keyFile": "~/.ssh/a" } }""")));
+        Assert.False(store.IsTrusted(Item("""{ "card": "ssh", "open": "sftp://host/", "options": { "user": "root", "keyFile": "~/.ssh/b" } }""")));
+        Assert.False(store.IsTrusted(Item("""{ "card": "ssh", "open": "sftp://host/", "options": { "user": "admin", "keyFile": "~/.ssh/a" } }""")));
+    }
+
+    [Fact]
     public void Changing_run_revokes_trust()
     {
         var store = new C4kTrustStore(StorePath);

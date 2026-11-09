@@ -815,7 +815,7 @@ public sealed class FilePanelView : ViewBase
 
         if (tab.Marked.Count == 0 && tab.CurrentEntry is { } current && FileIcons.IsFolderConfig(current))
         {
-            return (Loc.T("Enter — pokaż widok folderu · F4 — edytuj · Shift+Enter — otwórz jako tekst"), null);
+            return (Loc.T("Enter — otwórz element .c4k · F4 — edytuj · Shift+Enter — otwórz jako tekst"), null);
         }
 
         int files = 0, containers = 0;
