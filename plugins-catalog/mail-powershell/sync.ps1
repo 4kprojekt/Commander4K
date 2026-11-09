@@ -2,8 +2,9 @@
 # through the SDK (c4k.ps1): the app owns the password, the connections and the certificates.
 #
 # Account folder layout:
-#   <account>/c4k.dir                  options: imap, smtp, user, name, refresh ("5m"; missing/false = only on open and
-#                                      "Sprawdź teraz"), since ("<n>d|m|y" or "YYYY-MM-DD"; empty = 3 months)
+#   <account>/<name>.c4k               { "plugin": "official.mail", "options": { … } } with imap, smtp, user, name,
+#                                      refresh ("5m"; missing/false = only on open and "Sprawdź teraz"), since
+#                                      ("<n>d|m|y" or "YYYY-MM-DD"; empty = 3 months)
 #   <account>/.mail/state.json         sync state (see New-MailState)
 #   <account>/.mail/lock               { machine, lastTick }: one computer per account folder
 #   <account>/<local folder>/<yyyy>/<MM>/<"● " if unread><yyyy-MM-dd HHmm sender - subject [uid N]>.eml
@@ -106,15 +107,19 @@ function Register-MailAccount([string] $Path) {
     $true
 }
 
-# The account options from the folder's c4k.dir (preview or enter action naming this plugin), else $Options.
+# The .c4k item files of a folder, by name; none when it cannot be listed.
+# shortcut: plain name order, not the app's natural order; it only matters with several mail items in one folder.
+function Get-MailItemFiles([string] $Folder) {
+    $entries = try { @(Get-C4KChildItem $Folder) } catch { @() }
+    @($entries | Where-Object { $_.kind -eq 'file' -and ([string] $_.name).EndsWith('.c4k', [StringComparison]::OrdinalIgnoreCase) -and -not ([string] $_.name).StartsWith('.') } | Sort-Object { [string] $_.name })
+}
+
+# The account options from the first .c4k in the folder that names this plugin and has options, else $Options.
 function Get-MailAccountConfig([string] $Folder, $Options) {
-    $config = Read-MailJson (Join-MailPath $Folder 'c4k.dir')
     $found = $null
-    if ($config -is [hashtable]) {
-        foreach ($key in 'preview', 'enter') {
-            $action = $config[$key]
-            if ($action -is [hashtable] -and $action['plugin'] -eq 'official.mail' -and $action['options'] -is [hashtable]) { $found = $action['options']; break }
-        }
+    foreach ($file in Get-MailItemFiles $Folder) {
+        $item = Read-MailJson ([string] $file.path)
+        if ($item -is [hashtable] -and $item['plugin'] -eq 'official.mail' -and $item['options'] -is [hashtable]) { $found = $item['options']; break }
     }
     if ($null -eq $found -and $Options -is [hashtable]) { $found = $Options }
     if ($null -eq $found -or -not $found['imap'] -or -not $found['user']) { return $null }

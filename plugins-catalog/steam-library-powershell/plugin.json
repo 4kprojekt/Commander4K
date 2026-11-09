@@ -4,7 +4,7 @@
   "name": "Steam: biblioteka gier",
   "version": "1.0.0",
   "author": "4Kprojekt",
-  "description": "Oficjalna wtyczka: gry zainstalowane w bibliotece Steam jako kafelki z okładkami (klik uruchamia grę) i jako tabela. Folder steamapps (lub folder Steama) z plikiem c4k.dir: { \"enter\": { \"plugin\": \"official.steam-library\" } }.",
+  "description": "Oficjalna wtyczka: gry zainstalowane w bibliotece Steam jako kafelki z okładkami (klik uruchamia grę) i jako tabela. Folder steamapps (lub folder Steama) z plikiem steam.c4k: { \"plugin\": \"official.steam-library\" }.",
   "runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" },
   "permissions": ["fs.read"],
   "contributes": {

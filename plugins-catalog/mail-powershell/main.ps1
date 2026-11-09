@@ -1,6 +1,6 @@
 # Commander4K official plugin: mail (IMAP/SMTP through the app, messages as .eml files).
 # The app does IMAP, SMTP, MIME and keeps the passwords; this plugin only decides what to sync where (sync.ps1).
-# Account folder: a c4k.dir with { "preview": { "plugin": "official.mail", "options": { imap, smtp, user, refresh, since } } }.
+# Account folder: a .c4k item { "plugin": "official.mail", "options": { imap, smtp, user, refresh, since } }.
 
 . "$PSScriptRoot/c4k.ps1"
 . "$PSScriptRoot/sync.ps1"
@@ -61,7 +61,7 @@ function Get-MailAccountView([string] $Path, $Options, [int] $Limit = $script:Ma
         return @{ kind = 'markdown'; content = ($md -join "`n"); actions = $actions }
     }
     if ($null -eq $config) {
-        $md.Add('Brak konfiguracji: dodaj `imap` i `user` w opcjach `c4k.dir`.')
+        $md.Add('Brak konfiguracji: dodaj `imap` i `user` w opcjach pliku `.c4k` konta.')
         return @{ kind = 'markdown'; content = ($md -join "`n"); actions = $actions }
     }
     $rows = Get-MailFolderCounts $Path $state
@@ -250,7 +250,7 @@ function Get-MailAccountCard([string] $Path, $Options) {
 # "Nowa wiadomość" on an account: an empty draft in Szkice and its form.
 function New-MailBlankDraft([string] $Path, $Options) {
     $config = Get-MailAccountConfig $Path $Options
-    if ($null -eq $config) { throw 'Brak konfiguracji konta (imap i user w c4k.dir).' }
+    if ($null -eq $config) { throw 'Brak konfiguracji konta (imap i user w pliku .c4k).' }
     $ctx = @{ root = $Path; options = $config; state = (Read-MailState $Path) }
     $dir = Get-MailDraftsDir $ctx
     $draftPath = Join-MailPath $dir (Get-MailFreeName $dir (Get-MailDraftName ''))
@@ -265,77 +265,21 @@ function New-MailBlankDraft([string] $Path, $Options) {
 # ---- "Dodaj konto pocztowe" ----
 
 $script:MailHostPattern = '^[^\s:/\\@]+(:\d{1,5})?$'
-$script:MailSchemaUrl = 'https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.dir.schema.json'
+$script:MailSchemaUrl = 'https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.schema.json'
 
 function Test-MailLocalDiskPath([string] $Path) { $Path -match '^([A-Za-z]:[\\/]|\\\\[^\\])' }
 
-# JSON text -> ordered dictionaries, lists, strings, numbers, booleans. Unlike ConvertFrom-Json it never turns a string
-# that looks like a date ("2026-01-01") into a DateTime, and it keeps the key order. Comments and trailing commas are
-# accepted (the host reads c4k.dir that way too).
-function ConvertFrom-MailJsonValue([System.Text.Json.JsonElement] $Element) {
-    switch ($Element.ValueKind) {
-        'Object' {
-            $map = [ordered]@{}
-            foreach ($property in $Element.EnumerateObject()) { $map[$property.Name] = ConvertFrom-MailJsonValue $property.Value }
-            return $map
-        }
-        'Array' {
-            $list = [System.Collections.Generic.List[object]]::new()
-            foreach ($item in $Element.EnumerateArray()) { $list.Add((ConvertFrom-MailJsonValue $item)) }
-            return , $list.ToArray()
-        }
-        'String' { return $Element.GetString() }
-        'Number' {
-            $long = [long] 0
-            if ($Element.TryGetInt64([ref] $long)) { return $long }
-            $decimal = [decimal] 0
-            if ([decimal]::TryParse($Element.GetRawText(), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref] $decimal)) { return $decimal }
-            return $Element.GetDouble()
-        }
-        'True' { return $true }
-        'False' { return $false }
-        default { return $null }
-    }
+# A free item name in $Folder like the app's C4kWriter.UniqueFileName: "name.c4k", "name 2.c4k", … (never overwrites).
+function Get-MailFreeItemName([string] $Folder, [string] $Name) {
+    $file = "$Name.c4k"
+    for ($n = 2; $null -ne (Get-C4KItem (Join-MailPath $Folder $file)); $n++) { $file = "$Name $n.c4k" }
+    $file
 }
 
-function ConvertFrom-MailJsonText([string] $Text) {
-    $options = [System.Text.Json.JsonDocumentOptions]::new()
-    $options.CommentHandling = [System.Text.Json.JsonCommentHandling]::Skip
-    $options.AllowTrailingCommas = $true
-    $document = [System.Text.Json.JsonDocument]::Parse($Text, $options)
-    try { ConvertFrom-MailJsonValue $document.RootElement }
-    finally { $document.Dispose() }
-}
-
-# The text of the dashboard c4k.dir with the account's tile added, like FolderConfigWriter.AppendTile: the other keys
-# and tiles stay as they were, in the same order, and string values are not reinterpreted. $Existing is $null for a new file.
-function Add-MailDashboardTile($Existing, $Tile) {
-    if ($null -eq $Existing) { $root = [ordered]@{ '$schema' = $script:MailSchemaUrl } }
-    else {
-        $root = try { ConvertFrom-MailJsonText $Existing } catch { $null }
-        if ($root -isnot [System.Collections.IDictionary]) { throw 'Nie można odczytać c4k.dir w tym folderze (to nie jest poprawny JSON), więc go nie zmieniam.' }
-    }
-    $isDashboardObject = { param($a) $a -is [System.Collections.IDictionary] -and $a['view'] -eq 'dashboard' }
-    $target = $null
-    if (& $isDashboardObject $root['enter']) { $target = $root['enter'] }
-    elseif (& $isDashboardObject $root['preview']) { $target = $root['preview'] }
-    if ($target) {
-        $target['tiles'] = @(@($target['tiles']) | Where-Object { $null -ne $_ }) + @($Tile)
-    }
-    elseif ($null -eq $root['enter'] -and ($null -eq $root['preview'] -or $root['preview'] -eq 'dashboard')) {
-        $root['enter'] = [ordered]@{ view = 'dashboard'; tiles = @($Tile) }
-        $root['preview'] = 'dashboard'
-    }
-    else {
-        if (-not (Confirm-C4K 'Dodaj konto pocztowe' 'W tym folderze c4k.dir pokazuje coś innego niż pulpit. Zamienić podgląd na pulpit z kartą konta (dotychczasowy podgląd przejdzie pod Enter, jeśli jest wolny)?')) {
-            throw 'Anulowano: c4k.dir w tym folderze nie został zmieniony.'
-        }
-        $old = $root['preview']
-        $root.Remove('preview')
-        $root['preview'] = [ordered]@{ view = 'dashboard'; tiles = @($Tile) }
-        if ($null -eq $root['enter'] -and $null -ne $old) { $root['enter'] = $old }
-    }
-    ($root | ConvertTo-Json -Depth 20) + "`n"
+function Write-MailItem([string] $Folder, [string] $Name, $Item) {
+    $root = [ordered]@{ '$schema' = $script:MailSchemaUrl }
+    foreach ($key in $Item.Keys) { $root[$key] = $Item[$key] }
+    Set-C4KText (Join-MailPath $Folder (Get-MailFreeItemName $Folder $Name)) (($root | ConvertTo-Json -Depth 20) + "`n")
 }
 
 # The fields of the account window. $Values are the answers of the previous round (shown again after a check failed).
@@ -368,7 +312,7 @@ function Get-MailAccountFields($Values, [bool] $WithFolder) {
     , $fields.ToArray()
 }
 
-# Checks the answers of the account window: errors per field, else the c4k.dir options (and the folder name).
+# Checks the answers of the account window: errors per field, else the account options (and the folder name).
 function Test-MailAccountValues($Values, [string] $Parent) {
     $errors = @{}
     $address = ([string] $Values['user']).Trim()
@@ -429,7 +373,7 @@ function Read-MailAccountOptions([string] $Title, [string] $Parent) {
     $values = $null
     $errors = $null
     $message = $null
-    $intro = 'Ustawienia trafią do c4k.dir folderu konta. Przed zapisem aplikacja zaloguje się raz, żeby sprawdzić konto.'
+    $intro = 'Ustawienia trafią do pliku .c4k w folderze konta. Przed zapisem aplikacja zaloguje się raz, żeby sprawdzić konto.'
     $description = $intro
     while ($true) {
         $values = Show-C4KDialog $Title (Get-MailAccountFields $values ([bool] $Parent)) -Description $description -Submit 'Sprawdź i zapisz' -Message $message -Errors $errors
@@ -467,24 +411,15 @@ function Add-MailAccount([string] $Active) {
 
     $accountPath = Join-MailPath $Active $folderName
     if ($null -ne (Get-C4KItem $accountPath)) { throw "Folder $folderName już istnieje." }
-    $dashboardPath = Join-MailPath $Active 'c4k.dir'
 
-    $action = { [ordered]@{ plugin = 'official.mail'; options = $options } }
-    $accountConfig = [ordered]@{ '$schema' = $script:MailSchemaUrl; preview = (& $action); enter = (& $action) }
-
-    $tile = [ordered]@{ title = $folderName; open = $folderName; card = 'official.mail/account'; refresh = '30s' }
-    $existing = $null
-    if ($null -ne (Get-C4KItem $dashboardPath)) {
-        $existing = Get-C4KText $dashboardPath
-        if ($existing -match '(?m)^\s*//|/\*') {
-            if (-not (Confirm-C4K $title 'c4k.dir w tym folderze ma komentarze; po dodaniu karty konta zostaną usunięte. Kontynuować?')) { throw 'Anulowano: c4k.dir w tym folderze nie został zmieniony.' }
-        }
-    }
-    $dashboard = Add-MailDashboardTile $existing $tile
+    # A folder that already holds .c4k items is a dashboard: the account gets a card there. One item becomes a
+    # dashboard only when the user agrees. "open" too, because the app finds a card's target through it.
+    $items = @(Get-MailItemFiles $Active).Count
+    $card = $items -ge 2 -or ($items -eq 1 -and (Confirm-C4K $title 'Folder stanie się dashboardem: ma już jeden plik .c4k, a karta konta będzie drugim. Dodać kartę?'))
 
     New-C4KDirectory $accountPath
-    Set-C4KText (Join-MailPath $accountPath 'c4k.dir') (($accountConfig | ConvertTo-Json -Depth 20) + "`n")
-    Set-C4KText $dashboardPath $dashboard
+    Write-MailItem $accountPath $folderName ([ordered]@{ plugin = 'official.mail'; options = $options })
+    if ($card) { Write-MailItem $Active $folderName ([ordered]@{ plugin = 'official.mail'; card = $true; folder = $folderName; open = $folderName; refresh = '30s' }) }
     [void] (Register-MailAccount $accountPath)
     Request-MailCheck $accountPath
     @{ message = "Dodano konto $folderName. Pierwsza synchronizacja ruszy w tle." }
@@ -798,7 +733,7 @@ Register-C4KHandler 'command.execute' {
 Register-C4KHandler 'background.tick' { param($p) Invoke-MailTick }
 
 # A folder that is being made a mail account (the app's "folder view" choice): ask for the account, check the login
-# and hand the options back; the app writes them into the folder's c4k.dir.
+# and hand the options back; the app writes them into the folder's .c4k item.
 Register-C4KHandler 'preview.setup' {
     param($p)
     if ($p.preview -ne 'account') { return @{ options = @{} } }

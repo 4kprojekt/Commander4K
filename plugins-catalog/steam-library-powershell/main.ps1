@@ -1,10 +1,10 @@
-# Official plugin: the games of a Steam library. Put a c4k.dir in a steamapps folder (or in Steam's own folder):
-#   { "enter": { "plugin": "official.steam-library" }, "preview": { "plugin": "official.steam-library" } }
+# Official plugin: the games of a Steam library. Put steam.c4k in a steamapps folder (or in Steam's own folder):
+#   { "plugin": "official.steam-library" }
 # Games come from appmanifest_<appid>.acf files (and, by default, every library listed in libraryfolders.vdf);
 # covers from Steam's appcache. Everything is read through the SDK (fs.read); a tile click asks the app to open
 # steam://rungameid/<appid>, which the user confirms once.
 #
-# options (in c4k.dir): steamPath — Steam's folder for covers when the library is elsewhere (default: next to
+# options (in the .c4k file): steamPath — Steam's folder for covers when the library is elsewhere (default: next to
 # steamapps, then C:\Program Files (x86)\Steam); allLibraries — false shows only this folder's games; sort — name|size|updated.
 . "$PSScriptRoot/c4k.ps1"
 
@@ -23,7 +23,7 @@ function Get-Parent([string] $Path) { $trimmed = $Path.TrimEnd('\'); $cut = $tri
 
 function Test-C4KPath([string] $Path) { try { $null -ne (Get-C4KItem $Path) } catch { $false } }
 
-# The steamapps folder and Steam's root for the folder the c4k.dir is in.
+# The steamapps folder and Steam's root for the folder the .c4k file is in.
 function Resolve-Library([string] $Folder, $Options) {
     $steamapps = if ((Split-Path $Folder -Leaf) -ieq 'steamapps') { $Folder } else { Join-C4KPath $Folder 'steamapps' }
     $roots = @()

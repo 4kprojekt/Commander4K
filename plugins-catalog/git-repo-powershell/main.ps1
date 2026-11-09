@@ -1,9 +1,9 @@
-# Official plugin: an overview of a Git repository as the folder's quick view. Put a c4k.dir in the repository:
-#   { "preview": { "plugin": "official.git-repo" }, "enter": { "plugin": "official.git-repo" } }
+# Official plugin: an overview of a Git repository as the folder's quick view. Put git-repo.c4k in the repository:
+#   { "plugin": "official.git-repo" }
 # Shows the branch and how far it is from its upstream, uncommitted changes, recent commits, branches, tags and
 # remotes. git runs through the app (shell.run), so every command line is audited; nothing is changed in the repository.
 #
-# options (in c4k.dir): commits — how many recent commits (default 15); files — how many changed files (default 30);
+# options (in the .c4k file): commits — how many recent commits (default 15); files — how many changed files (default 30);
 # branches — how many branches and tags (default 10).
 . "$PSScriptRoot/c4k.ps1"
 

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-04",
+  "updated": "2026-11-09",
   "baseUrl": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/",
   "plugins": [
     {
@@ -29,11 +29,11 @@
         },
         {
           "path": "main.ps1",
-          "sha256": "f980608a8748b13d6951e79adebe2f053b3a62dc4ccea64bffc7fd9ba463cafd"
+          "sha256": "eb2e5a5d5f64e1dd11b50a32a88059f0dc8e8dd32fac97f5705bf2ad63a0ab7c"
         },
         {
           "path": "plugin.json",
-          "sha256": "749bcba76cfc65e416760f11f8d6e183c0eb197706a67555a48989be43bd07b7"
+          "sha256": "af47cfa946de9c3c70f3f52db6d0d3156336cc02b85fcf97a973d3911f642791"
         }
       ],
       "previewExtensions": [
@@ -67,11 +67,11 @@
         },
         {
           "path": "main.ps1",
-          "sha256": "9b3816b067df48187077586b044a3f00f08efc8c3e28394b9c11b5c1013d72a4"
+          "sha256": "8aa74db6b9221359c319a447237dfc1f5d0423009a3b1f45226457ed4ba0b656"
         },
         {
           "path": "plugin.json",
-          "sha256": "28a58611126508d021e2573ee347ae0283aa1dbdd8748afcaea7e487332e9863"
+          "sha256": "4ad4792b541cbc35572993c84c13b7a0e1ea6c77fbf98d51c750bdaf935724ab"
         }
       ],
       "previewExtensions": [
@@ -372,7 +372,7 @@
     {
       "id": "official.mail",
       "name": "Poczta",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "author": "4Kprojekt",
       "runtime": "powershell",
       "description": {
@@ -396,19 +396,19 @@
         },
         {
           "path": "compose.ps1",
-          "sha256": "bff496b87e3c720957a0d9ca09dedb201143f142e577fd7488ad21662026b987"
+          "sha256": "95855505898dc7b21b6b01343a3416d89d2705a3842e067f581b8da677ed4a2b"
         },
         {
           "path": "main.ps1",
-          "sha256": "9369826ff1e9603179089561e917c9b2d82373dfbb5ecdd1b043d099485039c4"
+          "sha256": "46f5dce47a4f4656d7a554fc51f2c3b1fe6d10b6d6537f7e64a243e3e84efd6d"
         },
         {
           "path": "plugin.json",
-          "sha256": "40dc5980a175c9afe62f79d9446997cec88dab020cee17e4ab7afd8d9ba9ca65"
+          "sha256": "317082596cafcb026217081dd908e6778f4be2c3242e5b58aff62db2e4ba7a8e"
         },
         {
           "path": "sync.ps1",
-          "sha256": "701f388c8a9f08e7bfc6c0db0c1afcb9564458566fe3de6463ab377ccbd44955"
+          "sha256": "cd7c4213eab8adda64c42294a0e6a902308b5058ebe4af41dd07bc223b2e432d"
         }
       ],
       "previewExtensions": [

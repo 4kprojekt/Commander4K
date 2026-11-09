@@ -15,7 +15,7 @@ function Get-MailParent([string] $Path) {
     if ($cut -le 0) { $null } else { $trimmed.Substring(0, $cut) }
 }
 
-# The account a message file belongs to: the nearest ancestor (up to four levels above its mail folder) whose c4k.dir
+# The account a message file belongs to: the nearest ancestor (up to four levels above its mail folder) whose .c4k item
 # names this plugin. $null when there is none. state is $null when state.json cannot be read. dir is the file's own
 # folder (a month folder "2026\11" or, for drafts and older files, the mail folder); mail is the mail folder and local
 # its name relative to the account ("INBOX", "INBOX\spam").
@@ -255,7 +255,7 @@ function Get-MailReplyLink([string] $DraftPath) {
 
 # reply | replyAll | forward of the message file: a new draft in Szkice and its form.
 function New-MailReplyDraft([string] $Path, [string] $Mode, $Ctx) {
-    if ($null -eq $Ctx) { throw 'Ta wiadomość nie leży w folderze konta poczty (brak c4k.dir z wtyczką Poczta).' }
+    if ($null -eq $Ctx) { throw 'Ta wiadomość nie leży w folderze konta poczty (brak pliku .c4k z wtyczką Poczta).' }
     $self = Get-MailFromAddress $Ctx.options
     $reply = New-C4KMailReply $Path $Mode $self
     $dir = Get-MailDraftsDir $Ctx
@@ -381,7 +381,7 @@ function Invoke-MailSend([string] $DraftPath, $Ctx, $Draft, $Fields, [string[]] 
     if ($count -eq 0) { return & $fail 'Podaj odbiorcę w polu Do.' }
     if (-not $Ctx.options['smtp']) {
         Write-MailDraftFile $DraftPath $Ctx $Fields $Draft $Refs
-        return & $fail 'Konto nie ma serwera SMTP: dodaj opcję smtp w c4k.dir.'
+        return & $fail 'Konto nie ma serwera SMTP: dodaj opcję smtp w pliku .c4k konta.'
     }
 
     # Whatever the form holds goes out, and the file keeps it if sending fails.
