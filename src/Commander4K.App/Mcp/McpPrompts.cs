@@ -79,7 +79,7 @@ public static class McpPrompts
                     "1. Call dashboard_guide and follow its design rules.\n" +
                     "2. Call get_dashboard for the folder (keep existing .c4k files you are not asked to change; a folder with exactly one .c4k file is that folder's view, so do not add files next to it unless the user asks), and list_directory to see what is there " +
                     "(subfolders for folder cards and sub-dashboards, docs for markdown/note cards, pictures for gallery, configs for plugin cards).\n" +
-                    "3. Plan the tile order (file names such as "10 ...", "20 ..."), the KPI row, the main chart or list and the details; ask the user for API URLs, servers " +
+                    "3. Plan the tile order (file names such as 10, 20, 30 prefixes), the KPI row, the main chart or list and the details; ask the user for API URLs, servers " +
                     "or secrets you cannot find, and never invent endpoints.\n" +
                     "4. Run check_dashboard until there are no errors and the 3- and 4-column pictures have no empty cells.\n" +
                     "5. save_dashboard (one { name, json } per file), then navigate to the folder and set the other panel to preview (set_panel_mode) so the user sees it. " +
