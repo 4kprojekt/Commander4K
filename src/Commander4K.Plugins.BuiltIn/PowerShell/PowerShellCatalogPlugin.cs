@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Commander4K.Core.Execution;
 using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Local;
@@ -7,14 +8,23 @@ using Commander4K.Plugins.BuiltIn.Local;
 namespace Commander4K.Plugins.BuiltIn.PowerShell;
 
 /// <summary>
-/// Catalogue of ready PowerShell commands (config/powershell.json): every entry is a menu/palette command and a row
-/// of the "PowerShell" panel. Output of non-elevated commands is captured and shown in a viewer.
+/// Catalogue of ready PowerShell commands (config/powershell.json) plus the user's own script files
+/// (<c>*.ps1</c> in config/powershell, subfolders = submenus): every entry is a menu/palette command and a row of the
+/// "PowerShell" panel. A script file gets the selected files as its arguments. Output of non-elevated commands is
+/// captured and shown in a viewer.
 /// </summary>
 public sealed partial class PowerShellCatalogPlugin(string catalogPath) : ICommandPlugin, IPanelPlugin
 {
     public const string PluginId = "builtin.powershell";
 
+    /// <summary>Command ids of script files: <c>script:</c> + the path relative to <see cref="ScriptsFolder"/>.</summary>
+    public const string ScriptPrefix = "script:";
+
+    private const string OpenFolderId = "scripts-folder";
+    private const string ReloadId = "scripts-reload";
+
     private IReadOnlyList<PowerShellCommand> _commands = PowerShellCatalog.Defaults;
+    private IReadOnlyList<string> _scripts = [];
 
     public string Id => PluginId;
 
@@ -24,25 +34,107 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
 
     public string Title => Loc.T("Polecenia PowerShell");
 
-    public string Description => Loc.T("Katalog gotowych poleceń PowerShell (config/powershell.json) do uruchamiania na bieżącym folderze i zaznaczonych plikach.");
+    public string Description => Loc.T("Gotowe polecenia PowerShell (config/powershell.json) i własne skrypty .ps1 (folder config/powershell) do uruchamiania na bieżącym folderze i zaznaczonych plikach.");
 
     public string CatalogPath { get; } = catalogPath;
 
+    /// <summary>The user's script files, next to the catalogue: <c>config/powershell</c>.</summary>
+    public string ScriptsFolder { get; } = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(catalogPath))!, "powershell");
+
     public IReadOnlyList<PluginCommand> Commands =>
-        [.. _commands.Select(c => new PluginCommand(c.Id, c.Title, "PowerShell/" + c.Category, c.Description))];
+    [
+        .. _commands.Select(c => new PluginCommand(c.Id, c.Title, "PowerShell/" + c.Category, c.Description)),
+        .. _scripts.Select(s => new PluginCommand(ScriptPrefix + s, Path.GetFileNameWithoutExtension(s), "PowerShell/" + ScriptCategory(s),
+            Loc.T("Skrypt {0}; zaznaczone pliki są jego parametrami.", s))),
+        new PluginCommand(OpenFolderId, Loc.T("Otwórz folder skryptów"), "PowerShell", Loc.T("Folder config/powershell: każdy plik .ps1 w nim jest poleceniem w tym menu.")),
+        new PluginCommand(ReloadId, Loc.T("Przeładuj polecenia i skrypty"), "PowerShell", Loc.T("Czyta ponownie powershell.json i folder skryptów.")),
+    ];
+
+    /// <summary>Menu of a script: "Skrypty", or "Skrypty/<its subfolder>".</summary>
+    private static string ScriptCategory(string relative) =>
+        Path.GetDirectoryName(relative) is { Length: > 0 } folder ? Loc.T("Skrypty") + "/" + folder.Replace('\\', '/') : Loc.T("Skrypty");
 
     public event Action? CommandsChanged;
 
     public async Task ReloadAsync(CancellationToken cancellationToken = default)
     {
+        await CallerThread.LeaveUi(); // reads the catalogue and lists the scripts folder
         _commands = await PowerShellCatalog.LoadOrCreateAsync(CatalogPath, cancellationToken).ConfigureAwait(false);
+        _scripts = ListScripts();
         CommandsChanged?.Invoke();
     }
 
-    public Task ExecuteAsync(string commandId, IPluginHost host, CancellationToken cancellationToken) =>
-        _commands.FirstOrDefault(c => c.Id == commandId) is { } command
-            ? RunAsync(command, host, cancellationToken)
-            : Task.CompletedTask;
+    /// <summary>The <c>.ps1</c> files of <see cref="ScriptsFolder"/> (relative paths, sorted); the folder gets an example the first time.</summary>
+    private IReadOnlyList<string> ListScripts()
+    {
+        try
+        {
+            if (!Directory.Exists(ScriptsFolder))
+            {
+                Directory.CreateDirectory(ScriptsFolder);
+                File.WriteAllText(Path.Combine(ScriptsFolder, "Przykład - pokaż parametry.ps1"), ExampleScript);
+            }
+
+            return [.. Directory.EnumerateFiles(ScriptsFolder, "*.ps1", new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 3, IgnoreInaccessible = true })
+                .Select(file => Path.GetRelativePath(ScriptsFolder, file))
+                .Order(StringComparer.CurrentCultureIgnoreCase)];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private const string ExampleScript = """
+        # Każdy plik .ps1 w tym folderze jest poleceniem w menu PowerShell > Skrypty (podfolder = podmenu).
+        # Zaznaczone pliki (albo plik pod kursorem) trafiają do skryptu jako parametry; folderem roboczym jest folder panelu.
+        param([Parameter(ValueFromRemainingArguments)] [string[]] $Files)
+
+        "Folder: $(Get-Location)"
+        "Parametry: $($Files.Count)"
+        $Files | ForEach-Object { Get-Item -LiteralPath $_ | Select-Object Name, Length, LastWriteTime }
+
+        """;
+
+    public async Task ExecuteAsync(string commandId, IPluginHost host, CancellationToken cancellationToken)
+    {
+        if (commandId == OpenFolderId)
+        {
+            await host.OpenFolderAsync(ScriptsFolder).ConfigureAwait(false);
+        }
+        else if (commandId == ReloadId)
+        {
+            await ReloadAsync(cancellationToken).ConfigureAwait(false);
+            host.Notify(Loc.T("Polecenia PowerShell: {0}, skrypty: {1}.", _commands.Count, _scripts.Count));
+        }
+        else if (commandId.StartsWith(ScriptPrefix, StringComparison.Ordinal) && _scripts.Contains(commandId[ScriptPrefix.Length..]))
+        {
+            await RunScriptFileAsync(commandId[ScriptPrefix.Length..], host, cancellationToken).ConfigureAwait(false);
+        }
+        else if (_commands.FirstOrDefault(c => c.Id == commandId) is { } command)
+        {
+            await RunAsync(command, host, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Runs a script file with the selected entries as its arguments, one each.</summary>
+    private Task RunScriptFileAsync(string relative, IPluginHost host, CancellationToken cancellationToken)
+    {
+        var selected = host.SelectedEntries;
+        var files = selected.Select(e => LocalFileSystemPlugin.ToLocalPath(e.Path)).OfType<string>().ToList();
+        if (files.Count != selected.Count)
+        {
+            // Dropping them silently would run the script on fewer files than the user marked.
+            host.Notify(Loc.T("Skrypt dostaje ścieżki plików: zaznacz pliki na dysku albo w udziale sieciowym."), isError: true);
+            return Task.CompletedTask;
+        }
+
+        return RunScriptAsync(Path.GetFileNameWithoutExtension(relative), ScriptCommandLine(Path.Combine(ScriptsFolder, relative), files), false, false, host, cancellationToken);
+    }
+
+    /// <summary><c>&amp; 'script.ps1' 'file 1' 'file 2'</c>: every path a quoted literal, so names cannot inject code.</summary>
+    internal static string ScriptCommandLine(string script, IReadOnlyList<string> files) =>
+        "& " + Quote(script) + string.Concat(files.Select(file => " " + Quote(file)));
 
     public IPanelSession CreateSession(PanelRequest request, IPluginHost host) => new Session(this, host);
 
@@ -106,8 +198,13 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
             return;
         }
 
-        if ((command.Confirm || command.RequiresAdmin)
-            && !await host.ConfirmAsync(command.Title, Loc.T("Uruchomić{0}?\n\n{1}", (command.RequiresAdmin ? " jako administrator" : ""), script)).ConfigureAwait(false))
+        await RunScriptAsync(command.Title, script, command.RequiresAdmin, command.Confirm, host, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task RunScriptAsync(string title, string script, bool requiresAdmin, bool confirm, IPluginHost host, CancellationToken cancellationToken)
+    {
+        if ((confirm || requiresAdmin)
+            && !await host.ConfirmAsync(title, Loc.T("Uruchomić{0}?\n\n{1}", (requiresAdmin ? " jako administrator" : ""), script)).ConfigureAwait(false))
         {
             return;
         }
@@ -116,10 +213,10 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
         try
         {
             // Everything runs through the host, which checks the shell.run permission and audits the command line.
-            var result = await host.RunProcessAsync(BuildRequest(FindShell(), script, directory, command.RequiresAdmin), cancellationToken).ConfigureAwait(false);
-            if (!command.RequiresAdmin)
+            var result = await host.RunProcessAsync(BuildRequest(FindShell(), script, directory, requiresAdmin), cancellationToken).ConfigureAwait(false);
+            if (!requiresAdmin)
             {
-                await host.ShowTextAsync($"PowerShell — {command.Title}", $"PS> {script}\n\n{FormatResult(result)}").ConfigureAwait(false);
+                await host.ShowTextAsync($"PowerShell — {title}", $"PS> {script}\n\n{FormatResult(result)}").ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException ex)
@@ -184,6 +281,7 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
         [
             new("run", Loc.T("Uruchom"), "Enter"),
             new("edit", Loc.T("Edytuj katalog (powershell.json)"), "F4", AppliesToRows: false),
+            new("folder", Loc.T("Otwórz folder skryptów"), "F7", AppliesToRows: false),
             new("reload", Loc.T("Przeładuj katalog"), "Ctrl+R", AppliesToRows: false),
         ];
 
@@ -202,11 +300,26 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
                 }
             }
 
-            return new PanelSnapshot(Columns, rows, Loc.T("{0} poleceń · {1} · powłoka: {2}", plugin._commands.Count, plugin.CatalogPath, Path.GetFileName(FindShell())));
+            const string scripts = "cat:" + ScriptPrefix;
+            rows.Add(new PanelRow(scripts, null, [Loc.T("Skrypty"), plugin.ScriptsFolder, ""], RowSeverity.Highlight, ExpandedByDefault: true));
+            foreach (var script in plugin._scripts)
+            {
+                rows.Add(new PanelRow(ScriptPrefix + script, scripts, [script, Loc.T("Zaznaczone pliki są parametrami skryptu."), ""]));
+            }
+
+            return new PanelSnapshot(Columns, rows, Loc.T("{0} poleceń · {1} · {2} skryptów · {3} · powłoka: {4}",
+                plugin._commands.Count, plugin.CatalogPath, plugin._scripts.Count, plugin.ScriptsFolder, Path.GetFileName(FindShell())));
         }
 
         public Task<PanelDetails?> GetDetailsAsync(string rowId, CancellationToken cancellationToken) =>
-            Task.FromResult(plugin._commands.FirstOrDefault(c => c.Id == rowId) is { } command
+            Task.FromResult(rowId.StartsWith(ScriptPrefix, StringComparison.Ordinal)
+                ? new PanelDetails([new PanelDetailSection(rowId[ScriptPrefix.Length..],
+                [
+                    new(Loc.T("Plik"), Path.Combine(plugin.ScriptsFolder, rowId[ScriptPrefix.Length..])),
+                    new(Loc.T("Parametry"), Loc.T("Zaznaczone pliki są parametrami skryptu.")),
+                    new(Loc.T("Id (do keymap.json)"), $"plugin:{PluginId}:{rowId}"),
+                ])])
+                : plugin._commands.FirstOrDefault(c => c.Id == rowId) is { } command
                 ? new PanelDetails([new PanelDetailSection(command.Title,
                 [
                     new(Loc.T("Opis"), command.Description),
@@ -229,6 +342,9 @@ public sealed partial class PowerShellCatalogPlugin(string catalogPath) : IComma
                     return null;
                 case "edit":
                     await host.EditFileAsync(plugin.CatalogPath).ConfigureAwait(false);
+                    return null;
+                case "folder":
+                    await host.OpenFolderAsync(plugin.ScriptsFolder).ConfigureAwait(false);
                     return null;
                 default:
                     return null;

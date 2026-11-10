@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
   "id": "examples.folder-stats",
   "name": "Statystyki folderu (Python)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "4Kprojekt",
   "description": "Przykład: rozkład rozszerzeń i rozmiarów w bieżącym folderze. Tylko odczyt.",
   "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },

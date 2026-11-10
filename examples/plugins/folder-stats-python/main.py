@@ -34,6 +34,8 @@ def execute(params):
     for ext, files in groups(context):
         total = sum(max(f["size"], 0) for f in files)
         lines.append(f"{ext:<12} {len(files):>6} plików  {human(total):>10}")
+    whole = c4k.dir_size(context["activePath"])  # counted by the app, subfolders included
+    lines += ["", f"Razem z podfolderami: {whole['files']} plików, {human(whole['bytes'])}"]
     return {"text": {"title": "Podsumowanie folderu", "content": "\n".join(lines)}}
 
 
@@ -150,31 +152,6 @@ def preview_action(params):
 def form_changed(params):
     """Form fields after the user paused typing (800 ms): keep them, e.g. as a draft."""
     c4k.storage_set("form", params["values"])
-
-
-@c4k.handler("preview.card")
-def card(params):
-    """Dashboard card for a .csv file: rows and columns, plus a button that opens it."""
-    import csv
-    import io
-
-    path = params["entry"]["path"]
-    text = c4k.read_text(path, max_bytes=512 * 1024)
-    try:
-        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|")
-    except csv.Error:
-        dialect = csv.excel
-    rows = list(csv.reader(io.StringIO(text), dialect))
-    width = max((len(r) for r in rows), default=0)
-    return {
-        "icon": "📊",
-        "status": "ok" if rows else "warning",
-        "items": [
-            {"kind": "value", "label": "Wiersze", "value": str(max(len(rows) - 1, 0))},
-            {"kind": "value", "label": "Kolumny", "value": str(width)},
-        ],
-        "actions": [{"label": "Otwórz", "target": path}],
-    }
 
 
 @c4k.handler("preview.card")

@@ -42,6 +42,27 @@ public sealed class SystemPluginTests : IDisposable
     }
 
     [Fact]
+    public async Task Script_files_are_commands_and_get_the_selected_files_as_arguments()
+    {
+        var plugin = new PowerShellCatalogPlugin(Path.Combine(_directory, "powershell.json"));
+        await plugin.ReloadAsync(TestToken);
+
+        // The folder is created with an example, and every .ps1 in it (subfolder = submenu) is a command.
+        Assert.Contains(plugin.Commands, c => c.Id.StartsWith(PowerShellCatalogPlugin.ScriptPrefix, StringComparison.Ordinal) && c.Category == "PowerShell/Skrypty");
+        Directory.CreateDirectory(Path.Combine(plugin.ScriptsFolder, "Moje"));
+        var script = Path.Combine(plugin.ScriptsFolder, "Moje", "licz 'to'.ps1");
+        File.WriteAllText(script, "\"$($args.Count)|$($args -join '|')\"");
+        await plugin.ReloadAsync(TestToken);
+        Assert.Contains(plugin.Commands, c => c.Id == PowerShellCatalogPlugin.ScriptPrefix + Path.Combine("Moje", "licz 'to'.ps1") && c.Category == "PowerShell/Skrypty/Moje");
+
+        var line = PowerShellCatalogPlugin.ScriptCommandLine(script, [@"C:\a b\x.txt", @"C:\it's; calc.exe"]);
+        var result = await Commander4K.Core.Execution.ProcessRunner.RunAsync(
+            PowerShellCatalogPlugin.BuildRequest(PowerShellCatalogPlugin.FindShell(), line, null), TestToken);
+
+        Assert.Equal(@"2|C:\a b\x.txt|C:\it's; calc.exe", result.Output.Trim());
+    }
+
+    [Fact]
     public async Task Task_manager_builds_a_process_tree_including_this_process()
     {
         var session = new TaskManagerPanelPlugin().CreateSession(new PanelRequest(null, null), null!);

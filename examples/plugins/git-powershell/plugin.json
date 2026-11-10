@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
   "id": "examples.git",
   "name": "Git (PowerShell)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "4Kprojekt",
   "description": "Przykład: status i historia repozytorium Git w bieżącym folderze (uruchamia git przez aplikację).",
   "runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" },

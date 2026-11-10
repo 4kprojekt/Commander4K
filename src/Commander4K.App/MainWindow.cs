@@ -939,14 +939,38 @@ public sealed class MainWindow : Window
 
         var mode = panel.FolderMode;
         C4kFolder? config = null;
-        if (mode != FolderViewMode.Files && VfsPath.GetScheme(folder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
+        (VfsEntry Folder, C4kFolder Config, C4kItem Item)? inherited = null;
+        var probed = panel.ActiveTab;
+
+        // On a server the look for .c4k files is a round trip (seconds when it is slow or gone): the row shows it is working.
+        var remote = mode != FolderViewMode.Files && VfsPath.GetScheme(folder.Path) is "sftp" or "ftp";
+        if (remote)
         {
-            config = await Task.Run(() => _host!.ReadFolderAsync(folder.Path, CancellationToken.None));
+            probed.SetBusy(folder.Path, true);
+        }
+
+        try
+        {
+            if (mode != FolderViewMode.Files && VfsPath.GetScheme(folder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
+            {
+                config = await Task.Run(() => _host!.ReadFolderAsync(folder.Path, CancellationToken.None));
+            }
+
+            if (config is null && mode == FolderViewMode.Auto && inheritParentView)
+            {
+                inherited = await FindAncestorFolderViewAsync(folder.Path);
+            }
+        }
+        finally
+        {
+            if (remote)
+            {
+                probed.SetBusy(folder.Path, false);
+            }
         }
 
         if (config is null && mode == FolderViewMode.Auto && inheritParentView)
         {
-            var inherited = await FindAncestorFolderViewAsync(folder.Path);
             if (expectedTab is not null && panel.ActiveTab != expectedTab)
             {
                 return;
@@ -988,7 +1012,7 @@ public sealed class MainWindow : Window
             await panel.NavigateAsync(folder.Path, focusName);
         }
 
-        if (mode == FolderViewMode.View)
+        if (mode == FolderViewMode.View && panel.ActiveTab.Error is null) // a failed listing keeps its error and "Esc" hint on screen
         {
             var path = folder.Path;
             panel.ShowMode(new NoFolderView(_skins!.Current, folder.Name, () => _ = ConfigureFolderViewAsync(path, panel)), folderView: true);
@@ -1095,8 +1119,12 @@ public sealed class MainWindow : Window
 
         if (panel.FolderMode != FolderViewMode.Files)
         {
-            var tab = panel.ActiveTab;
-            await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true);
+            // A folder that failed to list has no view to look for: asking the dead server again (its .c4k files, then
+            // its parents') made the window wait for seconds and covered the error with "no view".
+            if (panel.ActiveTab is { Error: null } tab)
+            {
+                await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true);
+            }
         }
         else if (ReturnPath(panel.ActiveTab) is { } back)
         {
@@ -1106,8 +1134,7 @@ public sealed class MainWindow : Window
 
     /// <summary>Where Esc and Pliki go back to: the origin of a .c4k "open" (consumed), else, on a failed listing, the last folder that listed.</summary>
     private static string? ReturnPath(PanelTab tab) =>
-        tab.TakeOrigin()
-        ?? (tab.Error is not null && tab.LastGoodPath is { } good && !SamePath(good, tab.Path) ? good : null);
+        tab.TakeOrigin() ?? tab.FailedReturnPath;
 
     private async Task RestoreTabFolderModeAsync(FilePanelView panel)
     {
@@ -1118,7 +1145,7 @@ public sealed class MainWindow : Window
         }
 
         tab.SetFolderViewInfo(null, null);
-        if (tab.FolderMode != FolderViewMode.Files)
+        if (tab.FolderMode != FolderViewMode.Files && tab.Error is null)
         {
             await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true, expectedTab: tab);
         }
@@ -2722,8 +2749,8 @@ public sealed class MainWindow : Window
             return;
         }
 
-        _host.Settings.LeftPath = _left.ActiveTab.Path;
-        _host.Settings.RightPath = _right.ActiveTab.Path;
+        _host.Settings.LeftPath = _left.ActiveTab.PathToRestore;
+        _host.Settings.RightPath = _right.ActiveTab.PathToRestore;
         _host.Settings.Window = CapturePlacement();
         try
         {

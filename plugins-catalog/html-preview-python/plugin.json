@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
   "id": "official.html-preview",
   "name": "Podgląd HTML",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "4Kprojekt",
   "description": "Oficjalna wtyczka: strony HTML jako czytelny tekst — tytuł, spis nagłówków, treść, linki i obrazy (bez uruchamiania skryptów); karta na dashboard liczy linki i obrazy i otwiera stronę w przeglądarce panelu.",
   "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },

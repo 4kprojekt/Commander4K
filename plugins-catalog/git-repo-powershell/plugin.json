@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
   "id": "official.git-repo",
   "name": "Git: podgląd repozytorium",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "4Kprojekt",
   "description": "Oficjalna wtyczka: podgląd repozytorium Git — gałąź i stan względem serwera, niezatwierdzone zmiany, ostatnie commity, gałęzie, tagi i serwery zdalne. Folder repozytorium z plikiem git-repo.c4k: { \"plugin\": \"official.git-repo\" }.",
   "runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" },

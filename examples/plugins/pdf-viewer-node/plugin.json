@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
   "id": "examples.pdf-viewer",
   "name": "Podgląd PDF (Node.js, PDF.js)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "4Kprojekt",
   "description": "Przykład podglądu webowego: pliki PDF w szybkim podglądzie przez PDF.js — strony, powiększenie, wyszukiwanie i drukowanie. Plik czyta aplikacja (fs.read), strona nie ma dostępu do sieci.",
   "runtime": { "type": "node", "entry": "main.js", "version": ">=18" },

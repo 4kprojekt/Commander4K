@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
   "id": "official.pe-info",
   "name": "Podgląd EXE i DLL",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "4Kprojekt",
   "description": "Oficjalna wtyczka: nagłówki, zabezpieczenia, sekcje, importy i eksporty plików wykonywalnych Windows (PE); tylko odczyt, nic nie jest uruchamiane.",
   "runtime": { "type": "python", "entry": "main.py", "version": ">=3.9" },

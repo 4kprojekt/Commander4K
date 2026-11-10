@@ -72,6 +72,30 @@ public sealed class PanelTab
     /// <summary>The last folder whose listing worked: Esc on a failed listing (any VFS plugin) goes back there.</summary>
     public string? LastGoodPath { get; private set; }
 
+    /// <summary>
+    /// Where a failed listing goes back to: the last folder that listed, or the user's home folder when there is none
+    /// (the app started in a folder on a server that no longer answers). <c>null</c> while the listing works.
+    /// </summary>
+    public string? FailedReturnPath
+    {
+        get
+        {
+            if (Error is null)
+            {
+                return null;
+            }
+
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return LastGoodPath is { } good && !SameFolder(good, Path) ? good : !SameFolder(home, Path) ? home : null;
+        }
+    }
+
+    /// <summary>The path to start in next time: never a location that failed (its origin or the last working folder instead).</summary>
+    public string PathToRestore => Error is null ? Path : Origin ?? FailedReturnPath ?? Path;
+
+    private static bool SameFolder(string a, string b) =>
+        string.Equals(a.TrimEnd('\\', '/'), b.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+
     private bool IsWithinOriginTarget(string path)
     {
         var trimmed = path.TrimEnd('\\', '/');
