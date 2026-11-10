@@ -69,9 +69,12 @@ function Read-C4KInput([string] $Title, [string] $Message, [string] $Initial = '
 function Show-C4KDialog([string] $Title, [object[]] $Fields, [string] $Description, [string] $Submit, [string] $Message, [hashtable] $Errors) {  # one window, many fields -> hashtable id = value, or $null
     Invoke-C4K 'ui.dialog' @{ title = $Title; fields = @($Fields); description = $Description; submit = $Submit; message = $Message; errors = $Errors }
 }
+function Open-C4KPath([string] $Path, [string] $Focus) { [void](Invoke-C4K 'ui.navigate' @{ path = $Path; focus = $(if ($Focus) { $Focus } else { $null }) }) }  # active file panel; -Focus: name to put the cursor on
 function Open-C4KUrl([string] $Url) { [void](Invoke-C4K 'ui.openUrl' @{ url = $Url }) }                            # internal browser, http(s) only
 function Open-C4KFolder([string] $Path) { [void](Invoke-C4K 'ui.openFolder' @{ path = $Path }) }                  # the user chooses: Explorer or the active panel
-function Search-C4KWeb([string] $Query, [string] $Engine) { [void](Invoke-C4K 'ui.search' @{ query = $Query; engine = $(if ($Engine) { $Engine } else { $null }) }) }  # engine: assistant, google, chatgpt…
+function Search-C4KWeb([string] $Query, [string] $Engine) { [void](Invoke-C4K 'ui.search' @{ query = $Query; engine = $(if ($Engine) { $Engine } else { $null }) }) }  # engine: google, bing, duckduckgo; none = the user's
+function Edit-C4KFile([string] $Path) { [void](Invoke-C4K 'ui.editFile' @{ path = $Path }) }                       # the user's editor (tools.json)
+function Open-C4KPanel([string] $Panel, [string] $Argument) { [void](Invoke-C4K 'ui.openPanel' @{ panel = $Panel; argument = $(if ($Argument) { $Argument } else { $null }) }) }  # a panel by id ('<plugin id>/<panel id>')
 function Copy-C4KText([string] $Text) { [void](Invoke-C4K 'ui.copyText' @{ text = $Text }) }                        # clipboard (write only)
 function Get-C4KActionTarget([string] $Action, [hashtable] $Arguments = @{}) {  # preview button target "c4k:plugin/<action>?k=v" -> comes back as preview.action
     $query = @($Arguments.GetEnumerator() | ForEach-Object { [uri]::EscapeDataString([string] $_.Key) + '=' + [uri]::EscapeDataString([string] $_.Value) }) -join '&'
@@ -84,8 +87,10 @@ function Get-C4KStorage([string] $Key, $Default = $null) {                      
     if ($null -eq $value) { $Default } else { $value }
 }
 function Set-C4KStorage([string] $Key, $Value) { [void](Invoke-C4K 'storage.set' @{ key = $Key; value = $Value }) }  # any JSON value; $null removes the key
+function Get-C4KStorageKeys { Invoke-C4K 'storage.keys' }                                                            # -> keys
 function Get-C4KChildItem([string] $Path) { Invoke-C4K 'fs.list' @{ path = $Path } }                                # fs.read -> entries
 function Get-C4KItem([string] $Path) { Invoke-C4K 'fs.stat' @{ path = $Path } }                                     # fs.read -> entry or $null
+function Get-C4KFolderSize([string] $Path) { Invoke-C4K 'fs.size' @{ path = $Path } }                               # fs.read -> bytes, files, folders, inaccessible; counted by the app on all cores
 function Get-C4KText([string] $Path, [int] $MaxBytes = 1048576) { Invoke-C4K 'fs.readText' @{ path = $Path; maxBytes = $MaxBytes } }  # fs.read
 function Read-C4KBytes([string] $Path, [long] $Offset = 0, [int] $Length = 65536) {                                 # fs.read -> byte[] (max 16 MB)
     [Convert]::FromBase64String((Invoke-C4K 'fs.readBytes' @{ path = $Path; offset = $Offset; length = $Length }).data)
@@ -147,7 +152,7 @@ function Start-C4KPlugin {
             $handler = $script:C4KHandlers[$method]
             $result = if ($handler) { & $handler ($message.params ?? @{}) }
                       elseif ($method -eq 'initialize') { @{} }
-                      else { throw "Unknown method $method" }
+                      else { $unknown = [System.Exception]::new("Unknown method $method"); $unknown.Data['Code'] = -32601; throw $unknown }
             if ($null -ne $id) { Send-C4KMessage @{ jsonrpc = '2.0'; id = $id; result = $result } }
         }
         catch {

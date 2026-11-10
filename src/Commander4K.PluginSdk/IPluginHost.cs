@@ -186,6 +186,17 @@ public interface IPluginHost
     /// <summary>OS, machine, memory and drives. Requires <see cref="PluginPermissions.SystemInfo"/>.</summary>
     Task<SystemSnapshot> GetSystemInfoAsync(CancellationToken cancellationToken = default);
 
+    // ---- the plugin's own data (no permission needed) ----
+
+    /// <summary>A value the plugin stored earlier, or <c>null</c>. Each plugin sees only its own data.</summary>
+    Task<System.Text.Json.Nodes.JsonNode?> StorageGetAsync(string key);
+
+    /// <summary>Stores any JSON value under <paramref name="key"/>; <c>null</c> removes it. At most 1 MB per plugin.</summary>
+    Task StorageSetAsync(string key, System.Text.Json.Nodes.JsonNode? value);
+
+    /// <summary>The keys the plugin has stored.</summary>
+    Task<IReadOnlyList<string>> StorageKeysAsync();
+
     /// <summary>Mail through the app (IMAP/SMTP, parsing, composing). Every member requires <see cref="PluginPermissions.Mail"/>.</summary>
     IMailHost Mail { get; }
 }

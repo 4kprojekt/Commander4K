@@ -85,7 +85,9 @@ def dialog(title, fields, description=None, submit=None, message=None, errors=No
 def navigate(path, focus=None):      call("ui.navigate", path=path, focus=focus)
 def open_url(url):                   call("ui.openUrl", url=url)                              # internal browser, http(s) only
 def open_folder(path):               call("ui.openFolder", path=path)                         # the user chooses: Explorer or the active panel
-def search(query, engine=None):      call("ui.search", query=query, engine=engine)            # engine: None, "assistant", "google", "chatgpt"…
+def search(query, engine=None):      call("ui.search", query=query, engine=engine)            # engine: None (the user's), "google", "bing", "duckduckgo"
+def edit_file(path):                 call("ui.editFile", path=path)                           # the user's editor (tools.json)
+def open_panel(panel, argument=None): call("ui.openPanel", panel=panel, argument=argument)    # a panel by id ("<plugin id>/<panel id>")
 def copy_text(text):                 call("ui.copyText", text=text)                           # clipboard (write only)
 def action_target(action, **args):                                                              # preview button target "c4k:plugin/<action>?k=v" -> comes back as preview.action
     def esc(text):
@@ -98,8 +100,10 @@ def storage_get(key, default=None):                                             
     value = call("storage.get", key=key)
     return default if value is None else value
 def storage_set(key, value):         call("storage.set", key=key, value=value)               # any JSON value; None removes the key
+def storage_keys():                  return call("storage.keys")                             # -> [key]
 def list_dir(path):                  return call("fs.list", path=path)                       # fs.read  -> [entry]
 def stat(path):                      return call("fs.stat", path=path)                       # fs.read  -> entry or None
+def dir_size(path):                  return call("fs.size", path=path)                       # fs.read  -> {bytes, files, folders, inaccessible}; counted by the app on all cores
 def read_text(path, max_bytes=1048576): return call("fs.readText", path=path, maxBytes=max_bytes)  # fs.read -> str (UTF-8)
 def read_bytes(path, offset=0, length=65536):                                                # fs.read  -> bytes (max 16 MB)
     return base64.b64decode(call("fs.readBytes", path=path, offset=offset, length=length)["data"])

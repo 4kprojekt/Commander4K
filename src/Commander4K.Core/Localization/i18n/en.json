@@ -1094,6 +1094,7 @@
   "uruchomić komendę": "run a command",
   "uruchomić komendę wtyczki": "run a plugin command",
   "otworzyć panel wtyczki": "open a plugin panel",
+  "wykonać akcję panelu wtyczki": "run an action of a plugin panel",
   "pokazać podgląd pliku": "preview a file",
   "zainstalować wtyczkę": "install a plugin",
   "włączyć wtyczkę": "enable a plugin",

@@ -1471,7 +1471,7 @@ public sealed class MailPluginTests : IAsyncLifetime
         var missing = RuntimeCatalog.CheckRequirement(discovered.Manifest!.Runtime, _runtimes);
         Assert.SkipWhen(missing is not null, missing ?? string.Empty);
         var runtime = _runtimes.First(r => r.Type == discovered.Manifest.Runtime.Type);
-        var plugin = new ExternalPlugin(discovered, runtime, new ScopedPluginHost(discovered.Manifest, _ui, _router, _http, _audit, null, backend), _audit, _storage);
+        var plugin = new ExternalPlugin(discovered, runtime, new ScopedPluginHost(discovered.Manifest, _ui, _router, _http, _audit, null, backend, _storage), _audit);
         _owned.Add(plugin);
         return plugin;
     }

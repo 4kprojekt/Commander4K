@@ -109,7 +109,7 @@ Commands get the keymap id `plugin:<pluginId>:<commandId>`, and panels get `pane
 
 | Permission | Allows these app API calls |
 |---|---|
-| `fs.read` | `fs.list`, `fs.stat`, `fs.readText`, `fs.readBytes`. They work on any location the app can open: disks, SMB shares, SFTP/FTP, archives, the registry. |
+| `fs.read` | `fs.list`, `fs.stat`, `fs.size`, `fs.readText`, `fs.readBytes`. They work on any location the app can open: disks, SMB shares, SFTP/FTP, archives, the registry. |
 | `fs.write` | `fs.writeText`, `fs.writeBytes`, `fs.mkdir`, `fs.delete`, `fs.move` |
 | `process.read` | `process.list` |
 | `process.kill` | `process.kill` |
@@ -156,12 +156,14 @@ Ask for the fewest permissions that do the job.
 | `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options, pinned }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }`. Or `{ kind: "web", page, state? }` (an HTML page from the preview's `webRoot`, see "Web previews"). A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). A preview may also return `{ kind: "chart", title, description?, chart }` (see `preview.card` for `chart`) or a form: `{ kind: "form", title, fields: [{ id, label, value, multiline? }], files: [{ name, path, size }], buttons: [{ label, target, shortcut? }], message?, messageError? }`. Any result may carry `path` (an absolute path other than the entry's): you renamed or moved the entry (a message marked read) or the view is now about another file (the draft of a reply), and the app follows that path for later renders, actions and form edits. Any result may carry `actions: [{ label, target, shortcut? }]`, shown as a bar of buttons above the content; a `shortcut` (`"R"`, `"Ctrl+Enter"`) works while the preview's panel is active (plain keys not while the user types in a form field). A `target` is what a tile target is, or `c4k:plugin/<action>?k=v` (build it with `action_target`), which calls your `preview.action`. `pinned` is `true` when the user opened the entry with Enter (the view stays on it, so it is the place for buttons) and `false` in the quick view that follows the cursor. With `"enter": true` in `contributes.previews`, Enter on a matching file opens this pinned view over the panel when your preview is the highest-priority match; Shift+Enter still opens the file with Windows, and Esc returns to the files. |
 | `preview.action` | `{ preview, entry, options, action, args, values? }` | `null` (the app renders the entry again) or a new result in the `preview.render` shape. A `c4k:plugin/…` button or a dashboard card action (the card is read again afterwards); `args` holds the target's query, `values` the form fields when the button belongs to a form. |
 | `preview.formChanged` | `{ preview, entry, options, values }` | `null`. The form's field values, sent 800 ms after the user stops typing and always before a button's `preview.action`, so you can keep a draft. |
-| Sensitive preview form fields | In a `preview.render` form field, set `"password": true` to mask the value in the UI. The value is still sent through the form protocol; plugins should not log or persist it unless the user explicitly asks. |
 | `preview.suggest` | `{ preview, folder: { … }, entries: [{ … }], truncated, context }` | Only for previews whose `suggest` rule has `"ask": true`, and only after the rule matched the folder under the cursor. `{ score (0–1), message, options? }` or `null`. Answers below 0.5 are ignored, and the best answer across all previews becomes a hint ("switch to …?"); accepting writes a `.c4k` file with `{ "plugin": <id>, "preview": <preview>, "options": <options> }`. `entries` is the folder listing (at most 500, `truncated` when cut). 5 s limit, process start included; an error or timeout means no suggestion. See "Folder suggestions". |
 | `preview.message` | `{ preview, entry, method, params, context }` | Any JSON value. A web preview page called `c4k.request(method, params)`; answer it here (30 s limit). See "Web previews". |
 | `preview.card` | `{ preview, entry: { … } \| null, context, options, previous }` | Only for previews with `"card": true` in `contributes.previews`. The small form shown on a `.c4k` dashboard: `{ title?, subtitle?, icon?, status?: "ok"\|"warning"\|"error", items: [...], actions: [{ label, target }] }`. Items: `{ kind: "value", label, value, status? }`, `{ kind: "progress", label, fraction (0–1), text? }`, `{ kind: "text", text }`, `{ kind: "thumbnails", images: [path] }` (at most 4, read with your `fs.read`), `{ kind: "chart", chart: { kind: "line"\|"bar", unit?, min?, max?, series: [{ name, points: [{ x, y, label? }] }] } }`. `previous` is the card you returned last time (thumbnails as a count), so a card refreshed on a timer can add a point to its chart; keep at most 120 points. An action `target` is a path, a URL, `c4k:refresh` (read the card again) or `c4k:plugin/<action>?k=v` (your `preview.action` with the card's entry; the card is read again afterwards). Previews without `"card": true` get a plain card with their title and an Open button. |
 | `preview.setup` | `{ preview, folder, context }` | Only for folder previews with `"setup": true`. Sent when the user gives a folder this preview (*Widok folderu…*), after the plugin is installed and enabled and before the `.c4k` file is written. Ask what the folder needs in one `ui.dialog` window (or `ui.confirm` for a yes/no; the call may take up to 15 minutes) and answer `{ options: { … } }`; the app writes them as the item's `options`. Answer `null` when the user cancels: nothing is written. Throw to show an error. |
+| `background.tick` | — | `{ more?: boolean }` or `null`. Only with the `background` permission and `contributes.background`; 60 s limit. See [Background work](#background-work). |
 | `shutdown` | — | `null`, then exit |
+
+Sensitive form fields: in a `preview.render` form field, set `"password": true` to mask the value in the UI. The value is still sent through the form protocol; plugins should not log or persist it unless the user explicitly asks.
 
 `options` is the `"options"` object of the `.c4k` item when the panel or preview was opened through it (see [.c4k files](#c4k-files)), otherwise `null`.
 
@@ -189,12 +191,15 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 | `ui.openFolder` | `{ path }` | `null` | — (the user is asked where to open it: Explorer or the active panel; nothing is created; audited) |
 | `ui.search` | `{ query, engine? }` | `null` | — (`engine`: omitted = the user's search engine, or `google`, `bing`, `duckduckgo`; any other value uses the user's search engine; use it e.g. to let the user look up an error) |
 | `ui.copyText` | `{ text }` | `null` | — (clipboard, write only) |
+| `ui.editFile` | `{ path }` | `null` | — (opens the file in the user's editor from tools.json; audited) |
+| `ui.openPanel` | `{ panel, argument? }` | `null` | — (`panel`: a panel id as in the keymap without the `panel:` prefix, e.g. `<plugin id>/<panel id>`) |
 | `storage.get` | `{ key }` | any JSON value or `null` | — (the plugin's own data) |
 | `storage.set` | `{ key, value }` (`null` removes; max 1 MB per plugin) | `null` | — |
 | `storage.keys` | — | `[string]` | — |
+| `fs.size` | `{ path }` (a folder, counted with everything below) | `{ bytes, files, folders, inaccessible }` (`inaccessible`: folders that could not be read) | `fs.read` |
 | `fs.list` | `{ path }` | `[entry]` | `fs.read` |
 | `fs.stat` | `{ path }` | entry or `null` (missing) | `fs.read` |
-| `fs.readText` | `{ path, maxBytes? }` (default 1 MB, max 16 MB) | string (UTF-8) | `fs.read` |
+| `fs.readText` | `{ path, maxBytes? }` (default 1 MB, max 16 MB; a longer file is cut at a character boundary) | string (UTF-8) | `fs.read` |
 | `fs.readBytes` | `{ path, offset?, length? }` (default 64 KB, max 16 MB) | `{ data (base64), bytesRead, eof }` | `fs.read` |
 | `fs.writeText` | `{ path, content }` | `null` | `fs.write` |
 | `fs.writeBytes` | `{ path, data (base64) }` | `null` | `fs.write` |
@@ -229,14 +234,20 @@ Long loads are fine: the panel shows a spinner and stays responsive. Requests ti
 - `modified`: ISO 8601 or `null`.
 
 **Errors** use standard JSON-RPC codes:
+- `-32000`: the call failed (file not found, time-out, server error…). The message says why.
 - `-32001`: permission denied. The message names the missing permission.
 - `-32010`: mail login needed, with `data: { authRequired: true, realm }`.
 - `-32011`: the mail server's certificate is not trusted yet, with `data: { host, fingerprint }`.
 - `-32012`: `mail.send` got no confirmation (timeout, lost connection), so the message may or may not have been sent, with `data: { outcomeUnknown: true }`. Do not simply send it again.
 - `-32601`: unknown method.
 - `-32602`: invalid parameters.
+- `-32800`: the request was cancelled.
 
 The SDK clients turn these into exceptions.
+
+**Audit:** every call is written to the audit log under its method name. Reads and writes are logged by what they do: `fs.readText`/`fs.readBytes` as `fs.read`, `fs.writeText`/`fs.writeBytes` as `fs.write`. `ui.notify`, `context.get` and `job.progress` are not logged.
+
+**Threads:** the app answers every request off its UI thread, and your handlers may take as long as the limits below allow: the window never waits for a plugin.
 
 ### Receiving and providing files
 
@@ -341,17 +352,21 @@ Every helper maps to one protocol method above:
 | `ui.confirm` | `confirm(title, message)` | `confirm(title, message)` | `Confirm-C4K $Title $Message` |
 | `ui.prompt` | `prompt(title, message, initial="")` | `prompt(title, message, initial)` | `Read-C4KInput $Title $Message $Initial` |
 | `ui.dialog` | `dialog(title, fields, description=None, submit=None, message=None, errors=None)` | `dialog(title, fields, { description, submit, message, errors })` | `Show-C4KDialog $Title $Fields [-Description] [-Submit] [-Message] [-Errors]` |
-| `ui.navigate` | `navigate(path, focus=None)` | `navigate(path, focus)` | — (`Invoke-C4K 'ui.navigate' @{ path = … }`) |
+| `ui.navigate` | `navigate(path, focus=None)` | `navigate(path, focus)` | `Open-C4KPath $Path [$Focus]` |
 | `ui.openUrl` | `open_url(url)` | `openUrl(url)` | `Open-C4KUrl $Url` |
 | `ui.openFolder` | `open_folder(path)` | `openFolder(path)` | `Open-C4KFolder $Path` |
 | `ui.search` | `search(query, engine=None)` | `search(query, engine)` | `Search-C4KWeb $Query $Engine` |
 | `ui.copyText` | `copy_text(text)` | `copyText(text)` | `Copy-C4KText $Text` |
+| `ui.editFile` | `edit_file(path)` | `editFile(path)` | `Edit-C4KFile $Path` |
+| `ui.openPanel` | `open_panel(panel, argument=None)` | `openPanel(panel, argument)` | `Open-C4KPanel $Panel [$Argument]` |
 | — (`c4k:plugin/…` target for `preview.action`) | `action_target(action, **args)` | `actionTarget(action, args)` | `Get-C4KActionTarget $Action @{ k = v }` |
 | — (result of `preview.render`) | `web_preview(page, state=None)` | `webPreview(page, state)` | `New-C4KWebPreview $Page [$State]` |
 | — (result of `preview.suggest`) | `folder_suggestion(score, message, options=None)` | `folderSuggestion(score, message, options)` | `New-C4KFolderSuggestion $Score $Message [$Options]` |
 | `storage.get` / `.set` | `storage_get(key, default)` / `storage_set(key, value)` | `storageGet(key, fallback)` / `storageSet(key, value)` | `Get-C4KStorage $Key $Default` / `Set-C4KStorage $Key $Value` |
+| `storage.keys` | `storage_keys()` | `storageKeys()` | `Get-C4KStorageKeys` |
 | `fs.list` | `list_dir(path)` | `listDir(path)` | `Get-C4KChildItem $Path` |
 | `fs.stat` | `stat(path)` | `stat(path)` | `Get-C4KItem $Path` |
+| `fs.size` | `dir_size(path)` | `dirSize(path)` | `Get-C4KFolderSize $Path` |
 | `fs.readText` | `read_text(path, max_bytes=1048576)` | `readText(path, maxBytes)` | `Get-C4KText $Path [$MaxBytes]` |
 | `fs.readBytes` | `read_bytes(path, offset=0, length=65536)` → `bytes` | `readBytes(path, offset, length)` → `Buffer` | `Read-C4KBytes $Path [$Offset] [$Length]` → `byte[]` |
 | `fs.writeText` | `write_text(path, content)` | `writeText(path, content)` | `Set-C4KText $Path $Content` |
@@ -767,6 +782,7 @@ It also shows the same server as a `.mcp.json` entry for a project. Use `127.0.0
 | `read_file`, `write_file`, `make_directory` | ask | Read and write files inside the allowed folders. |
 | `move`, `delete` | always ask | No "yes for this session" for these. |
 | `run_command`, `run_plugin_command`, `load_plugin_panel`, `render_preview`, `reload_plugin` | ask | Run app or plugin commands, open plugin panels, render a preview, restart a plugin's process. |
+| `run_panel_action` | always ask | Run one action of a panel plugin on rows it listed (end a process, a plugin panel's own actions). Ids come from `load_plugin_panel`; the plugin manager's actions are refused. |
 | `install_plugin`, `enable_plugin` | always ask | Show the plugin's permissions in their own dialog. |
 | `list_settings`, `list_key_bindings` | allow | The settings (as in `Ctrl+,`: key, value, allowed values) and the keyboard shortcuts. |
 | `set_setting`, `set_key_binding` | ask | Change a setting (applied at once and saved) or bind keys to a command (saved to `keymap.json`). |
@@ -780,7 +796,7 @@ It also shows the same server as a `.mcp.json` entry for a project. Use `127.0.0
 
 A blocked tool is still listed, with "(Disabled by the user in Commander4K.)" at the end of its description, and calling it returns an error. Prompts: `write_plugin`, `preview_plugin_for_file`, `explain_file_format`, `translate_ui`, `design_skin`, `build_dashboard` (guide → read the folder → plan the tiles and KPIs → check until clean → save and show it). The two prompts about a file include its first bytes only when the file is allowed, not protected, and `read_file` is not blocked; each of them is audited as `prompt:<name>`.
 
-**Allowed folders.** File tools only work inside the folders listed in the connect window (or the setting "Foldery dostępne dla MCP"). Any VFS path can be one: a disk folder, `\\server\share`, `sftp://…`. With an empty list no file can be touched. A path outside them is refused with a message that tells the model to ask you. The same applies to folders the app tools take from the panels: `get_context` shows a panel's contents only when its folder is allowed (and not protected), `select` needs the chosen panel's folder, and `run_command`, `run_plugin_command` and `load_plugin_panel` need both panels' folders and the marked entries, inside the allowed folders and outside the protected ones. `load_plugin_panel` passes `argument` only to panels that take a file, after the same check; other panels never see it. "Dodaj folder z aktywnego panelu" accepts real folders only: disk paths, `\\server\share`, `sftp://` and `ftp://` (not This PC, `net://`, the registry or archives; type those into the setting if you really mean it).
+**Allowed folders.** File tools only work inside the folders listed in the connect window (or the setting "Foldery dostępne dla MCP"). Any VFS path can be one: a disk folder, `\\server\share`, `sftp://…`. With an empty list no file can be touched. A path outside them is refused with a message that tells the model to ask you. The same applies to folders the app tools take from the panels: `get_context` shows a panel's contents only when its folder is allowed (and not protected), `select` needs the chosen panel's folder, and `run_command`, `run_plugin_command`, `load_plugin_panel`, `run_panel_action` and `render_preview` with a plugin's preview (the plugin is sent the panels' context) need both panels' folders and the marked entries, inside the allowed folders and outside the protected ones. `load_plugin_panel` passes `argument` only to panels that take a file, after the same check; other panels never see it. "Dodaj folder z aktywnego panelu" accepts real folders only: disk paths, `\\server\share`, `sftp://` and `ftp://` (not This PC, `net://`, the registry or archives; type those into the setting if you really mean it).
 
 **Protected folders.** No tool can read or change the `plugins/` folders (next to the exe and in the data folder), `config/` (approvals, encrypted credentials and the MCP token, known hosts, trusted folders), `data/` (audit logs, plugin storage, the browser profile with its sign-ins) or the folder of `Commander4K.exe` itself (a DLL placed there would load on the next start), even when they sit inside an allowed folder. Only `list_directory` and `stat` work there, because they return names and sizes, not contents. `navigate`, the panel checks of the app tools and the `explain_file_format` prompt refuse them too. Writing tools (`write_file`, `make_directory`, `move`, `delete`), `render_preview` (a folder preview reads its children) and the recursive `folder` argument of `check_plugin` and `install_plugin` are also refused on a folder that contains a protected one. Paths with NTFS stream syntax (a `:` after the drive, as in `file.txt:stream` or `folder::$INDEX_ALLOCATION`) are refused by every tool, because they reach real files under a different name. The refusal reads "Commander4K's own plugin, config and data folders cannot be accessed through MCP." Plugins get into `plugins/` only through `install_plugin`.
 
@@ -797,4 +813,4 @@ A blocked tool is still listed, with "(Disabled by the user in Commander4K.)" at
 3. `check_plugin` with `folder` (or `files`) reports manifest errors and SDK bypasses. Fix them until it is clean.
 4. `install_plugin` shows its permissions to the user and installs it into `plugins/<id>`, disabled. Code that bypasses the SDK is not installed.
 5. `enable_plugin` shows the permissions again; on "yes" the plugin starts.
-6. Try it with `run_plugin_command`, `load_plugin_panel` or `render_preview`. Read problems with `get_plugin_log`. After editing the code, call `install_plugin` again (it replaces the installed code), then `reload_plugin`; `reload_plugin` also restarts a plugin that hangs. Grown permissions need `enable_plugin` again.
+6. Try it with `run_plugin_command`, `load_plugin_panel` (and `run_panel_action` for a panel's actions) or `render_preview`. Read problems with `get_plugin_log`. After editing the code, call `install_plugin` again (it replaces the installed code), then `reload_plugin`; `reload_plugin` also restarts a plugin that hangs. Grown permissions need `enable_plugin` again.

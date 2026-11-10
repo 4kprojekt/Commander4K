@@ -183,7 +183,7 @@ public sealed class AppHost : IAsyncDisposable
             {
                 host = new ScopedPluginHost(manifest, PluginUi, Router, PluginHttp, Audit,
                     () => SystemSnapshots.Processes(Plugins.BuiltIn.Interop.ProcessLookups.ParentIds, Plugins.BuiltIn.Interop.ProcessLookups.ImagePath),
-                    Mail);
+                    Mail, PluginData);
                 _hosts[manifest.Id] = host;
             }
 
@@ -241,7 +241,7 @@ public sealed class AppHost : IAsyncDisposable
         foreach (var plugin in discovered.Where(p => PluginBlocker(p) is null))
         {
             var runtime = Runtimes.First(r => string.Equals(r.Type, plugin.Manifest!.Runtime.Type, StringComparison.OrdinalIgnoreCase));
-            external.Add(new ExternalPlugin(plugin, runtime, (ScopedPluginHost)HostFor(plugin.Manifest!), Audit, PluginData));
+            external.Add(new ExternalPlugin(plugin, runtime, (ScopedPluginHost)HostFor(plugin.Manifest!), Audit));
         }
 
         DiscoveredPlugins = discovered;

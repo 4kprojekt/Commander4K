@@ -85,6 +85,7 @@ public sealed class McpConfirmDialog : DialogWindow<McpConsent>
         "run_command" => Loc.T("uruchomić komendę"),
         "run_plugin_command" => Loc.T("uruchomić komendę wtyczki"),
         "load_plugin_panel" => Loc.T("otworzyć panel wtyczki"),
+        "run_panel_action" => Loc.T("wykonać akcję panelu wtyczki"),
         "render_preview" => Loc.T("pokazać podgląd pliku"),
         "install_plugin" => Loc.T("zainstalować wtyczkę"),
         "enable_plugin" => Loc.T("włączyć wtyczkę"),

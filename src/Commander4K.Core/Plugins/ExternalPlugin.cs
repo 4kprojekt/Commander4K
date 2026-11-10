@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using Commander4K.Core.Execution;
 using Commander4K.Core.Localization;
 using Commander4K.Core.Updates;
 using Commander4K.PluginSdk;
@@ -25,21 +26,18 @@ public sealed class ExternalPlugin : IAsyncDisposable
     private Process? _process;
     private JsonRpcConnection? _connection;
 
-    private readonly PluginStorage? _storage;
     private readonly ConcurrentDictionary<string, IProgress<TransferProgress>> _jobs = new(StringComparer.Ordinal);
 
     // Time limits of the calls in flight; they stand still while the plugin waits for the user (see UserWait).
     private readonly Dictionary<CancellationTokenSource, TimeSpan> _limits = [];
     private int _userWaits;
 
-    /// <param name="storage">Backs <c>storage.get/set</c>; without it those calls fail with "not available".</param>
-    public ExternalPlugin(DiscoveredPlugin discovered, RuntimeInfo runtime, ScopedPluginHost host, AuditLog audit, PluginStorage? storage = null)
+    public ExternalPlugin(DiscoveredPlugin discovered, RuntimeInfo runtime, ScopedPluginHost host, AuditLog audit)
     {
         _discovered = discovered;
         _runtime = runtime;
         _host = host;
         _audit = audit;
-        _storage = storage;
     }
 
     public PluginManifest Manifest => _discovered.Manifest!;
@@ -48,9 +46,13 @@ public sealed class ExternalPlugin : IAsyncDisposable
 
     public bool IsRunning => _process is { HasExited: false };
 
-    /// <summary>Calls the plugin; starts it first if needed. Cancelling sends <c>$/cancelRequest</c>.</summary>
+    /// <summary>
+    /// Calls the plugin; starts it first if needed. Cancelling sends <c>$/cancelRequest</c>. Safe to call from the UI
+    /// thread: starting the process, building the JSON and writing to the pipe all happen on the pool.
+    /// </summary>
     public async Task<JsonElement> CallAsync(string method, object? parameters, CancellationToken cancellationToken, TimeSpan? timeout = null)
     {
+        await CallerThread.LeaveUi();
         var connection = await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         lock (_limits)
@@ -152,6 +154,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        await CallerThread.LeaveUi(); // killing a process tree is slow
         if (_connection is { } connection)
         {
             try
@@ -239,7 +242,11 @@ public sealed class ExternalPlugin : IAsyncDisposable
         }
     }
 
-    /// <summary>Requests from the plugin to the app. Each maps to one <see cref="IPluginHost"/> call.</summary>
+    /// <summary>
+    /// Requests from the plugin to the app. Each maps to one <see cref="IPluginHost"/> call (gated and audited there),
+    /// except <c>background.wake</c>, which is checked and audited here. A new method
+    /// also goes into the three SDK clients and docs/plugins.md; ProtocolConsistencyTests fails otherwise.
+    /// </summary>
     private async Task<object?> HandleRequestAsync(string method, JsonElement? p, CancellationToken cancellationToken)
     {
         string Str(string name) => p?.TryGetProperty(name, out var v) == true && v.ValueKind == JsonValueKind.String
@@ -321,7 +328,7 @@ public sealed class ExternalPlugin : IAsyncDisposable
                 {
                     var buffer = new byte[maxBytes];
                     var read = await stream.ReadAtLeastAsync(buffer, maxBytes, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
-                    return System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+                    return System.Text.Encoding.UTF8.GetString(buffer, 0, read < maxBytes ? read : Utf8Boundary(buffer, read));
                 }
 
             case "fs.writeText":
@@ -360,14 +367,22 @@ public sealed class ExternalPlugin : IAsyncDisposable
 
                 return null;
             case "storage.get":
-                return (_storage ?? throw new InvalidOperationException("Plugin storage is not available.")).Get(Manifest.Id, Str("key"));
+                return await _host.StorageGetAsync(Str("key")).ConfigureAwait(false);
             case "storage.set":
                 var value = p?.TryGetProperty("value", out var v) == true && v.ValueKind != JsonValueKind.Null ? System.Text.Json.Nodes.JsonNode.Parse(v.GetRawText()) : null;
-                (_storage ?? throw new InvalidOperationException("Plugin storage is not available.")).Set(Manifest.Id, Str("key"), value);
-                _audit.Record(Manifest.Id, "storage.set", Str("key"), AuditOutcome.Info);
+                await _host.StorageSetAsync(Str("key"), value).ConfigureAwait(false);
                 return null;
             case "storage.keys":
-                return _storage?.Keys(Manifest.Id) ?? [];
+                return await _host.StorageKeysAsync().ConfigureAwait(false);
+            case "ui.editFile":
+                await _host.EditFileAsync(Str("path")).ConfigureAwait(false);
+                return null;
+            case "ui.openPanel":
+                await _host.OpenPanelAsync(Str("panel"), OptStr("argument")).ConfigureAwait(false);
+                return null;
+            case "fs.size":
+                var size = await _host.CalculateSizeAsync(Str("path"), null, cancellationToken).ConfigureAwait(false);
+                return new { bytes = size.Bytes, files = size.Files, folders = size.Folders, inaccessible = size.Inaccessible };
             case "ui.copyText":
                 await _host.CopyTextAsync(Str("text")).ConfigureAwait(false);
                 return null;
@@ -423,6 +438,27 @@ public sealed class ExternalPlugin : IAsyncDisposable
                 _audit.Record(Manifest.Id, method, "nieznana metoda", AuditOutcome.Denied);
                 throw new JsonRpcException(JsonRpcException.MethodNotFound, Loc.T("Nieznana metoda „{0}”.", method));
         }
+    }
+
+    /// <summary>
+    /// Where to cut <paramref name="count"/> bytes of UTF-8 so that a character split by the read limit is left out
+    /// (it would decode as U+FFFD at the end of the text).
+    /// </summary>
+    public static int Utf8Boundary(ReadOnlySpan<byte> bytes, int count)
+    {
+        var lead = count - 1;
+        while (lead >= 0 && count - lead < 4 && (bytes[lead] & 0xC0) == 0x80)
+        {
+            lead--;
+        }
+
+        if (lead < 0)
+        {
+            return count;
+        }
+
+        var needed = bytes[lead] >= 0xF0 ? 4 : bytes[lead] >= 0xE0 ? 3 : bytes[lead] >= 0xC0 ? 2 : 1;
+        return needed > count - lead ? lead : count;
     }
 
     /// <summary>Moves a read stream to <paramref name="offset"/>: seeks when possible, otherwise reads and discards (SFTP, archives).</summary>

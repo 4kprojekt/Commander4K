@@ -19,10 +19,15 @@ internal static class McpPluginKnowledge
             .AppendLine("Use the installed plugins below when they fit the task instead of doing the same work by hand: the user already approved "
                 + "their permissions. Commander4K has no AI of its own; you are the only model here.")
             .AppendLine()
-            .AppendLine("Built-in panels (load_plugin_panel plugin=\"<id>\", set_panel_mode mode=\"panel:<id>\", dashboard card \"<id>\"):");
+            .AppendLine("Built-in panels (load_plugin_panel plugin=\"<id>\", run_panel_action for their actions, set_panel_mode mode=\"panel:<id>\", dashboard card \"<id>\") and command sets:");
         foreach (var panel in host.BuiltInPanels)
         {
             text.AppendLine($"- {panel.Id}: {panel.Title}. {panel.Description}");
+        }
+
+        foreach (var commands in host.CommandPlugins.Where(p => p.Manifest.IsBuiltIn))
+        {
+            text.AppendLine($"- {commands.Id}: {commands.Manifest.Name}, {commands.Commands.Count} commands (list_commands filter=\"plugin:{commands.Id}\", then run_plugin_command).");
         }
 
         text.AppendLine().AppendLine("Installed plugins (enabled):");

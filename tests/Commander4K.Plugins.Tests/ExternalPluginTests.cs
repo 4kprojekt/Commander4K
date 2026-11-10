@@ -1436,7 +1436,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Equal("copied", _ui.LastCopied);
         Assert.False(Directory.Exists(Path.Combine(_folder, "work")));
         var audit = _audit.Recent("tests.sdk-tour").Select(e => e.Operation).ToHashSet();
-        Assert.Superset(new HashSet<string> { "fs.mkdir", "fs.write", "fs.read", "fs.move", "fs.stat", "fs.delete", "process.list", "system.info", "net.request", "storage.set", "ui.copy" }, audit);
+        Assert.Superset(new HashSet<string> { "fs.mkdir", "fs.write", "fs.read", "fs.move", "fs.stat", "fs.delete", "process.list", "system.info", "net.request", "storage.set", "ui.copyText" }, audit);
     }
 
     [Fact]
@@ -1725,7 +1725,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         var missing = RuntimeCatalog.CheckRequirement(discovered.Manifest!.Runtime, _runtimes);
         Assert.SkipWhen(missing is not null, missing ?? string.Empty);
         var host = HostFor(discovered.Manifest);
-        await using var plugin = new ExternalPlugin(discovered, _runtimes.First(r => r.Type == discovered.Manifest.Runtime.Type), host, _audit, _storage);
+        await using var plugin = new ExternalPlugin(discovered, _runtimes.First(r => r.Type == discovered.Manifest.Runtime.Type), host, _audit);
         using var server = new RecordingServer("{\"ok\":true}");
         _storage.Set("examples.upload-client", "endpoints", new System.Text.Json.Nodes.JsonArray(server.Url));
         var session = new ExternalPanelPlugin(plugin, plugin.Manifest.Contributes!.Panels!.Single(p => p.Id == "endpoints"))
@@ -2103,7 +2103,7 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         var contributesOnly = new ExternalPlugin(
             new DiscoveredPlugin(both.Folder, both.Manifest with { Permissions = [] }, []),
             _runtimes.First(r => r.Type == "python"),
-            HostFor(both.Manifest with { Permissions = [] }), _audit, _storage);
+            HostFor(both.Manifest with { Permissions = [] }), _audit);
         _started.Add(contributesOnly);
 
         var selected = BackgroundTickLoop.Select([both, noPermission, contributesOnly]).Select(p => p.Manifest.Id);
@@ -2167,12 +2167,12 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         var missing = RuntimeCatalog.CheckRequirement(discovered.Manifest!.Runtime, _runtimes);
         Assert.SkipWhen(missing is not null, missing ?? string.Empty);
         var runtime = _runtimes.First(r => r.Type == discovered.Manifest.Runtime.Type);
-        return new ExternalPlugin(discovered, runtime, new ScopedPluginHost(discovered.Manifest, _ui, _router, _http, _audit, null, mail), _audit, _storage);
+        return new ExternalPlugin(discovered, runtime, new ScopedPluginHost(discovered.Manifest, _ui, _router, _http, _audit, null, mail, _storage), _audit);
     }
 
     private ScopedPluginHost HostFor(ExternalPlugin plugin) => HostFor(plugin.Manifest);
 
-    private ScopedPluginHost HostFor(PluginManifest manifest) => new(manifest, _ui, _router, _http, _audit);
+    private ScopedPluginHost HostFor(PluginManifest manifest) => new(manifest, _ui, _router, _http, _audit, storage: _storage);
 
     private static string RepositoryRoot()
     {

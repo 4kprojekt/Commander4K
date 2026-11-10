@@ -144,18 +144,45 @@ public static class McpAppTools
         new McpTool(
             new McpToolDefinition(
                 "load_plugin_panel",
-                "Loads a panel plugin's data (task manager, system info, a plugin's own panel…) without showing it: the columns and up to 500 rows as tab-separated text.",
+                "Loads a panel plugin's data (task manager, system info, a plugin's own panel…) without showing it: the panel's actions, then the columns and up to 500 rows as tab-separated text. The first column is the row id run_panel_action takes.",
                 McpSchema.Object(
                     ("plugin", "string", "Panel id (from list_plugins; external panels are <plugin id>/<panel id>).", true),
                     ("argument", "string", "What the panel is opened for, e.g. a log file path for panels that need a file (must be inside the allowed folders).", false),
                     ("filter", "string", "Filter text, as typed into the panel's filter box.", false)),
                 McpToolMode.Ask),
-            (call, ct) => LoadPanelAsync(window, host, call, access, ct),
+            (call, ct) => PanelAsync(window, host, call, access, (plugin, session, snapshot, _, _) => Task.FromResult(new McpToolResult(FormatPanel(plugin, session, snapshot))), ct),
             args => $"load_plugin_panel {args["plugin"]} {args["argument"]}".TrimEnd()),
         new McpTool(
             new McpToolDefinition(
+                "run_panel_action",
+                "Runs one action of a panel plugin on rows of it (end a process in the task manager, a plugin panel's own actions), without showing the panel. "
+                + "Action ids and row ids come from load_plugin_panel with the same argument and filter. The user confirms every call.",
+                new JsonObject
+                {
+                    ["type"] = "object",
+                    ["properties"] = new JsonObject
+                    {
+                        ["plugin"] = new JsonObject { ["type"] = "string", ["description"] = "Panel id, as for load_plugin_panel." },
+                        ["action"] = new JsonObject { ["type"] = "string", ["description"] = "Action id from load_plugin_panel." },
+                        ["rows"] = new JsonObject
+                        {
+                            ["type"] = "array",
+                            ["items"] = new JsonObject { ["type"] = "string" },
+                            ["description"] = "Row ids (first column of load_plugin_panel); empty for actions that need no rows.",
+                        },
+                        ["argument"] = new JsonObject { ["type"] = "string", ["description"] = "As for load_plugin_panel." },
+                        ["filter"] = new JsonObject { ["type"] = "string", ["description"] = "As for load_plugin_panel." },
+                    },
+                    ["required"] = new JsonArray("plugin", "action"),
+                },
+                McpToolMode.Ask,
+                AlwaysAsk: true),
+            (call, ct) => PanelAsync(window, host, call, access, RunActionAsync, ct),
+            args => $"run_panel_action {args["plugin"]} {args["action"]} {args["rows"]?.ToJsonString()}".TrimEnd()),
+        new McpTool(
+            new McpToolDefinition(
                 "render_preview",
-                "Renders a file or folder with Commander4K's quick view (the highest-priority preview plugin that accepts it, or the given one): Markdown/text as text, tiles as JSON, images and binary files as a one-line description.",
+                "Renders a file or folder with Commander4K's quick view (the highest-priority preview plugin that accepts it, or the given one): Markdown/text as text, tiles as JSON, images and binary files as a one-line description. A plugin's preview also needs both panels' folders and the marked entries inside the allowed folders.",
                 McpSchema.Object(
                     ("path", "string", "File or folder to preview.", true),
                     ("plugin", "string", "Preview plugin id (from list_plugins) instead of the automatic choice.", false)),
@@ -164,7 +191,7 @@ public static class McpAppTools
                 // A folder preview reads its children (Markdown excerpts, notes overview), so an ancestor of a
                 // protected folder is refused, as for the other recursive tools.
                 ReadsTree: true),
-            (call, ct) => RenderPreviewAsync(host, call, ct),
+            (call, ct) => RenderPreviewAsync(window, host, call, access, ct),
             args => "render_preview " + args["path"]),
         new McpTool(
             new McpToolDefinition(
@@ -498,7 +525,12 @@ public static class McpAppTools
             : McpToolResult.Error(failure);
     }
 
-    private static async Task<McpToolResult> LoadPanelAsync(MainWindow window, AppHost host, McpCall call, Func<McpAccess> access, CancellationToken ct)
+    /// <summary>
+    /// Checks the call as load_plugin_panel always did (panel id, the window's context, the argument), opens a session,
+    /// loads it and hands the snapshot to <paramref name="use"/>.
+    /// </summary>
+    private static async Task<McpToolResult> PanelAsync(MainWindow window, AppHost host, McpCall call, Func<McpAccess> access,
+        Func<IPanelPlugin, IPanelSession, PanelSnapshot, McpCall, CancellationToken, Task<McpToolResult>> use, CancellationToken ct)
     {
         var id = call.Required("plugin");
         if (host.FindPanel(id) is not { } plugin)
@@ -539,33 +571,72 @@ public static class McpAppTools
         var request = new PanelRequest(argument, call.Optional("filter"));
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
         limit.CancelAfter(LoadTimeout);
-        PanelSnapshot snapshot;
         try
         {
             await using var session = plugin.CreateSession(request, host.HostFor(plugin.Manifest));
-            snapshot = await session.LoadAsync(request, null, limit.Token).ConfigureAwait(false);
+            var snapshot = await session.LoadAsync(request, null, limit.Token).ConfigureAwait(false);
+            limit.CancelAfter(CommandWait);
+            return await use(plugin, session, snapshot, call, limit.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return McpToolResult.Error($"The panel {plugin.Id} did not load within {LoadTimeout.TotalSeconds:0} s.");
+            return McpToolResult.Error($"The panel {plugin.Id} did not answer in time.");
         }
         catch (Exception ex) when (IsExpected(ex))
         {
             return McpToolResult.Error($"The panel {plugin.Id} failed: {ex.Message}");
         }
-
-        return new McpToolResult(FormatPanel(plugin, snapshot));
     }
 
-    private static string FormatPanel(IPanelPlugin plugin, PanelSnapshot snapshot)
+    private static async Task<McpToolResult> RunActionAsync(IPanelPlugin plugin, IPanelSession session, PanelSnapshot snapshot, McpCall call, CancellationToken ct)
+    {
+        if (string.Equals(plugin.Id, PluginManagerPanel.PluginId, StringComparison.OrdinalIgnoreCase))
+        {
+            // Its actions approve and install plugins; over MCP that goes only through the permission dialogs.
+            return McpToolResult.Error("The plugin manager's actions are not available over MCP: use install_plugin, enable_plugin and reload_plugin.");
+        }
+
+        var id = call.Required("action");
+        if (session.Actions.FirstOrDefault(a => string.Equals(a.Id, id, StringComparison.OrdinalIgnoreCase)) is not { } action)
+        {
+            return McpToolResult.Error($"The panel {plugin.Id} has no action '{id}'. Actions: {ActionList(session)}.");
+        }
+
+        var rows = new List<string>();
+        foreach (var node in call.Arguments["rows"] as JsonArray ?? [])
+        {
+            // Only rows the panel itself listed: an id is never taken on trust (in the task manager it is a process).
+            if (node is not JsonValue value || !value.TryGetValue<string>(out var row) || !snapshot.Rows.Any(r => r.Id == row))
+            {
+                return McpToolResult.Error($"Unknown row {node?.ToJsonString() ?? "null"}: use the ids in the first column of load_plugin_panel (same argument and filter).");
+            }
+
+            rows.Add(row);
+        }
+
+        if (action.AppliesToRows && rows.Count == 0)
+        {
+            return McpToolResult.Error($"The action {action.Id} works on rows: pass their ids in 'rows'.");
+        }
+
+        var text = await session.ExecuteActionAsync(action.Id, rows, ct).ConfigureAwait(false);
+        return new McpToolResult($"Ran {action.Id} ({action.Title}) of {plugin.Id}" + (rows.Count > 0 ? $" on {rows.Count} rows." : ".")
+            + (string.IsNullOrWhiteSpace(text) ? string.Empty : "\n\n" + Clip(text)));
+    }
+
+    private static string ActionList(IPanelSession session) =>
+        string.Join(", ", session.Actions.Select(a => $"{a.Id} ({a.Title}{(a.AppliesToRows ? string.Empty : ", no rows")})").DefaultIfEmpty("none"));
+
+    private static string FormatPanel(IPanelPlugin plugin, IPanelSession session, PanelSnapshot snapshot)
     {
         var text = new StringBuilder($"# {plugin.Title} ({plugin.Id})\n");
+        text.AppendLine($"Actions (run_panel_action): {ActionList(session)}");
         if (snapshot.Status is { Length: > 0 } status)
         {
             text.AppendLine(status);
         }
 
-        text.AppendLine(string.Join('\t', snapshot.Columns.Select(c => Cell(c.Header))));
+        text.AppendLine("id\t" + string.Join('\t', snapshot.Columns.Select(c => Cell(c.Header))));
         var byId = new Dictionary<string, PanelRow>(StringComparer.Ordinal);
         foreach (var row in snapshot.Rows)
         {
@@ -587,7 +658,7 @@ public static class McpAppTools
                 cells[0] = new string(' ', depth * 2) + cells[0];
             }
 
-            text.AppendLine(string.Join('\t', cells));
+            text.AppendLine(Cell(row.Id) + "\t" + string.Join('\t', cells));
         }
 
         if (snapshot.Rows.Count > MaxPanelRows)
@@ -600,7 +671,7 @@ public static class McpAppTools
         static string Cell(string value) => value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
     }
 
-    private static async Task<McpToolResult> RenderPreviewAsync(AppHost host, McpCall call, CancellationToken ct)
+    private static async Task<McpToolResult> RenderPreviewAsync(MainWindow window, AppHost host, McpCall call, Func<McpAccess> access, CancellationToken ct)
     {
         var path = call.Required("path");
         var wanted = call.Optional("plugin");
@@ -635,6 +706,15 @@ public static class McpAppTools
                 {
                     return McpToolResult.Error($"No preview for {entry.Name}.");
                 }
+            }
+
+            // An external preview is sent the window's context (preview.render) and its answer goes to the model, so
+            // that context must be inside the allowed folders, as for load_plugin_panel. Built-in previews ignore it.
+            var current = access();
+            if (!plugin.Manifest.IsBuiltIn
+                && await Dispatcher.UIThread.InvokeAsync(() => window.McpPluginContext().FirstRefusal(current)) is { } contextRefusal)
+            {
+                return McpToolResult.Error(contextRefusal);
             }
 
             var content = await plugin.LoadAsync(entry, host.HostFor(plugin.Manifest), null, limit.Token).ConfigureAwait(false);

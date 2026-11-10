@@ -47,13 +47,15 @@ public interface IPluginUi
 
 /// <summary>
 /// The <see cref="IPluginHost"/> one plugin sees. Gated operations check the plugin's manifest permissions; every call
-/// — allowed, denied or failed — is written to the <see cref="AuditLog"/> with the plugin's id. Elevated program runs
-/// additionally require the user's confirmation every time.
+/// — allowed, denied or failed — is written to the <see cref="AuditLog"/> with the plugin's id (windows by title only,
+/// never their text or the answers; status-bar messages are not logged). Elevated program runs additionally require
+/// the user's confirmation every time.
 /// </summary>
 /// <param name="processes">Process list for <c>process.list</c>; the app passes one with parent PIDs and image paths.</param>
 /// <param name="mail">The app's mail service behind <see cref="Mail"/>; without it mail calls fail with "not available".</param>
+/// <param name="storage">Backs <c>storage.get/set/keys</c>; without it reads are empty and writes fail with "not available".</param>
 public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsRouter router, HttpClient http, AuditLog audit,
-    Func<IReadOnlyList<ProcessSnapshot>>? processes = null, IMailBackend? mail = null) : IPluginHost
+    Func<IReadOnlyList<ProcessSnapshot>>? processes = null, IMailBackend? mail = null, PluginStorage? storage = null) : IPluginHost
 {
     private const int MaxHttpBytes = 5 * 1024 * 1024;
 
@@ -82,11 +84,23 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
 
     public void Notify(string message, bool isError = false, string? target = null) => ui.Notify(message, isError, target);
 
-    public Task ShowTextAsync(string title, string text) => ui.ShowTextAsync(title, text);
+    public Task ShowTextAsync(string title, string text)
+    {
+        audit.Record(Manifest.Id, "ui.showText", title, AuditOutcome.Info);
+        return ui.ShowTextAsync(title, text);
+    }
 
-    public Task<bool> ConfirmAsync(string title, string message) => ui.ConfirmAsync(title, message);
+    public Task<bool> ConfirmAsync(string title, string message)
+    {
+        audit.Record(Manifest.Id, "ui.confirm", title, AuditOutcome.Info);
+        return ui.ConfirmAsync(title, message);
+    }
 
-    public Task<string?> PromptAsync(string title, string message, string initial = "") => ui.PromptAsync(title, message, initial);
+    public Task<string?> PromptAsync(string title, string message, string initial = "")
+    {
+        audit.Record(Manifest.Id, "ui.prompt", title, AuditOutcome.Info);
+        return ui.PromptAsync(title, message, initial);
+    }
 
     /// <remarks>Not gated, like <see cref="PromptAsync"/>. The audit names the dialog and its fields, never the answers.</remarks>
     public Task<IReadOnlyDictionary<string, string>?> ShowDialogAsync(DialogRequest request)
@@ -104,11 +118,15 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
 
     public Task EditFileAsync(string path)
     {
-        audit.Record(Manifest.Id, "ui.edit", path, AuditOutcome.Info);
+        audit.Record(Manifest.Id, "ui.editFile", path, AuditOutcome.Info);
         return ui.EditFileAsync(path);
     }
 
-    public Task OpenPanelAsync(string panelPluginId, string? argument = null) => ui.OpenPanelAsync(panelPluginId, argument);
+    public Task OpenPanelAsync(string panelPluginId, string? argument = null)
+    {
+        audit.Record(Manifest.Id, "ui.openPanel", panelPluginId, AuditOutcome.Info);
+        return ui.OpenPanelAsync(panelPluginId, argument);
+    }
 
     /// <remarks>Not gated: the page opens visibly in the app's browser, not inside the plugin. Only http(s) is allowed.</remarks>
     public Task OpenUrlAsync(string url)
@@ -141,12 +159,42 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
         return ui.OpenFolderAsync(path);
     }
 
-    public void Log(string message) => audit.Record(Manifest.Id, "log", message, AuditOutcome.Info);
+    public void Log(string message) => audit.Record(Manifest.Id, "log.write", message, AuditOutcome.Info);
 
     public Task CopyTextAsync(string text)
     {
-        audit.Record(Manifest.Id, "ui.copy", Loc.T("{0} znaków", text.Length), AuditOutcome.Info);
+        audit.Record(Manifest.Id, "ui.copyText", Loc.T("{0} znaków", text.Length), AuditOutcome.Info);
         return ui.CopyTextAsync(text);
+    }
+
+    // Storage is one small JSON file per plugin, read and written whole: off the UI thread, like every other call.
+    public async Task<System.Text.Json.Nodes.JsonNode?> StorageGetAsync(string key)
+    {
+        await CallerThread.LeaveUi();
+        audit.Record(Manifest.Id, "storage.get", key, AuditOutcome.Info);
+        return storage?.Get(Manifest.Id, key);
+    }
+
+    public async Task StorageSetAsync(string key, System.Text.Json.Nodes.JsonNode? value)
+    {
+        await CallerThread.LeaveUi();
+        try
+        {
+            (storage ?? throw new InvalidOperationException("Plugin storage is not available.")).Set(Manifest.Id, key, value);
+            audit.Record(Manifest.Id, "storage.set", key, AuditOutcome.Info);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            audit.Record(Manifest.Id, "storage.set", $"{key} → {ex.GetType().Name}: {ex.Message}", AuditOutcome.Failed);
+            throw;
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> StorageKeysAsync()
+    {
+        await CallerThread.LeaveUi();
+        audit.Record(Manifest.Id, "storage.keys", string.Empty, AuditOutcome.Info);
+        return storage?.Keys(Manifest.Id) ?? [];
     }
 
     /// <summary>
@@ -445,6 +493,8 @@ public sealed class ScopedPluginHost(PluginManifest manifest, IPluginUi ui, VfsR
 
     private async Task<T> Gate<T>(string permission, string operation, string detail, Func<Task<T>> action)
     {
+        // Some actions work before their first await (starting or killing a process, opening a file): never on the UI thread.
+        await CallerThread.LeaveUi();
         if (!Manifest.Allows(permission))
         {
             if (permission == PluginPermissions.FileRead && _grants.Covers(detail))

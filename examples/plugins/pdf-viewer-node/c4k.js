@@ -91,7 +91,9 @@ module.exports = {
   navigate: (path, focus = null) => call('ui.navigate', { path, focus }),
   openUrl: url => call('ui.openUrl', { url }),                                   // internal browser, http(s) only
   openFolder: path => call('ui.openFolder', { path }),                           // the user chooses: Explorer or the active panel
-  search: (query, engine = null) => call('ui.search', { query, engine }),        // engine: null, 'assistant', 'google', 'chatgpt'…
+  search: (query, engine = null) => call('ui.search', { query, engine }),        // engine: null (the user's), 'google', 'bing', 'duckduckgo'
+  editFile: path => call('ui.editFile', { path }),                               // the user's editor (tools.json)
+  openPanel: (panel, argument = null) => call('ui.openPanel', { panel, argument }), // a panel by id ('<plugin id>/<panel id>')
   copyText: text => call('ui.copyText', { text }),                               // clipboard (write only)
   actionTarget: (action, args = {}) => 'c4k:plugin/' + encodeURIComponent(action) + // preview button target "c4k:plugin/<action>?k=v" -> comes back as preview.action
     (Object.keys(args).length ? '?' + Object.entries(args).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&') : ''),
@@ -99,8 +101,10 @@ module.exports = {
   folderSuggestion: (score, message, options = null) => ({ score, message, options }), // result of preview.suggest (score 0..1)
   storageGet: async (key, fallback = null) => (await call('storage.get', { key })) ?? fallback, // the plugin's own settings/data (no permission)
   storageSet: (key, value) => call('storage.set', { key, value }),              // any JSON value; null removes the key
+  storageKeys: () => call('storage.keys'),                                       // -> [key]
   listDir: path => call('fs.list', { path }),                                  // fs.read -> [entry]
   stat: path => call('fs.stat', { path }),                                     // fs.read -> entry or null
+  dirSize: path => call('fs.size', { path }),                                  // fs.read -> {bytes, files, folders, inaccessible}; counted by the app on all cores
   readText: (path, maxBytes = 1048576) => call('fs.readText', { path, maxBytes }), // fs.read -> string (UTF-8)
   readBytes: async (path, offset = 0, length = 65536) =>                         // fs.read -> Buffer (max 16 MB)
     Buffer.from((await call('fs.readBytes', { path, offset, length })).data, 'base64'),
