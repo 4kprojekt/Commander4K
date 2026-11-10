@@ -1641,6 +1641,76 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         Assert.Equal("mail-target", _ui.LastNotificationTarget);
     }
 
+    [Theory]
+    [InlineData("python")]
+    [InlineData("node")]
+    [InlineData("powershell")]
+    public async Task Storage_keys_folder_size_editor_panel_and_navigation_work_from_every_sdk_client(string language)
+    {
+        var (client, entry, version, source) = language switch
+        {
+            "python" => ("c4k.py", "main.py", ">=3.9", """
+                import c4k
+
+                @c4k.handler("command.execute")
+                def run(params):
+                    base = c4k.context()["activePath"]
+                    c4k.storage_set("a", 1)
+                    size = c4k.dir_size(base)
+                    c4k.edit_file(base + "\\x.txt")
+                    c4k.open_panel("builtin.sysinfo")
+                    c4k.navigate(base)
+                    return {"text": {"title": "t", "content": ",".join(c4k.storage_keys()) + (" ok" if size["files"] >= 1 else " bad")}}
+
+                c4k.serve()
+                """),
+            "node" => ("c4k.js", "main.js", ">=18", """
+                const c4k = require('./c4k');
+                c4k.on('command.execute', async () => {
+                  const base = (await c4k.context()).activePath;
+                  await c4k.storageSet('a', 1);
+                  const size = await c4k.dirSize(base);
+                  await c4k.editFile(base + '\\x.txt');
+                  await c4k.openPanel('builtin.sysinfo');
+                  await c4k.navigate(base);
+                  return { text: { title: 't', content: (await c4k.storageKeys()).join(',') + (size.files >= 1 ? ' ok' : ' bad') } };
+                });
+                """),
+            _ => ("c4k.ps1", "main.ps1", ">=7", """
+                . "$PSScriptRoot/c4k.ps1"
+                Register-C4KHandler 'command.execute' {
+                    param($p)
+                    $base = (Get-C4KContext).activePath
+                    Set-C4KStorage 'a' 1
+                    $size = Get-C4KFolderSize $base
+                    Edit-C4KFile "$base\x.txt"
+                    Open-C4KPanel 'builtin.sysinfo'
+                    Open-C4KPath $base
+                    $keys = @(Get-C4KStorageKeys) -join ','
+                    @{ text = @{ title = 't'; content = $keys + $(if ($size.files -ge 1) { ' ok' } else { ' bad' }) } }
+                }
+                Start-C4KPlugin
+                """),
+        };
+        var folder = Path.Combine(_folder, "host-" + language);
+        Directory.CreateDirectory(folder);
+        File.Copy(Path.Combine(RepositoryRoot(), "plugins-sdk", language, client), Path.Combine(folder, client));
+        File.WriteAllText(Path.Combine(folder, entry), source);
+        File.WriteAllText(Path.Combine(folder, ManifestReader.FileName), $$"""
+            { "id": "tests.host-{{language}}", "name": "Host", "version": "1.0.0", "author": "t", "description": "d",
+              "runtime": { "type": "{{language}}", "entry": "{{entry}}", "version": "{{version}}" },
+              "permissions": ["fs.read"],
+              "contributes": { "commands": [ { "id": "go", "title": "Go", "category": "T" } ] } }
+            """);
+        await using var plugin = StartFrom(folder);
+
+        await new ExternalCommandPlugin(plugin).ExecuteAsync("go", HostFor(plugin), TestToken);
+
+        Assert.Equal("a ok", _ui.LastText);
+        var audit = _audit.Recent("tests.host-" + language).Select(e => e.Operation).ToHashSet();
+        Assert.Superset(new HashSet<string> { "storage.set", "storage.keys", "fs.size", "ui.editFile", "ui.openPanel", "ui.navigate" }, audit);
+    }
+
     [Fact]
     public async Task Mail_errors_reach_the_plugin_with_code_and_data()
     {

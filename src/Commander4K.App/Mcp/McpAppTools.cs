@@ -191,7 +191,7 @@ public static class McpAppTools
                 // A folder preview reads its children (Markdown excerpts, notes overview), so an ancestor of a
                 // protected folder is refused, as for the other recursive tools.
                 ReadsTree: true),
-            (call, ct) => RenderPreviewAsync(window, host, call, access, ct),
+            (call, ct) => RenderPreviewAsync(window, host, call, access, withAction: false, ct),
             args => "render_preview " + args["path"]),
         new McpTool(
             new McpToolDefinition(
@@ -224,6 +224,50 @@ public static class McpAppTools
                 McpToolMode.Ask),
             (call, _) => ReloadAsync(host, call.Required("id")),
             args => "reload_plugin " + args["id"]),
+        new McpTool(
+            new McpToolDefinition(
+                "run_preview_action",
+                "Presses a button of a plugin's preview (a c4k:plugin/<action>?k=v target listed by render_preview, or a dashboard card's action) and returns what the preview shows afterwards. "
+                + "Actions can change things (delete or send a message), so the user confirms every call.",
+                new JsonObject
+                {
+                    ["type"] = "object",
+                    ["properties"] = new JsonObject
+                    {
+                        ["path"] = new JsonObject { ["type"] = "string", ["description"] = "The previewed file or folder." },
+                        ["plugin"] = new JsonObject { ["type"] = "string", ["description"] = "Preview plugin id instead of the automatic choice." },
+                        ["action"] = new JsonObject { ["type"] = "string", ["description"] = "Action name: the part after c4k:plugin/ and before ?." },
+                        ["args"] = new JsonObject { ["type"] = "object", ["description"] = "The target's query as key/value strings." },
+                    },
+                    ["required"] = new JsonArray("path", "action"),
+                },
+                McpToolMode.Ask,
+                AlwaysAsk: true,
+                PathArguments: ["path"],
+                ReadsTree: true),
+            (call, ct) => RenderPreviewAsync(window, host, call, access, withAction: true, ct),
+            args => $"run_preview_action {args["path"]} {args["action"]} {args["args"]?.ToJsonString()}".TrimEnd()),
+        new McpTool(
+            new McpToolDefinition(
+                "render_card",
+                "Reads one dashboard card as the dashboard would draw it: values, progress bars, text, chart series and actions as text. "
+                + "Give the .c4k item JSON (as in save_dashboard) and the folder it would live in. Cards that wait for the user's trust (run, SSH, POST, sftp/ftp targets) are not read.",
+                McpSchema.Object(
+                    ("folder", "string", "The dashboard folder (relative 'open' paths start here).", true),
+                    ("json", "string", "The item's JSON with a \"card\" key.", true)),
+                McpToolMode.Ask,
+                PathArguments: ["folder"],
+                ReadsTree: true),
+            (call, ct) => RenderCardAsync(window, host, call, access, ct),
+            args => "render_card " + args["folder"]),
+        new McpTool(
+            new McpToolDefinition(
+                "disable_plugin",
+                "Disables an installed external plugin (its process stops; enable_plugin asks the user again). Nothing is deleted.",
+                McpSchema.Object(("id", "string", "Plugin id.", true)),
+                McpToolMode.Ask),
+            (call, _) => DisableAsync(host, call),
+            args => "disable_plugin " + args["id"]),
     ];
 
     private static McpToolResult ListCommands(AppHost host, string? filter)
@@ -671,7 +715,97 @@ public static class McpAppTools
         static string Cell(string value) => value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
     }
 
-    private static async Task<McpToolResult> RenderPreviewAsync(MainWindow window, AppHost host, McpCall call, Func<McpAccess> access, CancellationToken ct)
+    private static async Task<McpToolResult> DisableAsync(AppHost host, McpCall call)
+    {
+        var id = call.Required("id");
+        if (FindPlugin(host, id) is not { Manifest: { } manifest })
+        {
+            return McpToolResult.Error($"No installed plugin '{id}'.");
+        }
+
+        host.Approvals.Disable(manifest.Id);
+        host.Audit.Record(manifest.Id, "disable", "disabled by MCP client " + call.ClientName, AuditOutcome.Info);
+        await host.ReloadExternalPluginsAsync().ConfigureAwait(false);
+        return new McpToolResult($"Disabled {manifest.Id}. enable_plugin turns it on again (the user is asked).");
+    }
+
+    private static async Task<McpToolResult> RenderCardAsync(MainWindow window, AppHost host, McpCall call, Func<McpAccess> access, CancellationToken ct)
+    {
+        var item = Core.Folders.C4kItem.Parse(call.Required("folder"), "card" + Core.Folders.C4kReader.Extension, call.Required("json"));
+        if (item.Error is { } invalid)
+        {
+            return McpToolResult.Error($"The item is not valid: {invalid}");
+        }
+
+        // The item's own paths come from the JSON, not from an argument the dispatcher checked; plugin cards are also
+        // sent the window's context.
+        var current = access();
+        var refusal = new[] { item.CardTarget, item.ContextFolder }.Where(p => !string.IsNullOrEmpty(p)).Select(p => current.Refusal(p!)).FirstOrDefault(r => r is not null)
+            ?? await Dispatcher.UIThread.InvokeAsync(() => window.McpPluginContext().FirstRefusal(current));
+        if (refusal is not null)
+        {
+            return McpToolResult.Error(refusal);
+        }
+
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(LoadTimeout);
+        try
+        {
+            var source = await host.CreateCardResolver().ResolveAsync(item, limit.Token).ConfigureAwait(false);
+            if (source is null)
+            {
+                return McpToolResult.Error("The item has no \"card\": the dashboard shows it as a plain shortcut tile.");
+            }
+
+            if (source.NeedsTrust || source.Unavailable is not null)
+            {
+                return McpToolResult.Error(source.Unavailable
+                    ?? "This card signs in somewhere or may change something, so it stays locked until the user allows the saved file in Commander4K (\"Zezwól\"); MCP cannot read it.");
+            }
+
+            return new McpToolResult(FormatCard(await source.Load(null, limit.Token).ConfigureAwait(false)));
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return McpToolResult.Error($"The card did not load within {LoadTimeout.TotalSeconds:0} s.");
+        }
+        catch (Exception ex) when (IsExpected(ex))
+        {
+            return McpToolResult.Error($"The card failed: {ex.Message}");
+        }
+    }
+
+    private static string FormatCard(PreviewCard card)
+    {
+        var text = new StringBuilder($"Card: {card.Title ?? "(the tile's title)"}");
+        text.Append(card.Subtitle is { Length: > 0 } subtitle ? $" — {subtitle}" : string.Empty)
+            .AppendLine(card.Status == CardStatus.None ? string.Empty : $" [{card.Status.ToString().ToLowerInvariant()}]");
+        foreach (var item in card.Items)
+        {
+            text.AppendLine(item switch
+            {
+                CardValue value => $"- {value.Label}: {value.Value}{(value.Status == CardStatus.None ? string.Empty : $" [{value.Status.ToString().ToLowerInvariant()}]")}",
+                CardProgress progress => string.Create(CultureInfo.InvariantCulture, $"- {progress.Label}: {progress.Fraction:P0} {progress.Text}").TrimEnd(),
+                CardText line => "- " + Clip(line.Text),
+                CardThumbnails thumbnails => $"- {thumbnails.Images.Count} thumbnails",
+                CardChart chart => "- " + ChartText(chart.Chart),
+                _ => $"- ({item.GetType().Name})",
+            });
+        }
+
+        foreach (var action in card.Actions)
+        {
+            text.AppendLine($"Action: {action.Label} → {action.Target}");
+        }
+
+        return text.ToString();
+    }
+
+    private static string ChartText(ChartData chart) =>
+        $"{chart.Kind.ToString().ToLowerInvariant()} chart{(chart.Unit is { Length: > 0 } unit ? $" ({unit})" : string.Empty)}: " + string.Join("; ", chart.Series.Select(s =>
+            string.Create(CultureInfo.InvariantCulture, $"{s.Name}: {s.Points.Count} points{(s.Points.Count > 0 ? $", last {s.Points[^1].Y:0.##}" : string.Empty)}")));
+
+    private static async Task<McpToolResult> RenderPreviewAsync(MainWindow window, AppHost host, McpCall call, Func<McpAccess> access, bool withAction, CancellationToken ct)
     {
         var path = call.Required("path");
         var wanted = call.Optional("plugin");
@@ -717,12 +851,32 @@ public static class McpAppTools
                 return McpToolResult.Error(contextRefusal);
             }
 
-            var content = await plugin.LoadAsync(entry, host.HostFor(plugin.Manifest), null, limit.Token).ConfigureAwait(false);
-            return new McpToolResult($"Preview of {entry.Path} by {plugin.Id}:\n\n" + FormatPreview(content));
+            PreviewContent? content = null;
+            if (withAction)
+            {
+                if (plugin is not IInteractivePreviewPlugin interactive)
+                {
+                    return McpToolResult.Error($"The preview {plugin.Id} has no actions.");
+                }
+
+                var arguments = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var (key, value) in call.Arguments["args"] as JsonObject ?? [])
+                {
+                    arguments[key] = value is JsonValue text && text.TryGetValue<string>(out var plain) ? plain : value?.ToJsonString() ?? string.Empty;
+                }
+
+                limit.CancelAfter(CommandWait);
+                content = await interactive.InvokeActionAsync(new PreviewActionRequest(entry, null, call.Required("action"), arguments, null), host.HostFor(plugin.Manifest), limit.Token)
+                    .ConfigureAwait(false);
+            }
+
+            // An action that answers nothing means "render the entry again", as in the window.
+            content ??= await plugin.LoadAsync(entry, host.HostFor(plugin.Manifest), null, limit.Token).ConfigureAwait(false);
+            return new McpToolResult($"Preview of {entry.Path} by {plugin.Id}{(withAction ? " after " + call.Required("action") : string.Empty)}:\n\n" + FormatPreview(content));
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return McpToolResult.Error($"The preview of {path} did not finish within {LoadTimeout.TotalSeconds:0} s.");
+            return McpToolResult.Error($"The preview of {path} did not answer in time.");
         }
         catch (Exception ex) when (IsExpected(ex))
         {
@@ -739,10 +893,38 @@ public static class McpAppTools
         HexPreview hex => $"Binary file, {hex.TotalLength.ToString("N0", CultureInfo.InvariantCulture)} bytes; first bytes: {Convert.ToHexString(hex.Data.Span[..Math.Min(32, hex.Data.Length)]).ToLowerInvariant()}",
         FolderPreview folder => FolderText(folder),
         MessagePreview message => message.Message,
-        WebPreview web => $"Web preview: page {web.Page} of plugin {web.PluginId} (shown in the app window; not available as text).",
+        ActionsPreview actions => FormatPreview(actions.Content) + "\n\nActions (run_preview_action for c4k:plugin/ targets):\n" + Buttons(actions.Actions),
+        ChartPreview chart => $"{chart.Title}\n{chart.Description}\n{ChartText(chart.Chart)}",
+        ListPreview list => ListText(list),
+        MailPreview mail => $"Subject: {mail.Subject}\nFrom: {mail.From} {mail.FromAddress}\nTo: {mail.To}\nDate: {mail.Date}\n"
+            + $"Attachments: {string.Join(", ", mail.Attachments.Select(a => a.Name).DefaultIfEmpty("none"))}\n\n{Clip(mail.Body)}",
+        FormPreview form => $"Form: {form.Title}\n{form.Message}\n"
+            + string.Concat(form.Fields.Select(f => $"- {f.Id} ({f.Label}): {(f.Password ? "(hidden)" : Clip(f.Value))}\n"))
+            + string.Concat(form.Files.Select(f => $"- file {f.Name} ({f.Size.ToString(CultureInfo.InvariantCulture)} bytes)\n"))
+            + "Buttons:\n" + Buttons(form.Buttons),
+        WebPreview web => $"Web preview: page {web.Page} of plugin {web.PluginId}, drawn in the app window (its HTML is not run here). State handed to the page: {Clip(web.StateJson ?? "none")}",
         BrowserPagePreview browser => $"Web page: {browser.Url} (shown in the app browser; not available as text).",
         _ => $"({content.GetType().Name}: no text form)",
     };
+
+    private static string Buttons(IReadOnlyList<PreviewAction> actions) =>
+        string.Concat(actions.Select(a => $"- {a.Label} → {a.Target}\n"));
+
+    private static string ListText(ListPreview list)
+    {
+        var text = new StringBuilder($"List: {list.Title ?? list.Folder} ({list.Items.Count} rows) {list.Status}\n");
+        foreach (var tab in list.Tabs ?? [])
+        {
+            text.AppendLine($"Tab{(tab.Selected ? " (shown)" : string.Empty)}: {tab.Label}{(tab.Count is { } count ? $" ({count})" : string.Empty)} → {tab.Target}");
+        }
+
+        foreach (var item in list.Items.Take(MaxPanelRows))
+        {
+            text.AppendLine(string.Join('\t', new[] { item.Title, item.Subtitle, item.Meta, string.Join(",", item.Tags ?? []), item.Path }.Select(c => c ?? string.Empty)));
+        }
+
+        return text.Append(list.More is { } more ? $"More rows: {more.Target}\n" : string.Empty).ToString();
+    }
 
     private static string Clip(string text) =>
         text.Length <= McpFileTools.MaxTextChars ? text : text[..McpFileTools.MaxTextChars] + $"\n… (cut at {McpFileTools.MaxTextChars} characters)";
