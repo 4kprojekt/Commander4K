@@ -16,7 +16,7 @@ public static class FolderSuggestions
 
     public static FolderSuggestion? Gallery(FolderSnapshot folder)
     {
-        var files = folder.Entries.Count(e => e.Kind == VfsEntryKind.File);
+        var files = folder.Entries.Count(e => e.Kind == VfsEntryKind.File && !FolderViews.IsC4k(e));
         var images = folder.Entries.Count(FolderViews.IsImage);
         return images >= MinFiles && images >= MinShare * files
             ? new FolderSuggestion(Score,
@@ -33,7 +33,7 @@ public static class FolderSuggestions
             return new FolderSuggestion(Score, Loc.T("To jest vault Obsidiana. Pokazać jako notatki z powiązaniami?"), view);
         }
 
-        var files = folder.Entries.Count(e => e.Kind == VfsEntryKind.File);
+        var files = folder.Entries.Count(e => e.Kind == VfsEntryKind.File && !FolderViews.IsC4k(e));
         var notes = folder.Entries.Count(e => e.Kind == VfsEntryKind.File && NotesOverview.IsMarkdown(e.Name));
         return notes >= MinFiles && notes >= MinShare * files
             ? new FolderSuggestion(Score,

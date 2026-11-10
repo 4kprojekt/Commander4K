@@ -22,7 +22,7 @@ public sealed record SshStats(
 /// </summary>
 public static class SshStatsParser
 {
-    /// <summary>Never built from user input: <c>c4k.dir</c> cannot add anything to it.</summary>
+    /// <summary>Never built from user input: a <c>.c4k</c> file cannot add anything to it.</summary>
     public const string Command =
         "echo @@uname; uname -s; " +
         "echo @@loadavg; cat /proc/loadavg; " +

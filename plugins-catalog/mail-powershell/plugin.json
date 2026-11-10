@@ -2,15 +2,15 @@
   "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
   "id": "official.mail",
   "name": "Poczta",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "4Kprojekt",
-  "description": "Oficjalna wtyczka: poczta IMAP/SMTP w folderach .eml. Folder konta z plikiem c4k.dir: { \"preview\": { \"plugin\": \"official.mail\", \"options\": { \"imap\": \"imap.example.com:993\", \"smtp\": \"smtp.example.com:465\", \"user\": \"ja@example.com\", \"refresh\": \"5m\", \"since\": \"3m\" } }, \"enter\": \"official.mail\" }. Opcja from (adres nadawcy) jest opcjonalna: domyślnie user, a gdy user nie jest adresem, user@serwer-imap. Hasło zna tylko aplikacja.",
+  "description": "Oficjalna wtyczka: poczta IMAP/SMTP w folderach .eml. Folder konta z plikiem .c4k: { \"plugin\": \"official.mail\", \"options\": { \"imap\": \"imap.example.com:993\", \"smtp\": \"smtp.example.com:465\", \"user\": \"ja@example.com\", \"refresh\": \"5m\", \"since\": \"3m\" } }. Opcja from (adres nadawcy) jest opcjonalna: domyślnie user, a gdy user nie jest adresem, user@serwer-imap. Hasło zna tylko aplikacja.",
   "runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" },
   "permissions": ["mail", "fs.read", "fs.write", "background"],
   "contributes": {
     "background": { "interval": "1m" },
     "commands": [
-      { "id": "add-account", "title": "Dodaj konto pocztowe", "category": "Poczta", "description": "Pyta o adres i serwery, sprawdza logowanie i dodaje folder konta z kartą na pulpicie." }
+      { "id": "add-account", "title": "Dodaj konto pocztowe", "category": "Poczta", "description": "Pyta o adres i serwery, sprawdza logowanie i dodaje folder konta z plikiem .c4k, a gdy bieżący folder jest dashboardem, także kartę konta." }
     ],
     "previews": [
       { "id": "account", "title": "Poczta: konto", "extensions": ["/"], "priority": -10, "card": true, "setup": true },

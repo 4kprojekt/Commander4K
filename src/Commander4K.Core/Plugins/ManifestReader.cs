@@ -185,7 +185,7 @@ public static partial class ManifestReader
     {
         try
         {
-            return FolderConfig.ParseRefresh(text) is not null;
+            return C4kJson.ParseRefresh(text) is not null;
         }
         catch (FormatException)
         {

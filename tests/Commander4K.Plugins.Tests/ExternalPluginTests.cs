@@ -1942,25 +1942,24 @@ public sealed class ExternalPluginTests : IAsyncLifetime
         await File.WriteAllBytesAsync(Path.Combine(photos, "b.png"), [0x89, 0x50, 0x4E, 0x47], TestToken);
         await File.WriteAllBytesAsync(Path.Combine(photos, "a.jpg"), [0xFF, 0xD8], TestToken);
         await File.WriteAllTextAsync(Path.Combine(photos, "notes.txt"), "x", TestToken);
-        await File.WriteAllTextAsync(Path.Combine(photos, Core.Folders.FolderConfig.FileName), """
-            { "title": "Wakacje", "preview": "gallery",
-              "enter": { "view": "dashboard", "tiles": [ { "title": "Logi", "open": "logs" }, { "title": "Build", "run": "build.ps1" } ] } }
-            """, TestToken);
+        await File.WriteAllTextAsync(Path.Combine(photos, "1 gallery.c4k"), """{ "title": "Wakacje", "view": "gallery" }""", TestToken);
+        await File.WriteAllTextAsync(Path.Combine(photos, "2 logs.c4k"), """{ "title": "Logi", "open": "logs" }""", TestToken);
+        await File.WriteAllTextAsync(Path.Combine(photos, "3 build.c4k"), """{ "title": "Build", "run": { "command": "build.ps1" } }""", TestToken);
         var host = HostFor(new PluginManifest("builtin.preview.folder", "Folder", "1.0.0", "a", "d", [PluginPermissions.FileRead]));
-        var config = await Core.Folders.FolderConfig.ReadAsync(_router, photos, TimeSpan.FromSeconds(5), TestToken);
+        var config = await Core.Folders.C4kReader.ReadAsync(_router, photos, TimeSpan.FromSeconds(5), TestToken);
         var folder = new VfsEntry("photos", photos, VfsEntryKind.Directory);
 
         using var thumbnails = new BuiltIn.Previews.ThumbnailStore();
-        var gallery = Assert.IsType<TilesPreview>(await BuiltIn.Previews.FolderViews.LoadAsync(config!, config!.Preview!, "preview", folder, host, thumbnails, null, TestToken));
+        var gallery = Assert.IsType<TilesPreview>(await BuiltIn.Previews.FolderViews.LoadAsync(config!.Items[0], folder, host, thumbnails, null, TestToken));
         Assert.Equal("Wakacje", gallery.Title);
         Assert.Equal(["a.jpg", "b.png"], gallery.Tiles.Select(t => t.Title));
         Assert.Null(gallery.Tiles[1].Image); // four bytes are no picture: the tile keeps its icon
         Assert.Equal(Path.Combine(photos, "a.jpg"), gallery.Tiles[0].Target);
 
-        var dashboard = Assert.IsType<BuiltIn.Dashboard.DashboardPreview>(await BuiltIn.Previews.FolderViews.LoadAsync(config, config.Enter!, "enter", folder, host, thumbnails, null, TestToken));
-        Assert.Equal([Path.Combine(photos, "logs"), "c4k:run/enter/1"], dashboard.Slots.Select(s => s.Shortcut.Target));
+        var dashboard = BuiltIn.Previews.FolderViews.Dashboard(config!);
+        Assert.Equal([null, BuiltIn.Previews.FolderViews.RunTarget(Path.Combine(photos, "3 build.c4k"))], dashboard.Slots.Skip(1).Select(s => s.Shortcut.Target));
 
-        Assert.Null(await Core.Folders.FolderConfig.ReadAsync(_router, _folder, TimeSpan.FromSeconds(5), TestToken));
+        Assert.Null(await Core.Folders.C4kReader.ReadAsync(_router, _folder, TimeSpan.FromSeconds(5), TestToken));
     }
 
     [Fact]

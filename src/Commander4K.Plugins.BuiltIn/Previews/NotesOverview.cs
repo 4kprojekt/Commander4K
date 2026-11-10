@@ -63,7 +63,7 @@ public static partial class NotesOverview
     /// <summary>A plain folder of notes: at least 3 Markdown files that make up at least half of the files.</summary>
     public static bool LooksLikeNotes(IReadOnlyList<VfsEntry> listing)
     {
-        var files = listing.Where(e => e.Kind == VfsEntryKind.File).ToList();
+        var files = listing.Where(e => e.Kind == VfsEntryKind.File && !FolderViews.IsC4k(e)).ToList();
         var markdown = files.Count(e => IsMarkdown(e.Name));
         return markdown >= 3 && markdown * 2 >= files.Count;
     }

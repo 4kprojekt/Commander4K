@@ -19,8 +19,8 @@ public sealed class SecretHostMismatchException(string name, string boundHost)
 }
 
 /// <summary>
-/// Tokens and keys that <c>c4k.dir</c> files refer to as <c>{secret:name}</c> (<c>config/secrets.json</c>), encrypted
-/// with DPAPI. Each secret is bound to the origin (scheme, host, port) it was first saved for, so an edited <c>c4k.dir</c> in a shared folder
+/// Tokens and keys that <c>.c4k</c> files refer to as <c>{secret:name}</c> (<c>config/secrets.json</c>), encrypted
+/// with DPAPI. Each secret is bound to the origin (scheme, host, port) it was first saved for, so an edited <c>.c4k</c> in a shared folder
 /// cannot send it anywhere else.
 /// </summary>
 public sealed partial class SecretStore(string path)

@@ -7,8 +7,8 @@ using Commander4K.Plugins.BuiltIn.Dashboard;
 namespace Commander4K.Plugins.BuiltIn.Previews;
 
 /// <summary>
-/// The views a <c>c4k.dir</c> can name with <c>"view"</c>: a gallery of the folder's images, a dashboard of tiles, the
-/// notes overview, a Markdown file, or the ordinary folder preview. Everything is read through the host (fs.read).
+/// The views a <c>.c4k</c> item can name with <c>"view"</c>: a gallery of the folder's images, the
+/// notes overview, a Markdown file, or the ordinary folder preview; plus the dashboard of a folder with several items. Everything is read through the host (fs.read).
 /// </summary>
 public static class FolderViews
 {
@@ -24,34 +24,35 @@ public static class FolderViews
     internal static bool IsImage(VfsEntry entry) =>
         entry.Kind == VfsEntryKind.File && ImageExtensions.Contains(Path.GetExtension(entry.Name), StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Link a dashboard tile uses for its <c>run</c>: the window looks the command up in the same <c>c4k.dir</c>.</summary>
-    public static string RunTarget(string section, int tile) => $"c4k:run/{section}/{tile}";
+    /// <summary>An item file: not part of the folder's content when judging what the folder is.</summary>
+    internal static bool IsC4k(VfsEntry entry) => entry.Name.EndsWith(C4kReader.Extension, StringComparison.OrdinalIgnoreCase);
 
-    /// <param name="section"><c>preview</c> or <c>enter</c> — which part of the file <paramref name="action"/> came from.</param>
+    /// <summary>Link a dashboard tile uses for its <c>run</c>: the window reads the command again from that file.</summary>
+    public static string RunTarget(string filePath) => "c4k:run/" + filePath;
+
+    /// <summary>The view of one item.</summary>
     /// <param name="thumbnails">The gallery's thumbnails (<see cref="FolderPreviewPlugin.Thumbnails"/>).</param>
-    public static async Task<PreviewContent> LoadAsync(FolderConfig config, FolderAction action, string section, VfsEntry folder, IPluginHost host,
+    public static async Task<PreviewContent> LoadAsync(C4kItem item, VfsEntry folder, IPluginHost host,
         ThumbnailStore thumbnails, IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
     {
-        var view = (action.View ?? FolderViewIds.Files).ToLowerInvariant();
+        var view = (item.View ?? FolderViewIds.Files).ToLowerInvariant();
         switch (view)
         {
             case FolderViewIds.Gallery:
-                return await GalleryAsync(config, folder, host, thumbnails, progress, cancellationToken).ConfigureAwait(false);
-            case FolderViewIds.Dashboard:
-                return await WithPicturesAsync(Dashboard(config, action, section), config, host, cancellationToken).ConfigureAwait(false);
+                return await GalleryAsync(item, folder, host, thumbnails, progress, cancellationToken).ConfigureAwait(false);
             case FolderViewIds.Notes:
                 progress?.Report(new MarkdownPreview(Loc.T("⏳ Czytam notatki i ich powiązania…"), CanEdit: false));
                 var listing = await host.ListAsync(folder.Path, cancellationToken).ConfigureAwait(false);
                 var vault = await NotesOverview.FindVaultRootAsync(host, folder.Path, listing, cancellationToken).ConfigureAwait(false);
                 return new MarkdownPreview(await NotesOverview.BuildAsync(host, folder.Path, vault, cancellationToken).ConfigureAwait(false), CanEdit: false);
             case FolderViewIds.Markdown:
-                var file = config.Resolve(action.File ?? "README.md");
+                var file = item.Resolve(item.File ?? "README.md");
                 var (data, length, _) = await PreviewReading.ReadHeadAsync(host, file, MaxMarkdownBytes, cancellationToken).ConfigureAwait(false);
                 return new MarkdownPreview(PreviewReading.Decode(data, length), CanEdit: false);
             case FolderViewIds.Files:
                 return await new FolderPreviewPlugin().LoadAsync(folder, host, progress, cancellationToken).ConfigureAwait(false);
             default:
-                return new MessagePreview(Loc.T("c4k.dir: nieznany widok „{0}” (dostępne: {1}).", action.View ?? string.Empty, string.Join(", ", FolderViewIds.All)));
+                return new MessagePreview(Loc.T(".c4k: nieznany widok „{0}” (dostępne: {1}).", item.View ?? string.Empty, string.Join(", ", FolderViewIds.All)));
         }
     }
 
@@ -59,7 +60,7 @@ public static class FolderViews
     /// Tiles appear at once with icons; the pictures are small thumbnails that <see cref="ThumbnailStore"/> reads from
     /// the folder's <c>.thumbnail.c4k</c> or makes on its own threads, so a share full of photos never holds the view.
     /// </summary>
-    private static async Task<TilesPreview> GalleryAsync(FolderConfig config, VfsEntry folder, IPluginHost host, ThumbnailStore thumbnails,
+    private static async Task<TilesPreview> GalleryAsync(C4kItem item, VfsEntry folder, IPluginHost host, ThumbnailStore thumbnails,
         IProgress<PreviewContent>? progress, CancellationToken cancellationToken)
     {
         var listing = await host.ListAsync(folder.Path, cancellationToken).ConfigureAwait(false);
@@ -68,8 +69,8 @@ public static class FolderViews
             .OrderBy(e => e.Name, StringComparer.CurrentCultureIgnoreCase)
             .Take(MaxImages)
             .ToList();
-        var title = config.Title ?? folder.Name;
-        var description = config.Description ?? Loc.P(images.Count, "{0} obraz|{0} obrazy|{0} obrazów");
+        var title = SingleTitle(item);
+        var description = item.Description ?? Loc.P(images.Count, "{0} obraz|{0} obrazy|{0} obrazów");
         var tiles = images.Select(e => new PreviewTile(e.Name, Size(e.Size), "🖼", null, e.Path)).ToArray();
         progress?.Report(new TilesPreview(title, [.. tiles], description, 220));
 
@@ -116,40 +117,47 @@ public static class FolderViews
         return Snapshot();
     }
 
-    /// <summary>The dashboard's tiles as shortcuts (no I/O); the window turns card tiles into live cards.</summary>
-    public static DashboardPreview Dashboard(FolderConfig config, FolderAction action, string section)
+    /// <summary>Title of a view that fills the panel: the folder's name unless the file sets its own title (every gallery the app writes is <c>gallery.c4k</c>).</summary>
+    public static string SingleTitle(C4kItem item) =>
+        item.Title == item.Name ? Path.GetFileName(item.ContextFolder.TrimEnd('\\', '/')) is { Length: > 0 } name ? name : item.ContextFolder : item.Title;
+
+    /// <summary>The folder's items as shortcut tiles (no I/O); the window turns card items into live cards. Tiles left without a target are linked to their file by the window.</summary>
+    public static DashboardPreview Dashboard(C4kFolder folder)
     {
         var slots = new List<DashboardSlot>();
-        for (var i = 0; i < action.Tiles.Count; i++)
+        for (var i = 0; i < folder.Items.Count; i++)
         {
-            var tile = action.Tiles[i];
-            var target = tile.Run is not null ? RunTarget(section, i)
-                : tile.Url is { } url ? url
-                : tile.Open is { } open ? config.Resolve(open)
-                : null;
-            var subtitle = tile.Subtitle ?? (tile.Run is { } run ? "▶ " + run : null);
-            slots.Add(new DashboardSlot(i, tile, new PreviewTile(tile.Title, subtitle, tile.Icon ?? (tile.Run is not null ? "▶" : tile.Url is not null ? "🌐" : "📁"), null, target)));
+            var item = folder.Items[i];
+            var target = item.Kind switch
+            {
+                FolderActionKind.Run => RunTarget(item.FilePath),
+                FolderActionKind.Url => item.Url,
+                // An open item is performed from its file (its login and the way back), a card about another folder opens that folder.
+                FolderActionKind.Open => null,
+                _ => item.Card is not null ? item.CardTarget : null,
+            };
+            var subtitle = item.Description ?? (item.Run is { } run ? "▶ " + run : null);
+            slots.Add(new DashboardSlot(i, item, new PreviewTile(item.Title, subtitle, item.Icon ?? (item.Run is not null ? "▶" : item.Url is not null ? "🌐" : "📁"), null, target)));
         }
 
-        return new DashboardPreview(config.Title ?? Path.GetFileName(config.Folder.TrimEnd('\\', '/')),
-            config.Description ?? (slots.Count == 0 ? Loc.T("Dodaj kafelki w c4k.dir: lista „tiles” z polami title oraz open, url albo run.") : null),
-            config, section, slots);
+        return new DashboardPreview(Path.GetFileName(folder.Folder.TrimEnd('\\', '/')),
+            folder.Skipped > 0 ? Loc.P(folder.Skipped, "Pominięto {0} plik .c4k|Pominięto {0} pliki .c4k|Pominięto {0} plików .c4k") : null, folder, slots);
     }
 
-    /// <summary>Reads the tiles' own pictures (<c>image</c>).</summary>
-    private static async Task<DashboardPreview> WithPicturesAsync(DashboardPreview dashboard, FolderConfig config, IPluginHost host, CancellationToken cancellationToken)
+    /// <summary>Reads the tiles' own pictures (<c>image</c>); the window calls it before showing the dashboard.</summary>
+    public static async Task<DashboardPreview> WithPicturesAsync(DashboardPreview dashboard, IPluginHost host, CancellationToken cancellationToken)
     {
         var slots = dashboard.Slots.ToArray();
         for (var i = 0; i < slots.Length; i++)
         {
-            if (slots[i].Tile.Image is not { } picture)
+            if (slots[i].Item.Image is not { } picture)
             {
                 continue;
             }
 
             try
             {
-                var (data, length, truncated) = await PreviewReading.ReadHeadAsync(host, config.Resolve(picture), MaxImageBytes, cancellationToken).ConfigureAwait(false);
+                var (data, length, truncated) = await PreviewReading.ReadHeadAsync(host, slots[i].Item.Resolve(picture), MaxImageBytes, cancellationToken).ConfigureAwait(false);
                 if (!truncated)
                 {
                     slots[i] = slots[i] with { Shortcut = slots[i].Shortcut with { Image = data.AsMemory(0, length) } };

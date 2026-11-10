@@ -25,7 +25,7 @@ public sealed record FolderPreview(string Path, IReadOnlyList<FolderPreviewItem>
 /// <param name="Target">
 /// What a click does: a path (opened like Enter), an <c>http(s)</c> URL (the browser panel), another URI such as
 /// <c>steam://rungameid/570</c> (opened by Windows after the user confirms the scheme once), or a <c>c4k:</c> link
-/// (<c>c4k:install/&lt;plugin id&gt;</c>, <c>c4k:run/&lt;tile&gt;</c> for a <c>c4k.dir</c> script). <c>null</c> = not clickable.
+/// (<c>c4k:install/&lt;plugin id&gt;</c>, <c>c4k:run/&lt;tile&gt;</c> for a <c>.c4k</c> script). <c>null</c> = not clickable.
 /// </param>
 public sealed record PreviewTile(string Title, string? Subtitle = null, string? Icon = null, ReadOnlyMemory<byte>? Image = null, string? Target = null);
 

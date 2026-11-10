@@ -216,8 +216,8 @@ public sealed class ApiCardTests : IAsyncDisposable
 
     private static ApiRequest Request(string fields)
     {
-        var config = FolderConfig.Parse(@"C:\x", $$"""{ "preview": { "view": "api", "api": { "url": "https://api.example.com/status", "fields": {{fields}} } } }""");
-        return config.Preview!.Api ?? throw new InvalidOperationException(config.Error);
+        var item = C4kItem.Parse(@"C:\x", "status.c4k", $$"""{ "view": "api", "api": { "url": "https://api.example.com/status", "fields": {{fields}} } }""");
+        return item.Api ?? throw new InvalidOperationException(item.Error);
     }
 
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };

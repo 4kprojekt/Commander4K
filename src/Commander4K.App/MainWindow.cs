@@ -192,7 +192,7 @@ public sealed class MainWindow : Window
     {
         _host = host;
         FolderOpener.OpenInPanel = path => _ = _active.NavigateAsync(path);
-        _ = EnsureAppFolderConfigsAsync(); // plugins/, config/ and config/skins/ name their views in c4k.dir
+        _ = EnsureAppFolderConfigsAsync(); // plugins/, config/ and config/skins/ name their views in .c4k files
         _skins = new SkinManager(host, host.Skins.Get(host.Settings.Skin));
         BuildShell();
         _started.TrySetResult();
@@ -461,9 +461,9 @@ public sealed class MainWindow : Window
     private const string PluginsViewKey = FolderViewIds.Plugins;
 
     /// <summary>
-    /// The app's own views belong to folders, through an ordinary <c>c4k.dir</c> in each: the plugin manager in
-    /// <c>plugins/</c>, settings in <c>config/</c>, skins in <c>config/skins/</c> (<c>"view": "plugins" | "settings" | "skins"</c>).
-    /// The files are written when missing and never overwritten, so the user can change or delete them.
+    /// The app's own views belong to folders, through an ordinary <c>.c4k</c> item in each: <c>plugins.c4k</c> in
+    /// <c>plugins/</c>, <c>settings.c4k</c> in <c>config/</c>, <c>skins.c4k</c> in <c>config/skins/</c> (<c>"view": "plugins" | "settings" | "skins"</c>).
+    /// A file is written only when the folder has no <c>.c4k</c> at all and never overwritten, so the user can change or delete it.
     /// </summary>
     private async Task EnsureAppFolderConfigsAsync()
     {
@@ -475,10 +475,10 @@ public sealed class MainWindow : Window
                 try
                 {
                     Directory.CreateDirectory(folder);
-                    var file = Path.Combine(folder, FolderConfig.FileName);
-                    if (!File.Exists(file))
+                    if (!Directory.EnumerateFiles(folder, "*" + C4kReader.Extension).Any(f => !Path.GetFileName(f).StartsWith('.')))
                     {
-                        File.WriteAllText(file, FolderConfigWriter.CreateForAction(System.Text.Json.Nodes.JsonValue.Create(view), "both"));
+                        using var stream = new FileStream(Path.Combine(folder, view + C4kReader.Extension), FileMode.CreateNew, FileAccess.Write);
+                        stream.Write(System.Text.Encoding.UTF8.GetBytes(C4kWriter.Create(new System.Text.Json.Nodes.JsonObject { ["view"] = view })));
                     }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -644,7 +644,7 @@ public sealed class MainWindow : Window
             id => _host.DiscoveredPlugins.Any(p => string.Equals(p.Manifest?.Id, id, StringComparison.OrdinalIgnoreCase))),
         .. McpAppTools.Create(this, _host, McpContext, allowedRoots, protectedRoots),
         .. McpConfigTools.Create(McpConfigContext()),
-        .. McpDashboardTools.Create(_host.Router, McpCardPreviews),
+        .. McpDashboardTools.Create(_host.Router, McpCardPreviews, allowedRoots, protectedRoots),
         .. McpSkinTools.Create(this, _host, () => _skins!),
     ];
 
@@ -891,7 +891,7 @@ public sealed class MainWindow : Window
     private McpConnectWindow? _mcpConnect;
     private Button _mcpBadge = null!;
 
-    /// <param name="pinned">A folder's own view (c4k.dir "enter") shown in <paramref name="source"/> itself.</param>
+    /// <param name="pinned">A folder's own view (its .c4k items) shown in <paramref name="source"/> itself.</param>
     /// <param name="pinnedFile">A file opened with Enter by a preview that asks for it, shown in <paramref name="source"/> itself.</param>
     /// <param name="embedded">The preview under a plugin's list: it follows <paramref name="source"/>'s cursor and has no header.</param>
     private PreviewPanelView CreatePreview(FilePanelView source, PreviewPanelView.PinnedFolder? pinned = null, VfsEntry? pinnedFile = null, bool embedded = false) =>
@@ -914,16 +914,17 @@ public sealed class MainWindow : Window
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
             RunShortcut = RunShortcut,
             AskFolderTrust = AskFolderTrustAsync,
-            EditDashboardTile = (dashboard, index, edit) => EditDashboardTileAsync(dashboard, index, edit),
+            ResizeDashboardTile = ResizeDashboardTileAsync,
         };
 
     /// <summary>
-    /// Enter on a folder: its <c>c4k.dir</c> (when the setting is on) may show a view, open a panel plugin, go somewhere
-    /// else (SFTP with a key), open a page or run a script; otherwise, and with Shift+Enter, the folder opens as files.
-    /// Only disks, shares and SFTP/FTP are checked — one stat per Enter, abandoned after 2 s on a hung share.
+    /// Enter on a folder: its <c>.c4k</c> items (when the setting is on) decide. One item is performed: a view, a panel
+    /// plugin, somewhere else (SFTP with a key), a page or a script; several make the folder's dashboard. Otherwise, and
+    /// with Shift+Enter, the folder opens as files. Only disks, shares and SFTP/FTP are checked — one listing per Enter,
+    /// abandoned after 2 s on a hung share.
     /// </summary>
     /// <remarks>
-    /// The panel's Pliki · Auto · Widok switch decides: Pliki never reads c4k.dir, Auto shows the folder's view when it has
+    /// The panel's Pliki · Auto · Widok switch decides: Pliki never reads .c4k files, Auto shows the folder's view when it has
     /// one, Widok shows a view always — a card saying there is none when the folder has no view.
     /// </remarks>
     private async Task EnterFolderAsync(FilePanelView panel, VfsEntry folder, bool inheritParentView = false, PanelTab? expectedTab = null)
@@ -937,10 +938,10 @@ public sealed class MainWindow : Window
         }
 
         var mode = panel.FolderMode;
-        FolderConfig? config = null;
+        C4kFolder? config = null;
         if (mode != FolderViewMode.Files && VfsPath.GetScheme(folder.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
         {
-            config = await Task.Run(() => _host!.ReadFolderConfigAsync(folder.Path, CancellationToken.None));
+            config = await Task.Run(() => _host!.ReadFolderAsync(folder.Path, CancellationToken.None));
         }
 
         if (config is null && mode == FolderViewMode.Auto && inheritParentView)
@@ -953,28 +954,27 @@ public sealed class MainWindow : Window
 
             if (inherited is { } view)
             {
-                await RunFolderActionAsync(panel, view.Folder, view.Config, view.Action);
+                await RunFolderActionAsync(panel, view.Folder, view.Config, view.Item);
                 return;
             }
         }
 
-        if (config?.Error is { } error)
+        if (config?.Single is { Error: { } error } broken)
         {
-            Notify(Loc.T("{0}: {1}", config.FilePath, error), isError: true);
+            Notify(Loc.T("{0}: {1}", broken.FilePath, error), isError: true);
+            config = null;
         }
 
-        // A file with only a "preview" view shows that view on Enter too; an explicit "enter": "files" keeps the files
-        // (Widok then still shows the "preview" view when there is one).
-        static FolderAction? Shown(FolderAction? candidate) => candidate is { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel } ? candidate : null;
-        var action = mode switch
+        // Several items: the dashboard. One item is performed; "view": "files" keeps the files (Widok then shows "no view").
+        if (config is { Layout: C4kLayout.Dashboard })
         {
-            FolderViewMode.Files => null,
-            FolderViewMode.View => config?.Enter is { IsPlainFiles: false } enter ? enter : Shown(config?.Preview),
-            _ => config?.Enter ?? Shown(config?.Preview),
-        };
-        if (action is { IsPlainFiles: false })
+            ShowPinnedFolder(panel, folder, config, null);
+            return;
+        }
+
+        if (config?.Single is { IsPlainFiles: false } item)
         {
-            await RunFolderActionAsync(panel, folder, config!, action);
+            await RunFolderActionAsync(panel, folder, config, item);
             return;
         }
 
@@ -996,7 +996,8 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task<(VfsEntry Folder, FolderConfig Config, FolderAction Action)?> FindAncestorFolderViewAsync(string path)
+    /// <summary>The nearest parent folder with one view or panel item; a parent dashboard is not inherited.</summary>
+    private async Task<(VfsEntry Folder, C4kFolder Config, C4kItem Item)?> FindAncestorFolderViewAsync(string path)
     {
         if (!_host!.Settings.FolderConfigs
             || VfsPath.GetScheme(path) is not (VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp"))
@@ -1015,10 +1016,10 @@ public sealed class MainWindow : Window
             }
 
             current = parent;
-            FolderConfig? config;
+            C4kFolder? config;
             try
             {
-                config = await Task.Run(() => _host.ReadFolderConfigAsync(current, budget.Token), budget.Token);
+                config = await Task.Run(() => _host.ReadFolderAsync(current, budget.Token), budget.Token);
             }
             catch (OperationCanceledException) when (budget.IsCancellationRequested)
             {
@@ -1031,16 +1032,18 @@ public sealed class MainWindow : Window
                 continue;
             }
 
-            if (config.Error is { } error)
+            if (config.Single is not { } item)
             {
-                Notify(Loc.T("{0}: {1}", config.FilePath, error), isError: true);
                 return null;
             }
 
-            var action = config.Enter ?? (config.Preview is { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel } preview
-                ? preview
-                : null);
-            if (action is not { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel })
+            if (item.Error is { } error)
+            {
+                Notify(Loc.T("{0}: {1}", item.FilePath, error), isError: true);
+                return null;
+            }
+
+            if (item is not { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel })
             {
                 return null;
             }
@@ -1048,7 +1051,7 @@ public sealed class MainWindow : Window
             var relativePath = VfsPath.StripScheme(config.Folder).TrimEnd('\\', '/');
             var separator = relativePath.LastIndexOfAny(['\\', '/']);
             var name = relativePath[(separator + 1)..];
-            return (new VfsEntry(name, config.Folder, VfsEntryKind.Directory), config, action);
+            return (new VfsEntry(name, config.Folder, VfsEntryKind.Directory), config, item);
         }
     }
 
@@ -1064,8 +1067,9 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var config = await Task.Run(() => _host!.ReadFolderConfigAsync(path, CancellationToken.None));
-        if (config is not { Error: null } || (config.Enter ?? config.Preview) is not { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel }
+        var config = await Task.Run(() => _host!.ReadFolderAsync(path, CancellationToken.None));
+        if (config is null
+            || (config.Layout != C4kLayout.Dashboard && config.Single is not { Error: null, IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel })
             || panel.Mode is not null || !SamePath(panel.ActiveTab.Path, path))
         {
             return; // no view, or the user went elsewhere meanwhile
@@ -1094,6 +1098,10 @@ public sealed class MainWindow : Window
             var tab = panel.ActiveTab;
             await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true);
         }
+        else if (panel.ActiveTab.Origin is { } origin)
+        {
+            await panel.ActiveTab.NavigateAsync(origin); // Pliki after a .c4k "open": the files of the folder holding it
+        }
     }
 
     private async Task RestoreTabFolderModeAsync(FilePanelView panel)
@@ -1111,20 +1119,21 @@ public sealed class MainWindow : Window
         }
     }
 
-    /// <summary>Enter (or a double click) on <c>c4k.dir</c> in the file list: the folder's view replaces the files.</summary>
+    /// <summary>Enter (or a double click) on a <c>.c4k</c> file in the file list: that item is performed, not the folder's view.</summary>
     private async Task ShowOwnFolderViewAsync(FilePanelView panel, VfsEntry file)
     {
         var folderPath = panel.ActiveTab.Path;
-        var config = await Task.Run(() => _host!.ReadFolderConfigAsync(folderPath, CancellationToken.None));
-        if (config?.Error is { } error)
+        var config = await Task.Run(() => _host!.ReadFolderAsync(folderPath, CancellationToken.None));
+        var item = config?.Items.FirstOrDefault(i => SamePath(i.FilePath, file.Path));
+        if (item?.Error is { } error)
         {
-            Notify(Loc.T("{0}: {1}", config.FilePath, error), isError: true);
+            Notify(Loc.T("{0}: {1}", item.FilePath, error), isError: true);
             return;
         }
 
-        if ((config?.Enter ?? config?.Preview) is { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel } action)
+        if (item is { IsPlainFiles: false })
         {
-            await RunFolderActionAsync(panel, new VfsEntry(panel.ActiveTab.Title, folderPath, VfsEntryKind.Directory), config!, action);
+            await RunFolderActionAsync(panel, new VfsEntry(panel.ActiveTab.Title, folderPath, VfsEntryKind.Directory), config!, item);
             return;
         }
 
@@ -1132,19 +1141,15 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
-    /// cm_FolderView: writes a c4k.dir for the folder under the cursor (or the current one) from a short choice — a
-    /// view, a catalog plugin, an SSH connection with a key, a web page or a script — for its preview, its Enter or both.
-    /// </summary>
-    /// <summary>
     /// cm_AddApiCard: a sample request to an API, a pick of fields from its answer, and a card added to the dashboard of
-    /// the current folder's c4k.dir. An Authorization value goes to the secret store; the file only names it.
+    /// the current folder as a new .c4k file. An Authorization value goes to the secret store; the file only names it.
     /// </summary>
     private async ValueTask AddApiCardAsync(CommandInvocation _)
     {
         var folder = _active.ActiveTab.Path;
         if (VfsPath.GetScheme(folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme) || folder.Contains("://", StringComparison.Ordinal))
         {
-            Notify(Loc.T("Plik c4k.dir można utworzyć na dysku albo w udziale sieciowym."), isError: true);
+            Notify(Loc.T("Plik .c4k można utworzyć na dysku albo w udziale sieciowym."), isError: true);
             return;
         }
 
@@ -1231,39 +1236,9 @@ public sealed class MainWindow : Window
             tile["refresh"] = refresh;
         }
 
-        var file = FolderConfig.ChildPath(folder, FolderConfig.FileName);
-        var existing = await Task.Run(() => File.Exists(file) ? File.ReadAllText(file) : null);
-        if (existing is not null && FolderConfigWriter.HasComments(existing)
-            && !await new ConfirmDialog(brushes, Loc.T("Zapisać c4k.dir?"), Loc.T("{0} ma komentarze; zapis nowej karty je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
+        var json = C4kWriter.Create(tile);
+        if (await CreateItemsAsync(folder, [(choice.Title, json)]) is not [var file])
         {
-            return;
-        }
-
-        var wasTrusted = existing is null || await Task.Run(() => _host.FolderTrust.IsTrusted(FolderConfig.Parse(folder, existing)));
-        string text;
-        try
-        {
-            text = FolderConfigWriter.AppendTile(existing, tile, replacePreview: false);
-        }
-        catch (InvalidOperationException)
-        {
-            if (!await new ConfirmDialog(brushes, Loc.T("Zamienić podgląd na dashboard?"),
-                    Loc.T("{0} pokazuje teraz coś innego. Podgląd stanie się dashboardem z tą kartą; dotychczasowy podgląd zostanie po wejściu do folderu, jeśli nic tam nie ustawiono.", file), Loc.T("Zamień")).ShowAsync(this))
-            {
-                return;
-            }
-
-            text = FolderConfigWriter.AppendTile(existing, tile, replacePreview: true);
-        }
-
-        try
-        {
-            // The folder may be on a share: opening the file must not wait on the UI thread.
-            await Task.Run(() => File.WriteAllTextAsync(file, text));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Notify(ex.Message, isError: true);
             return;
         }
 
@@ -1273,22 +1248,49 @@ public sealed class MainWindow : Window
             await Task.Run(() => _host.Secrets.Set(secretName, authorization!, origin));
         }
 
-        // The user just wrote this file; trust carries over only from a file that was trusted (or did not exist).
-        if (wasTrusted)
-        {
-            await Task.Run(() => _host.FolderTrust.Trust(FolderConfig.Parse(folder, text)));
-        }
-
+        // The user just wrote this new file, so it starts trusted.
+        await Task.Run(() => _host.FolderTrust.Trust(C4kItem.Parse(folder, Path.GetFileName(file), json)));
         Notify(Loc.T("Dodano kartę „{0}” do {1}.", choice.Title, file));
         await _active.ActiveTab.RefreshAsync();
+    }
+
+    /// <summary>
+    /// Writes new item files into <paramref name="folder"/>, never replacing one. A folder with exactly one item would
+    /// turn into a dashboard, so the user confirms that first. Returns the written paths; <c>null</c> when declined.
+    /// </summary>
+    private async Task<List<string>?> CreateItemsAsync(string folder, IReadOnlyList<(string BaseName, string Json)> items)
+    {
+        var current = await Task.Run(() => _host!.ReadFolderAsync(folder, CancellationToken.None));
+        if (current?.Single is { } single
+            && !await new ConfirmDialog(_skins!.Current, Loc.T("Folder stanie się dashboardem"),
+                Loc.T("{0} ma teraz jeden plik .c4k ({1}), który decyduje o widoku folderu. Kolejny plik sprawi, że folder pokaże dashboard: po jednym kafelku na każdy plik .c4k.",
+                    folder, Path.GetFileName(single.FilePath)), Loc.T("Zapisz")).ShowAsync(this))
+        {
+            return null;
+        }
+
+        var written = new List<string>();
+        foreach (var (baseName, json) in items)
+        {
+            var (_, error, path) = await C4kWriter.CreateNewAsync(folder, baseName, json, TimeSpan.FromSeconds(5), CancellationToken.None);
+            if (path is null)
+            {
+                Notify(Loc.T("Nie można zapisać pliku .c4k w {0}: {1}", folder, error), isError: true);
+                break;
+            }
+
+            written.Add(path);
+        }
+
+        _host!.FolderSuggestions.Forget(folder);
+        return written;
     }
 
     /// <summary><c>c4k:secret/&lt;name&gt;</c>: asks for a secret an API card needs and binds it to the origin (scheme, host, port) of that card's request.</summary>
     private async Task AskSecretAsync(string name, VfsEntry? folder)
     {
-        var config = folder is { } f ? await Task.Run(() => _host!.ReadFolderConfigAsync(f.Path, CancellationToken.None)) : null;
-        var request = config is null ? null
-            : new[] { config.Enter, config.Preview }.Where(a => a is not null).SelectMany(a => a!.Tiles.Select(t => t.Api).Append(a.Api))
+        var config = folder is { } f ? await Task.Run(() => _host!.ReadFolderAsync(f.Path, CancellationToken.None)) : null;
+        var request = config?.Items.Select(i => i.Api)
                 .FirstOrDefault(r => r is not null && (Core.Security.SecretStore.NamesIn(r.Url).Contains(name)
                     || r.Headers.Values.Any(v => Core.Security.SecretStore.NamesIn(v).Contains(name))
                     || (r.Body is { } body && Core.Security.SecretStore.NamesIn(body).Contains(name))));
@@ -1314,12 +1316,16 @@ public sealed class MainWindow : Window
         await ConfigureFolderViewAsync(folder, panel);
     }
 
+    /// <summary>
+    /// cm_FolderView: writes a new <c>.c4k</c> item for the folder from a short choice — a view, a catalog plugin, an SSH
+    /// connection with a key, a web page or a script (the dashboard choice writes three sample items).
+    /// </summary>
     private async Task ConfigureFolderViewAsync(string folder, FilePanelView panel)
     {
         var tab = panel.ActiveTab;
         if (VfsPath.GetScheme(folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme) || folder.Contains("://", StringComparison.Ordinal))
         {
-            Notify(Loc.T("Plik c4k.dir można utworzyć na dysku albo w udziale sieciowym."), isError: true);
+            Notify(Loc.T("Plik .c4k można utworzyć na dysku albo w udziale sieciowym."), isError: true);
             return;
         }
 
@@ -1335,25 +1341,38 @@ public sealed class MainWindow : Window
             new(Loc.T("▶ Skrypt"), Loc.T("wejście uruchamia polecenie (po Twojej zgodzie)"), "run", "script ps1 bat polecenie"),
         };
         items.AddRange(_host!.PluginCatalog.Plugins.Select(p => new PickerItem("🧩 " + p.Name, p.LocalizedDescription, "plugin:" + p.Id, string.Join(' ', p.Tags))));
-        items.Add(new(Loc.T("✕ Zwykła lista plików"), Loc.T("usuwa c4k.dir"), "remove", "usuń delete"));
+        items.Add(new(Loc.T("✕ Zwykła lista plików"), Loc.T("usuwa jedyny plik .c4k"), "remove", "usuń delete"));
 
         var choice = (await new PickerDialog(brushes, Loc.T("Widok folderu: {0}", folder), items,
-            Loc.T("Co ma pokazywać ten folder? Ustawienia zostaną zapisane w pliku c4k.dir w tym folderze.")).ShowAsync(this))?.Value;
+            Loc.T("Co ma pokazywać ten folder? Wybór zostanie zapisany jako nowy plik .c4k w tym folderze.")).ShowAsync(this))?.Value;
         if (choice is null)
         {
             return;
         }
 
-        var file = FolderConfig.ChildPath(folder, FolderConfig.FileName);
         if (choice == "remove")
         {
+            var current = await Task.Run(() => _host.ReadFolderAsync(folder, CancellationToken.None));
+            if (current is null)
+            {
+                return;
+            }
+
+            if (current.Single is not { } only)
+            {
+                Notify(Loc.T("Folder ma kilka plików .c4k — usuń w panelu te, których nie chcesz."), isError: true);
+                return;
+            }
+
+            var file = only.FilePath;
+            if (!await new ConfirmDialog(brushes, Loc.T("Usunąć plik .c4k?"), Loc.T("Usunąć {0}? Folder pokaże zwykłą listę plików.", file), Loc.T("Usuń")).ShowAsync(this))
+            {
+                return;
+            }
+
             try
             {
-                if (await _host!.Router.GetEntryAsync(file, CancellationToken.None) is not null)
-                {
-                    await _host.Router.DeleteAsync(file, recursive: false, CancellationToken.None);
-                }
-
+                await _host.Router.DeleteAsync(file, recursive: false, CancellationToken.None);
                 Notify(Loc.T("Usunięto {0}.", file));
                 await tab.RefreshAsync();
             }
@@ -1366,8 +1385,9 @@ public sealed class MainWindow : Window
             return;
         }
 
-        System.Text.Json.Nodes.JsonNode? action;
-        var where = "both";
+        var newItems = new List<(string BaseName, string Json)>();
+        System.Text.Json.Nodes.JsonObject Item(string key, System.Text.Json.Nodes.JsonNode value) => new() { [key] = value };
+        string HostOf(string address, string fallback) => Uri.TryCreate(address, UriKind.Absolute, out var parsed) && parsed.Host.Length > 0 ? parsed.Host : fallback;
         switch (choice)
         {
             case "ssh":
@@ -1378,13 +1398,13 @@ public sealed class MainWindow : Window
                 }
 
                 var key = await new InputDialog(brushes, Loc.T("Połączenie SSH"), Loc.T("Klucz prywatny (puste = domyślne klucze z ~/.ssh):"), "~/.ssh/id_ed25519").ShowAsync(this);
-                action = new System.Text.Json.Nodes.JsonObject { ["open"] = address.Trim() };
+                var ssh = Item("open", address.Trim());
                 if (!string.IsNullOrWhiteSpace(key))
                 {
-                    action["keyFile"] = key.Trim();
+                    ssh["keyFile"] = key.Trim();
                 }
 
-                where = "enter";
+                newItems.Add((HostOf(address.Trim(), "ssh"), C4kWriter.Create(ssh)));
                 break;
             case "url":
                 var url = await new InputDialog(brushes, Loc.T("Strona WWW"), Loc.T("Adres strony:"), "https://").ShowAsync(this);
@@ -1393,8 +1413,7 @@ public sealed class MainWindow : Window
                     return;
                 }
 
-                action = new System.Text.Json.Nodes.JsonObject { ["url"] = url!.Trim() };
-                where = "enter";
+                newItems.Add((HostOf(url!.Trim(), "www"), C4kWriter.Create(Item("url", url!.Trim()))));
                 break;
             case "run":
                 var command = await new InputDialog(brushes, Loc.T("Skrypt"), Loc.T("Polecenie (np. build.ps1, npm, code):"), "build.ps1").ShowAsync(this);
@@ -1403,30 +1422,23 @@ public sealed class MainWindow : Window
                     return;
                 }
 
-                action = new System.Text.Json.Nodes.JsonObject { ["run"] = new System.Text.Json.Nodes.JsonObject { ["command"] = command.Trim(), ["args"] = new System.Text.Json.Nodes.JsonArray() } };
-                where = "enter";
+                var run = Item("run", new System.Text.Json.Nodes.JsonObject { ["command"] = command.Trim(), ["args"] = new System.Text.Json.Nodes.JsonArray() });
+                newItems.Add((Path.GetFileNameWithoutExtension(command.Trim()), C4kWriter.Create(run)));
                 break;
             case FolderViewIds.Dashboard:
-                action = System.Text.Json.Nodes.JsonNode.Parse("""
-                    {
-                      "view": "dashboard",
-                      "tiles": [
-                        { "title": "Dokumenty", "icon": "📁", "open": "~/Documents" },
-                        { "title": "Commander4K", "icon": "🌐", "url": "https://github.com/4kprojekt/Commander4K" },
-                        { "title": "Terminal", "icon": "▶", "run": { "command": "wt", "args": ["-d", "."] } }
-                      ]
-                    }
-                    """);
+                // A dashboard is several .c4k files: three sample tiles to edit or delete.
+                newItems.Add(("Dokumenty", C4kWriter.Create(new() { ["icon"] = "📁", ["open"] = "~/Documents" })));
+                newItems.Add(("Commander4K", C4kWriter.Create(new() { ["icon"] = "🌐", ["url"] = "https://github.com/4kprojekt/Commander4K" })));
+                newItems.Add(("Terminal", C4kWriter.Create(new() { ["icon"] = "▶", ["run"] = new System.Text.Json.Nodes.JsonObject { ["command"] = "wt", ["args"] = new System.Text.Json.Nodes.JsonArray("-d", ".") } })));
                 break;
             default:
                 if (choice.StartsWith("plugin:", StringComparison.Ordinal))
                 {
                     var plugin = _host.PluginCatalog.Find(choice[7..])!;
-                    var pluginAction = new System.Text.Json.Nodes.JsonObject { ["plugin"] = plugin.Id };
-                    action = pluginAction;
+                    var pluginItem = Item("plugin", plugin.Id);
 
                     // The user picked the plugin: install it (the confirmation is the consent), enable it if it waits
-                    // for consent, then let it ask what the folder needs (an account, a server…) before c4k.dir is written.
+                    // for consent, then let it ask what the folder needs (an account, a server…) before the file is written.
                     if (!IsInstalled(plugin.Id))
                     {
                         await InstallFromCatalogAsync(plugin.Id);
@@ -1444,70 +1456,34 @@ public sealed class MainWindow : Window
 
                     if (System.Text.Json.Nodes.JsonNode.Parse(options) is System.Text.Json.Nodes.JsonObject { Count: > 0 } optionsNode)
                     {
-                        pluginAction["options"] = optionsNode;
+                        pluginItem["options"] = optionsNode;
                     }
+
+                    newItems.Add((plugin.Name, C4kWriter.Create(pluginItem)));
                 }
                 else
                 {
-                    action = choice;
+                    newItems.Add((choice, C4kWriter.Create(Item("view", choice))));
                 }
 
                 break;
         }
 
-        if (where == "both")
-        {
-            var when = (await new PickerDialog(brushes, Loc.T("Kiedy?"),
-            [
-                new(Loc.T("Podgląd i wejście"), Loc.T("Ctrl+Q na folderze i Enter"), "both"),
-                new(Loc.T("Tylko podgląd"), Loc.T("Enter otwiera zwykłą listę plików"), "preview"),
-                new(Loc.T("Tylko wejście"), Loc.T("podgląd pokazuje rozmiary jak zwykle"), "enter"),
-            ]).ShowAsync(this))?.Value;
-            if (when is null)
-            {
-                return;
-            }
-
-            where = when;
-        }
-
-        string? existing;
-        try
-        {
-            existing = await Task.Run(() => ReadFolderConfigTextAsync(file, CancellationToken.None));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
-            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
-        {
-            Notify(Loc.T("Nie można odczytać {0}: {1}", file, ex.Message), isError: true);
-            return;
-        }
-
-        if (existing is not null && !await new ConfirmDialog(brushes, Loc.T("Zastąpić c4k.dir?"), Loc.T("{0} już istnieje.", file), Loc.T("Zastąp")).ShowAsync(this))
+        if (await CreateItemsAsync(folder, newItems) is not { Count: > 0 } written)
         {
             return;
         }
 
-        var text = FolderConfigWriter.CreateForAction(action, where);
-        try
+        Notify(Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", string.Join(", ", written.Select(Path.GetFileName))));
+        var config = await Task.Run(() => _host.ReadFolderAsync(folder, CancellationToken.None));
+        var folderEntry = new VfsEntry(Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), folder, VfsEntryKind.Directory);
+        if (config is { Layout: C4kLayout.Dashboard })
         {
-            await WriteFolderConfigTextAsync(file, text, CancellationToken.None);
+            ShowPinnedFolder(panel, folderEntry, config, null);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
-            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
+        else if (config?.Single is { Error: null, IsPlainFiles: false } item)
         {
-            Notify(Loc.T("Nie można zapisać {0}: {1}", file, ex.Message), isError: true);
-            return;
-        }
-
-        _host.FolderSuggestions.Forget(folder);
-        Notify(Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file));
-        var config = FolderConfig.Parse(folder, text);
-        var configuredAction = where is "both" or "preview" ? config.Preview : config.Enter;
-        if (configuredAction is { IsPlainFiles: false })
-        {
-            var folderEntry = new VfsEntry(Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), folder, VfsEntryKind.Directory);
-            await RunFolderActionAsync(panel, folderEntry, config, configuredAction);
+            await RunFolderActionAsync(panel, folderEntry, config, item);
         }
         else
         {
@@ -1515,7 +1491,7 @@ public sealed class MainWindow : Window
         }
     }
 
-    /// <summary>Shift+Enter: the folder's files, whatever its <c>c4k.dir</c> says; a file opens with Windows even when a preview claims Enter.</summary>
+    /// <summary>Shift+Enter: the folder's files, whatever its <c>.c4k</c> files say; a file opens with Windows even when a preview claims Enter.</summary>
     private void EnterFolderPlain()
     {
         if (_active.Mode is null && _active.ActiveTab.CurrentEntry is { IsContainer: true, Kind: not (VfsEntryKind.ParentLink or VfsEntryKind.Action) } entry)
@@ -1532,31 +1508,29 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task RunFolderActionAsync(FilePanelView panel, VfsEntry folder, FolderConfig config, FolderAction action)
+    /// <summary>Performs one item of <paramref name="folder"/> (Enter, a tile, an inherited view).</summary>
+    private async Task RunFolderActionAsync(FilePanelView panel, VfsEntry folder, C4kFolder config, C4kItem action)
     {
         var host = _host!;
         switch (action.Kind)
         {
             case FolderActionKind.Run when action.Run is { } run:
-                await RunFolderCommandAsync(config, run);
+                await RunFolderCommandAsync(action, run);
                 return;
 
             case FolderActionKind.Open when action.Open is { } open:
-                var target = config.Resolve(open);
-                if (VfsPath.GetScheme(target) is "sftp" or "ftp" && (action.KeyFile is not null || action.User is not null))
-                {
-                    // The login from c4k.dir is kept for this session only; saved connections remain the place for passwords.
-                    host.Remote.SetLogin(target, new RemoteLogin(action.User ?? RemoteTransferVfsPlugin.UserNameOf(target) ?? Environment.UserName,
-                        PrivateKeyFile: action.KeyFile is { } key ? config.Resolve(key) : null));
-                }
-
-                await panel.NavigateAsync(target);
+                var target = action.Resolve(open);
+                ApplyItemLogin(action, target);
+                var openTab = panel.ActiveTab;
+                var navigation = panel.NavigateAsync(target);
+                openTab.SetOrigin(action.Folder, target); // after NavigateAsync, which drops an origin the new path is not under
+                await navigation;
                 return;
 
             case FolderActionKind.Url when action.Url is { } url:
                 if (!Core.Web.WebUrl.IsWebUrl(url))
                 {
-                    Notify(Loc.T("{0}: „url” musi być adresem http(s).", config.FilePath), isError: true);
+                    Notify(Loc.T("{0}: „url” musi być adresem http(s).", action.FilePath), isError: true);
                     break;
                 }
 
@@ -1584,14 +1558,20 @@ public sealed class MainWindow : Window
                 return;
 
             case FolderActionKind.View:
-                _ = panel.NavigateAsync(folder.Path);
-                panel.ActiveTab.SetFolderViewInfo(folder.Name, action.Plugin is null ? null : PluginDisplayName(action.Plugin));
-                panel.ShowMode(CreatePreview(panel, new PreviewPanelView.PinnedFolder(folder, config, action)));
-                SetActive(panel);
+                ShowPinnedFolder(panel, folder, config, action);
                 return;
         }
 
         await panel.NavigateAsync(folder.Path);
+    }
+
+    /// <summary>One item's view, or the dashboard (<paramref name="item"/> = <c>null</c>), pinned over the folder's files.</summary>
+    private void ShowPinnedFolder(FilePanelView panel, VfsEntry folder, C4kFolder config, C4kItem? item)
+    {
+        _ = panel.NavigateAsync(folder.Path);
+        panel.ActiveTab.SetFolderViewInfo(folder.Name, item?.Plugin is { } plugin ? PluginDisplayName(plugin) : null);
+        panel.ShowMode(CreatePreview(panel, new PreviewPanelView.PinnedFolder(folder, config, item)));
+        SetActive(panel);
     }
 
     private bool IsInstalled(string pluginId) =>
@@ -1610,60 +1590,60 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
-    /// Runs a command from a <c>c4k.dir</c>. The first time (and after every change of the file) the user sees the
-    /// exact command and decides; a folder copied from elsewhere cannot run anything on its own. Disks and shares only.
+    /// A dashboard card that signs in (SSH, SFTP/FTP) or may change something (POST…) waits for trust in its own
+    /// <c>.c4k</c> file. The dialog lists everything the trust unlocks in that file, a command included.
     /// </summary>
-    /// <summary>
-    /// Dashboard cards that sign in (SSH) or may change something (POST…) wait for trust in their c4k.dir. The dialog
-    /// lists everything the trust unlocks, scripts included, because it is given to the whole file content.
-    /// </summary>
-    private async Task<bool> AskFolderTrustAsync(FolderConfig config)
+    private async Task<bool> AskFolderTrustAsync(C4kItem item)
     {
-        if (VfsPath.GetScheme(config.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
+        if (VfsPath.GetScheme(item.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
         {
             return false;
         }
 
-        var message = Loc.T("Plik {0} chce:", config.FilePath) + "\n\n" + string.Join("\n", config.TrustSummary().Select(line => "    " + line)) + "\n\n" +
-            Loc.T("Zgoda dotyczy tej treści pliku — gdy c4k.dir się zmieni, zapytam ponownie. Zezwalaj tylko na adresy i serwery, które znasz.");
-        if (!await new ConfirmDialog(_skins!.Current, Loc.T("Zezwolić na ten plik c4k.dir?"), message, Loc.T("Zezwól")).ShowAsync(this))
+        var message = Loc.T("Plik {0} chce:", item.FilePath) + "\n\n" + string.Join("\n", item.TrustSummary().Select(line => "    " + line)) + "\n\n" +
+            Loc.T("Zgoda dotyczy tych adresów i serwerów w tym pliku — gdy się zmienią, zapytam ponownie. Zezwalaj tylko na adresy i serwery, które znasz.");
+        if (!await new ConfirmDialog(_skins!.Current, Loc.T("Zezwolić na plik {0}?", Path.GetFileName(item.FilePath)), message, Loc.T("Zezwól")).ShowAsync(this))
         {
             return false;
         }
 
-        await Task.Run(() => _host!.FolderTrust.Trust(config));
-        _host!.Audit.Record("c4k.dir", "trust", config.FilePath);
+        await Task.Run(() => _host!.FolderTrust.Trust(item));
+        _host!.Audit.Record("c4k", "trust", item.FilePath);
         return true;
     }
 
-    private async Task RunFolderCommandAsync(FolderConfig config, FolderRun run)
+    /// <summary>
+    /// Runs a command from a <c>.c4k</c> file. The first time (and after every change of the command) the user sees the
+    /// exact command and decides; a folder copied from elsewhere cannot run anything on its own. Disks and shares only.
+    /// </summary>
+    private async Task RunFolderCommandAsync(C4kItem item, FolderRun run)
     {
-        if (VfsPath.GetScheme(config.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
+        if (VfsPath.GetScheme(item.Folder) is not (VfsPath.FileScheme or VfsPath.SmbScheme))
         {
-            Notify(Loc.T("Polecenia z c4k.dir działają tylko na dyskach i udziałach sieciowych."), isError: true);
+            Notify(Loc.T("Polecenia z plików .c4k działają tylko na dyskach i udziałach sieciowych."), isError: true);
             return;
         }
 
-        var workingDirectory = run.WorkingDirectory is { } cwd ? config.Resolve(cwd) : config.Folder;
-        if (!await Task.Run(() => _host!.FolderTrust.IsTrusted(config)))
+        var workingDirectory = run.WorkingDirectory is { } cwd ? item.Resolve(cwd) : item.Folder;
+        if (!await Task.Run(() => _host!.FolderTrust.IsTrusted(item)))
         {
-            var message = Loc.T("Plik {0} chce uruchomić:", config.FilePath) + "\n\n    " + run + "\n\n" +
+            var message = Loc.T("Plik {0} chce uruchomić:", item.FilePath) + "\n\n    " + run + "\n\n" +
                 Loc.T("Folder roboczy: {0}", workingDirectory) + "\n\n" +
-                Loc.T("Zgoda dotyczy tej treści pliku — gdy c4k.dir się zmieni, zapytam ponownie. Uruchamiaj tylko polecenia, które rozumiesz.");
-            if (!await new ConfirmDialog(_skins!.Current, Loc.T("Uruchomić polecenie z c4k.dir?"), message, Loc.T("Uruchom")).ShowAsync(this))
+                Loc.T("Zgoda dotyczy tego polecenia w tym pliku — gdy się zmieni, zapytam ponownie. Uruchamiaj tylko polecenia, które rozumiesz.");
+            if (!await new ConfirmDialog(_skins!.Current, Loc.T("Uruchomić polecenie z {0}?", Path.GetFileName(item.FilePath)), message, Loc.T("Uruchom")).ShowAsync(this))
             {
                 return;
             }
 
-            await Task.Run(() => _host!.FolderTrust.Trust(config));
+            await Task.Run(() => _host!.FolderTrust.Trust(item));
         }
 
-        _host!.Audit.Record("c4k.dir", "run", $"{config.FilePath}: {run}");
+        _host!.Audit.Record("c4k", "run", $"{item.FilePath}: {run}");
         await Task.Run(() =>
         {
             try
             {
-                using var _ = Process.Start(FolderRunStartInfo(config, run, workingDirectory));
+                using var _ = Process.Start(FolderRunStartInfo(item, run, workingDirectory));
             }
             catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or FileNotFoundException)
             {
@@ -1672,10 +1652,10 @@ public sealed class MainWindow : Window
         });
     }
 
-    /// <summary>A script next to the c4k.dir runs with its interpreter (.ps1 → PowerShell 7); anything else goes through Windows (exe, bat, documents, PATH).</summary>
-    private static ProcessStartInfo FolderRunStartInfo(FolderConfig config, FolderRun run, string workingDirectory)
+    /// <summary>A script next to the .c4k file runs with its interpreter (.ps1 → PowerShell 7); anything else goes through Windows (exe, bat, documents, PATH).</summary>
+    private static ProcessStartInfo FolderRunStartInfo(C4kItem item, FolderRun run, string workingDirectory)
     {
-        var local = config.Resolve(run.Command);
+        var local = item.Resolve(run.Command);
         var command = File.Exists(local) ? local : run.Command;
         var info = Path.GetExtension(command).Equals(".ps1", StringComparison.OrdinalIgnoreCase)
             ? new ProcessStartInfo("pwsh") { ArgumentList = { "-NoLogo", "-File", command } }
@@ -1727,6 +1707,10 @@ public sealed class MainWindow : Window
             {
                 await RunTileCommandAsync(target["c4k:run/".Length..], folder);
             }
+            else if (target.StartsWith(PreviewPanelView.ItemTargetPrefix, StringComparison.Ordinal))
+            {
+                await OpenItemTileAsync(target[PreviewPanelView.ItemTargetPrefix.Length..], folder, listPanel);
+            }
             else if (target.StartsWith(Plugins.BuiltIn.Dashboard.ApiCards.SecretActionPrefix, StringComparison.Ordinal))
             {
                 await AskSecretAsync(target[Plugins.BuiltIn.Dashboard.ApiCards.SecretActionPrefix.Length..], folder);
@@ -1755,8 +1739,14 @@ public sealed class MainWindow : Window
                 if (listPanel.Mode is PreviewPanelView { IsPinnedFolder: true } pinnedView && entry is { IsContainer: true } folderEntry
                     && VfsPath.GetScheme(folderEntry.Path) is VfsPath.FileScheme or VfsPath.SmbScheme or "sftp" or "ftp")
                 {
-                    var config = await Task.Run(() => _host.ReadFolderConfigAsync(folderEntry.Path, CancellationToken.None));
-                    if (config is { Error: null } && (config.Enter ?? config.Preview) is { IsPlainFiles: false, Kind: FolderActionKind.View } view)
+                    var config = await Task.Run(() => _host.ReadFolderAsync(folderEntry.Path, CancellationToken.None));
+                    if (config is { Layout: C4kLayout.Dashboard })
+                    {
+                        await pinnedView.OpenPinnedAsync(new PreviewPanelView.PinnedFolder(folderEntry, config, null));
+                        return;
+                    }
+
+                    if (config?.Single is { Error: null, IsPlainFiles: false, Kind: FolderActionKind.View } view)
                     {
                         await pinnedView.OpenPinnedAsync(new PreviewPanelView.PinnedFolder(folderEntry, config, view));
                         return;
@@ -1839,24 +1829,92 @@ public sealed class MainWindow : Window
         });
     }
 
-    /// <summary><c>c4k:run/&lt;section&gt;/&lt;tile&gt;</c>: the command is read again from the folder's c4k.dir, never taken from the link.</summary>
-    private async Task RunTileCommandAsync(string reference, VfsEntry? folder)
+    /// <summary><c>c4k:run/&lt;file&gt;</c>: the command is read again from that <c>.c4k</c> file of the folder on screen, never taken from the link.</summary>
+    private async Task RunTileCommandAsync(string filePath, VfsEntry? folder)
     {
-        var parts = reference.Split('/');
-        if (folder is null || parts.Length != 2 || !int.TryParse(parts[1], out var index))
+        if (await FindFolderItemAsync(filePath, folder) is not { Item.Run: { } run } found)
         {
+            Notify(Loc.T("Kafelek nie ma już polecenia w pliku .c4k."), isError: true);
             return;
         }
 
-        var config = await Task.Run(() => _host!.ReadFolderConfigAsync(folder.Value.Path, CancellationToken.None));
-        var action = parts[0] == "enter" ? config?.Enter : config?.Preview;
-        if (config is null || action is null || index < 0 || index >= action.Tiles.Count || action.Tiles[index].Run is not { } run)
+        await RunFolderCommandAsync(found.Item, run);
+    }
+
+    /// <summary>
+    /// <c>c4k:item/&lt;file&gt;</c>: a dashboard tile of a view, panel or plugin item performs it, as Enter on a folder
+    /// with only that item would; on a pinned dashboard the view opens in place, so Back returns to the dashboard.
+    /// </summary>
+    private async Task OpenItemTileAsync(string filePath, VfsEntry? folder, FilePanelView listPanel)
+    {
+        if (await FindFolderItemAsync(filePath, folder) is not { } found)
         {
-            Notify(Loc.T("Kafelek nie ma już polecenia w c4k.dir."), isError: true);
+            Notify(Loc.T("Nie znaleziono {0}.", filePath), isError: true);
             return;
         }
 
-        await RunFolderCommandAsync(config, run);
+        var (config, item) = found;
+        if (item.Error is { } error)
+        {
+            Notify(Loc.T("{0}: {1}", item.FilePath, error), isError: true);
+            return;
+        }
+
+        var folderEntry = folder!.Value;
+        if (item.IsPlainFiles)
+        {
+            if (listPanel.Mode is PreviewPanelView { IsPinned: true })
+            {
+                listPanel.CloseMode();
+            }
+
+            await listPanel.NavigateAsync(folderEntry.Path);
+            return;
+        }
+
+        if (item is { Kind: FolderActionKind.Open, Open: { } open })
+        {
+            // The ordinary tile path (a folder with its own view opens in place, a pinned view closes), with the item's login and way back.
+            var target = item.Resolve(open);
+            ApplyItemLogin(item, target);
+            await OpenTileAsync(new PreviewTile(item.Title, Target: target), folder, listPanel);
+            if (SamePath(listPanel.ActiveTab.Path, target))
+            {
+                listPanel.ActiveTab.SetOrigin(item.Folder, target);
+            }
+
+            return;
+        }
+
+        if (item.Kind == FolderActionKind.View && listPanel.Mode is PreviewPanelView { IsPinnedFolder: true } pinnedView)
+        {
+            await pinnedView.OpenPinnedAsync(new PreviewPanelView.PinnedFolder(folderEntry, config, item));
+            return;
+        }
+
+        await RunFolderActionAsync(listPanel, folderEntry, config, item);
+    }
+
+    /// <summary>The login from the .c4k file is kept for this session only; saved connections remain the place for passwords.</summary>
+    private void ApplyItemLogin(C4kItem item, string target)
+    {
+        if (VfsPath.GetScheme(target) is "sftp" or "ftp" && (item.KeyFile is not null || item.User is not null))
+        {
+            _host!.Remote.SetLogin(target, new RemoteLogin(item.User ?? RemoteTransferVfsPlugin.UserNameOf(target) ?? Environment.UserName,
+                PrivateKeyFile: item.KeyFile is { } key ? item.Resolve(key) : null));
+        }
+    }
+
+    /// <summary>An item of the folder a tile came from, read again from disk; a link to a file elsewhere finds nothing.</summary>
+    private async Task<(C4kFolder Config, C4kItem Item)?> FindFolderItemAsync(string filePath, VfsEntry? folder)
+    {
+        if (folder is not { } shown)
+        {
+            return null;
+        }
+
+        var config = await Task.Run(() => _host!.ReadFolderAsync(shown.Path, CancellationToken.None));
+        return config?.Items.FirstOrDefault(i => SamePath(i.FilePath, filePath)) is { } item ? (config, item) : null;
     }
 
     /// <summary>An installed plugin that still waits for consent: asks now, with the same text as the plugin manager.</summary>
@@ -1895,9 +1953,9 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
-    /// A folder whose <c>c4k.dir</c> names a plugin that is missing, disabled or not configured yet: installs it (the
+    /// A folder whose <c>.c4k</c> item names a plugin that is missing, disabled or not configured yet: installs it (the
     /// installer's dialog is the consent), enables it, asks it for the folder's options (<c>preview.setup</c>) and writes
-    /// them into every action of the file that names the plugin. The preview reloads afterwards.
+    /// them into the first item file that names the plugin without options. The preview reloads afterwards.
     /// </summary>
     private async Task ConfigureFolderPluginAsync(string pluginId, VfsEntry? folder)
     {
@@ -1911,46 +1969,38 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var file = FolderConfig.ChildPath(target.Path, FolderConfig.FileName);
-        string? existing;
-        try
-        {
-            existing = await Task.Run(() => ReadFolderConfigTextAsync(file, CancellationToken.None));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
-            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
-        {
-            Notify(Loc.T("Nie można odczytać {0}: {1}", file, ex.Message), isError: true);
-            return;
-        }
-
-        var config = existing is null ? null : FolderConfig.Parse(target.Path, existing);
-        if (existing is null || config!.Error is not null
-            || new[] { config.Preview, config.Enter }.Any(a => a?.Options is not null && string.Equals(a.Plugin, pluginId, StringComparison.OrdinalIgnoreCase)))
+        var config = await Task.Run(() => _host!.ReadFolderAsync(target.Path, CancellationToken.None));
+        if (config?.Items.FirstOrDefault(i => i.Error is null && i.Options is null && string.Equals(i.Plugin, pluginId, StringComparison.OrdinalIgnoreCase)) is not { } item)
         {
             return; // nothing to fill in (or already configured): the reload shows the plugin's view
         }
 
-        if (await SetupFolderPluginAsync(pluginId, target.Path) is not { } options
+        if (await SetupFolderPluginAsync(pluginId, item.ContextFolder) is not { } options
             || System.Text.Json.Nodes.JsonNode.Parse(options) is not System.Text.Json.Nodes.JsonObject { Count: > 0 })
         {
             return;
         }
 
-        if (FolderConfigWriter.HasComments(existing)
-            && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać c4k.dir?"),
-                Loc.T("{0} ma komentarze; zapis ustawień wtyczki je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
-        {
-            return;
-        }
-
+        var file = item.FilePath;
         try
         {
-            if (FolderConfigWriter.SetPluginOptions(existing, pluginId, options) is { } text)
+            var existing = await Task.Run(() => ReadItemTextAsync(file, CancellationToken.None));
+            if (existing is null)
             {
-                await Task.Run(() => WriteFolderConfigTextAsync(file, text, CancellationToken.None));
-                Notify(Loc.T("Zapisano ustawienia wtyczki w {0}.", file));
+                Notify(Loc.T("Nie znaleziono pliku {0}.", file), isError: true);
+                return;
             }
+
+            if (C4kWriter.HasComments(existing)
+                && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać plik .c4k?"),
+                    Loc.T("{0} ma komentarze; zapis ustawień wtyczki je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
+            {
+                return;
+            }
+
+            var text = C4kWriter.SetOptions(existing, options);
+            await Task.Run(() => WriteItemTextAsync(file, text, CancellationToken.None));
+            Notify(Loc.T("Zapisano ustawienia wtyczki w {0}.", file));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
             or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException
@@ -1999,7 +2049,7 @@ public sealed class MainWindow : Window
         }
 
         if (await new ConfirmDialog(_skins!.Current, Loc.T("Ten folder potrzebuje wtyczki"),
-                Loc.T("c4k.dir tego folderu korzysta z wtyczki „{0}”:\n\n{1}\n\nPobrać ją z katalogu oficjalnych wtyczek?", entry.Name, entry.LocalizedDescription), Loc.T("Pobierz")).ShowAsync(this))
+                Loc.T("Plik .c4k tego folderu korzysta z wtyczki „{0}”:\n\n{1}\n\nPobrać ją z katalogu oficjalnych wtyczek?", entry.Name, entry.LocalizedDescription), Loc.T("Pobierz")).ShowAsync(this))
         {
             await InstallFromCatalogAsync(pluginId);
         }
@@ -2279,33 +2329,30 @@ public sealed class MainWindow : Window
         }
     }
 
-    /// <summary>Writes the folder's c4k.dir and opens the view; when the write is refused the view still opens once.</summary>
+    /// <summary>Writes the folder's <c>.c4k</c> item and opens the view; when the write is refused the view still opens once.</summary>
     private async Task AcceptFolderSuggestionAsync(FilePanelView panel, RankedSuggestion suggestion)
     {
         CancelSuggestion();
         var folder = suggestion.Folder;
-        var json = FolderConfigWriter.CreateForAction(FolderConfigWriter.ActionFor(suggestion.Suggestion.View), "both");
-        var file = FolderConfig.ChildPath(folder.Path, FolderConfig.FileName);
-        var (result, error) = await FolderConfigWriter.CreateNewAsync(file, json, TimeSpan.FromSeconds(5), CancellationToken.None);
-        _host!.FolderSuggestions.Forget(folder.Path);
-        if (result == FolderConfigWrite.AlreadyExists)
+        var view = suggestion.Suggestion.View;
+        var json = C4kWriter.Create(C4kWriter.ItemFor(view));
+        var baseName = view.Plugin is null ? view.View ?? FolderViewIds.Files : PluginDisplayName(view.Plugin) ?? view.Plugin;
+
+        // Through CreateItemsAsync: the suggestion saw only a snapshot, so a .c4k past it still gets the dashboard question.
+        if (await CreateItemsAsync(folder.Path, [(baseName, json)]) is not { } written)
         {
-            // The listing was cut short or the answer was stale: the folder's own file wins, never overwritten.
-            Notify(Loc.T("Folder ma już własny c4k.dir — otwieram go zamiast propozycji."));
-            await EnterFolderAsync(panel, folder);
             return;
         }
 
-        Notify(result == FolderConfigWrite.Written
-            ? Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file)
-            : Loc.T("Nie zapisano c4k.dir ({0}) — widok otwarty tylko teraz.", error), isError: result == FolderConfigWrite.Failed);
-
-        var config = FolderConfig.Parse(folder.Path, json);
-        if (config.Enter is { } action)
+        if (written is [var file])
         {
-            await RunFolderActionAsync(panel, folder, config, action);
-            ShowBackToFilesTour(panel);
+            Notify(Loc.T("Zapisano {0} — Enter na folderze go użyje, Shift+Enter pokazuje pliki, F4 edytuje.", file));
         }
+
+        // A refused write was reported by CreateItemsAsync; the view still opens this once.
+        var item = C4kItem.Parse(folder.Path, written is [var path] ? Path.GetFileName(path) : baseName + C4kReader.Extension, json);
+        await RunFolderActionAsync(panel, folder, C4kReader.Build(folder.Path, [(Path.GetFileName(item.FilePath), json)]), item);
+        ShowBackToFilesTour(panel);
     }
 
     private Tour.SpotlightOverlay? _tour;
@@ -2689,8 +2736,8 @@ public sealed class MainWindow : Window
         c.Register(CommandIds.Help, Loc.T("Lista skrótów klawiszowych"), ShowHelpAsync)
          .Register(CommandIds.SwitchPanel, Loc.T("Przełącz panel"), () => SetActive(Other))
          .Register(CommandIds.Open, Loc.T("Otwórz / wejdź"), OpenCurrent)
-         .Register(CommandIds.EnterFolderPlain, Loc.T("Wejdź do folderu jako lista plików (pomija c4k.dir)"), EnterFolderPlain)
-         .Register(CommandIds.FolderView, Loc.T("Widok folderu (c4k.dir): galeria, kafelki, wtyczka, SSH, skrypt"), ConfigureFolderViewAsync)
+         .Register(CommandIds.EnterFolderPlain, Loc.T("Wejdź do folderu jako lista plików (pomija pliki .c4k)"), EnterFolderPlain)
+         .Register(CommandIds.FolderView, Loc.T("Widok folderu (plik .c4k): galeria, kafelki, wtyczka, SSH, skrypt"), ConfigureFolderViewAsync)
          .Register(CommandIds.AcceptFolderSuggestion, Loc.T("Przyjmij podpowiedź widoku folderu"), AcceptShownSuggestion)
          .Register(CommandIds.ResetFolderSuggestions, Loc.T("Wyczyść odrzucone podpowiedzi widoku folderu"), ResetFolderSuggestionsAsync)
          .Register(CommandIds.AddApiCard, Loc.T("Dodaj kartę API do dashboardu folderu (wybór pól z odpowiedzi)"), AddApiCardAsync)
@@ -2762,7 +2809,7 @@ public sealed class MainWindow : Window
         _ => throw new ArgumentException($"Unknown panel '{which}': use left, right, active or other."),
     };
 
-    /// <summary>Plain navigation (no c4k.dir action runs); completes when the listing has loaded or failed.</summary>
+    /// <summary>Plain navigation (no .c4k item runs); completes when the listing has loaded or failed.</summary>
     internal Task McpNavigateAsync(FilePanelView panel, string path) => panel.NavigateAsync(path);
 
     /// <summary>Marks exactly <paramref name="names"/> (replacing earlier marks) and moves the cursor.</summary>
@@ -2966,8 +3013,8 @@ public sealed class MainWindow : Window
     /// <param name="plain">Shift+Enter: skip a preview that claims Enter (<c>"enter": true</c>) and open the file as before.</param>
     private void OpenFile(FilePanelView panel, VfsEntry entry, bool plain = false)
     {
-        if (!plain && panel.Mode is null
-            && string.Equals(entry.Path, FolderConfig.ChildPath(panel.ActiveTab.Path, FolderConfig.FileName), StringComparison.OrdinalIgnoreCase))
+        if (!plain && panel.Mode is null && C4kReader.IsItemFile(entry)
+            && SamePath(_host!.Router.GetParentPath(entry.Path) ?? string.Empty, panel.ActiveTab.Path))
         {
             _ = ShowOwnFolderViewAsync(panel, entry);
             return;
@@ -3256,82 +3303,30 @@ public sealed class MainWindow : Window
             return true;
         }
 
-        var file = FolderConfig.ChildPath(folder.Path, FolderConfig.FileName);
-        string? existing;
-        try
-        {
-            existing = await Task.Run(() => ReadFolderConfigTextAsync(file, CancellationToken.None));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
-            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
-        {
-            Notify(Loc.T("Nie można odczytać {0}: {1}", file, ex.Message), isError: true);
-            return true;
-        }
-
-        if (existing is not null && FolderConfig.Parse(folder.Path, existing).Error is { } configError)
-        {
-            Notify(Loc.T("{0}: {1}", file, configError), isError: true);
-            return true;
-        }
-
-        if (existing is not null && FolderConfigWriter.HasComments(existing)
-            && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać c4k.dir?"),
-                Loc.T("{0} ma komentarze; zapis nowych skrótów je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
-        {
-            return true;
-        }
-
-        var wasTrusted = existing is null || await Task.Run(() => _host!.FolderTrust.IsTrusted(FolderConfig.Parse(folder.Path, existing)));
         var tiles = entries.Select(entry =>
         {
-            var tile = new System.Text.Json.Nodes.JsonObject { ["title"] = entry.Name };
+            var tile = new System.Text.Json.Nodes.JsonObject();
             tile[Core.Web.WebUrl.IsWebUrl(entry.Path) ? "url" : "open"] = entry.Path;
             if (ManifestPreviewCardId(entry) is { } previewCardId)
             {
                 tile["card"] = previewCardId;
             }
 
-            return tile;
+            return (entry.Name, C4kWriter.Create(tile));
         }).ToList();
-        var text = existing;
-        try
+        if (await CreateItemsAsync(folder.Path, tiles) is not { Count: > 0 } written)
         {
-            foreach (var tile in tiles)
-            {
-                text = FolderConfigWriter.AppendTile(text, (System.Text.Json.Nodes.JsonObject)tile.DeepClone(), replacePreview: false, preferPreview: true);
-            }
-        }
-        catch (InvalidOperationException)
-        {
-            if (!await new ConfirmDialog(_skins!.Current, Loc.T("Zamienić podgląd na dashboard?"),
-                    Loc.T("{0} pokazuje teraz coś innego. Podgląd stanie się dashboardem z tymi skrótami; dotychczasowy podgląd zostanie po wejściu do folderu, jeśli nic tam nie ustawiono.", file), Loc.T("Zamień")).ShowAsync(this))
-            {
-                return true;
-            }
-
-            text = existing;
-            foreach (var tile in tiles)
-            {
-                text = FolderConfigWriter.AppendTile(text, (System.Text.Json.Nodes.JsonObject)tile.DeepClone(), replacePreview: true, preferPreview: true);
-            }
-        }
-
-        try
-        {
-            await Task.Run(() => WriteFolderConfigTextAsync(file, text!, CancellationToken.None));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
-            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException)
-        {
-            Notify(Loc.T("Nie można zapisać {0}: {1}", file, ex.Message), isError: true);
             return true;
         }
 
-        if (wasTrusted)
+        // The user just made these files, so they start trusted (an SFTP target would otherwise wait for "Zezwól").
+        await Task.Run(() =>
         {
-            await Task.Run(() => _host!.FolderTrust.Trust(FolderConfig.Parse(folder.Path, text!)));
-        }
+            for (var i = 0; i < written.Count; i++)
+            {
+                _host!.FolderTrust.Trust(C4kItem.Parse(folder.Path, Path.GetFileName(written[i]), tiles[i].Item2));
+            }
+        });
 
         source.ActiveTab.Marked.Clear();
         if (preview.DashboardFolder?.Path == folder.Path)
@@ -3339,7 +3334,7 @@ public sealed class MainWindow : Window
             await preview.ReloadCurrentAsync();
         }
 
-        var message = Loc.P(tiles.Count, "{0} skrót do dashboardu „{1}”.|{0} skróty do dashboardu „{1}”.|{0} skrótów do dashboardu „{1}”.", folder.Name);
+        var message = Loc.P(written.Count, "{0} skrót do dashboardu „{1}”.|{0} skróty do dashboardu „{1}”.|{0} skrótów do dashboardu „{1}”.", folder.Name);
         var skipped = sources.Count - entries.Count;
         if (skipped > 0)
         {
@@ -3361,8 +3356,8 @@ public sealed class MainWindow : Window
             .FirstOrDefault();
     }
 
-    private async Task EditDashboardTileAsync(
-        Commander4K.Plugins.BuiltIn.Dashboard.DashboardPreview dashboard, int index, DashboardTileEdit edit)
+    /// <summary>⤢ on a dashboard tile: the next size goes into that item's own file. Trust ignores the size, so it stays.</summary>
+    private async Task ResizeDashboardTileAsync(Commander4K.Plugins.BuiltIn.Dashboard.DashboardPreview dashboard, int index)
     {
         if ((uint)index >= (uint)dashboard.Slots.Count)
         {
@@ -3370,58 +3365,30 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var tile = dashboard.Slots[index].Tile;
-        if (edit == DashboardTileEdit.Remove
-            && !await new ConfirmDialog(_skins!.Current, Loc.T("Usuń kafelek?"),
-                Loc.T("Usunąć kafelek „{0}” z dashboardu?", tile.Title), Loc.T("Usuń")).ShowAsync(this))
-        {
-            return;
-        }
-
-        var file = FolderConfig.ChildPath(dashboard.Config.Folder, FolderConfig.FileName);
+        var item = dashboard.Slots[index].Item;
+        var file = item.FilePath;
         try
         {
-            var existing = await Task.Run(() => ReadFolderConfigTextAsync(file, CancellationToken.None));
+            var existing = await Task.Run(() => ReadItemTextAsync(file, CancellationToken.None));
             if (existing is null)
             {
                 Notify(Loc.T("Nie znaleziono pliku {0}.", file), isError: true);
                 return;
             }
 
-            var parsed = FolderConfig.Parse(dashboard.Config.Folder, existing);
-            if (parsed.Error is { } configError)
-            {
-                Notify(Loc.T("{0}: {1}", file, configError), isError: true);
-                return;
-            }
-
-            if (FolderConfigWriter.HasComments(existing)
-                && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać c4k.dir?"),
+            if (C4kWriter.HasComments(existing)
+                && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać plik .c4k?"),
                     Loc.T("{0} ma komentarze; zapis zmian kafelka je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
             {
                 return;
             }
 
-            var wasTrusted = await Task.Run(() => _host!.FolderTrust.IsTrusted(parsed));
-            var updated = edit switch
-            {
-                DashboardTileEdit.Remove => FolderConfigWriter.RemoveTile(existing, dashboard.Section, index, tile.Title),
-                DashboardTileEdit.MoveUp => FolderConfigWriter.MoveTile(existing, dashboard.Section, index, -1, tile.Title),
-                DashboardTileEdit.MoveDown => FolderConfigWriter.MoveTile(existing, dashboard.Section, index, 1, tile.Title),
-                DashboardTileEdit.Resize => FolderConfigWriter.ResizeTile(existing, dashboard.Section, index, TileSizes.Next(tile.Size), tile.Title),
-                _ => throw new ArgumentOutOfRangeException(nameof(edit)),
-            };
-            await Task.Run(() => WriteFolderConfigTextAsync(file, updated, CancellationToken.None));
-            if (wasTrusted)
-            {
-                await Task.Run(() => _host!.FolderTrust.Trust(FolderConfig.Parse(dashboard.Config.Folder, updated)));
-            }
-
-            _host!.FolderSuggestions.Forget(dashboard.Config.Folder);
+            var updated = C4kWriter.SetSize(existing, TileSizes.Next(item.Size));
+            await Task.Run(() => WriteItemTextAsync(file, updated, CancellationToken.None));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
             or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException
-            or InvalidOperationException or ArgumentException)
+            or System.Text.Json.JsonException)
         {
             Notify(Loc.T("Nie można zmienić kafelka: {0}", ex.Message), isError: true);
         }
@@ -3432,7 +3399,7 @@ public sealed class MainWindow : Window
         && (Core.Web.WebUrl.IsWebUrl(entry.Path)
             || entry.Kind is not VfsEntryKind.Service && _host!.Router.TryResolve(entry.Path, out _));
 
-    private async Task<string?> ReadFolderConfigTextAsync(string file, CancellationToken cancellationToken)
+    private async Task<string?> ReadItemTextAsync(string file, CancellationToken cancellationToken)
     {
         var entry = await _host!.Router.GetEntryAsync(file, cancellationToken);
         if (entry is null)
@@ -3440,9 +3407,9 @@ public sealed class MainWindow : Window
             return null;
         }
 
-        if (entry is not { Kind: VfsEntryKind.File } fileEntry || fileEntry.Size > 256 * 1024)
+        if (entry is not { Kind: VfsEntryKind.File } fileEntry || fileEntry.Size > C4kReader.MaxBytes)
         {
-            throw new IOException(Loc.T("Plik {0} nie jest prawidłowym plikiem c4k.dir.", file));
+            throw new IOException(Loc.T("Plik {0} nie jest prawidłowym plikiem .c4k.", file));
         }
 
         await using var stream = await _host.Router.OpenReadAsync(file, cancellationToken);
@@ -3457,24 +3424,24 @@ public sealed class MainWindow : Window
                 break;
             }
 
-            if (content.Length + read > 256 * 1024)
+            if (content.Length + read > C4kReader.MaxBytes)
             {
-                throw new IOException(Loc.T("Plik {0} przekracza dozwolony rozmiar c4k.dir.", file));
+                throw new IOException(Loc.T("Plik {0} przekracza dozwolony rozmiar pliku .c4k.", file));
             }
 
             content.Append(buffer, 0, read);
         }
 
         var text = content.ToString();
-        if (Encoding.UTF8.GetByteCount(text) > 256 * 1024)
+        if (Encoding.UTF8.GetByteCount(text) > C4kReader.MaxBytes)
         {
-            throw new IOException(Loc.T("Plik {0} przekracza dozwolony rozmiar c4k.dir.", file));
+            throw new IOException(Loc.T("Plik {0} przekracza dozwolony rozmiar pliku .c4k.", file));
         }
 
         return text;
     }
 
-    private async Task WriteFolderConfigTextAsync(string file, string text, CancellationToken cancellationToken)
+    private async Task WriteItemTextAsync(string file, string text, CancellationToken cancellationToken)
     {
         await using var stream = await _host!.Router.OpenWriteAsync(file, overwrite: true, cancellationToken);
         await stream.WriteAsync(Encoding.UTF8.GetBytes(text), cancellationToken);
@@ -3968,8 +3935,8 @@ public sealed class MainWindow : Window
     private Task OpenPanelAsync(string pluginId, string? argument) => OpenPanelInAsync(pluginId, argument, null);
 
     /// <param name="target">Panel to show the plugin in; <c>null</c> = the usual mode target (see <see cref="ModeTarget"/>).</param>
-    /// <param name="options">JSON from a folder's c4k.dir, passed to the plugin with the request.</param>
-    /// <param name="folderView">The panel belongs to the folder the target panel is in (a c4k.dir panel).</param>
+    /// <param name="options">JSON from a .c4k item, passed to the plugin with the request.</param>
+    /// <param name="folderView">The panel belongs to the folder the target panel is in (a .c4k panel item).</param>
     private Task OpenPanelInAsync(string pluginId, string? argument, FilePanelView? target, string? options = null, bool folderView = false)
     {
         var host = _host!;
@@ -4459,7 +4426,14 @@ public sealed class MainWindow : Window
     private void CancelCurrent()
     {
         var tab = _active.ActiveTab;
-        if (tab.IsLoading)
+        if (tab.Origin is { } origin && tab.Marked.Count == 0 && _active.Mode is null && !_host!.Keymap.IsChordPending && string.IsNullOrEmpty(_commandLine.Text))
+        {
+            // A .c4k "open" brought the tab here (a server, another folder): Esc returns to the files of the folder holding
+            // that file. Pliki, so that re-selecting the tab or Auto does not perform the same item (and reconnect) again.
+            _active.FolderMode = FolderViewMode.Files;
+            _ = tab.NavigateAsync(origin);
+        }
+        else if (tab.IsLoading)
         {
             tab.CancelLoading();
         }

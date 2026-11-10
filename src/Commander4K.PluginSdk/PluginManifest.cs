@@ -77,7 +77,7 @@ public sealed record PanelContribution(
 /// <param name="Enter">Enter on a matching file opens the pinned preview; Shift+Enter keeps the shell open.</param>
 /// <param name="Suggest">When folders should be offered this preview (checked by the host; see <see cref="PreviewSuggestRule"/>).</param>
 /// <param name="Setup">The plugin answers <c>preview.setup</c>: when a folder is given this preview, the host asks the
-/// plugin for the folder's <c>options</c> (the plugin asks the user) before writing <c>c4k.dir</c>.</param>
+/// plugin for the folder's <c>options</c> (the plugin asks the user) before writing the <c>.c4k</c> item.</param>
 public sealed record PreviewContribution(string Id, string Title, IReadOnlyList<string> Extensions, int Priority = 10, string? WebRoot = null, bool Card = false, bool Enter = false,
     PreviewSuggestRule? Suggest = null, bool Setup = false);
 

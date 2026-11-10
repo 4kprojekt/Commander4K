@@ -218,14 +218,15 @@ public sealed class MailPluginTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Add_account_writes_both_c4k_dir_files()
+    public async Task Add_account_writes_the_account_item_and_a_card_in_a_dashboard()
     {
         var backend = new FakeMailServer();
         var plugin = Start(backend);
         var poczta = Path.Combine(_dir, "Poczta");
         Directory.CreateDirectory(poczta);
-        File.WriteAllText(Path.Combine(poczta, "c4k.dir"),
-            "// pulpit\n{ \"enter\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"Dokumenty\", \"open\": \"Dokumenty\" } ] }, \"preview\": \"dashboard\", \"note\": 42 }");
+        File.WriteAllText(Path.Combine(poczta, "Dokumenty.c4k"), "// kafelek\n{ \"title\": \"Dokumenty\", \"open\": \"Dokumenty\" }");
+        const string taken = "{ \"title\": \"Firma (stara)\", \"url\": \"https://example.org\" }";
+        File.WriteAllText(Path.Combine(poczta, "Firma.c4k"), taken);
         _ui.Active = poczta;
         // One window; the servers come from the address ("auto"), so IMAP and SMTP are not answered.
         _ui.Dialogs.Enqueue(Answers(("user", "anna@example.org"), ("name", "Anna Nowak"), ("folder", "Firma"), ("servers", "auto"), ("refresh", "5m"), ("since", "3m")));
@@ -239,36 +240,37 @@ public sealed class MailPluginTests : IAsyncLifetime
         Assert.Equal(DialogFieldType.Segmented, request.Fields.Single(f => f.Id == "servers").Type);
         Assert.True(request.Fields.Single(f => f.Id == "user").Required);
         var accountDir = Path.Combine(poczta, "Firma");
-        var accountText = File.ReadAllText(Path.Combine(accountDir, "c4k.dir"));
+        Assert.Equal(["Firma.c4k"], Directory.GetFiles(accountDir, "*.c4k").Select(Path.GetFileName));
+        var accountText = File.ReadAllText(Path.Combine(accountDir, "Firma.c4k"));
         Assert.DoesNotContain("password", accountText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("haslo", accountText, StringComparison.OrdinalIgnoreCase);
         var account = JsonNode.Parse(accountText)!;
-        foreach (var key in new[] { "preview", "enter" })
-        {
-            Assert.Equal(PluginId, account[key]!["plugin"]!.GetValue<string>());
-            var options = account[key]!["options"]!;
-            Assert.Equal("imap.example.org:993", options["imap"]!.GetValue<string>());
-            Assert.Equal("smtp.example.org:465", options["smtp"]!.GetValue<string>());
-            Assert.Equal("anna@example.org", options["user"]!.GetValue<string>());
-            Assert.Equal("Anna Nowak", options["name"]!.GetValue<string>());
-            Assert.Equal("5m", options["refresh"]!.GetValue<string>());
-        }
+        Assert.Equal("https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.schema.json", account["$schema"]!.GetValue<string>());
+        Assert.Equal(PluginId, account["plugin"]!.GetValue<string>());
+        Assert.Null(account["preview"]);
+        Assert.Null(account["enter"]);
+        var options = account["options"]!;
+        Assert.Equal("imap.example.org:993", options["imap"]!.GetValue<string>());
+        Assert.Equal("smtp.example.org:465", options["smtp"]!.GetValue<string>());
+        Assert.Equal("anna@example.org", options["user"]!.GetValue<string>());
+        Assert.Equal("Anna Nowak", options["name"]!.GetValue<string>());
+        Assert.Equal("5m", options["refresh"]!.GetValue<string>());
 
-        var dashboard = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "c4k.dir")))!;
-        Assert.Equal(42, dashboard["note"]!.GetValue<int>());
-        var tiles = dashboard["enter"]!["tiles"]!.AsArray();
-        Assert.Equal(2, tiles.Count);
-        Assert.Equal("Dokumenty", tiles[0]!["title"]!.GetValue<string>());
-        Assert.Equal("Firma", tiles[1]!["title"]!.GetValue<string>());
-        Assert.Equal("Firma", tiles[1]!["open"]!.GetValue<string>());
-        Assert.Equal("official.mail/account", tiles[1]!["card"]!.GetValue<string>());
-        Assert.Equal("30s", tiles[1]!["refresh"]!.GetValue<string>());
+        // The dashboard's files are never rewritten; the card takes a free name.
+        Assert.Equal(taken, File.ReadAllText(Path.Combine(poczta, "Firma.c4k")));
+        Assert.StartsWith("// kafelek", File.ReadAllText(Path.Combine(poczta, "Dokumenty.c4k")), StringComparison.Ordinal);
+        var card = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "Firma 2.c4k")))!;
+        Assert.Equal(PluginId, card["plugin"]!.GetValue<string>());
+        Assert.True(card["card"]!.GetValue<bool>());
+        Assert.Equal("Firma", card["folder"]!.GetValue<string>());
+        Assert.Equal("30s", card["refresh"]!.GetValue<string>());
+        Assert.Null(card["options"]);
         Assert.Contains(accountDir, _storage.Get(PluginId, "accounts")!.AsArray().Select(x => x!.GetValue<string>()));
         Assert.True(backend.LastAccount!.Interactive);
     }
 
     [Fact]
-    public async Task Add_account_creates_a_new_dashboard_and_refuses_remote_paths()
+    public async Task Add_account_in_a_plain_folder_writes_no_card_and_refuses_remote_paths()
     {
         var backend = new FakeMailServer();
         var plugin = Start(backend);
@@ -279,18 +281,35 @@ public sealed class MailPluginTests : IAsyncLifetime
 
         await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
 
-        var dashboard = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "c4k.dir")))!;
-        Assert.Equal("dashboard", dashboard["preview"]!.GetValue<string>());
-        var options = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "Jan", "c4k.dir")))!["preview"]!["options"]!;
+        Assert.Empty(Directory.GetFiles(poczta, "*.c4k"));
+        var options = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "Jan", "Jan.c4k")))!["options"]!;
         Assert.False(options["refresh"]!.GetValue<bool>());
         Assert.Equal("1y", options["since"]!.GetValue<string>());
-        Assert.Equal("Jan", dashboard["enter"]!["tiles"]![0]!["title"]!.GetValue<string>());
-        Assert.Null(JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "Jan", "c4k.dir")))!["preview"]!["options"]!["smtp"]);
+        Assert.Null(options["smtp"]);
 
         _ui.Active = "sftp://host/dir";
         var before = backend.Calls;
         await Assert.ThrowsAnyAsync<Exception>(() => new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token));
         Assert.Equal(before, backend.Calls);
+    }
+
+    [Fact]
+    public async Task Add_account_asks_before_a_single_item_folder_becomes_a_dashboard()
+    {
+        var backend = new FakeMailServer();
+        var plugin = Start(backend);
+        var poczta = Path.Combine(_dir, "Jedna");
+        Directory.CreateDirectory(poczta);
+        File.WriteAllText(Path.Combine(poczta, "notatki.c4k"), "{ \"view\": \"notes\" }");
+        _ui.Active = poczta;
+        _ui.ConfirmAnswer = false;
+        _ui.Dialogs.Enqueue(Answers(("user", "jan@example.org"), ("folder", "Jan"), ("servers", "auto")));
+
+        await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
+
+        Assert.Contains("dashboard", Assert.Single(_ui.Confirmations).Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["notatki.c4k"], Directory.GetFiles(poczta, "*.c4k").Select(Path.GetFileName));
+        Assert.True(File.Exists(Path.Combine(poczta, "Jan", "Jan.c4k")));
     }
 
     [Fact]
@@ -1101,29 +1120,6 @@ public sealed class MailPluginTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Add_account_keeps_date_like_strings_and_key_order_in_the_dashboard()
-    {
-        var backend = new FakeMailServer();
-        var plugin = Start(backend);
-        var poczta = Path.Combine(_dir, "Daty");
-        Directory.CreateDirectory(poczta);
-        File.WriteAllText(Path.Combine(poczta, "c4k.dir"),
-            "{ \"zeta\": \"2026-01-01T10:00:00Z\", \"enter\": { \"view\": \"dashboard\", \"tiles\": [ { \"title\": \"2026-01-01\", \"open\": \"x\" } ] }, \"preview\": \"dashboard\", \"alpha\": 1.50 }");
-        _ui.Active = poczta;
-        _ui.Dialogs.Enqueue(Answers(("user", "anna@example.org"), ("folder", "Firma"), ("servers", "auto")));
-
-        await new ExternalCommandPlugin(plugin).ExecuteAsync("add-account", Host(plugin), Token);
-
-        var dashboard = JsonNode.Parse(File.ReadAllText(Path.Combine(poczta, "c4k.dir")))!.AsObject();
-        Assert.Equal(["zeta", "enter", "preview", "alpha"], dashboard.Select(p => p.Key));
-        Assert.Equal("2026-01-01T10:00:00Z", dashboard["zeta"]!.GetValue<string>());
-        Assert.Equal(1.50m, dashboard["alpha"]!.GetValue<decimal>());
-        var tiles = dashboard["enter"]!["tiles"]!.AsArray();
-        Assert.Equal("2026-01-01", tiles[0]!["title"]!.GetValue<string>());
-        Assert.Equal("Firma", tiles[1]!["title"]!.GetValue<string>());
-    }
-
-    [Fact]
     public async Task Html_message_renders_without_remote_content()
     {
         var server = await MailboxAsync();
@@ -1533,12 +1529,10 @@ public sealed class MailPluginTests : IAsyncLifetime
             options["since"] = since;
         }
 
-        var config = new JsonObject
-        {
-            ["preview"] = new JsonObject { ["plugin"] = PluginId, ["options"] = options },
-            ["enter"] = PluginId,
-        };
-        File.WriteAllText(Path.Combine(folder, "c4k.dir"), "// account\n" + config.ToJsonString());
+        // A different item sorts first: the plugin takes the first .c4k that names it.
+        File.WriteAllText(Path.Combine(folder, "a notatki.c4k"), new JsonObject { ["view"] = "notes" }.ToJsonString());
+        var config = new JsonObject { ["plugin"] = PluginId, ["options"] = options };
+        File.WriteAllText(Path.Combine(folder, "konto.c4k"), "// account\n" + config.ToJsonString());
         return folder;
     }
 

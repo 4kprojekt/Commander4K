@@ -188,9 +188,9 @@ public sealed class ThumbnailStoreTests : IAsyncDisposable
 
     private async Task<TilesPreview> LoadAsync(IPluginHost host, IProgress<PreviewContent>? progress = null, ThumbnailStore? store = null)
     {
-        var config = FolderConfig.Parse(_root, """{ "preview": "gallery" }""");
+        var item = C4kItem.Parse(_root, "gallery.c4k", """{ "view": "gallery" }""");
         var folder = new VfsEntry(Path.GetFileName(_root), _root, VfsEntryKind.Directory);
-        return Assert.IsType<TilesPreview>(await FolderViews.LoadAsync(config, config.Preview!, "preview", folder, host, store ?? _plugin.Thumbnails, progress, TestToken));
+        return Assert.IsType<TilesPreview>(await FolderViews.LoadAsync(item, folder, host, store ?? _plugin.Thumbnails, progress, TestToken));
     }
 
     /// <summary>Stale thumbnails are deleted after the pictures, so the gallery can be back before they are gone.</summary>

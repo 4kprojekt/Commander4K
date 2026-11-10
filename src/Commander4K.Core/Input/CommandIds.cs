@@ -42,10 +42,10 @@ public static class CommandIds
     public const string SwitchPanel = "cm_SwitchPanel";
     public const string Open = "cm_Open";
 
-    /// <summary>Shift+Enter: enter a folder as a plain file list, ignoring its c4k.dir.</summary>
+    /// <summary>Shift+Enter: enter a folder as a plain file list, ignoring its .c4k items.</summary>
     public const string EnterFolderPlain = "cm_EnterFolderPlain";
 
-    /// <summary>Create or edit the current folder's c4k.dir (how it is previewed and what entering it does).</summary>
+    /// <summary>Write a new .c4k item for the current folder (how it is previewed and what entering it does).</summary>
     public const string FolderView = "cm_FolderView";
 
     public const string AcceptFolderSuggestion = "cm_AcceptFolderSuggestion";

@@ -8,10 +8,10 @@
   },
   "files.associations": {
     "plugin.json": "jsonc",
-    "c4k.dir": "jsonc"
+    "*.c4k": "jsonc"
   },
   "json.schemas": [
     { "fileMatch": ["**/plugins/*/plugin.json", "examples/plugins/*/plugin.json", "plugins-catalog/*/plugin.json"], "url": "./docs/plugin.schema.json" },
-    { "fileMatch": ["c4k.dir"], "url": "./docs/c4k.dir.schema.json" }
+    { "fileMatch": ["*.c4k"], "url": "./docs/c4k.schema.json" }
   ]
 }

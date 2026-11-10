@@ -19,7 +19,7 @@ public sealed record PluginCatalogFile
 /// <summary>One plugin of the official catalog (<c>plugins-catalog/catalog.json</c>).</summary>
 public sealed record PluginCatalogEntry
 {
-    /// <summary>The manifest id; <c>c4k.dir</c> files refer to it with <c>"plugin"</c>.</summary>
+    /// <summary>The manifest id; <c>.c4k</c> files refer to it with <c>"plugin"</c>.</summary>
     public required string Id { get; init; }
 
     public required string Name { get; init; }
@@ -40,7 +40,7 @@ public sealed record PluginCatalogEntry
     /// <summary>Patterns declared by this plugin's <c>contributes.previews</c>.</summary>
     public IReadOnlyList<string> PreviewExtensions { get; init => field = value ?? []; } = [];
 
-    /// <summary>An example <c>c4k.dir</c> for a folder this plugin shows.</summary>
+    /// <summary>An example <c>.c4k</c> item for a folder this plugin shows.</summary>
     public string? Example { get; init; }
 
     /// <summary>The plugin folder, relative to <see cref="PluginCatalogDocument.BaseUrl"/>.</summary>

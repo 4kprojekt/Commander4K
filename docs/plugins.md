@@ -152,18 +152,18 @@ Ask for the fewest permissions that do the job.
 | `panel.receive` | `{ panel, receiver, jobId, files, context }` | `{ text?, results?: [{ path, ok, error? }] }`. One call for the whole selection; no time limit. |
 | `panel.providers` | `{ panel, rowIds, context }` | `[{ id, title, description? }]`. Panels with `provides` only; answer within 5 s. |
 | `panel.provide` | `{ panel, provider, jobId, rowIds, context }` | `{ files: [{ name, text? \| base64? \| url? \| error? }], text? }`. No time limit; the whole reply must stay under 16 MB. |
-| `panel.card` | `{ panel, entry: { … } \| null, context, options, previous }` | Only for panels with `"card": true` in `contributes.panels`. The panel's dashboard widget, answered exactly like `preview.card` (same items, actions and `previous`). `entry` is the tile's `open`, when it has one. A tile names it `"card": "<plugin id>/<panel id>"`; panels without `"card": true` get a plain card with their description and an Open button (`c4k:panel/<id>`). |
+| `panel.card` | `{ panel, entry: { … } \| null, context, options, previous }` | Only for panels with `"card": true` in `contributes.panels`. The panel's dashboard widget, answered exactly like `preview.card` (same items, actions and `previous`). `entry` is the tile's `open` (or its `folder`), when it has one. A tile names it `"card": "<plugin id>/<panel id>"`; panels without `"card": true` get a plain card with their description and an Open button (`c4k:panel/<id>`). |
 | `preview.render` | `{ preview, entry: { name, path, kind, size, … }, context, options, pinned }` | `{ kind: "markdown"\|"text", content, editable? }` or `{ kind: "tiles", title, description?, tileWidth?, tiles: [{ title, subtitle?, icon?, image?, target? }] }`. Or `{ kind: "web", page, state? }` (an HTML page from the preview's `webRoot`, see "Web previews"). A tile's `image` is a path the app reads with your `fs.read` permission; `target` is a path, an http(s) URL or another URI such as `steam://rungameid/570` (the user confirms the scheme once). Quick view (`Ctrl+Q`) of the entry under the cursor; read the file with `read_text`/`read_bytes`. Markdown is rendered with formatting (headings, tables, code). The highest `priority` wins among previews that accept the file. `extensions` items: `".csv"` (extension), `"package.json"` (file name), `"openapi*.json"` (pattern with `*`/`?`), `"/"` (folders). A preview may also return `{ kind: "chart", title, description?, chart }` (see `preview.card` for `chart`) or a form: `{ kind: "form", title, fields: [{ id, label, value, multiline? }], files: [{ name, path, size }], buttons: [{ label, target, shortcut? }], message?, messageError? }`. Any result may carry `path` (an absolute path other than the entry's): you renamed or moved the entry (a message marked read) or the view is now about another file (the draft of a reply), and the app follows that path for later renders, actions and form edits. Any result may carry `actions: [{ label, target, shortcut? }]`, shown as a bar of buttons above the content; a `shortcut` (`"R"`, `"Ctrl+Enter"`) works while the preview's panel is active (plain keys not while the user types in a form field). A `target` is what a tile target is, or `c4k:plugin/<action>?k=v` (build it with `action_target`), which calls your `preview.action`. `pinned` is `true` when the user opened the entry with Enter (the view stays on it, so it is the place for buttons) and `false` in the quick view that follows the cursor. With `"enter": true` in `contributes.previews`, Enter on a matching file opens this pinned view over the panel when your preview is the highest-priority match; Shift+Enter still opens the file with Windows, and Esc returns to the files. |
 | `preview.action` | `{ preview, entry, options, action, args, values? }` | `null` (the app renders the entry again) or a new result in the `preview.render` shape. A `c4k:plugin/…` button or a dashboard card action (the card is read again afterwards); `args` holds the target's query, `values` the form fields when the button belongs to a form. |
 | `preview.formChanged` | `{ preview, entry, options, values }` | `null`. The form's field values, sent 800 ms after the user stops typing and always before a button's `preview.action`, so you can keep a draft. |
 | Sensitive preview form fields | In a `preview.render` form field, set `"password": true` to mask the value in the UI. The value is still sent through the form protocol; plugins should not log or persist it unless the user explicitly asks. |
-| `preview.suggest` | `{ preview, folder: { … }, entries: [{ … }], truncated, context }` | Only for previews whose `suggest` rule has `"ask": true`, and only after the rule matched the folder under the cursor. `{ score (0–1), message, options? }` or `null`. Answers below 0.5 are ignored, and the best answer across all previews becomes a hint ("switch to …?"); accepting writes `c4k.dir` with `{ "plugin": <id>, "preview": <preview>, "options": <options> }`. `entries` is the folder listing (at most 500, `truncated` when cut). 5 s limit, process start included; an error or timeout means no suggestion. See "Folder suggestions". |
+| `preview.suggest` | `{ preview, folder: { … }, entries: [{ … }], truncated, context }` | Only for previews whose `suggest` rule has `"ask": true`, and only after the rule matched the folder under the cursor. `{ score (0–1), message, options? }` or `null`. Answers below 0.5 are ignored, and the best answer across all previews becomes a hint ("switch to …?"); accepting writes a `.c4k` file with `{ "plugin": <id>, "preview": <preview>, "options": <options> }`. `entries` is the folder listing (at most 500, `truncated` when cut). 5 s limit, process start included; an error or timeout means no suggestion. See "Folder suggestions". |
 | `preview.message` | `{ preview, entry, method, params, context }` | Any JSON value. A web preview page called `c4k.request(method, params)`; answer it here (30 s limit). See "Web previews". |
-| `preview.card` | `{ preview, entry: { … } \| null, context, options, previous }` | Only for previews with `"card": true` in `contributes.previews`. The small form shown on a `c4k.dir` dashboard: `{ title?, subtitle?, icon?, status?: "ok"\|"warning"\|"error", items: [...], actions: [{ label, target }] }`. Items: `{ kind: "value", label, value, status? }`, `{ kind: "progress", label, fraction (0–1), text? }`, `{ kind: "text", text }`, `{ kind: "thumbnails", images: [path] }` (at most 4, read with your `fs.read`), `{ kind: "chart", chart: { kind: "line"\|"bar", unit?, min?, max?, series: [{ name, points: [{ x, y, label? }] }] } }`. `previous` is the card you returned last time (thumbnails as a count), so a card refreshed on a timer can add a point to its chart; keep at most 120 points. An action `target` is a path, a URL, `c4k:refresh` (read the card again) or `c4k:plugin/<action>?k=v` (your `preview.action` with the card's entry; the card is read again afterwards). Previews without `"card": true` get a plain card with their title and an Open button. |
-| `preview.setup` | `{ preview, folder, context }` | Only for folder previews with `"setup": true`. Sent when the user gives a folder this preview (*Widok folderu…*), after the plugin is installed and enabled and before `c4k.dir` is written. Ask what the folder needs in one `ui.dialog` window (or `ui.confirm` for a yes/no; the call may take up to 15 minutes) and answer `{ options: { … } }`; the app writes them as the action's `options`. Answer `null` when the user cancels: nothing is written. Throw to show an error. |
+| `preview.card` | `{ preview, entry: { … } \| null, context, options, previous }` | Only for previews with `"card": true` in `contributes.previews`. The small form shown on a `.c4k` dashboard: `{ title?, subtitle?, icon?, status?: "ok"\|"warning"\|"error", items: [...], actions: [{ label, target }] }`. Items: `{ kind: "value", label, value, status? }`, `{ kind: "progress", label, fraction (0–1), text? }`, `{ kind: "text", text }`, `{ kind: "thumbnails", images: [path] }` (at most 4, read with your `fs.read`), `{ kind: "chart", chart: { kind: "line"\|"bar", unit?, min?, max?, series: [{ name, points: [{ x, y, label? }] }] } }`. `previous` is the card you returned last time (thumbnails as a count), so a card refreshed on a timer can add a point to its chart; keep at most 120 points. An action `target` is a path, a URL, `c4k:refresh` (read the card again) or `c4k:plugin/<action>?k=v` (your `preview.action` with the card's entry; the card is read again afterwards). Previews without `"card": true` get a plain card with their title and an Open button. |
+| `preview.setup` | `{ preview, folder, context }` | Only for folder previews with `"setup": true`. Sent when the user gives a folder this preview (*Widok folderu…*), after the plugin is installed and enabled and before the `.c4k` file is written. Ask what the folder needs in one `ui.dialog` window (or `ui.confirm` for a yes/no; the call may take up to 15 minutes) and answer `{ options: { … } }`; the app writes them as the item's `options`. Answer `null` when the user cancels: nothing is written. Throw to show an error. |
 | `shutdown` | — | `null`, then exit |
 
-`options` is the `"options"` object of the folder's `c4k.dir` when the panel or preview was opened through it (see [Folder files](#folder-files-c4kdir)), otherwise `null`.
+`options` is the `"options"` object of the `.c4k` item when the panel or preview was opened through it (see [.c4k files](#c4k-files)), otherwise `null`.
 
 `context` = `{ activePath, otherPath, selection: [{ name, path, kind, size, modified, hidden }] }`:
 - `activePath` is the location of the file list the user is looking at;
@@ -593,59 +593,67 @@ Each side of the window is a row of tabs, and **a tab is a folder plus what it s
 | Content | Title on the tab | Sends to the other panel (F5 here) | Receives from the other panel (F5 there) |
 |---|---|---|---|
 | File list (the default) | The folder's name | Marked files and folders (copy, move with F6) | Files and folders, written into its folder |
-| Preview or a folder's own view (`c4k.dir` `view` or `plugin` preview: gallery, dashboard, notes, mail, Steam…) | The folder's name; the path bar shows the view's title (`title` in `c4k.dir`) | Nothing (Esc shows the files, then F5) | Files, written into the folder under the view |
+| Preview or a folder's own view (a `.c4k` `view` or `plugin` preview: gallery, notes, mail, Steam…, or the dashboard of several `.c4k` files) | The folder's name; the path bar shows the view's title (the item's `title`) | Nothing (Esc shows the files, then F5) | Files, written into the folder under the view |
 | Plugin panel (`builtin.sysinfo`, `builtin.taskmanager`, `builtin.powershell`, plugin panels) | The folder's name when bound to it, otherwise the panel's title | With `provides`: the selected rows as files (`panel.provide`) | With `accepts`: the files, handed to the plugin (`panel.receive`) |
 | Browser, app pages (settings, skins) | The page's title | Nothing | Nothing |
 
 F6 (move) works only between folders: into or out of a plugin panel it is refused. The app decides all this from what the content declares (`accepts`, `provides`), never from the plugin's own checks, and a refused transfer says why in the status bar.
 
-**Bound to a folder, or opened by itself.** A content is either the folder's own (its `c4k.dir` names it in `preview` or `enter`, or it is an app page such as the plugin manager on `data/plugins`) or opened ad hoc (F2, the command palette, a shortcut such as `Ctrl+Alt+I`). Any panel can be bound to a folder; this folder opens the system information on Enter:
+**Bound to a folder, or opened by itself.** A content is either the folder's own (its `.c4k` file names it, or it is an app page such as the plugin manager on `data/plugins`) or opened ad hoc (F2, the command palette, a shortcut such as `Ctrl+Alt+I`). Any panel can be bound to a folder; a folder with this `system.c4k` opens the system information on Enter:
 
 ```json
-{ "title": "Ten komputer", "enter": { "panel": "builtin.sysinfo" } }
+{ "title": "Ten komputer", "panel": "builtin.sysinfo" }
 ```
 
-**Files ↔ view.** The path bar of a file list has *Pliki · Auto · Widok*, kept per tab. *Pliki* never reads `c4k.dir`; *Auto* shows the folder's view when its `c4k.dir` has one; *Widok* always shows a view ("Brak zdefiniowanego podglądu" when there is none). On a folder's own view the same switch, or Esc, shows the folder's files in the default file list plugin, and *Auto*/*Widok* brings the view back. A content opened by itself has no switch: Esc closes it. `Shift+Enter` always enters a folder as plain files.
+**Files ↔ view.** The path bar of a file list has *Pliki · Auto · Widok*, kept per tab. *Pliki* never reads `.c4k` files; *Auto* shows the folder's view when it has `.c4k` files; *Widok* always shows a view ("Brak zdefiniowanego podglądu" when there is none). On a folder's own view the same switch, or Esc, shows the folder's files in the default file list plugin, and *Auto*/*Widok* brings the view back. A content opened by itself has no switch: Esc closes it. `Shift+Enter` always enters a folder as plain files.
 
-**Every panel is a widget.** A dashboard tile can show any panel as a card: `{ "title": "System", "card": "builtin.sysinfo" }`, `"builtin.taskmanager"`, or `"<plugin id>/<panel id>"` for plugin panels with `"card": true` (they answer `panel.card`). `"card": true` on a folder whose `c4k.dir` opens a panel shows that panel's widget. The card's Open button (`c4k:panel/<id>`) opens the panel opposite the dashboard.
+**Every panel is a widget.** A dashboard tile can show any panel as a card: `{ "title": "System", "card": "builtin.sysinfo" }`, `"builtin.taskmanager"`, or `"<plugin id>/<panel id>"` for plugin panels with `"card": true` (they answer `panel.card`). `"card": true` on a folder whose `.c4k` file opens a panel shows that panel's widget. The card's Open button (`c4k:panel/<id>`) opens the panel opposite the dashboard.
 
-**For AI clients (MCP).** `get_context` describes each panel's content in one line: what it is, whether it is bound to the folder, and what it provides or receives. `set_panel_mode` switches a panel between `files`, `preview` and `panel:<id>`; `load_plugin_panel` loads a panel's rows; `dashboard_guide` lists the panels that draw widgets. Write a folder's `c4k.dir` with `write_file` (or `save_dashboard` for dashboards) to bind a view to it.
+**For AI clients (MCP).** `get_context` describes each panel's content in one line: what it is, whether it is bound to the folder, and what it provides or receives. `set_panel_mode` switches a panel between `files`, `preview` and `panel:<id>`; `load_plugin_panel` loads a panel's rows; `dashboard_guide` lists the panels that draw widgets. Write a `.c4k` file into a folder with `write_file` (or `save_dashboard` for dashboards) to bind a view to it.
 
-## Folder files (`c4k.dir`)
+## `.c4k` files
 
-A folder can say how it wants to be shown. A `c4k.dir` file in it (JSON with comments, schema [`c4k.dir.schema.json`](c4k.dir.schema.json)) has two optional actions: `preview` (the quick view of the folder) and `enter` (what Enter on it does). Shift+Enter always opens the plain file list, and the setting "Pliki c4k.dir w folderach" turns the feature off. `cm_FolderView` writes the file from a short choice.
+A folder can say how it wants to be shown. Every `*.c4k` file in it (JSON with comments and trailing commas, schema [`c4k.schema.json`](c4k.schema.json)) describes **one item**: a view, a plugin, a panel, a connection, a link, a command or an API request. What the folder shows follows from how many there are:
 
-Each action is a built-in view name, a plugin id, or an object with one target:
+- no `.c4k` file: the ordinary file list;
+- one file: that item is the folder's view. A view or plugin item is shown by the quick view (Ctrl+Q on the folder) and pinned on Enter; an `open`, `url` or `run` item happens on Enter;
+- two or more: a **dashboard** with one tile per file, ordered by file name in natural order (`2-…` before `10-…`, case ignored). Rename a file to move its tile; delete it to remove the tile.
+
+At most 50 files are read (the first 50 by name; the dashboard shows "Pominięto N plików .c4k" for the rest), each up to 256 KB. A broken file becomes an error tile and never hides the others. The listing has a 2 s limit and runs only on disks, shares, SFTP and FTP; when it trips, the folder shows its files. `.c4k` files are ordinary visible files: the panel marks them with their own icon and `<WIDOK>`, and Enter on one runs that item. Shift+Enter always opens the plain file list, *Pliki* on the path bar never reads `.c4k`, and the setting "Pliki .c4k w folderach" turns the feature off. `cm_FolderView` (*Widok folderu (plik .c4k)*) writes a new file from a short choice; the file is named after the title or plugin and made unique (`mail.c4k`, `mail 2.c4k`), and existing files are never overwritten. A writer that would add a second file to a folder with one item asks first, because the folder becomes a dashboard.
+
+The file name without `.c4k` is the default `title`. One target per item:
 
 | Target | Example | What happens |
 |---|---|---|
-| `view` | `"gallery"`, `"dashboard"`, `"notes"`, `"markdown"`, `"files"` | Built-in views: image thumbnails (made in the background and kept in the folder's hidden `.thumbnail.c4k`, named `<image>.<size>-<mtime>.webp`, stale ones deleted), tiles from `tiles`, Markdown notes with their links, a Markdown file (`file`, README.md by default), the plain list. `"settings"`, `"skins"` and `"plugins"` are the app's own pages (settings, skins, plugin manager): the app writes them into `config/`, `config/skins/` and the plugins folder when those have no `c4k.dir`, and Pliki/Podgląd switches between the page and the files. |
+| `view` | `"gallery"`, `"notes"`, `"markdown"`, `"files"`, `"api"` | Built-in views: image thumbnails (made in the background and kept in the folder's hidden `.thumbnail.c4k`, named `<image>.<size>-<mtime>.webp`, stale ones deleted), Markdown notes with their links, a Markdown file (`file`, README.md by default), the plain list, the fields of an HTTP API (`api`, GET and HEAD only). `"settings"`, `"skins"` and `"plugins"` are the app's own pages (settings, skins, plugin manager): the app writes `settings.c4k`, `skins.c4k` and `plugins.c4k` into `config/`, `config/skins/` and the plugins folder when those have no `.c4k` file, and *Pliki* switches between the page and the files. A second `.c4k` file in one of these folders turns it into a dashboard. |
 | `plugin` (+ `preview`) | `{ "plugin": "official.steam-library" }` | The plugin's preview (`contributes.previews`, `extensions: ["/"]`) renders the folder, with `options`. On Enter it fills the panel; Esc returns to the files. |
 | `panel` (+ `plugin`) | `{ "panel": "builtin.sysinfo" }`, `{ "plugin": "examples.git", "panel": "log" }` | Opens a panel plugin with the folder as `argument` and `options`: a built-in panel by its id, a plugin's panel by `plugin` + `panel` (or `"<plugin>/<panel>"`). |
-| `open` (+ `user`, `keyFile`) | `{ "open": "sftp://me@nas.lan/srv", "keyFile": "~/.ssh/id_ed25519" }` | Goes there instead; relative paths are resolved against the folder. |
+| `open` (+ `user`, `keyFile`) | `{ "open": "sftp://me@nas.lan/srv", "keyFile": "~/.ssh/id_ed25519" }` | Goes there instead; relative paths are resolved against the file's folder. The tab remembers that folder as its origin: Esc (or *Pliki*) goes back to its file list, also after a failed connection, which stays on screen with its error. Navigating elsewhere by hand drops the origin. |
 | `url` | `{ "url": "https://grafana.lan" }` | The page in the panel browser. |
-| `run` | `{ "run": { "command": "build.ps1", "args": ["-Release"], "cwd": "src" } }` | Runs a command. The user sees it first and trusts this exact file content; a changed or copied `c4k.dir` asks again. |
+| `run` | `{ "run": { "command": "build.ps1", "args": ["-Release"], "cwd": "src" } }` | Runs a command, on disks and shares only. The user sees it first and trusts this file (see below). |
 
-Dashboard tiles: `{ "title", "subtitle"?, "icon"?, "image"?, "open" | "url" | "run" }`.
+Other keys: `title`, `description`, `icon`, `image` (a picture for the tile), `options` (passed to the plugin), `folder` (the item's context folder, relative to the file or absolute; the file's folder by default: `preview.setup` is asked about it, and a card without `open` shows it, e.g. a mail account kept in another folder), and the card fields below.
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.dir.schema.json",
+  "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/c4k.schema.json",
   "title": "Gry",
-  "preview": { "plugin": "official.steam-library", "options": { "sort": "size" } },
-  "enter": { "plugin": "official.steam-library" }
+  "plugin": "official.steam-library",
+  "options": { "sort": "size" }
 }
 ```
 
-A plugin that is not installed, is disabled, or has `"setup": true` but no `options` in the file shows a setup card instead. Its button installs the plugin from the official catalog (one consent), enables it, sends `preview.setup` so the plugin can ask for its options in a dialog, writes the answer into every action of the file that names the plugin, and shows the view.
+**Trust.** An item that runs a command, sends a request that may change something (`api` with a method other than GET/HEAD), signs in to an SSH server (`ssh` card) or reads an SFTP/FTP target as a card stays locked until the user allows **that file** ("Zezwól"). Trust is stored in `config/trusted-folders.json` per file path, with a hash of only those fields (`run`, the request's method, URL, body and headers, the server, `user` and `keyFile`, also inside an `ssh` card's `options`), so resizing a tile or changing its title keeps it, while another command, server or login, or the same file under another name, asks again. On a dashboard each card is locked or live on its own.
 
-The official `official.git-repo` plugin works this way: `{ "preview": { "plugin": "official.git-repo" } }` in a repository shows its branch, changes, recent commits, branches, tags and remotes, read with `git` through `shell.run` (options `commits`, `files`, `branches`).
+A plugin that is not installed, is disabled, or has `"setup": true` but no `options` in its item shows a setup card instead. Its button installs the plugin from the official catalog (one consent), enables it, sends `preview.setup` so the plugin can ask for its options in a dialog, writes the answer as `options` into the item that names the plugin, and shows the view. Writers ask before rewriting a file that has comments (they would be lost).
 
-To make a plugin for folders, contribute a preview with `"extensions": ["/"]` and a negative `priority`, so it only shows folders whose `c4k.dir` names it, and return `kind: "tiles"` or `markdown` from `preview.render`. Read `options` for your settings.
+The official `official.git-repo` plugin works this way: `git-repo.c4k` = `{ "plugin": "official.git-repo" }` in a repository shows its branch, changes, recent commits, branches, tags and remotes, read with `git` through `shell.run` (options `commits`, `files`, `branches`).
+
+To make a plugin for folders, contribute a preview with `"extensions": ["/"]` and a negative `priority`, so it only shows folders whose `.c4k` file names it, and return `kind: "tiles"` or `markdown` from `preview.render`. Read `options` for your settings.
 
 ### Folder suggestions
 
-When the cursor rests on a folder without `c4k.dir` (on a disk or a share), the app reads its listing once and asks every preview that can judge folders. The built-in gallery (5+ images, 60 % of the files) and notes (`.obsidian`, or 5+ Markdown files, 60 % of the files) do this, and so can yours. The best answer appears as a small hint in the panel. Accepting it (button or `Ctrl+Enter`) writes `c4k.dir` with your preview as `enter` and `preview`, and opens the view.
+When the cursor rests on a folder without any `.c4k` file (on a disk or a share), the app reads its listing once and asks every preview that can judge folders. The built-in gallery (5+ images, 60 % of the files) and notes (`.obsidian`, or 5+ Markdown files, 60 % of the files) do this, and so can yours; `.c4k` files never count as content. The best answer appears as a small hint in the panel. Accepting it (button or `Ctrl+Enter`) writes a `.c4k` file naming your preview (`{ "plugin", "preview", "options" }`) and opens the view.
 
 Add a `suggest` rule to the preview contribution:
 
@@ -661,69 +669,68 @@ Add a `suggest` rule to the preview contribution:
 
 ### Dashboard cards
 
-A dashboard tile with `"card"` is a live card drawn by a preview instead of a plain shortcut. Plain tiles keep working as before, and both can sit in one dashboard.
+On a dashboard, an item with `"card"` is a live card drawn by a preview instead of a plain shortcut tile (icon, title, description; a click performs the item). Built-in views, `url` and `run` items are shortcut tiles. A dashboard folder might hold:
 
 ```jsonc
-{
-  "enter": {
-    "view": "dashboard",
-    "tiles": [
-      { "title": "Zdjęcia", "open": "photos", "card": "gallery" },        // four thumbnails, count, size, Open
-      { "title": "Dokumenty", "open": "~/Documents", "card": true },      // whatever Ctrl+Q would show for it
-      { "title": "Serwery", "open": "servers", "card": true },            // a folder with its own dashboard: a dashboard card
-      { "title": "VPS", "open": "sftp://kamil@vps.example.com/", "card": "ssh", "refresh": "10s", "options": { "keyFile": "~/.ssh/id_ed25519" } },
-      { "title": "Grafana", "card": "api", "refresh": "1m", "size": "wide",
-        "api": { "url": "https://grafana.example.com/api/health", "headers": { "Authorization": "{secret:grafana}" },
-                 "fields": [ { "path": "database", "label": "Baza", "as": "status", "ok": ["ok"] }, { "path": "version" } ] } },
-      { "title": "Konfiguracja", "open": "config.json", "card": "official.json-preview" },
-      { "title": "Tokio", "card": "clock", "options": { "timeZone": "Asia/Tokyo" } },
-      { "title": "Dyski", "card": "disks", "size": "tall" },
-      { "title": "Na piątek", "card": "note", "size": "full", "options": { "text": "Kopia NAS i przegląd certyfikatów." } }
-    ]
-  },
-  "preview": "dashboard"
-}
+// 01 zdjecia.c4k — four thumbnails, count, size, Open
+{ "title": "Zdjęcia", "open": "photos", "card": "gallery" }
+// 02 dokumenty.c4k — whatever Ctrl+Q would show for it
+{ "title": "Dokumenty", "open": "~/Documents", "card": true }
+// 03 serwery.c4k — a folder that is itself a dashboard: a dashboard card
+{ "title": "Serwery", "open": "servers", "card": true }
+// 04 vps.c4k
+{ "title": "VPS", "open": "sftp://kamil@vps.example.com/", "card": "ssh", "refresh": "10s", "options": { "keyFile": "~/.ssh/id_ed25519" } }
+// 05 grafana.c4k
+{ "title": "Grafana", "card": "api", "refresh": "1m", "size": "wide",
+  "api": { "url": "https://grafana.example.com/api/health", "headers": { "Authorization": "{secret:grafana}" },
+           "fields": [ { "path": "database", "label": "Baza", "as": "status", "ok": ["ok"] }, { "path": "version" } ] } }
+// 06 konfiguracja.c4k
+{ "title": "Konfiguracja", "open": "config.json", "card": "official.json-preview" }
+// 07 tokio.c4k
+{ "title": "Tokio", "card": "clock", "options": { "timeZone": "Asia/Tokyo" } }
+// 08 dyski.c4k
+{ "title": "Dyski", "card": "disks", "size": "tall" }
+// 09 notatka.c4k
+{ "title": "Na piątek", "card": "note", "size": "full", "options": { "text": "Kopia NAS i przegląd certyfikatów." } }
 ```
 
-- `card`: `true` = the preview Ctrl+Q would pick for `open`, including that folder's own `c4k.dir`; or a name: `files`, `gallery`, `notes`, `markdown`, `dashboard`, `api`, `ssh`, the widgets `clock`, `note`, `disks`, a panel id (`builtin.sysinfo`, `builtin.taskmanager`, `plugin/panel`; see [Panels](#panels-everything-is-a-folder)), or a plugin id (`plugin` or `plugin/preview`). A named card ignores the target's `c4k.dir`. A card that points at a folder with a dashboard shows that dashboard's title and tiles, and a click opens it in place: ← (Alt+←, Backspace) goes back, the breadcrumbs jump, and Esc shows the files of the folder on screen.
+- `card`: `true` = the preview Ctrl+Q would pick for the target (`open`, else `folder`), including that folder's own `.c4k` files; or a name: `files`, `gallery`, `notes`, `markdown`, `dashboard`, `api`, `ssh`, the widgets `clock`, `note`, `disks`, a panel id (`builtin.sysinfo`, `builtin.taskmanager`, `plugin/panel`; see [Panels](#panels-everything-is-a-folder)), or a plugin id (`plugin` or `plugin/preview`). A named card ignores the target's `.c4k` files. A card that points at a folder with a dashboard shows that dashboard's title and tiles, and a click opens it in place: ← (Alt+←, Backspace) goes back, the breadcrumbs jump, and Esc shows the files of the folder on screen.
 - `refresh`: `10s`, `5m`, `1h` (at least 2 s), only while the dashboard is visible. Without it the card is read once and has "Odśwież".
-- `size`: the tile's footprint on the dashboard grid, columns × rows: `small` 1×1 (default), `wide` 2×1, `tall` 1×2, `large` 2×2, `huge` 3×2, `full` (the whole row, 1 high). The grid has as many columns as fit the panel (at least 240 px each) and places tiles in order, filling a hole beside a taller tile with the next small ones; spans wider than the grid shrink to it. A taller card shows more text lines, a taller chart and bigger thumbnails. The ⤢ button over a tile (shown on hover, next to ↑ ↓ ×) cycles the sizes and writes `size` into the `c4k.dir`. `options`: passed to the card's preview.
-- `heading: true` makes a tile a section heading across the whole row (title in accent capitals, `subtitle` as a muted line, a rule below); it groups the tiles after it. A card whose answer has exactly one value (an `api` card with one field, for example) is drawn as a KPI: the number large, coloured by its status, the label under it.
+- `size`: the tile's footprint on the dashboard grid, columns × rows: `small` 1×1 (default), `wide` 2×1, `tall` 1×2, `large` 2×2, `huge` 3×2, `full` (the whole row, 1 high). The grid has as many columns as fit the panel (at least 240 px each) and places tiles in order, filling a hole beside a taller tile with the next small ones; spans wider than the grid shrink to it. A taller card shows more text lines, a taller chart and bigger thumbnails. The ⤢ button over a tile (shown on hover) cycles the sizes and writes `size` into that tile's file. `options`: passed to the card's preview.
+- A card whose answer has exactly one value (an `api` card with one field, for example) is drawn as a KPI: the number large, coloured by its status, the label under it.
 - Widget cards need no folder: `clock` (time and date; `options.timeZone` is an IANA or Windows id; read every 15 s), `note` (`options.text`, or the start of the text file in `open`) and `disks` (used and free space of this computer's disks, or of the disk holding `open`; read every minute). `refresh` overrides those intervals.
-- `api`: `url`, `method` (GET by default), `headers`, `body`, `contentType`, `fields` (`path` such as `a.b` or `items[0].name`, `label`, `as`: `value`, `chart` or `status`, `unit`, `ok`). `cm_AddApiCard` asks the API once, lists the fields of its answer and writes the tile. `"preview": { "view": "api", "api": { … } }` shows the same fields as the folder's preview (GET and HEAD only).
-- Secrets: write `{secret:name}` in a header or the body (never in the url, which is logged); the value lives encrypted in `config/secrets.json`, bound to the origin (scheme, host, port) it was first saved for, and a card that misses it offers to enter it. Never put tokens in `c4k.dir`.
-- Consent: `api` cards with methods other than GET/HEAD and every `ssh` card wait until the user trusts this `c4k.dir` (the same trust as `run`; a changed file asks again), and only on disks and shares.
-- `ssh` runs one fixed, read-only command (uname, `/proc`, `df`) with the saved login or keys; non-Linux servers show their status only. `options.keyFile` (and `options.user`) pick the key; like every path in the file, a relative `keyFile` is resolved against the folder and `~` is the user's profile.
+- `api`: `url`, `method` (GET by default), `headers`, `body`, `contentType`, `fields` (`path` such as `a.b` or `items[0].name`, `label`, `as`: `value`, `chart` or `status`, `unit`, `ok`). `cm_AddApiCard` asks the API once, lists the fields of its answer and writes a new `.c4k` file with the card. `{ "view": "api", "api": { … } }` shows the same fields as a folder's view (GET and HEAD only).
+- Secrets: write `{secret:name}` in a header or the body (never in the url, which is logged); the value lives encrypted in `config/secrets.json`, bound to the origin (scheme, host, port) it was first saved for, and a card that misses it offers to enter it. Never put tokens in a `.c4k` file.
+- Consent: `api` cards with methods other than GET/HEAD, every `ssh` card and cards that read an SFTP/FTP target wait until the user trusts their file (the same trust as `run`), and only on disks and shares.
+- `ssh` runs one fixed, read-only command (uname, `/proc`, `df`) with the saved login or keys; non-Linux servers show their status only. `options.keyFile` (and `options.user`) pick the key, else the item's own `keyFile`/`user`; like every path in the file, a relative `keyFile` is resolved against the folder and `~` is the user's profile.
 
 The official catalog has preview plugins with cards: `official.json-preview`, `official.openapi-preview`, `official.html-preview`, `official.pe-info` (EXE/DLL: architecture, version, signer, execution level, missing DLLs) and `official.archive-info` (file count, unpacked size, compression, package id and version). For your own, see `preview.card` (previews) and `panel.card` (panels) in the protocol table.
 
 ### Example: mail ("Poczta")
 
-The official mail plugin (`official.mail`) keeps an account in a folder and shows it as a card on a dashboard. There are two ways in. The command *Dodaj konto pocztowe* (menu *Wtyczki ▸ Poczta*) creates a new account folder under the active one and adds its card to that folder's dashboard. Choosing *Poczta* in *Widok folderu…* turns the current folder into an account through `preview.setup`. Both open one `ui.dialog` window: address, sender name, (folder name), servers "Z adresu" or "Ręcznie" (`visibleWhen` shows IMAP/SMTP only for the manual mode), how often to check and how far back to fetch. The plugin then logs in once (the app asks for the password and keeps it; it never reaches a file); a refused login opens the same window again with the reason, so nothing is written until it works. The command writes both files below. By hand, an account folder `Poczta/firma/c4k.dir` is:
+The official mail plugin (`official.mail`) keeps an account in a folder and shows it as a card on a dashboard. There are two ways in. The command *Dodaj konto pocztowe* (menu *Wtyczki ▸ Poczta*) creates a new account folder under the active one. Choosing *Poczta* in *Widok folderu…* turns the current folder into an account through `preview.setup`. Both open one `ui.dialog` window: address, sender name, (folder name), servers "Z adresu" or "Ręcznie" (`visibleWhen` shows IMAP/SMTP only for the manual mode), how often to check and how far back to fetch. The plugin then logs in once (the app asks for the password and keeps it; it never reaches a file); a refused login opens the same window again with the reason, so nothing is written until it works. By hand, the account folder `Poczta/firma` holds `firma.c4k`:
 
 ```jsonc
 {
-  "preview": { "plugin": "official.mail", "options": { "imap": "imap.example.com:993", "smtp": "smtp.example.com:465", "user": "ja@example.com", "refresh": "5m", "since": "3m" } },
-  "enter": { "plugin": "official.mail", "options": { "imap": "imap.example.com:993", "smtp": "smtp.example.com:465", "user": "ja@example.com", "refresh": "5m", "since": "3m" } }
+  "plugin": "official.mail",
+  "options": { "imap": "imap.example.com:993", "smtp": "smtp.example.com:465", "user": "ja@example.com", "refresh": "5m", "since": "3m" }
 }
 ```
 
-and `Poczta/c4k.dir` shows every account as a card with the unread count (the plugin needs the `background` permission and the setting *PluginBackground* for the sync between visits):
+When the active folder is already a dashboard (two or more `.c4k` files; with exactly one the command asks first), the command also writes a card for the new account there, so `Poczta/` shows every account with its unread count (the plugin needs the `background` permission and the setting *PluginBackground* for the sync between visits):
 
 ```jsonc
-{
-  "enter": { "view": "dashboard", "tiles": [ { "title": "firma", "open": "firma", "card": "official.mail/account", "refresh": "30s" } ] },
-  "preview": "dashboard"
-}
+// Poczta/firma.c4k
+{ "title": "firma", "plugin": "official.mail", "card": true, "folder": "firma", "open": "firma", "refresh": "30s" }
 ```
 
-The card reads only the message files and `.mail/state.json`; *Sprawdź teraz* syncs that account at once (at most 10 s, the rest continues in the background).
+The card reads only the message files and `.mail/state.json`; *Sprawdź teraz* syncs that account at once (at most 10 s, the rest continues in the background). Enter on the card opens the account folder.
 
 ## Official plugin catalog
 
-[`plugins-catalog/catalog.json`](../plugins-catalog/catalog.json) lists the plugins that can be installed from the plugin manager (group "Katalog oficjalnych wtyczek", Ctrl+I) and from `c4k.dir`. The app downloads it at start-up from the repository, so new plugins appear without an update. Each entry gives the plugin folder (relative to `baseUrl`) and the SHA-256 of every file. The hash is computed over the UTF-8 text with CR removed. A downloaded file that does not match is refused. An installed plugin starts disabled until the user approves its permissions, like any other.
+[`plugins-catalog/catalog.json`](../plugins-catalog/catalog.json) lists the plugins that can be installed from the plugin manager (group "Katalog oficjalnych wtyczek", Ctrl+I) and from `.c4k` files. The app downloads it at start-up from the repository, so new plugins appear without an update. Each entry gives the plugin folder (relative to `baseUrl`) and the SHA-256 of every file. The hash is computed over the UTF-8 text with CR removed. A downloaded file that does not match is refused. An installed plugin starts disabled until the user approves its permissions, like any other.
 
-To add a plugin, put its folder in `plugins-catalog/` (official) or `examples/plugins/`, add an entry (`id`, `name`, `runtime`, `description` per language, `tags`, an `example` c4k.dir, `path`), then run `pwsh ./plugins-catalog/Update-Catalog.ps1` to fill in the files and hashes. `PluginCatalogTests` fails if the catalog is out of date.
+To add a plugin, put its folder in `plugins-catalog/` (official) or `examples/plugins/`, add an entry (`id`, `name`, `runtime`, `description` per language, `tags`, an `example` `.c4k` item, `path`), then run `pwsh ./plugins-catalog/Update-Catalog.ps1` to fill in the files and hashes. `PluginCatalogTests` fails if the catalog is out of date.
 
 ## Writing a plugin by hand
 
@@ -747,7 +754,7 @@ claude mcp add --transport http commander4k http://127.0.0.1:47800/mcp --header 
 
 It also shows the same server as a `.mcp.json` entry for a project. Use `127.0.0.1` exactly: the listener is bound to that address and HTTP.sys rejects requests whose `Host` header says `localhost`. Every request needs the bearer token. "Nowy token" replaces it, and the old token stops working at once. The server listens on loopback only and refuses browser origins other than localhost. The badge shows "AI podłączone (n)" while clients are connected, and says so when the port is in use.
 
-**What the client knows at once.** The `initialize` answer carries server instructions built for that session: the built-in panels and every enabled plugin with the call that uses it (`run_plugin_command` for commands, `load_plugin_panel` for panels, `render_preview` and the `c4k.dir` line for previews, the dashboard card names), so the client uses installed plugins without being told. `list_plugins` gives the current state later.
+**What the client knows at once.** The `initialize` answer carries server instructions built for that session: the built-in panels and every enabled plugin with the call that uses it (`run_plugin_command` for commands, `load_plugin_panel` for panels, `render_preview` and the `.c4k` line for previews, the dashboard card names), so the client uses installed plugins without being told. `list_plugins` gives the current state later.
 
 **Tools.** Each tool has a mode, set per tool in the settings (`Ctrl+,`, search "mcp"): allow, ask or block. The defaults are:
 
@@ -766,12 +773,12 @@ It also shows the same server as a `.mcp.json` entry for a project. Use `127.0.0
 | `get_translation_kit`, `check_translation` | allow | The translation rules and the texts to translate, page by page (`onlyMissing` to complete a language); check translated entries without saving. |
 | `save_translation` | ask | Merge translated entries into `config/i18n/<code>.json`. Refused for wrong placeholders or plural forms and unknown keys; `pl` is the source language. |
 | `get_skin_guide`, `list_skins`, `get_skin`, `check_skin` | allow | The skin brief, schema and current skin; the skins; one skin's JSON; schema and contrast check. |
-| `dashboard_guide` | allow | How to build a folder dashboard: tile fields and sizes, the grid, every card type with its options (and the cards of the installed plugins), section headings, KPI tiles, design rules and recipes. |
-| `get_dashboard`, `check_dashboard` | allow | A folder's `c4k.dir` with its tiles; a draft checked without saving: errors, warnings (missing plugins, cards that wait for trust, design hints) and the grid drawn at 2, 3 and 4 columns. |
-| `save_dashboard` | ask | Writes `c4k.dir` into an allowed folder after the same checks (refused with errors); the dialog shows the file. The file is never trusted by this: `run`, SSH and POST cards stay locked until "Zezwól". |
+| `dashboard_guide` | allow | How to build a folder dashboard: one `.c4k` file per tile, ordered by file name, item fields and sizes, the grid, every card type with its options (and the cards of the installed plugins), KPI tiles, design rules and recipes. |
+| `get_dashboard`, `check_dashboard` | allow | A folder's `.c4k` files (name and JSON of each); a draft (a list of named items) checked without saving: errors, warnings (missing plugins, cards that wait for trust, design hints) and the grid drawn at 2, 3 and 4 columns. |
+| `save_dashboard` | ask | Writes one `.c4k` file per item into an allowed folder after the same checks (refused with errors, with a `folder` key outside the allowed folders, or when it would rewrite a file with comments); the dialog shows the files. The file is never trusted by this: `run`, SSH and POST cards stay locked until "Zezwól". |
 | `save_skin` | always ask | Shows the skin live in the window while you decide; "Zapisz skórkę" saves it to `config/skins/<id>.json` and switches to it, anything else puts the old skin back. |
 
-A blocked tool is still listed, with "(Disabled by the user in Commander4K.)" at the end of its description, and calling it returns an error. Prompts: `write_plugin`, `preview_plugin_for_file`, `explain_file_format`, `translate_ui`, `design_skin`, `build_dashboard` (guide → read the folder → plan sections and KPIs → check until clean → save and show it). The two prompts about a file include its first bytes only when the file is allowed, not protected, and `read_file` is not blocked; each of them is audited as `prompt:<name>`.
+A blocked tool is still listed, with "(Disabled by the user in Commander4K.)" at the end of its description, and calling it returns an error. Prompts: `write_plugin`, `preview_plugin_for_file`, `explain_file_format`, `translate_ui`, `design_skin`, `build_dashboard` (guide → read the folder → plan the tiles and KPIs → check until clean → save and show it). The two prompts about a file include its first bytes only when the file is allowed, not protected, and `read_file` is not blocked; each of them is audited as `prompt:<name>`.
 
 **Allowed folders.** File tools only work inside the folders listed in the connect window (or the setting "Foldery dostępne dla MCP"). Any VFS path can be one: a disk folder, `\\server\share`, `sftp://…`. With an empty list no file can be touched. A path outside them is refused with a message that tells the model to ask you. The same applies to folders the app tools take from the panels: `get_context` shows a panel's contents only when its folder is allowed (and not protected), `select` needs the chosen panel's folder, and `run_command`, `run_plugin_command` and `load_plugin_panel` need both panels' folders and the marked entries, inside the allowed folders and outside the protected ones. `load_plugin_panel` passes `argument` only to panels that take a file, after the same check; other panels never see it. "Dodaj folder z aktywnego panelu" accepts real folders only: disk paths, `\\server\share`, `sftp://` and `ftp://` (not This PC, `net://`, the registry or archives; type those into the setting if you really mean it).
 

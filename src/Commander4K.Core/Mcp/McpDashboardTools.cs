@@ -13,30 +13,44 @@ namespace Commander4K.Core.Mcp;
 public sealed record McpCardPreview(string Card, string Name, string? Description, IReadOnlyList<string> Extensions);
 
 /// <summary>
-/// MCP tools that let an AI client design <c>c4k.dir</c> dashboards: a guide with every card type and the design rules,
-/// reading the current dashboard, checking a draft (errors, warnings and a picture of the grid at several widths)
-/// and saving it. Saving goes through the dispatcher's confirmation like every write, and never trusts the file:
-/// cards that run commands, sign in over SSH or send POST requests stay locked until the user allows them.
+/// MCP tools that let an AI client design folder dashboards made of <c>*.c4k</c> files: a guide with every card type
+/// and the design rules, reading the current items, checking a draft (errors, warnings and a picture of the grid at
+/// several widths) and saving it. Saving goes through the dispatcher's confirmation like every write, and never trusts
+/// the files: cards that run commands, sign in over SSH or send POST requests stay locked until the user allows them.
 /// </summary>
 public static class McpDashboardTools
 {
-    private const int MaxConfigBytes = 256 * 1024;
-
-    /// <summary>Built-in card names (folder views, API/SSH, widgets) a tile's <c>card</c> may use besides plugin ids.</summary>
-    public static readonly IReadOnlyList<string> BuiltInCards =
-        [FolderViewIds.Files, FolderViewIds.Gallery, FolderViewIds.Notes, FolderViewIds.Markdown, FolderViewIds.Dashboard, FolderViewIds.Api, FolderViewIds.Ssh, "clock", "note", "disks"];
+    private const int MaxConfigBytes = (int)C4kReader.MaxBytes;
 
     private static readonly string[] FolderCards = [FolderViewIds.Files, FolderViewIds.Gallery, FolderViewIds.Notes, FolderViewIds.Markdown, FolderViewIds.Dashboard];
 
+    private static readonly JsonDocumentOptions Lenient = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
+
+    private static JsonObject ItemsSchema(string description)
+    {
+        var schema = McpSchema.Object(("folder", "string", "The folder (disk, share, sftp://…); relative paths in items are resolved against it.", true), ("items", "array", description, true));
+        schema["properties"]!["items"]!["items"] = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["name"] = new JsonObject { ["type"] = "string", ["description"] = "File name, with or without .c4k. Files are ordered by name (natural order) to make the dashboard." },
+                ["json"] = new JsonObject { ["type"] = "string", ["description"] = "The item's JSON text." },
+            },
+            ["required"] = new JsonArray("name", "json"),
+        };
+        return schema;
+    }
+
     /// <param name="cardPreviews">The installed previews that draw cards, read on every call (plugins come and go).</param>
-    public static IReadOnlyList<McpTool> Create(VfsRouter router, Func<IReadOnlyList<McpCardPreview>> cardPreviews) =>
+    public static IReadOnlyList<McpTool> Create(VfsRouter router, Func<IReadOnlyList<McpCardPreview>> cardPreviews, Func<IReadOnlyList<string>> allowedRoots, Func<IReadOnlyList<string>> protectedRoots) =>
     [
         new McpTool(
             new McpToolDefinition(
                 "dashboard_guide",
-                "How to build a Commander4K folder dashboard (a c4k.dir file): tile fields, the six tile sizes and how the grid places them, "
+                "How to build a Commander4K folder dashboard (a set of .c4k files): the item keys, the six tile sizes and how the grid places them, "
                 + "every card type with its options (folder views, API, SSH, clock, note, disks, and the cards of the installed plugins), "
-                + "section headings, KPI tiles, design rules for a clean, professional dashboard and complete examples. Read it before writing a dashboard.",
+                + "KPI tiles, design rules for a clean, professional dashboard and complete examples. Read it before writing a dashboard.",
                 McpSchema.Object(),
                 McpToolMode.Allow),
             (_, _) => Task.FromResult(new McpToolResult(Guide(cardPreviews()))),
@@ -44,8 +58,8 @@ public static class McpDashboardTools
         new McpTool(
             new McpToolDefinition(
                 "get_dashboard",
-                "Reads the c4k.dir of a folder: its full JSON (keep the keys you do not change), its dashboards with every tile, "
-                + "problems found in it and a picture of the grid. Returns a note when the folder has no c4k.dir yet.",
+                "Reads the .c4k files of a folder: each as { name, json } (keep what you do not change), problems found in them and a picture "
+                + "of the grid. Returns a note when the folder has no .c4k files yet.",
                 McpSchema.Object(("folder", "string", "The folder (disk, share, sftp://…).", true)),
                 McpToolMode.Allow,
                 PathArguments: ["folder"]),
@@ -54,127 +68,135 @@ public static class McpDashboardTools
         new McpTool(
             new McpToolDefinition(
                 "check_dashboard",
-                "Checks a draft c4k.dir without saving it: JSON and tile errors, unknown or missing card plugins, cards that will wait for the "
+                "Checks draft .c4k items without saving them: JSON and item errors, unknown or missing card plugins, cards that will wait for the "
                 + "user's trust, design warnings, and how the grid lays the tiles out at 2, 3 and 4 columns. Fix every error before save_dashboard.",
-                McpSchema.Object(
-                    ("folder", "string", "The folder the file is for (relative paths in open/image are resolved against it).", true),
-                    ("config", "string", "The complete c4k.dir JSON text.", true)),
+                ItemsSchema("The complete set of items the folder will have: one { name, json } per .c4k file."),
                 McpToolMode.Allow,
                 PathArguments: ["folder"]),
-            (call, _) => Task.FromResult(Check(call.Required("folder"), call.Required("config"), cardPreviews())),
+            (call, _) => Task.FromResult(Check(call.Required("folder"), ReadItems(call), cardPreviews())),
             args => "check_dashboard " + args["folder"]),
         new McpTool(
             new McpToolDefinition(
                 "save_dashboard",
-                "Writes c4k.dir into the folder (replacing the existing one) after the same checks as check_dashboard; refuses a file with errors. "
-                + "Keep the keys of the existing file you did not mean to change (read it with get_dashboard first). The panel shows the new "
-                + "dashboard the next time the folder is previewed or entered (use navigate to show it). Cards that run commands, use SSH or "
-                + "send POST requests stay locked until the user presses \"Zezwól\".",
-                McpSchema.Object(
-                    ("folder", "string", "The folder (disk, share, sftp://…).", true),
-                    ("config", "string", "The complete c4k.dir JSON text.", true)),
+                "Writes one .c4k file per item into the folder after the same checks as check_dashboard; refuses items with errors. One file is one "
+                + "view, two or more make a dashboard ordered by file name. A file with the same name is replaced (this call is confirmed by the user) "
+                + "unless it contains comments, which are never overwritten; a folder that has exactly one .c4k file is not turned into a dashboard "
+                + "unless the items include that file. Cards that run commands, use SSH or send POST requests stay locked until the user presses \"Zezwól\".",
+                ItemsSchema("The items to write: one { name, json } per .c4k file."),
                 McpToolMode.Ask,
                 PathArguments: ["folder"],
                 Writes: true),
-            (call, ct) => SaveAsync(router, call.Required("folder"), call.Required("config"), cardPreviews(), ct),
+            (call, ct) => SaveAsync(router, call.Required("folder"), ReadItems(call), cardPreviews(), allowedRoots(), protectedRoots(), ct),
             args => "save_dashboard " + args["folder"],
-            args => args["config"] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null),
+            args => args["items"] is JsonArray items ? string.Join("\n\n", items.Select(i => $"{i?["name"]}:\n{i?["json"]}")) : null),
     ];
 
-    /// <summary>Errors (the file cannot be saved), warnings and the layout pictures of a draft.</summary>
+    private static List<(string Name, string Json)> ReadItems(McpCall call)
+    {
+        if (call.Arguments["items"] is not JsonArray array)
+        {
+            throw new ArgumentException("Missing required argument 'items' (an array of { name, json }).");
+        }
+
+        var items = new List<(string, string)>();
+        foreach (var node in array)
+        {
+            var name = node?["name"] is JsonValue n && n.TryGetValue<string>(out var text) ? text.Trim() : null;
+            var json = node?["json"] switch { JsonValue v when v.TryGetValue<string>(out var j) => j, JsonObject o => o.ToJsonString(), _ => null };
+            if (string.IsNullOrEmpty(name) || json is null)
+            {
+                throw new ArgumentException("Every item needs a \"name\" and a \"json\".");
+            }
+
+            items.Add((name, json));
+        }
+
+        return items;
+    }
+
+    /// <summary>The file name for an item name, or <c>null</c> + error when the name could escape the folder or hide the file.</summary>
+    private static string? FileNameOf(string name, out string? error)
+    {
+        var file = name.EndsWith(C4kReader.Extension, StringComparison.OrdinalIgnoreCase) ? name : name + C4kReader.Extension;
+        error = file.StartsWith('.') || file.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || file.Contains("..", StringComparison.Ordinal)
+            ? $"\"{name}\" is not a valid file name (no folders, no leading dot, no : / \\ characters)." : null;
+        return error is null ? file : null;
+    }
+
+    /// <summary>Errors (the files cannot be saved), warnings and the layout pictures of a draft.</summary>
     public sealed record DashboardReport(IReadOnlyList<string> Errors, IReadOnlyList<string> Warnings, string Layout);
 
-    public static DashboardReport Analyze(FolderConfig config, IReadOnlyList<McpCardPreview> previews)
+    public static DashboardReport Analyze(C4kFolder folder, IReadOnlyList<McpCardPreview> previews)
     {
         var errors = new List<string>();
         var warnings = new List<string>();
-        if (config.Error is { } fileError)
+        if (folder.Items.Count == 0)
         {
-            errors.Add(fileError);
+            warnings.Add("No .c4k files: nothing is shown for the folder.");
             return new DashboardReport(errors, warnings, string.Empty);
         }
 
-        var layout = new StringBuilder();
-        var dashboards = Dashboards(config).ToList();
-        if (dashboards.Count == 0)
+        var titles = new HashSet<string>(StringComparer.Ordinal);
+        var tile = folder.Items.Count > 1;
+        foreach (var item in folder.Items)
         {
-            warnings.Add("Neither \"preview\" nor \"enter\" is a dashboard (\"view\": \"dashboard\" with \"tiles\").");
+            var where = item.Name + C4kReader.Extension;
+            if (item.Error is { } error)
+            {
+                errors.Add($"{where}: {error}");
+            }
+
+            if (tile && !titles.Add(item.Title))
+            {
+                warnings.Add($"{where}: the title \"{item.Title}\" repeats; make titles unique.");
+            }
+
+            CheckItem(item, where, tile, previews, errors, warnings);
         }
 
-        foreach (var (section, tiles) in dashboards)
+        if (folder.Skipped > 0)
         {
-            if (tiles.Count == 0)
-            {
-                warnings.Add($"{section}: the dashboard has no tiles.");
-                continue;
-            }
-
-            var titles = new HashSet<string>(StringComparer.Ordinal);
-            var headings = 0;
-            for (var i = 0; i < tiles.Count; i++)
-            {
-                var tile = tiles[i];
-                var where = $"{section} tile {i + 1} \"{tile.Title}\"";
-                if (!titles.Add(tile.Title))
-                {
-                    warnings.Add($"{where}: the title repeats; the app finds tiles by title when it edits them, so make titles unique.");
-                }
-
-                if (tile.Heading)
-                {
-                    headings++;
-                    continue;
-                }
-
-                if (tile.Error is { } tileError)
-                {
-                    errors.Add($"{where}: {tileError}");
-                }
-
-                CheckTile(tile, where, previews, errors, warnings);
-            }
-
-            if (tiles.Count > 24)
-            {
-                warnings.Add($"{section}: {tiles.Count} tiles is a lot for one screen; split it into dashboards in subfolders and link them with \"card\": \"dashboard\" tiles.");
-            }
-            else if (tiles.Count - headings > 8 && headings == 0)
-            {
-                warnings.Add($"{section}: {tiles.Count} tiles without a section heading; group them with \"heading\": true tiles.");
-            }
-
-            layout.Append(Picture(section, tiles));
+            errors.Add($"More than {C4kReader.MaxItems} .c4k files; only the first {C4kReader.MaxItems} are used.");
+        }
+        else if (folder.Items.Count > 24)
+        {
+            warnings.Add($"{folder.Items.Count} tiles is a lot for one screen; split it into dashboards in subfolders and link them with \"card\": \"dashboard\" items.");
         }
 
-        return new DashboardReport(errors, warnings, layout.ToString());
+        return new DashboardReport(errors, warnings, tile ? Picture(folder.Items) : string.Empty);
     }
 
-    private static void CheckTile(FolderTile tile, string where, IReadOnlyList<McpCardPreview> previews, List<string> errors, List<string> warnings)
+    private static void CheckItem(C4kItem item, string where, bool tile, IReadOnlyList<McpCardPreview> previews, List<string> errors, List<string> warnings)
     {
-        if (tile.Card is null)
+        if (item.Card is null)
         {
-            if (tile.Open is null && tile.Url is null && tile.Run is null)
+            if (item.View is null && item.Plugin is null && item.Panel is null && item.Open is null && item.Url is null && item.Run is null)
             {
-                warnings.Add($"{where}: a plain tile without open, url or run does nothing when clicked; make it a card or a heading.");
+                warnings.Add($"{where}: an item with no view, plugin, panel, open, url or run does nothing; give it one.");
             }
 
-            if (tile.Run is not null)
+            if (item.Run is not null)
             {
-                warnings.Add($"{where}: \"run\" works only after the user trusts this c4k.dir (they are asked on first use).");
+                warnings.Add($"{where}: \"run\" works only after the user trusts this file (they are asked on first use).");
             }
 
             return;
         }
 
-        var card = tile.Card;
-        if (tile.Refresh is { } refresh && refresh < TimeSpan.FromSeconds(10))
+        var card = item.Card;
+        if (!tile)
+        {
+            warnings.Add($"{where}: \"card\" only matters in a dashboard (two or more .c4k files).");
+        }
+
+        if (item.Refresh is { } refresh && refresh < TimeSpan.FromSeconds(10))
         {
             warnings.Add($"{where}: refresh every {refresh.TotalSeconds:0} s is aggressive; 30s–5m suits most cards.");
         }
 
-        if (string.Equals(card, FolderTile.AutoCard, StringComparison.Ordinal) || FolderCards.Contains(card, StringComparer.OrdinalIgnoreCase))
+        if (string.Equals(card, C4kItem.AutoCard, StringComparison.Ordinal) || FolderCards.Contains(card, StringComparer.OrdinalIgnoreCase))
         {
-            if (tile.Open is null)
+            if (item.Open is null)
             {
                 errors.Add($"{where}: card \"{card}\" needs \"open\" with the path it shows.");
             }
@@ -185,24 +207,24 @@ public static class McpDashboardTools
         switch (card.ToLowerInvariant())
         {
             case FolderViewIds.Api:
-                if (tile.Api?.HasSideEffects == true)
+                if (item.Api?.HasSideEffects == true)
                 {
-                    warnings.Add($"{where}: a {tile.Api.Method} request waits until the user trusts this c4k.dir; prefer GET for read-only cards.");
+                    warnings.Add($"{where}: a {item.Api.Method} request waits until the user trusts this file; prefer GET for read-only cards.");
                 }
 
                 return;
             case FolderViewIds.Ssh:
-                if (tile.Open is null || !tile.Open.StartsWith("sftp://", StringComparison.OrdinalIgnoreCase))
+                if (item.Open is null || !item.Open.StartsWith("sftp://", StringComparison.OrdinalIgnoreCase))
                 {
                     errors.Add($"{where}: card \"ssh\" needs \"open\" with an sftp:// path.");
                 }
 
-                warnings.Add($"{where}: SSH cards wait until the user trusts this c4k.dir.");
+                warnings.Add($"{where}: SSH cards wait until the user trusts this file.");
                 return;
             case "clock" or "disks":
                 return;
             case "note":
-                if (tile.Open is null && !(tile.Options?.Contains("\"text\"", StringComparison.Ordinal) ?? false))
+                if (item.Open is null && !(item.Options?.Contains("\"text\"", StringComparison.Ordinal) ?? false))
                 {
                     errors.Add($"{where}: card \"note\" needs options.text or open with a text file.");
                 }
@@ -217,42 +239,18 @@ public static class McpDashboardTools
         }
     }
 
-    /// <summary>The dashboards a file defines: (section, tiles); a tile-less dashboard shares the other section's tiles.</summary>
-    public static IEnumerable<(string Section, IReadOnlyList<FolderTile> Tiles)> Dashboards(FolderConfig config)
-    {
-        var preview = config.Preview is { View: FolderViewIds.Dashboard } p ? p : null;
-        var enter = config.Enter is { View: FolderViewIds.Dashboard } e ? e : null;
-
-        // A tile-less dashboard shares the other one's tiles: report those tiles once.
-        if (enter is not null)
-        {
-            var shared = preview is not null && (preview.Tiles.Count == 0 || enter.Tiles.Count == 0 || preview.Tiles.SequenceEqual(enter.Tiles));
-            yield return (shared ? "enter + preview" : "enter", enter.Tiles.Count > 0 ? enter.Tiles : preview?.Tiles ?? []);
-            if (shared)
-            {
-                yield break;
-            }
-        }
-
-        if (preview is not null)
-        {
-            yield return ("preview", preview.Tiles);
-        }
-    }
-
-    /// <summary>The grid at 4, 3 and 2 columns, one letter per tile (A, B, …; headings as ═), with a legend.</summary>
-    public static string Picture(string section, IReadOnlyList<FolderTile> tiles)
+    /// <summary>The grid at 4, 3 and 2 columns, one letter per tile (A, B, … in file order), with a legend.</summary>
+    public static string Picture(IReadOnlyList<C4kItem> tiles)
     {
         var text = new StringBuilder();
-        text.Append("Layout of ").Append(section).AppendLine(":");
+        text.AppendLine("Layout (files in name order):");
         for (var i = 0; i < tiles.Count; i++)
         {
-            var size = tiles[i].Heading ? "heading" : TileSizes.Name(tiles[i].Size);
-            text.Append("  ").Append(Letter(i)).Append(" = ").Append(tiles[i].Title).Append(" (").Append(size)
+            text.Append("  ").Append(Letter(i)).Append(" = ").Append(tiles[i].Name).Append(C4kReader.Extension).Append(" (").Append(TileSizes.Name(tiles[i].Size))
                 .Append(tiles[i].Card is { } card ? ", card " + card : string.Empty).AppendLine(")");
         }
 
-        var sizes = tiles.Select(t => t.LayoutSize).ToList();
+        var sizes = tiles.Select(t => t.Size).ToList();
         foreach (var columns in new[] { 4, 3, 2 })
         {
             var placements = TileGridLayout.Place(sizes, columns);
@@ -273,7 +271,7 @@ public static class McpDashboardTools
                 {
                     for (var c = p.Column; c < p.Column + p.ColumnSpan; c++)
                     {
-                        grid[r, c] = tiles[i].Heading ? '═' : Letter(i);
+                        grid[r, c] = Letter(i);
                     }
                 }
             }
@@ -294,7 +292,7 @@ public static class McpDashboardTools
 
             if (empty > 0)
             {
-                text.Append("  ").Append(empty).AppendLine(" empty cell(s) (·): reorder tiles or change sizes to close the gaps.");
+                text.Append("  ").Append(empty).AppendLine(" empty cell(s) (·): rename files to reorder or change sizes to close the gaps.");
             }
         }
 
@@ -303,10 +301,20 @@ public static class McpDashboardTools
 
     private static char Letter(int index) => index < 26 ? (char)('A' + index) : index < 52 ? (char)('a' + index - 26) : '#';
 
-    private static McpToolResult Check(string folder, string json, IReadOnlyList<McpCardPreview> previews)
+    private static McpToolResult Check(string folder, List<(string Name, string Json)> items, IReadOnlyList<McpCardPreview> previews)
     {
-        var config = FolderConfig.Parse(folder, json);
-        return new McpToolResult(Format(Analyze(config, previews), saved: null));
+        var files = new List<(string, string)>();
+        foreach (var (name, json) in items)
+        {
+            if (FileNameOf(name, out var error) is not { } file)
+            {
+                return McpToolResult.Error(error!);
+            }
+
+            files.Add((file, json));
+        }
+
+        return new McpToolResult(Format(Analyze(C4kReader.Build(folder, files), previews), saved: null));
     }
 
     private static string Format(DashboardReport report, string? saved)
@@ -336,61 +344,124 @@ public static class McpDashboardTools
         return text.ToString();
     }
 
-    private static async Task<McpToolResult> GetAsync(VfsRouter router, string folder, IReadOnlyList<McpCardPreview> previews, CancellationToken ct)
+    /// <summary>The item files of a folder (by name, at most <see cref="C4kReader.MaxItems"/> read) and how many exist.</summary>
+    private static async Task<(List<(string Name, string Json)> Files, int Total)> ReadFolderAsync(VfsRouter router, string folder, CancellationToken ct)
     {
-        var file = FolderConfig.ChildPath(folder, FolderConfig.FileName);
-        var json = await ReadAsync(router, file, ct).ConfigureAwait(false);
-        if (json is null)
+        var names = new List<string>();
+        await foreach (var entry in router.OpenListing(folder, ct).ReadAllAsync(ct).ConfigureAwait(false))
         {
-            return new McpToolResult($"{folder} has no {FolderConfig.FileName} yet. Read dashboard_guide, then write one with save_dashboard.");
+            if (C4kReader.IsItemFile(entry))
+            {
+                names.Add(entry.Name);
+            }
         }
 
-        var report = Analyze(FolderConfig.Parse(folder, json), previews);
-        return new McpToolResult($"{file}:\n```json\n{json.TrimEnd()}\n```\n" + Format(report, saved: null));
+        names.Sort(StringComparer.OrdinalIgnoreCase);
+        var files = new List<(string, string)>();
+        foreach (var name in names.Take(C4kReader.MaxItems))
+        {
+            files.Add((name, await ReadAsync(router, C4kJson.ChildPath(folder, name), ct).ConfigureAwait(false) ?? string.Empty));
+        }
+
+        return (files, names.Count);
     }
 
-    private static async Task<McpToolResult> SaveAsync(VfsRouter router, string folder, string json, IReadOnlyList<McpCardPreview> previews, CancellationToken ct)
+    private static async Task<McpToolResult> GetAsync(VfsRouter router, string folder, IReadOnlyList<McpCardPreview> previews, CancellationToken ct)
     {
-        if (Encoding.UTF8.GetByteCount(json) > MaxConfigBytes)
+        var (files, _) = await ReadFolderAsync(router, folder, ct).ConfigureAwait(false);
+        if (files.Count == 0)
         {
-            return McpToolResult.Error($"The file is larger than {MaxConfigBytes / 1024} KB.");
+            return new McpToolResult($"{folder} has no {C4kReader.Extension} files yet. Read dashboard_guide, then write them with save_dashboard.");
         }
 
-        var config = FolderConfig.Parse(folder, json);
-        var report = Analyze(config, previews);
+        var list = new JsonArray([.. files.Select(f => (JsonNode)new JsonObject { ["name"] = f.Name, ["json"] = f.Json })]);
+        var options = new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        var report = Analyze(C4kReader.Build(folder, files), previews);
+        return new McpToolResult($"```json\n{list.ToJsonString(options)}\n```\n" + Format(report, saved: null));
+    }
+
+    private static async Task<McpToolResult> SaveAsync(
+        VfsRouter router, string folder, List<(string Name, string Json)> items, IReadOnlyList<McpCardPreview> previews,
+        IReadOnlyList<string> roots, IReadOnlyList<string> protectedRoots, CancellationToken ct)
+    {
+        if (items.Count == 0)
+        {
+            return McpToolResult.Error("No items.");
+        }
+
+        var files = new List<(string Name, string Json)>();
+        foreach (var (name, json) in items)
+        {
+            if (FileNameOf(name, out var nameError) is not { } file)
+            {
+                return McpToolResult.Error(nameError!);
+            }
+
+            if (files.Any(f => string.Equals(f.Name, file, StringComparison.OrdinalIgnoreCase)))
+            {
+                return McpToolResult.Error($"{file} appears twice.");
+            }
+
+            if (Encoding.UTF8.GetByteCount(json) > MaxConfigBytes)
+            {
+                return McpToolResult.Error($"{file} is larger than {MaxConfigBytes / 1024} KB.");
+            }
+
+            files.Add((file, json));
+        }
+
+        var draft = C4kReader.Build(folder, files);
+        var report = Analyze(draft, previews);
         if (report.Errors.Count > 0)
         {
             return McpToolResult.Error("Not saved.\n" + Format(report, saved: null));
         }
 
-        var entry = await router.GetEntryAsync(folder, ct).ConfigureAwait(false);
-        if (entry is not { IsContainer: true })
+        // The "folder" key is a path too: it gets the same policy as the folder argument.
+        foreach (var item in draft.Items)
+        {
+            if (McpToolDispatcher.Refusal(item.ContextFolder, roots, protectedRoots) is { } refusal)
+            {
+                return McpToolResult.Error($"{item.Name}{C4kReader.Extension}: \"folder\" - {refusal}");
+            }
+        }
+
+        if (await router.GetEntryAsync(folder, ct).ConfigureAwait(false) is not { IsContainer: true })
         {
             return McpToolResult.Error($"{folder} is not a folder.");
         }
 
-        var file = FolderConfig.ChildPath(folder, FolderConfig.FileName);
-        var text = Pretty(json) + "\n";
-        await using (var stream = await router.OpenWriteAsync(file, overwrite: true, ct).ConfigureAwait(false))
+        var (existing, total) = await ReadFolderAsync(router, folder, ct).ConfigureAwait(false);
+        bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+        // A lone item is the folder's own view: the writer does not quietly add a second one next to it.
+        if (total == 1 && !files.Any(f => Same(f.Name, existing[0].Name)))
         {
-            var bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(text);
-            await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
+            return McpToolResult.Error($"{folder} has exactly one item ({existing[0].Name}) that is its view; adding more would turn it into a dashboard. Include {existing[0].Name} in the items (replace it) or ask the user.");
         }
 
-        return new McpToolResult(Format(report, $"Saved {file}."));
-    }
+        if (total + files.Count(f => !existing.Any(e => Same(e.Name, f.Name))) > C4kReader.MaxItems)
+        {
+            return McpToolResult.Error($"A folder shows at most {C4kReader.MaxItems} .c4k files.");
+        }
 
-    /// <summary>Indented JSON, so the user can read and edit the file; text with comments is kept as written.</summary>
-    private static string Pretty(string json)
-    {
-        try
+        foreach (var (file, _) in files)
         {
-            return JsonNode.Parse(json)!.ToJsonString(new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+            if (existing.FirstOrDefault(e => Same(e.Name, file)) is { Json: { } old } && C4kWriter.HasComments(old))
+            {
+                return McpToolResult.Error($"{file} already exists and contains comments, which would be lost; choose another name.");
+            }
         }
-        catch (JsonException)
+
+        var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        foreach (var (file, json) in files)
         {
-            return json.TrimEnd();
+            var text = C4kWriter.Create(JsonNode.Parse(json, documentOptions: Lenient)!.AsObject());
+            await using var stream = await router.OpenWriteAsync(C4kJson.ChildPath(folder, file), overwrite: true, ct).ConfigureAwait(false);
+            await stream.WriteAsync(encoding.GetBytes(text), ct).ConfigureAwait(false);
         }
+
+        return new McpToolResult(Format(report, $"Saved {files.Count} file(s) in {folder}: {string.Join(", ", files.Select(f => f.Name))}."));
     }
 
     private static async Task<string?> ReadAsync(VfsRouter router, string file, CancellationToken ct)
@@ -442,99 +513,88 @@ public static class McpDashboardTools
     }
 
     private const string GuideText = """
-        # Commander4K dashboards (c4k.dir)
+        # Commander4K dashboards (.c4k files)
 
-        A folder becomes a dashboard through a `c4k.dir` file (JSON, comments allowed) in it. `preview` is what quick view (Ctrl+Q)
-        shows when the cursor is on the folder; `enter` is what Enter opens (Esc then shows the plain files). A tile-less
-        `"preview": "dashboard"` shares the `enter` dashboard's tiles. Paths in `open` and `image` are relative to the folder;
-        `~` is the user's profile.
+        A folder's look is defined by `*.c4k` files in it, one item per file (JSON; comments are allowed in files the user writes, but files
+        saved through save_dashboard are written without comments). No files: an ordinary folder. One file: its view fills the panel.
+        Two or more: an automatic dashboard, one tile per file, in the natural order of the file names (`1 cpu.c4k` before `2 ram.c4k`
+        before `10 disks.c4k`). There are no headings and no order keys: to reorder, rename the files (number them). Hidden files
+        (leading dot) and files over 256 KB are ignored; at most 50 files are used. Paths in `open`, `image` and `file` are relative
+        to the folder; `~` is the user's profile. Use `get_dashboard` to see what exists and `save_dashboard` to write; an item's `name` is its file name.
 
         ```json
-        {
-          "title": "Infrastruktura",
-          "description": "Serwery, kopie i certyfikaty — stan na żywo.",
-          "enter": { "view": "dashboard", "tiles": [ … ] },
-          "preview": "dashboard"
-        }
+        { "title": "Serwery", "description": "Stan na żywo.", "card": "api", "size": "wide", "refresh": "30s", "api": { "url": "https://…" } }
         ```
 
-        ## Tile fields
-        - `title` (required, unique within the dashboard), `subtitle`, `icon` (one emoji or symbol), `image` (a picture file).
-        - What a click does — at most one: `open` (a path: folder, file, sftp://, \\server\share), `url` (http/https), `run` (a command;
-          needs the user's trust).
-        - `card`: makes the tile live (see below). `refresh`: "30s", "5m", "1h" (≥ 2 s; only while visible). `options`: object for the card.
-        - `size`: the footprint on the grid (columns × rows): `small` 1×1 (default), `wide` 2×1, `tall` 1×2, `large` 2×2, `huge` 3×2,
+        ## Item keys
+        - `title` (default: the file name), `description`, `icon` (one emoji or symbol), `image` (a picture file).
+        - What the item is, one of: `view` (`files`, `gallery`, `dashboard`, `notes`, `markdown`), `plugin` (+ `preview`/`panel`, `options`),
+          `open` (a path: folder, file, sftp://, \\server\share; + `user`, `keyFile`), `url` (http/https), `run` (a command; needs the
+          user's trust), `panel`.
+        - `folder`: the folder the item is about, instead of the one that holds the file (relative to it).
+        - `card`: makes the tile live (see below). `refresh`: "30s", "5m", "1h" (at least 2 s; only while visible). `options`: object for the card.
+        - `size`: the tile's footprint (columns x rows): `small` 1x1 (default), `wide` 2x1, `tall` 1x2, `large` 2x2, `huge` 3x2,
           `full` (whole row, 1 high).
-        - `heading: true`: a section heading across the whole row (title in accent capitals, subtitle as a muted line, a rule below).
-          It is not a tile; it groups the tiles after it.
 
         ## The grid
-        Columns = panel width / 252 px (each at least 240 px, gap 12 px): about 2 on a half-screen panel, 3–4 on a wide one, up to 8.
-        Tiles are placed in order; each takes the first free cell at or after the previous tile's row, so small tiles fill a hole beside
-        a tall one. Spans wider than the grid shrink to it. A row is at least 136 px high and grows with its content. Taller cards show
-        more lines, a taller chart and bigger thumbnails. check_dashboard draws the grid at 2, 3 and 4 columns — aim for no empty cells at 3–4.
+        Columns = panel width / 252 px (each at least 240 px, gap 12 px): about 2 on a half-screen panel, 3-4 on a wide one, up to 8.
+        Tiles are placed in file-name order; each takes the first free cell at or after the previous tile's row, so small tiles fill a hole
+        beside a tall one. Spans wider than the grid shrink to it. A row is at least 136 px high and grows with its content. check_dashboard
+        draws the grid at 2, 3 and 4 columns; aim for no empty cells at 3-4.
 
         ## Card types (`card`)
-        - `true` — whatever quick view would show for `open` (including that folder's own c4k.dir).
+        - `true`: whatever quick view would show for `open` (including that folder's own .c4k files).
         - Folder views (need `open` with a folder): `files` (counts, size, last change), `gallery` (4 thumbnails), `notes` (Markdown notes:
           count, recent), `markdown` (a folder's main note), `dashboard` (another dashboard: its title and tiles; a click opens it in place,
-          with back navigation — use it to link sub-dashboards).
-        - `api` — values from an HTTP JSON API:
+          with back navigation; use it to link sub-dashboards).
+        - `api`: values from an HTTP JSON API:
           `"api": { "url", "method" (GET), "headers", "body", "contentType", "fields": [ { "path": "a.b" | "items[0].name", "label",
           "as": "value" | "chart" | "status", "unit", "ok": ["ok","green"] } ] }`. `chart` adds a point on every refresh (a live line chart);
           `status` colours the card (ok values green, others red). Secrets: write `{secret:name}` in a header or the body (never in the url);
           the user enters the value once, it is stored encrypted. Methods other than GET/HEAD wait for the user's trust.
-        - `ssh` — CPU, memory, load, disks and uptime of a Linux server: `open` = sftp://user@host/, `options.keyFile`, `options.user`.
-          Waits for the user's trust.
+        - `ssh`: CPU, memory, load, disks and uptime of a Linux server: `open` = sftp://user@host/, `user`, `keyFile`. Waits for the user's trust.
         - Widgets (no folder needed): `clock` (`options.timeZone`: IANA or Windows id; refreshes every 15 s), `note` (`options.text`, or the
           start of the text file in `open`), `disks` (used/free space of this PC's disks, or of the disk holding `open`; every minute;
-          amber ≥ 90 %, red ≥ 95 %).
-        - A plugin id (`official.json-preview` or `plugin/preview`) — the plugin draws the card for `open`; see the list at the end.
+          amber from 90 %, red from 95 %).
+        - A plugin id (`official.json-preview` or `plugin/preview`): the plugin draws the card for `open`; see the list at the end.
         - A panel id (`builtin.sysinfo`: OS, memory with a chart, system disk, uptime; `builtin.taskmanager`: processes and the
-          biggest by memory; `plugin/panel` for plugin panels with `"card": true`) — every panel is a widget, no `open` needed; its Open
-          button opens the panel beside the dashboard. `card: true` on a folder whose c4k.dir opens a panel shows that panel's widget.
+          biggest by memory; `plugin/panel` for plugin panels with `"card": true`): every panel is a widget, no `open` needed.
 
         A card whose answer has exactly one value is drawn as a KPI: the number large (coloured by its status), the label under it.
         So an `api` card with one field makes a clean KPI tile; give it `size: small` and a short title.
 
+        ## Trust
+        `run`, POST-like `api`, `ssh` and sftp/ftp cards stay locked ("Zezwól") until the user trusts the file; save_dashboard never trusts.
+        Tell the user which files wait. Trust is bound to what it unlocks, so resizing or retitling keeps it. Never put tokens or passwords
+        in a file; use `{secret:name}`.
+
         ## Design rules for a professional dashboard
         1. Start with a purpose: one dashboard answers one question ("is production healthy?", "where is project X?").
-        2. Structure top-down: a row of 3–4 KPI tiles (small) → the main chart or list (huge/large) → details (small/wide) → notes and
-           links (full or wide). Open each group with a `heading` tile.
-        3. Keep it to one screen: 6–16 tiles. Put more into sub-dashboards (`card: "dashboard"` tiles pointing at subfolders).
+        2. Order by file name, top-down: 3-4 KPI tiles (small), then the main chart or list (huge/large), then details (small/wide), then
+           notes and links (full or wide). Number the names with gaps (`10 ...`, `20 ...`) so files can be inserted later.
+        3. Keep it to one screen: 6-16 tiles. Put more into sub-dashboards (`card: "dashboard"` items pointing at subfolders).
         4. Fill rows: sizes in a row should add up to the column count at 4 and 3 columns (check the picture). Pair a `tall` tile with
            two `small` ones beside it; a `large` with two `small` or one `wide` below it.
-        5. Titles: 1–3 words, sentence case, no trailing punctuation; put details into `subtitle`. Use the user's language (Polish UI).
-        6. Icons: one consistent family (e.g. all emoji symbols), one per tile; headings may have one too.
-        7. Refresh by how fast data changes: health/status 30s–1m, metrics 1–5m, files and notes once (no refresh).
+        5. Titles: 1-3 words, sentence case, no trailing punctuation; put details into `description`. Use the user's language (Polish UI).
+        6. Icons: one consistent family (e.g. all emoji symbols), one per tile.
+        7. Refresh by how fast data changes: health/status 30s-1m, metrics 1-5m, files and notes once (no refresh).
         8. Status colours carry meaning only: use `status` fields and `ok` lists for things that can fail; plain values for the rest.
-        9. Never put tokens or passwords in the file; use `{secret:name}`.
-        10. Prefer read-only cards (GET, folder views, widgets); `run`, `ssh` and POST cards need the user's trust — say so to the user.
+        9. Prefer read-only cards (GET, folder views, widgets); `run`, `ssh` and POST cards need the user's trust, so say so to the user.
+        10. A folder that already has exactly one .c4k file has that as its view: do not add files next to it unless the user asks.
 
-        ## Recipes
-        Operations (4 columns):
-        ```json
-        { "title": "Produkcja", "description": "Stan usług i serwerów",
-          "enter": { "view": "dashboard", "tiles": [
-            { "title": "Stan usług", "heading": true, "icon": "🛰" },
-            { "title": "API", "card": "api", "refresh": "30s", "api": { "url": "https://api.example.com/health",
-              "fields": [ { "path": "status", "label": "Status", "as": "status", "ok": ["ok"] } ] } },
-            { "title": "Czas odpowiedzi", "card": "api", "refresh": "1m", "api": { "url": "https://api.example.com/metrics",
-              "fields": [ { "path": "latency_ms", "label": "ms (p95)" } ] } },
-            { "title": "Kolejka", "card": "api", "refresh": "1m", "api": { "url": "https://api.example.com/queue",
-              "fields": [ { "path": "pending", "label": "zadań w kolejce" } ] } },
-            { "title": "Dyski", "card": "disks" },
-            { "title": "Ruch", "card": "api", "size": "huge", "refresh": "1m", "api": { "url": "https://api.example.com/metrics",
-              "fields": [ { "path": "rps", "label": "Żądania/s", "as": "chart" } ] } },
-            { "title": "VPS", "card": "ssh", "size": "tall", "open": "sftp://deploy@vps.example.com/", "refresh": "30s" },
-            { "title": "Dokumentacja", "heading": true, "icon": "📚" },
-            { "title": "Runbook", "open": "docs/runbook.md", "card": true, "size": "wide" },
-            { "title": "Dyżur", "card": "note", "size": "wide", "options": { "text": "Ten tydzień: Ania (tel. wewn. 214)." } }
-          ] },
-          "preview": "dashboard" }
-        ```
-        Project: heading "Projekt" → `files` card on src (small), `markdown` card on docs (wide), `gallery` on design/ (small) →
-        heading "Linki" → url tiles (small) for the repository, CI and the tracker → a `note` (full) with the next milestone.
+        ## Recipe: operations (4 columns)
+        Files (name: content):
+        - `10 API.c4k`: `{ "icon": "🛰", "card": "api", "refresh": "30s", "api": { "url": "https://api.example.com/health", "fields": [ { "path": "status", "label": "Status", "as": "status", "ok": ["ok"] } ] } }`
+        - `20 Czas odpowiedzi.c4k`: `{ "card": "api", "refresh": "1m", "api": { "url": "https://api.example.com/metrics", "fields": [ { "path": "latency_ms", "label": "ms (p95)" } ] } }`
+        - `30 Kolejka.c4k`: `{ "card": "api", "refresh": "1m", "api": { "url": "https://api.example.com/queue", "fields": [ { "path": "pending", "label": "zadań w kolejce" } ] } }`
+        - `40 Dyski.c4k`: `{ "card": "disks" }`
+        - `50 Ruch.c4k`: `{ "card": "api", "size": "huge", "refresh": "1m", "api": { "url": "https://api.example.com/metrics", "fields": [ { "path": "rps", "label": "Żądania/s", "as": "chart" } ] } }`
+        - `60 VPS.c4k`: `{ "card": "ssh", "size": "tall", "open": "sftp://deploy@vps.example.com/", "refresh": "30s" }`
+        - `70 Runbook.c4k`: `{ "open": "docs/runbook.md", "card": true, "size": "wide" }`
+        - `80 Dyżur.c4k`: `{ "card": "note", "size": "wide", "options": { "text": "Ten tydzień: Ania (tel. wewn. 214)." } }`
+
+        Project: `files` card on src (small), `markdown` card on docs (wide), `gallery` on design/ (small), url items (small) for the
+        repository, CI and the tracker, a `note` (full) with the next milestone.
         Home: clocks for two time zones (small), `disks` (tall), `gallery` of photos (large), shortcuts (small).
         """;
 }

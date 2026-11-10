@@ -3,7 +3,7 @@ namespace Commander4K.PluginSdk;
 /// <summary>
 /// A preview that can tell whether a whole folder suits it. When the cursor rests on a folder, the host reads one bounded
 /// listing and asks every such preview; the best answer becomes a hint ("switch to the gallery?"), and accepting it
-/// writes the folder's <c>c4k.dir</c>.
+/// writes a <c>.c4k</c> item into the folder.
 /// </summary>
 public interface IFolderSuggestingPreview : IPreviewPlugin
 {
@@ -17,7 +17,7 @@ public sealed record FolderSnapshot(VfsEntry Folder, IReadOnlyList<VfsEntry> Ent
 
 /// <param name="Score">0..1; the host ignores answers below 0.5 and shows the highest.</param>
 /// <param name="Message">The hint text, already in the user's language.</param>
-/// <param name="View">What the folder's <c>c4k.dir</c> gets as its <c>enter</c> and <c>preview</c> action.</param>
+/// <param name="View">What the folder's new <c>.c4k</c> item names (a view, or a plugin with its preview and options).</param>
 public sealed record FolderSuggestion(double Score, string Message, FolderSuggestionView View);
 
 /// <summary>Either a built-in view (<see cref="View"/>: <c>gallery</c>, <c>notes</c>…) or a plugin preview.</summary>

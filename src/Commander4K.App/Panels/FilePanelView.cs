@@ -18,7 +18,7 @@ namespace Commander4K.App.Panels;
 
 public sealed record AuthenticationRequest(PanelTab Tab, VfsAuthenticationRequiredException Exception);
 
-/// <summary>What entering a folder shows: always the files, the folder's own view when its c4k.dir has one, or always a view.</summary>
+/// <summary>What entering a folder shows: always the files, the folder's own view when it has .c4k items, or always a view.</summary>
 public enum FolderViewMode
 {
     Files,
@@ -42,7 +42,7 @@ public sealed class FilePanelView : ViewBase
 
     private readonly Stack<(IPanelModeView View, bool IsFolderView)> _returnModes = [];
 
-    /// <summary>The mode on screen is the view of the panel's folder (a c4k.dir panel, a built-in folder view).</summary>
+    /// <summary>The mode on screen is the view of the panel's folder (a .c4k panel item, a built-in folder view).</summary>
     private bool _modeIsFolderView;
 
     private readonly HashSet<IPanelModeView> _wiredModes = [];
@@ -201,7 +201,7 @@ public sealed class FilePanelView : ViewBase
         return null;
     }
 
-    /// <summary>The view on screen belongs to the panel's folder (its c4k.dir, an app page) rather than being opened by itself.</summary>
+    /// <summary>The view on screen belongs to the panel's folder (its .c4k item, an app page) rather than being opened by itself.</summary>
     public bool ShowsFolderView => IsFolderView;
 
     /// <summary>The view on screen belongs to the folder: the switch toggles between it and the files.</summary>
@@ -425,7 +425,7 @@ public sealed class FilePanelView : ViewBase
     /// <summary>Right click with the Windows context menu enabled; the window shows the menu for this entry (or the marked set).</summary>
     public event Action<VfsEntry>? ContextMenuRequested;
 
-    /// <summary>Enter on a folder, drive or share; the window decides (a <c>c4k.dir</c> may open something else) and calls <see cref="NavigateAsync"/>.</summary>
+    /// <summary>Enter on a folder, drive or share; the window decides (a <c>.c4k</c> item may open something else) and calls <see cref="NavigateAsync"/>.</summary>
     public event Action<VfsEntry>? FolderEntering;
 
     /// <summary>Enter on the "+ Add network connection" row.</summary>
@@ -646,7 +646,7 @@ public sealed class FilePanelView : ViewBase
             case VfsEntryKind.Service:
                 break;
             case VfsEntryKind.Directory or VfsEntryKind.Drive or VfsEntryKind.Share when FolderEntering is not null:
-                FolderEntering(entry); // The window checks the folder's c4k.dir first.
+                FolderEntering(entry); // The window checks the folder's .c4k files first.
                 break;
             case var _ when entry.IsContainer:
                 _ = ActiveTab.NavigateAsync(entry.Path);
@@ -751,11 +751,11 @@ public sealed class FilePanelView : ViewBase
         }
     }
 
-    /// <summary>The empty-folder card (also shown by the quick view): what the folder should show, saved in c4k.dir.</summary>
+    /// <summary>The empty-folder card (also shown by the quick view): what the folder should show, saved as a .c4k file.</summary>
     internal static Border EmptyFolderCard(SkinBrushes brushes, Action configure) => Ds.EmptyState(
         brushes,
         Loc.T("Pusty folder"),
-        Loc.T("Ten folder jest pusty. Wybierz, co ma pokazywać — ustawienia zostaną zapisane w pliku c4k.dir."),
+        Loc.T("Ten folder jest pusty. Wybierz, co ma pokazywać — wybór zostanie zapisany w pliku .c4k."),
         Loc.T("Skonfiguruj jako specjalny folder…"),
         configure);
 
@@ -815,7 +815,7 @@ public sealed class FilePanelView : ViewBase
 
         if (tab.Marked.Count == 0 && tab.CurrentEntry is { } current && FileIcons.IsFolderConfig(current))
         {
-            return (Loc.T("Enter — pokaż widok folderu · F4 — edytuj · Shift+Enter — otwórz jako tekst"), null);
+            return (Loc.T("Enter — otwórz element .c4k · F4 — edytuj · Shift+Enter — otwórz jako tekst"), null);
         }
 
         int files = 0, containers = 0;
@@ -998,7 +998,7 @@ public sealed class FilePanelView : ViewBase
         _locationButton.Foreground = b.HeaderForeground;
         _locationButton.FontSize = b.FontSize;
         ToolTip.SetTip(_locationButton, Loc.T("Zmień lokalizację panelu: dyski, Ten komputer, sieć, połączenia SSH/FTP (Alt+F1 / Alt+F2)"));
-        ToolTip.SetTip(_modeSwitch, Loc.T("Pliki: zawsze lista plików · Auto: widok z c4k.dir folderu lub nadrzędnego, a bez niego pliki · Widok: zawsze widok folderu"));
+        ToolTip.SetTip(_modeSwitch, Loc.T("Pliki: zawsze lista plików · Auto: widok z plików .c4k folderu lub nadrzędnego, a bez niego pliki · Widok: zawsze widok folderu"));
 
         UpdateModeButtons();
         ApplyChrome();
@@ -1044,7 +1044,7 @@ public sealed class FilePanelView : ViewBase
         UpdateViewDot();
     }
 
-    /// <summary>A dot on "Widok" while the listed folder has its own c4k.dir: the switch has a view to show.</summary>
+    /// <summary>A dot on "Widok" while the listed folder has its own .c4k files: the switch has a view to show.</summary>
     private void UpdateViewDot()
     {
         if ((_modeSwitch?.Content as Border)?.Child is not Panel buttons || buttons.Children.OfType<Button>().LastOrDefault() is not { } view)
@@ -1065,7 +1065,7 @@ public sealed class FilePanelView : ViewBase
 
         var has = ActiveTab.Entries.Any(entry => FileIcons.IsFolderConfig(entry));
         _viewDot.IsVisible = has;
-        ToolTip.SetTip(view, has ? Loc.T("Ten folder ma własny widok (c4k.dir)") : null);
+        ToolTip.SetTip(view, has ? Loc.T("Ten folder ma własny widok (pliki .c4k)") : null);
     }
 
     /// <summary>What entering a folder shows in this panel (Pliki · Auto · Widok on the path bar).</summary>

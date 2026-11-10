@@ -44,7 +44,10 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
 
     /// <param name="optionsJson"><c>{ "user": "…", "keyFile": "~/.ssh/id_ed25519" }</c> from the tile.</param>
     /// <param name="resolvePath">Resolves a relative <c>keyFile</c> against the tile's folder; without it only <c>~</c> is expanded.</param>
-    public async Task<PreviewCard> LoadCardAsync(string sftpPath, string? optionsJson, PreviewCard? previous, CancellationToken cancellationToken, Func<string, string>? resolvePath = null)
+    /// <param name="user">The item's own <c>user</c>, used when the options name none.</param>
+    /// <param name="keyFile">The item's own <c>keyFile</c>, used when the options name none.</param>
+    public async Task<PreviewCard> LoadCardAsync(string sftpPath, string? optionsJson, PreviewCard? previous, CancellationToken cancellationToken,
+        Func<string, string>? resolvePath = null, string? user = null, string? keyFile = null)
     {
         CardAction[] actions = [new(Loc.T("Otwórz"), sftpPath), new(Loc.T("Odśwież"), CardActions.Refresh)];
         RemoteEndpoint endpoint;
@@ -57,7 +60,7 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             return Card(CardStatus.Error, ex.Message, [], []);
         }
 
-        var login = Login(optionsJson, endpoint, resolvePath) ?? remote.LoginFor(sftpPath);
+        var login = Login(optionsJson, user, keyFile, endpoint, resolvePath) ?? remote.LoginFor(sftpPath);
         if (login is null)
         {
             return Card(CardStatus.Error, Loc.T("Wymaga logowania."), [], actions);
@@ -184,18 +187,22 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
         return Task.CompletedTask;
     }
 
-    private static RemoteLogin? Login(string? optionsJson, RemoteEndpoint endpoint, Func<string, string>? resolvePath)
+    private static RemoteLogin? Login(string? optionsJson, string? itemUser, string? itemKeyFile, RemoteEndpoint endpoint, Func<string, string>? resolvePath)
     {
-        if (optionsJson is null)
+        string? optionUser = null;
+        string? optionKey = null;
+        if (optionsJson is not null)
         {
-            return null;
+            using var options = JsonDocument.Parse(optionsJson);
+            string? Text(string name) => options.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            optionUser = Text("user");
+            optionKey = Text("keyFile");
         }
 
-        using var options = JsonDocument.Parse(optionsJson);
-        string? Text(string name) => options.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-        var keyFile = Text("keyFile");
-        var user = Text("user") ?? endpoint.UserName;
-        if (keyFile is null && Text("user") is null)
+        var keyFile = optionKey ?? itemKeyFile;
+        var named = optionUser ?? itemUser;
+        var user = named ?? endpoint.UserName;
+        if (keyFile is null && named is null)
         {
             return null;
         }

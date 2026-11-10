@@ -9,7 +9,7 @@ using Commander4K.PluginSdk;
 namespace Commander4K.Plugins.BuiltIn.Dashboard;
 
 /// <summary>
-/// Cards and the view for an HTTP API request from a <c>c4k.dir</c>: the request goes through the host's HTTP client
+/// Cards and the view for an HTTP API request from a <c>.c4k</c> item: the request goes through the host's HTTP client
 /// (net permission, audit), <c>{secret:name}</c> placeholders are filled from the <see cref="SecretStore"/> only for
 /// the host the secret belongs to, and the chosen fields are shown as values, chart points or status colours.
 /// </summary>

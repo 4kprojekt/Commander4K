@@ -46,6 +46,28 @@ public sealed class PanelTab
 
     public string? FolderViewOrigin { get; private set; }
 
+    /// <summary>
+    /// The folder holding the <c>.c4k</c> whose <c>open</c> brought this tab here (a server, another folder); Esc and Pliki
+    /// return to it. Kept on a failed connection and while the tab stays on the target or below it; any other navigation drops it.
+    /// </summary>
+    public string? Origin { get; private set; }
+
+    private string? _originTarget;
+
+    public void SetOrigin(string origin, string target)
+    {
+        Origin = origin;
+        _originTarget = target.TrimEnd('\\', '/');
+    }
+
+    private bool IsWithinOriginTarget(string path)
+    {
+        var trimmed = path.TrimEnd('\\', '/');
+        return _originTarget is { } target
+            && (string.Equals(trimmed, target, StringComparison.OrdinalIgnoreCase)
+                || (trimmed.StartsWith(target, StringComparison.OrdinalIgnoreCase) && trimmed[target.Length] is '\\' or '/'));
+    }
+
     public string? FolderViewPlugin { get; private set; }
 
     public void SetFolderViewInfo(string? folder, string? plugin)
@@ -297,6 +319,12 @@ public sealed class PanelTab
 
     private async Task LoadAsync(string path, string? focusName, bool preserveState)
     {
+        if (Origin is not null && !IsWithinOriginTarget(path))
+        {
+            Origin = null;
+            _originTarget = null;
+        }
+
         _listing?.Cancel();
         StopWatching();
         var cts = new CancellationTokenSource();

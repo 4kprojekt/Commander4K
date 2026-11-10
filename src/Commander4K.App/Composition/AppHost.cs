@@ -97,7 +97,7 @@ public sealed class AppHost : IAsyncDisposable
         SearchProviders = [Registry, FileSearch];
         Updates = new UpdateService(Http);
         PluginCatalog = new PluginCatalogService(Http, Path.Combine(dataDirectory, "data", "plugin-catalog.json"));
-        FolderTrust = new FolderTrustStore(Path.Combine(config.ConfigDirectory, "trusted-folders.json"));
+        FolderTrust = new C4kTrustStore(Path.Combine(config.ConfigDirectory, "trusted-folders.json"));
         Secrets = new Core.Security.SecretStore(Path.Combine(config.ConfigDirectory, "secrets.json"));
         _baseSettings = Core.Configuration.SettingsCatalog.Create(
             () => [.. Skins.Skins.Select(s => new SettingChoice(s.Id, s.DisplayName))],
@@ -308,23 +308,23 @@ public sealed class AppHost : IAsyncDisposable
 
     public UpdateService Updates { get; }
 
-    /// <summary>Official plugins from the repository (<c>plugins-catalog/catalog.json</c>), installable from the plugin manager and from <c>c4k.dir</c>.</summary>
+    /// <summary>Official plugins from the repository (<c>plugins-catalog/catalog.json</c>), installable from the plugin manager and from <c>.c4k</c> files.</summary>
     public PluginCatalogService PluginCatalog { get; }
 
     /// <summary>Downloads and installs a catalog plugin with the window's consent dialogs (set by the window).</summary>
     public Func<string, Task>? InstallFromCatalog { get; set; }
 
-    /// <summary><c>c4k.dir</c> files whose scripts the user allowed.</summary>
-    public FolderTrustStore FolderTrust { get; }
+    /// <summary><c>.c4k</c> files whose commands and requests the user allowed.</summary>
+    public C4kTrustStore FolderTrust { get; }
 
-    /// <summary>The folder's <c>c4k.dir</c> when the setting is on; <c>null</c> otherwise or when there is none.</summary>
-    public Task<FolderConfig?> ReadFolderConfigAsync(string folder, CancellationToken cancellationToken) =>
-        Settings.FolderConfigs ? FolderConfig.ReadAsync(Router, folder, TimeSpan.FromSeconds(2), cancellationToken) : Task.FromResult<FolderConfig?>(null);
+    /// <summary>The folder's <c>*.c4k</c> items when the setting is on; <c>null</c> otherwise or when there are none.</summary>
+    public Task<C4kFolder?> ReadFolderAsync(string folder, CancellationToken cancellationToken) =>
+        Settings.FolderConfigs ? C4kReader.ReadAsync(Router, folder, TimeSpan.FromSeconds(2), cancellationToken) : Task.FromResult<C4kFolder?>(null);
 
-    /// <summary>Tokens that <c>c4k.dir</c> requests name as <c>{secret:name}</c> (<c>config/secrets.json</c>, DPAPI).</summary>
+    /// <summary>Tokens that <c>.c4k</c> requests name as <c>{secret:name}</c> (<c>config/secrets.json</c>, DPAPI).</summary>
     public Core.Security.SecretStore Secrets { get; }
 
-    /// <summary>API cards and the API view of <c>c4k.dir</c> dashboards.</summary>
+    /// <summary>API cards and the API view of <c>.c4k</c> dashboards.</summary>
     public Plugins.BuiltIn.Dashboard.ApiCards ApiCards => _apiCards ??= new(Secrets);
 
     private Plugins.BuiltIn.Dashboard.ApiCards? _apiCards;
@@ -336,7 +336,7 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>Card sources for a dashboard, over the preview and panel plugins loaded right now.</summary>
     public Plugins.BuiltIn.Dashboard.CardResolver CreateCardResolver() =>
-        new(PreviewPlugins, PanelPlugins, HostFor, ReadFolderConfigAsync, id => PluginCatalog.Find(id) is not null, ApiCards, SshMonitor);
+        new(PreviewPlugins, PanelPlugins, HostFor, ReadFolderAsync, id => PluginCatalog.Find(id) is not null, ApiCards, SshMonitor);
 
     private readonly IReadOnlyList<SettingDescriptor> _baseSettings;
 

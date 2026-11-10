@@ -56,7 +56,7 @@ public static class PanelSorting
         return order.Descending ? -result : result;
     }
 
-    /// <summary>Groups, in order: "..", actions, drives, folders, shares, hosts, the folder's c4k.dir, files ("This PC" mixes all of them).</summary>
+    /// <summary>Groups, in order: "..", actions, drives, folders, shares, hosts, the folder's .c4k items, files ("This PC" mixes all of them).</summary>
     private static int Rank(VfsEntry entry) => entry.Kind switch
     {
         VfsEntryKind.ParentLink => 0,
