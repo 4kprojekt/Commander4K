@@ -60,6 +60,18 @@ public sealed class PanelTab
         _originTarget = target.TrimEnd('\\', '/');
     }
 
+    /// <summary>The origin, cleared: going back to it ends the detour.</summary>
+    public string? TakeOrigin()
+    {
+        var origin = Origin;
+        Origin = null;
+        _originTarget = null;
+        return origin;
+    }
+
+    /// <summary>The last folder whose listing worked: Esc on a failed listing (any VFS plugin) goes back there.</summary>
+    public string? LastGoodPath { get; private set; }
+
     private bool IsWithinOriginTarget(string path)
     {
         var trimmed = path.TrimEnd('\\', '/');
@@ -319,7 +331,8 @@ public sealed class PanelTab
 
     private async Task LoadAsync(string path, string? focusName, bool preserveState)
     {
-        if (Origin is not null && !IsWithinOriginTarget(path))
+        // Leaving a failed location (".." from an unreachable server) keeps the origin; only leaving a working one drops it.
+        if (Origin is not null && Error is null && !IsLoading && !IsWithinOriginTarget(path))
         {
             Origin = null;
             _originTarget = null;
@@ -405,6 +418,7 @@ public sealed class PanelTab
             IsLoading = false;
             ColumnData.Start(Entries, TopIndex, clear: false);
             Remember(path, all);
+            LastGoodPath = path;
             StartWatching(path, generation);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)

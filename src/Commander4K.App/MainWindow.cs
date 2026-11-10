@@ -1098,11 +1098,16 @@ public sealed class MainWindow : Window
             var tab = panel.ActiveTab;
             await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true);
         }
-        else if (panel.ActiveTab.Origin is { } origin)
+        else if (ReturnPath(panel.ActiveTab) is { } back)
         {
-            await panel.ActiveTab.NavigateAsync(origin); // Pliki after a .c4k "open": the files of the folder holding it
+            await panel.ActiveTab.NavigateAsync(back); // Pliki after a .c4k "open" or a failed listing: the folder to go back to
         }
     }
+
+    /// <summary>Where Esc and Pliki go back to: the origin of a .c4k "open" (consumed), else, on a failed listing, the last folder that listed.</summary>
+    private static string? ReturnPath(PanelTab tab) =>
+        tab.TakeOrigin()
+        ?? (tab.Error is not null && tab.LastGoodPath is { } good && !SamePath(good, tab.Path) ? good : null);
 
     private async Task RestoreTabFolderModeAsync(FilePanelView panel)
     {
@@ -4426,12 +4431,13 @@ public sealed class MainWindow : Window
     private void CancelCurrent()
     {
         var tab = _active.ActiveTab;
-        if (tab.Origin is { } origin && tab.Marked.Count == 0 && _active.Mode is null && !_host!.Keymap.IsChordPending && string.IsNullOrEmpty(_commandLine.Text))
+        if (tab.Marked.Count == 0 && _active.Mode is null && !_host!.Keymap.IsChordPending && string.IsNullOrEmpty(_commandLine.Text)
+            && ReturnPath(tab) is { } back)
         {
-            // A .c4k "open" brought the tab here (a server, another folder): Esc returns to the files of the folder holding
-            // that file. Pliki, so that re-selecting the tab or Auto does not perform the same item (and reconnect) again.
+            // A .c4k "open" brought the tab here, or the listing failed: Esc returns to the files of the folder holding that
+            // file (else the last folder that listed). Pliki, so re-selecting the tab or Auto does not reconnect again.
             _active.FolderMode = FolderViewMode.Files;
-            _ = tab.NavigateAsync(origin);
+            _ = tab.NavigateAsync(back);
         }
         else if (tab.IsLoading)
         {

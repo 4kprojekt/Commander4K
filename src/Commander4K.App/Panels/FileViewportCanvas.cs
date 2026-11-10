@@ -192,7 +192,8 @@ public sealed class FileViewportCanvas : Control
 
         if (tab.Error is { } error)
         {
-            DrawCentered(context, b, rows, error, b.Error);
+            var canGoBack = tab.Origin is not null || (tab.LastGoodPath is { } good && !string.Equals(good, tab.Path, StringComparison.OrdinalIgnoreCase));
+            DrawCentered(context, b, rows, canGoBack ? error + "\n" + Loc.T("Esc — powrót do plików") : error, b.Error);
         }
     }
 
