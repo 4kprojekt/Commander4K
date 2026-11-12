@@ -63,7 +63,7 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
         var endpoint = RemoteEndpoint.Parse(path);
         return endpoint.Password is not null ? new RemoteLogin(endpoint.UserName ?? string.Empty, endpoint.Password)
             : _logins.GetValueOrDefault(endpoint.SessionKey)
-            ?? (RemoteLogin.DefaultKeyFiles().Count > 0 ? new RemoteLogin(endpoint.UserName ?? Environment.UserName) : null);
+            ?? (RemoteLogin.DefaultKeyFiles(endpoint.Host).Count > 0 ? new RemoteLogin(endpoint.UserName ?? RemoteLogin.DefaultUser(endpoint.Host)) : null);
     }
 
     /// <summary>The user written in a remote path (<c>sftp://me@host/…</c>); <c>null</c> when it has none or is not one.</summary>
@@ -247,10 +247,11 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
             {
                 login = new RemoteLogin("anonymous", "anonymous@");
             }
-            else if (endpoint.Scheme == RemoteEndpoint.Sftp && RemoteLogin.DefaultKeyFiles().Count > 0)
+            else if (endpoint.Scheme == RemoteEndpoint.Sftp && RemoteLogin.DefaultKeyFiles(endpoint.Host).Count > 0)
             {
-                // Like ssh: try the default keys (as the given user, else the Windows user); a refusal asks for a login.
-                login = new RemoteLogin(endpoint.UserName ?? Environment.UserName);
+                // Like ssh: try the host's keys from ~/.ssh/config and the default keys (as the given user, else the
+                // config's, else the Windows user); a refusal asks for a login.
+                login = new RemoteLogin(endpoint.UserName ?? RemoteLogin.DefaultUser(endpoint.Host));
             }
             else
             {

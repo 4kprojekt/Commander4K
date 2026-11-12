@@ -161,7 +161,14 @@ public sealed class PluginDialog : DialogWindow<IReadOnlyDictionary<string, stri
 
     private async Task BrowseAsync(DialogField field, TextBox target)
     {
-        var current = target.Text?.Trim() is { Length: > 0 } text ? (field.Type == DialogFieldType.Folder ? text : Path.GetDirectoryName(text)) : null;
+        var typed = target.Text?.Trim() is { Length: > 0 } text ? text : field.Placeholder ?? string.Empty;
+        if (typed.StartsWith('~'))
+        {
+            // "~/.ssh/id_ed25519" should open the picker in the user's .ssh folder.
+            typed = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + typed[1..].Replace('/', '\\');
+        }
+
+        var current = typed.Length > 0 ? (field.Type == DialogFieldType.Folder ? typed : Path.GetDirectoryName(typed)) : null;
         var start = current is not null && Directory.Exists(current) ? await StorageProvider.TryGetFolderFromPathAsync(current) : null;
         string? picked;
         if (field.Type == DialogFieldType.Folder)

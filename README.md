@@ -112,6 +112,30 @@ The tiles appear at once. The pictures are small WebP thumbnails (256 px on the 
 - `"panel"` binds any panel to a folder: `Enter` opens the system information (OS, hardware, CPU, memory, disks, network, security, updates, start-up). The path bar's *Pliki* (or `Esc`) shows the folder's files again.
 - Every panel is also a widget: on a dashboard, `"card": "builtin.sysinfo"` (processor, memory with a chart, system disk, uptime) and `"card": "builtin.taskmanager"` (processes and the biggest ones) draw it as a small card. Plugin panels can do the same (`"card": true` in their manifest).
 
+### A dashboard from three small files
+
+Put one `.c4k` file in a folder and that item is the folder's view. Put two or more and the folder becomes a dashboard with one tile per file, ordered by file name (`1-…` before `2-…` before `10-…`). Rename a file to move its tile, delete it to remove the tile. There is no editor and no settings window: for e-mail, a server and a favourite folder on one screen, create these three files in a folder called `Start`:
+
+`Start/1-poczta.c4k`:
+
+```json
+{ "title": "Poczta", "plugin": "official.mail", "card": true, "folder": "../Poczta", "open": "../Poczta", "refresh": "30s" }
+```
+
+`Start/2-serwer.c4k`:
+
+```json
+{ "title": "Serwer", "card": "ssh", "refresh": "10s", "open": "sftp://admin@192.168.1.10/home/admin", "options": { "keyFile": "~/.ssh/id_ed25519" } }
+```
+
+`Start/3-projekty.c4k`:
+
+```json
+{ "title": "Projekty", "icon": "📂", "open": "D:\\Projects" }
+```
+
+`Enter` on `Start` shows the mailbox summary, the server's CPU, memory and disks, and a tile that opens `D:\Projects`. `Esc`, or *Pliki* in the path bar's **Pliki · Auto · Widok** switch, goes back to the plain file list. The mail card needs the `official.mail` plugin (installed from the catalog with one consent) and an account folder like the one in [A mailbox](#a-mailbox). The SSH card and anything that runs a command ask for trust once per file ("Zezwól"). Full reference: [.c4k files](docs/plugins.md#c4k-files).
+
 ### A dashboard of live cards
 
 ![A dashboard with an SSH server card, a weather API card, this PC, a photo gallery, notes, a README and shortcut tiles](docs/images/example-dashboard.png)
@@ -144,7 +168,7 @@ The tiles appear at once. The pictures are small WebP thumbnails (256 px on the 
 { "title": "Wdróż", "icon": "🚀", "run": { "command": "pwsh", "args": ["-File", "../Projekt/deploy.ps1"] } }
 ```
 
-- Tiles follow the file names in natural order (`2-…` before `10-…`); rename a file to move its tile, delete it to remove the tile. Up to 50 files are read; the dashboard says how many it skipped.
+- Tiles follow the file names as described above. Up to 50 files are read; the dashboard says how many it skipped.
 - `"card": "api"` asks an HTTP API and shows the chosen fields. `cm_AddApiCard` ("Dodaj kartę API") asks the API once and writes such a file for you. Tokens go into headers as `{secret:name}` and stay encrypted outside the file.
 - `"card": true` draws whatever `Ctrl+Q` would show for the target, so the notes and the README come from their folders' own `.c4k` files.
 - Items without `card` are shortcuts: `url` opens the page in the panel browser, `run` runs a command (only after you have seen it and trusted its file).

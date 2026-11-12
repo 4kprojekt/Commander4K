@@ -948,7 +948,7 @@
   "Kafelek otwiera „{0}” w programie, który Windows przypisał do „{1}:”. Pozwolić na linki {1}: do końca tej sesji?": "The tile opens \"{0}\" in the program Windows assigned to \"{1}:\". Allow {1}: links until the end of this session?",
   "Katalog oficjalnych wtyczek": "Official plugin catalog",
   "Katalog oficjalnych wtyczek (adres)": "Official plugin catalog (address)",
-  "Klucz prywatny (puste = domyślne klucze z ~/.ssh):": "Private key (empty = default keys from ~/.ssh):",
+  "Klucz: puste pole = klucze hosta z ~/.ssh/config i domyślne z ~/.ssh. Hasło: aplikacja zapyta o nie przy połączeniu i nie zapisze go w pliku.": "Key: an empty field = the host's keys from ~/.ssh/config and the default ones from ~/.ssh. Password: the app asks for it when connecting and never writes it to the file.",
   "Nie można pobrać wtyczki": "Cannot download the plugin",
   "Nie udało się pobrać katalogu: {0}": "Could not download the catalog: {0}",
   "Nie udało się uruchomić „{0}”: {1}": "Could not start \"{0}\": {1}",

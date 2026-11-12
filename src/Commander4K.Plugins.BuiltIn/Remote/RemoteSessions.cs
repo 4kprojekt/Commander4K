@@ -50,7 +50,7 @@ internal sealed class SftpSession(SftpClient client) : IRemoteSession
         TimeSpan keepAlive,
         CancellationToken cancellationToken)
     {
-        var info = new ConnectionInfo(endpoint.Host, endpoint.Port, login.UserName, [.. AuthenticationMethods(login)]);
+        var info = new ConnectionInfo(endpoint.Host, endpoint.Port, login.UserName, [.. AuthenticationMethods(login, endpoint.Host)]);
         var client = new SftpClient(info) { KeepAliveInterval = keepAlive };
         client.HostKeyReceived += (_, e) => e.CanTrust = hostKeyValidator(endpoint.Host, endpoint.Port, e.FingerPrintSHA256);
         try
@@ -70,12 +70,12 @@ internal sealed class SftpSession(SftpClient client) : IRemoteSession
         }
     }
 
-    internal static IEnumerable<AuthenticationMethod> AuthenticationMethods(RemoteLogin login)
+    internal static IEnumerable<AuthenticationMethod> AuthenticationMethods(RemoteLogin login, string? host = null)
     {
-        // An explicit key file, or else the default ~/.ssh keys when there is no password either. Keys that need a
-        // passphrase we do not have are skipped instead of failing the whole connection.
+        // An explicit key file, or else the host's ~/.ssh/config keys and the default ~/.ssh keys when there is no
+        // password either. Keys that need a passphrase we do not have are skipped instead of failing the whole connection.
         var keyFiles = login.PrivateKeyFile is { Length: > 0 } file ? [file]
-            : login.Password is null ? RemoteLogin.DefaultKeyFiles() : [];
+            : login.Password is null ? RemoteLogin.DefaultKeyFiles(host) : [];
         var keys = new List<IPrivateKeySource>();
         foreach (var path in keyFiles)
         {

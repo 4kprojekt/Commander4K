@@ -1423,20 +1423,30 @@ public sealed class MainWindow : Window
         switch (choice)
         {
             case "ssh":
-                var address = await new InputDialog(brushes, Loc.T("Połączenie SSH"), Loc.T("Adres (sftp://użytkownik@host/folder):"), "sftp://" + Environment.UserName + "@host/home/" + Environment.UserName).ShowAsync(this);
-                if (string.IsNullOrWhiteSpace(address))
+                // The same window plugins get from ui.dialog, so the file picker and the modes behave alike everywhere.
+                var answers = await new PluginDialog(brushes, new DialogRequest(Loc.T("Połączenie SSH"),
+                [
+                    new("address", DialogFieldType.Text, Loc.T("Adres (sftp://użytkownik@host/folder):"), "sftp://" + Environment.UserName + "@host/home/" + Environment.UserName, Required: true),
+                    new("auth", DialogFieldType.Segmented, Loc.T("Logowanie:"), "key",
+                        Options: [new("key", Loc.T("Klucz prywatny (SSH)")), new("password", Loc.T("Hasło"))],
+                        Help: Loc.T("Klucz: puste pole = klucze hosta z ~/.ssh/config i domyślne z ~/.ssh. Hasło: aplikacja zapyta o nie przy połączeniu i nie zapisze go w pliku.")),
+                    // Empty on purpose: a written keyFile would bypass the host's keys from ~/.ssh/config.
+                    new("keyFile", DialogFieldType.File, Loc.T("Plik klucza prywatnego:"), Placeholder: "~/.ssh/id_ed25519",
+                        VisibleWhen: new Dictionary<string, IReadOnlyList<string>> { ["auth"] = ["key"] }),
+                ])).ShowAsync(this);
+                if (answers is null)
                 {
                     return;
                 }
 
-                var key = await new InputDialog(brushes, Loc.T("Połączenie SSH"), Loc.T("Klucz prywatny (puste = domyślne klucze z ~/.ssh):"), "~/.ssh/id_ed25519").ShowAsync(this);
-                var ssh = Item("open", address.Trim());
-                if (!string.IsNullOrWhiteSpace(key))
+                var address = answers["address"];
+                var ssh = Item("open", address);
+                if (answers.GetValueOrDefault("keyFile") is { Length: > 0 } key)
                 {
-                    ssh["keyFile"] = key.Trim();
+                    ssh["keyFile"] = key;
                 }
 
-                newItems.Add((HostOf(address.Trim(), "ssh"), C4kWriter.Create(ssh)));
+                newItems.Add((HostOf(address, "ssh"), C4kWriter.Create(ssh)));
                 break;
             case "url":
                 var url = await new InputDialog(brushes, Loc.T("Strona WWW"), Loc.T("Adres strony:"), "https://").ShowAsync(this);

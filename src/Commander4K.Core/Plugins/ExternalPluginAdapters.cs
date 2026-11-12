@@ -404,7 +404,9 @@ public sealed class ExternalPreviewPlugin(ExternalPlugin plugin, PreviewContribu
 
     public bool CanPreview(VfsEntry entry) =>
         entry.IsContainer
-            ? entry.Kind != VfsEntryKind.ParentLink && preview.Extensions.Contains("/")
+            // "/" = real folders only: on hosts, registry keys and archives no built-in folder preview competes,
+            // so a "/" preview with any priority would win there (the mail account view once showed for LAN hosts).
+            ? entry.Kind is VfsEntryKind.Directory or VfsEntryKind.Drive or VfsEntryKind.Share && preview.Extensions.Contains("/")
             : preview.Extensions.Any(pattern => Matches(pattern, entry.Name));
 
     /// <summary>

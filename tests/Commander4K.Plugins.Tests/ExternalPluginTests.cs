@@ -130,6 +130,20 @@ public sealed class ExternalPluginTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Folder_preview_matches_folders_but_not_hosts_or_registry_keys()
+    {
+        var plugin = StartFrom(Path.Combine(RepositoryRoot(), "plugins-catalog", "mail-powershell"));
+        _started.Add(plugin);
+        var preview = new ExternalPreviewPlugin(plugin, plugin.Manifest.Contributes!.Previews!.First(p => p.Id == "account"));
+
+        Assert.True(preview.CanPreview(new VfsEntry("Poczta", @"C:\Poczta", VfsEntryKind.Directory)));
+        Assert.True(preview.CanPreview(new VfsEntry("share", @"\\srv\share", VfsEntryKind.Share)));
+        Assert.False(preview.CanPreview(new VfsEntry("192.168.0.24", "net://192.168.0.24", VfsEntryKind.Host)));
+        Assert.False(preview.CanPreview(new VfsEntry("Software", @"reg://HKCU\Software", VfsEntryKind.RegistryKey)));
+        Assert.False(preview.CanPreview(new VfsEntry("a.zip", @"C:\a.zip", VfsEntryKind.Archive)));
+    }
+
+    [Fact]
     public async Task Mikrotik_preview_matches_routeros_service_and_masks_password()
     {
         var plugin = StartFrom(Path.Combine(RepositoryRoot(), "plugins-catalog", "mikrotik-routeros-python"));

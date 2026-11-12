@@ -144,7 +144,7 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             }
 
             await DropAsync(key).ConfigureAwait(false);
-            var info = new ConnectionInfo(endpoint.Host, endpoint.Port, login.UserName, [.. SftpSession.AuthenticationMethods(login)]) { Timeout = TimeSpan.FromSeconds(10) };
+            var info = new ConnectionInfo(endpoint.Host, endpoint.Port, login.UserName, [.. SftpSession.AuthenticationMethods(login, endpoint.Host)]) { Timeout = TimeSpan.FromSeconds(10) };
             var client = new SshClient(info) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
             client.HostKeyReceived += (_, e) => e.CanTrust = remote.HostKeyValidator(endpoint.Host, endpoint.Port, e.FingerPrintSHA256);
             try
