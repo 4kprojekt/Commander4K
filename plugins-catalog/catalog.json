@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "updated": "2026-11-10",
+  "updated": "2026-11-14",
   "baseUrl": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/",
   "plugins": [
     {
       "id": "official.steam-library",
       "name": "Steam: biblioteka gier",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "4Kprojekt",
       "runtime": "powershell",
       "description": {
@@ -33,7 +33,7 @@
         },
         {
           "path": "plugin.json",
-          "sha256": "031a00587b7fc351c196fc8b9314946177f5c6709d69112eeb2a2d2d30c69a73"
+          "sha256": "75bd7d4263a1117a3496f6abbefd094732fd15f65bdb0dacaee70dc967d10a20"
         }
       ],
       "previewExtensions": [
@@ -43,7 +43,7 @@
     {
       "id": "official.git-repo",
       "name": "Git: podgląd repozytorium",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "4Kprojekt",
       "runtime": "powershell",
       "description": {
@@ -71,7 +71,7 @@
         },
         {
           "path": "plugin.json",
-          "sha256": "6e7a327842a9c0888c92f43dbce9baef512fbead55b87c7a575f7aef9255176c"
+          "sha256": "ed330d6dd748237d3d5bc783e68cfd7e0c0a32c1a28b4ba9d5f7d5c31d8883ed"
         }
       ],
       "previewExtensions": [
@@ -372,7 +372,7 @@
     {
       "id": "official.mail",
       "name": "Poczta",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "author": "4Kprojekt",
       "runtime": "powershell",
       "description": {
@@ -404,7 +404,7 @@
         },
         {
           "path": "plugin.json",
-          "sha256": "91bf18b39612d3e4e0d5b470fce4ea0443fb6d043e7dad631c9156a021140313"
+          "sha256": "0db579a6809a34d873d2b017a9dcc6d34418031cf2a4b6fb6cf94e785b977230"
         },
         {
           "path": "sync.ps1",

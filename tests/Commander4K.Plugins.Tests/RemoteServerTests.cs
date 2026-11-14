@@ -32,6 +32,37 @@ public sealed class RemoteServerTests : IAsyncDisposable
         Directory.Delete(_local, recursive: true);
     }
 
+    /// <summary>
+    /// The terminal's shell, against a server that gives one (atmoz/sftp does not): <c>C4K_TEST_SSH=sftp://foo:pass@127.0.0.1:2223/</c>
+    /// with docker <c>linuxserver/openssh-server -e PASSWORD_ACCESS=true -e USER_NAME=foo -e USER_PASSWORD=pass -p 2223:2222</c>.
+    /// </summary>
+    [Fact]
+    public async Task Shell_runs_a_command_and_ends_on_exit()
+    {
+        var server = Environment.GetEnvironmentVariable("C4K_TEST_SSH");
+        Assert.SkipWhen(string.IsNullOrEmpty(server), "C4K_TEST_SSH is not set");
+
+        await using var shell = await _remote.OpenShellAsync(server!, 100, 30, Token);
+        shell.Resize(120, 40);
+        shell.Write(Encoding.UTF8.GetBytes("echo c4k-$((6*7)); stty size; exit\n"));
+
+        // The read blocks, so it gets its own thread, as in the app; 0 = the shell ended.
+        var output = await Task.Factory.StartNew(() =>
+        {
+            var text = new StringBuilder();
+            var buffer = new byte[4096];
+            for (int read; (read = shell.Read(buffer)) > 0;)
+            {
+                text.Append(Encoding.UTF8.GetString(buffer, 0, read));
+            }
+
+            return text.ToString();
+        }, Token, TaskCreationOptions.LongRunning, TaskScheduler.Default).WaitAsync(TimeSpan.FromSeconds(30), Token);
+
+        Assert.Contains("c4k-42", output);
+        Assert.Contains("40 120", output);
+    }
+
     [Theory]
     [InlineData("C4K_TEST_SFTP")]
     [InlineData("C4K_TEST_FTP")]

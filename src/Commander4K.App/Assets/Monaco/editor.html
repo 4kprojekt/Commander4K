@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Commander4K's .c4k editor: hosted in WebView2 from a virtual host (c4k-editor.local), Monaco 0.52.2 (MIT) shipped with the app.
+     Page -> app (chrome.webview.postMessage): { t: 'ready' }, { t: 'change', dirty }, { t: 'problems', count }, { t: 'save', text },
+       { t: 'close' } (Esc with no widget open), { t: 'text', id, text }.
+     App -> page: { t: 'open', text, uri, schema, readOnly, theme, fontSize, fontFamily }, { t: 'theme', theme, fontSize, fontFamily },
+       { t: 'saved', text }, { t: 'get', id }, { t: 'focus' }, { t: 'format' }.
+     theme = { dark, background, foreground, accent, muted, surface, selected, selection }. -->
+<style>
+html, body { height: 100%; margin: 0; overflow: hidden; }
+#ed { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+<div id="ed"></div>
+<script src="vs/loader.js"></script>
+<script>
+const post = message => window.chrome.webview.postMessage(message);
+// Workers are same-origin files of the virtual host; the JSON worker gives validation and completion.
+window.MonacoEnvironment = { getWorkerUrl: () => 'vs/base/worker/workerMain.js' };
+require.config({ paths: { vs: 'vs' } });
+
+const queue = [];          // messages that arrive before Monaco is loaded
+let handle = m => queue.push(m);
+window.chrome.webview.addEventListener('message', e => handle(e.data));
+
+require(['vs/editor/editor.main'], () => {
+  let editor = null, baseline = '', dirty = false, problemTimer = 0, lastCount = -1;
+
+  const applyTheme = (th, fontSize, fontFamily) => {
+    monaco.editor.defineTheme('c4k', {
+      base: th.dark ? 'vs-dark' : 'vs', inherit: true, rules: [],
+      colors: {
+        'editor.background': th.background, 'editor.foreground': th.foreground,
+        'editorCursor.foreground': th.accent, 'editor.selectionBackground': th.selection,
+        'editorLineNumber.foreground': th.muted, 'editorWidget.background': th.surface,
+        'editorSuggestWidget.background': th.surface, 'editorSuggestWidget.selectedBackground': th.selected,
+      },
+    });
+    monaco.editor.setTheme('c4k');
+    document.body.style.background = th.background;
+    if (editor) editor.updateOptions({ fontSize, fontFamily });
+  };
+
+  const setDirty = () => {
+    const d = editor.getValue() !== baseline;
+    if (d !== dirty) { dirty = d; post({ t: 'change', dirty }); }
+  };
+
+  const open = m => {
+    applyTheme(m.theme, m.fontSize, m.fontFamily);
+    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+      validate: true, allowComments: true, trailingCommas: 'ignore', schemaValidation: 'warning',
+      enableSchemaRequest: false, schemas: m.schema ? [{ uri: 'c4k://schema', fileMatch: ['*'], schema: m.schema }] : [],
+    });
+    const uri = monaco.Uri.parse(m.uri);
+    const old = monaco.editor.getModel(uri);
+    if (old) old.dispose();
+    const model = monaco.editor.createModel(m.text, 'json', uri);
+    baseline = m.text; dirty = false; lastCount = -1;
+    if (!editor) {
+      editor = monaco.editor.create(document.getElementById('ed'), {
+        model, theme: 'c4k', minimap: { enabled: false }, automaticLayout: true, wordWrap: 'on', tabSize: 2,
+        scrollBeyondLastLine: false, quickSuggestions: { other: true, comments: false, strings: true },
+        suggestOnTriggerCharacters: true, formatOnPaste: true, fixedOverflowWidgets: true, contextmenu: true,
+        fontSize: m.fontSize, fontFamily: m.fontFamily, readOnly: !!m.readOnly,
+      });
+      editor.onDidChangeModelContent(setDirty);
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => post({ t: 'save', text: editor.getValue() }));
+      editor.addCommand(monaco.KeyCode.F1, () => {}); // no command palette
+      editor.addCommand(monaco.KeyCode.Escape, () => post({ t: 'close' }),
+        '!suggestWidgetVisible && !findWidgetVisible && !editorHoverVisible && !parameterHintsVisible && !renameInputVisible && !inSnippetMode');
+      monaco.editor.onDidChangeMarkers(() => {
+        clearTimeout(problemTimer);
+        problemTimer = setTimeout(() => {
+          const count = monaco.editor.getModelMarkers({}).length;
+          if (count !== lastCount) { lastCount = count; post({ t: 'problems', count }); }
+        }, 300);
+      });
+    } else {
+      editor.setModel(model);
+      editor.updateOptions({ readOnly: !!m.readOnly, fontSize: m.fontSize, fontFamily: m.fontFamily });
+    }
+    editor.focus();
+  };
+
+  handle = m => {
+    switch (m.t) {
+      case 'open': open(m); break;
+      case 'theme': applyTheme(m.theme, m.fontSize, m.fontFamily); break;
+      case 'saved': if (editor) { baseline = m.text ?? editor.getValue(); setDirty(); } break; // text typed since the save stays dirty
+      case 'get': post({ t: 'text', id: m.id, text: editor ? editor.getValue() : '' }); break;
+      case 'focus': if (editor) editor.focus(); break;
+      case 'format': if (editor) editor.getAction('editor.action.formatDocument').run(); break;
+    }
+  };
+  queue.splice(0).forEach(handle);
+  post({ t: 'ready' });
+});
+</script>
+</body>
+</html>

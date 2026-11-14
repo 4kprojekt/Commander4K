@@ -159,27 +159,8 @@ public static class MermaidRenderer
     }
 
     /// <summary>Copies render.html and mermaid.min.js out of the app into data/mermaid/&lt;version&gt; (once per version).</summary>
-    private static string ExtractAssets(string dataDirectory)
-    {
-        var folder = Path.Combine(dataDirectory, "data", "mermaid", MermaidVersion);
-        Directory.CreateDirectory(folder);
-        var assembly = typeof(MermaidRenderer).Assembly;
-        foreach (var name in new[] { "render.html", "mermaid.min.js" })
-        {
-            using var resource = assembly.GetManifestResourceStream("mermaid/" + name)
-                ?? throw new InvalidOperationException($"Missing embedded resource mermaid/{name}.");
-            var target = Path.Combine(folder, name);
-            if (File.Exists(target) && new FileInfo(target).Length == resource.Length)
-            {
-                continue;
-            }
-
-            using var file = File.Create(target);
-            resource.CopyTo(file);
-        }
-
-        return folder;
-    }
+    private static string ExtractAssets(string dataDirectory) =>
+        Browser.WebView2Host.ExtractAssets(Path.Combine(dataDirectory, "data", "mermaid", MermaidVersion), "mermaid/", "render.html", "mermaid.min.js");
 
     /// <summary>Mermaid's "base" theme driven by the skin: background, boxes, text, lines and the accent for borders.</summary>
     private static string ThemeJson(SkinBrushes b)

@@ -66,6 +66,18 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
             ?? (RemoteLogin.DefaultKeyFiles(endpoint.Host).Count > 0 ? new RemoteLogin(endpoint.UserName ?? RemoteLogin.DefaultUser(endpoint.Host)) : null);
     }
 
+    /// <summary>
+    /// Opens an interactive shell on the server of an <c>sftp://</c> path, signed in like its SFTP session and with the
+    /// same host key check. The caller owns (and disposes) it.
+    /// </summary>
+    public Task<SshShell> OpenShellAsync(string sftpPath, int columns, int rows, CancellationToken cancellationToken)
+    {
+        var endpoint = RemoteEndpoint.Parse(sftpPath);
+        return endpoint.Scheme == RemoteEndpoint.Sftp && LoginFor(sftpPath) is { } login
+            ? SshShell.ConnectAsync(endpoint, login, HostKeyValidator, KeepAliveInterval, columns, rows, cancellationToken)
+            : Task.FromException<SshShell>(new VfsAuthenticationRequiredException(sftpPath, endpoint.SessionKey));
+    }
+
     /// <summary>The user written in a remote path (<c>sftp://me@host/…</c>); <c>null</c> when it has none or is not one.</summary>
     public static string? UserNameOf(string path)
     {

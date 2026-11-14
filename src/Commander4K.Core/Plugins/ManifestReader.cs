@@ -29,7 +29,61 @@ public static partial class ManifestReader
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
+        Converters = { new OptionListConverter() },
     };
+
+    private static readonly string[] OptionTypes = ["string", "number", "boolean", "array", "object"];
+
+    /// <summary>Lenient <c>options</c> list: a non-array is ignored, entries without an id are skipped, an unknown type is "string".</summary>
+    private sealed class OptionListConverter : System.Text.Json.Serialization.JsonConverter<IReadOnlyList<OptionContribution>>
+    {
+        public override IReadOnlyList<OptionContribution>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            using var doc = JsonDocument.ParseValue(ref reader);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var list = new List<OptionContribution>();
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                string? Text(string name) => item.EnumerateObject()
+                    .FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == JsonValueKind.String)
+                    .Value.ToString() is { Length: > 0 } s ? s : null;
+
+                if (Text("id") is not { } id || string.IsNullOrWhiteSpace(id))
+                {
+                    continue;
+                }
+
+                var type = Text("type")?.ToLowerInvariant();
+                var values = item.EnumerateObject()
+                    .FirstOrDefault(p => string.Equals(p.Name, "values", StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == JsonValueKind.Array)
+                    .Value;
+                var required = item.EnumerateObject()
+                    .Any(p => string.Equals(p.Name, "required", StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == JsonValueKind.True);
+                list.Add(new OptionContribution(
+                    id,
+                    type is not null && OptionTypes.Contains(type) ? type : "string",
+                    Text("description"),
+                    values.ValueKind == JsonValueKind.Array
+                        ? values.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!).ToList()
+                        : null,
+                    required));
+            }
+
+            return list;
+        }
+
+        public override void Write(Utf8JsonWriter writer, IReadOnlyList<OptionContribution> value, JsonSerializerOptions options)
+            => JsonSerializer.Serialize(writer, value.ToArray(), options);
+    }
 
     public static IReadOnlyList<DiscoveredPlugin> Discover(IEnumerable<string> roots)
     {

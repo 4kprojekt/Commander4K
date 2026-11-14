@@ -660,6 +660,15 @@ Other keys: `title`, `description`, `icon`, `image` (a picture for the tile), `o
 
 **Trust.** An item that runs a command, sends a request that may change something (`api` with a method other than GET/HEAD), signs in to an SSH server (`ssh` card) or reads an SFTP/FTP target as a card stays locked until the user allows **that file** ("Zezwól"). Trust is stored in `config/trusted-folders.json` per file path, with a hash of only those fields (`run`, the request's method, URL, body and headers, the server, `user` and `keyFile`, also inside an `ssh` card's `options`), so resizing a tile or changing its title keeps it, while another command, server or login, or the same file under another name, asks again. On a dashboard each card is locked or live on its own.
 
+**Declaring options.** A preview or panel can list the keys of its `options` object in the manifest, so the built-in `.c4k` editor (F4 on a `.c4k` file) suggests and checks them. The host does not enforce the declaration: the plugin still gets whatever the item holds. `type` is `string` (default), `number`, `boolean`, `array` or `object`; an unknown type counts as `string`, entries without an `id` are skipped, and a malformed `options` is ignored.
+
+```json
+"previews": [{ "id": "account", "title": "Mail", "extensions": ["/"], "options": [
+  { "id": "imap", "type": "string", "description": "IMAP server, host:port", "required": true },
+  { "id": "refresh", "type": "string", "values": ["1m", "5m", "30m"] }
+] }]
+```
+
 A plugin that is not installed, is disabled, or has `"setup": true` but no `options` in its item shows a setup card instead. Its button installs the plugin from the official catalog (one consent), enables it, sends `preview.setup` so the plugin can ask for its options in a dialog, writes the answer as `options` into the item that names the plugin, and shows the view. Writers ask before rewriting a file that has comments (they would be lost).
 
 The official `official.git-repo` plugin works this way: `git-repo.c4k` = `{ "plugin": "official.git-repo" }` in a repository shows its branch, changes, recent commits, branches, tags and remotes, read with `git` through `shell.run` (options `commits`, `files`, `branches`).

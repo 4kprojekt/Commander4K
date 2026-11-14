@@ -1126,7 +1126,8 @@ public sealed class MainWindow : Window
                 await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true);
             }
         }
-        else if (ReturnPath(panel.ActiveTab) is { } back)
+        // An origin the tab noted itself (a server entered from the drive menu) stays: Pliki there means the server's files.
+        else if ((panel.ActiveTab.OriginFromItem || panel.ActiveTab.Error is not null) && ReturnPath(panel.ActiveTab) is { } back)
         {
             await panel.ActiveTab.NavigateAsync(back); // Pliki after a .c4k "open" or a failed listing: the folder to go back to
         }
@@ -1565,7 +1566,7 @@ public sealed class MainWindow : Window
                 ApplyItemLogin(action, target);
                 var openTab = panel.ActiveTab;
                 var navigation = panel.NavigateAsync(target);
-                openTab.SetOrigin(action.Folder, target); // after NavigateAsync, which drops an origin the new path is not under
+                openTab.SetOrigin(action.Folder, target, itemFile: action.FilePath); // after NavigateAsync, which drops an origin the new path is not under
                 await navigation;
                 return;
 
@@ -1922,7 +1923,7 @@ public sealed class MainWindow : Window
             await OpenTileAsync(new PreviewTile(item.Title, Target: target), folder, listPanel);
             if (SamePath(listPanel.ActiveTab.Path, target))
             {
-                listPanel.ActiveTab.SetOrigin(item.Folder, target);
+                listPanel.ActiveTab.SetOrigin(item.Folder, target, itemFile: item.FilePath);
             }
 
             return;
@@ -3166,6 +3167,13 @@ public sealed class MainWindow : Window
 
     private async ValueTask EditCurrentAsync(CommandInvocation _)
     {
+        // A .c4k item has its own editor, on any location (it reads and writes through the VFS).
+        if (_active.ActiveTab.CurrentEntry is { Kind: VfsEntryKind.File } item && FileIcons.IsFolderConfig(item) && Browser.WebView2Host.RuntimeVersion() is not null)
+        {
+            await OpenItemEditorAsync(item.Path);
+            return;
+        }
+
         if (_active.ActiveTab.CurrentEntry is not { Kind: VfsEntryKind.File } entry || !IsFileSystemPath(entry.Path))
         {
             Notify(Loc.T("Edycja działa dla plików na dyskach i udziałach sieciowych."));
@@ -3177,6 +3185,39 @@ public sealed class MainWindow : Window
         {
             Notify(result.Error ?? Loc.T("Nie udało się uruchomić edytora."), isError: true);
         }
+    }
+
+    /// <summary>F4 on a <c>.c4k</c> file: the item editor in the opposite panel, with a schema built from what is installed.</summary>
+    private async Task OpenItemEditorAsync(string file)
+    {
+        var target = ModeTarget().Target;
+        if (target.Mode is Editor.C4kEditorView open && (open.IsDirty || SamePath(open.FilePath, file)))
+        {
+            if (!SamePath(open.FilePath, file))
+            {
+                Notify(Loc.T("Najpierw zapisz albo zamknij edytor pliku {0}.", open.Title));
+            }
+
+            SetActive(target);
+            return;
+        }
+
+        var host = _host!;
+        var schema = await Task.Run(() =>
+        {
+            // Installed plugins with what they declare; catalog plugins that are not installed only by id and description.
+            var plugins = host.DiscoveredPlugins.Where(p => p.Manifest is not null)
+                .Select(p => C4kEditorSchema.FromManifest(p.Manifest!, installed: true)).ToList();
+            plugins.AddRange(host.PluginCatalog.Plugins
+                .Where(c => !plugins.Any(p => string.Equals(p.Id, c.Id, StringComparison.OrdinalIgnoreCase)))
+                .Select(c => new C4kEditorPlugin(c.Id, c.Name, c.Description.GetValueOrDefault("en") ?? c.Description.Values.FirstOrDefault(), false, [], [])));
+            using var reader = new StreamReader(typeof(MainWindow).Assembly.GetManifestResourceStream("docs/c4k.schema.json")!);
+            return C4kEditorSchema.Build(reader.ReadToEnd(), plugins, Plugins.BuiltIn.Dashboard.EditorCards.All).ToJsonString();
+        });
+
+        target.ShowMode(new Editor.C4kEditorView(host, file, schema, _skins!.Current, Notify, RunShortcut,
+            (title, message) => new ConfirmDialog(_skins!.Current, title, message, Loc.T("Odrzuć zmiany"), danger: true).ShowAsync(this)));
+        SetActive(target);
     }
 
     private async ValueTask CompareAsync(CommandInvocation _)
@@ -3198,6 +3239,32 @@ public sealed class MainWindow : Window
     private async ValueTask OpenTerminalAsync(CommandInvocation _)
     {
         var path = _active.ActiveTab.Path;
+        // On an SFTP server: a shell there, in the folder on screen, signed in like the panel (key and user; ssh asks for a password).
+        if (VfsPath.GetScheme(path) == "sftp" && Browser.WebView2Host.RuntimeVersion() is not null)
+        {
+            // The terminal in the opposite panel, beside the server's files; one per server (F9 again comes back to it).
+            var target = ModeTarget().Target;
+            if (target.Mode is not Terminal.SshTerminalView open || open.Server != RemoteTransferVfsPlugin.RealmFor(path))
+            {
+                target.ShowMode(new Terminal.SshTerminalView(_host!, path, _skins!.Current, Notify, RunShortcut));
+            }
+
+            SetActive(target);
+            return;
+        }
+
+        // Without WebView2: OpenSSH in Windows Terminal.
+        if (VfsPath.GetScheme(path) == "sftp" && SshCommandLine.For(path, _host!.Remote.LoginFor(path)) is { } ssh)
+        {
+            var remote = await _host.Tools.OpenSshTerminalAsync(ssh);
+            if (!remote.Launched)
+            {
+                Notify(remote.Error ?? Loc.T("Nie znaleziono terminala."), isError: true);
+            }
+
+            return;
+        }
+
         var directory = IsFileSystemPath(path) ? LocalFileSystemPlugin.ToLocalPath(path) ?? path : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var result = await _host!.Tools.OpenTerminalAsync(directory);
         if (!result.Launched)
@@ -4468,7 +4535,12 @@ public sealed class MainWindow : Window
     private void CancelCurrent()
     {
         var tab = _active.ActiveTab;
-        if (tab.Marked.Count == 0 && _active.Mode is null && !_host!.Keymap.IsChordPending && string.IsNullOrEmpty(_commandLine.Text)
+        if (tab.SizesInProgress.Count > 0 && _active.Mode is null)
+        {
+            tab.CancelSizes();
+        }
+        else if (tab.Marked.Count == 0 && _active.Mode is null && !_host!.Keymap.IsChordPending && string.IsNullOrEmpty(_commandLine.Text)
+            && !(tab.IsLoading && tab is { Origin: not null, OriginFromItem: false }) // a server entered by hand: the first Esc only stops the listing
             && ReturnPath(tab) is { } back)
         {
             // A .c4k "open" brought the tab here, or the listing failed: Esc returns to the files of the folder holding that
@@ -4597,10 +4669,57 @@ public sealed class MainWindow : Window
             }
 
             await request.Tab.NavigateAsync(request.Tab.Path);
+
+            // A .c4k "open" asked for this login and it worked: the file remembers the user and the key (never a password).
+            if (VfsPath.GetScheme(ex.Path) is "sftp" or "ftp" && request.Tab is { Error: null, OriginItemFile: { } itemFile })
+            {
+                await SaveItemLoginAsync(itemFile, credential.UserName, credential.KeyFile);
+            }
         }
         catch (Exception error)
         {
             Notify($"Logowanie nieudane: {error.Message}", isError: true);
+        }
+    }
+
+    private async Task SaveItemLoginAsync(string file, string user, string? keyFile)
+    {
+        try
+        {
+            var existing = await Task.Run(() => ReadItemTextAsync(file, CancellationToken.None));
+            if (existing is null)
+            {
+                return;
+            }
+
+            if (C4kWriter.HasComments(existing)
+                && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać plik .c4k?"),
+                    Loc.T("{0} ma komentarze; zapis logowania je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
+            {
+                return;
+            }
+
+            // The trust hash covers user and key: a file trusted before stays trusted after this change the user made here.
+            var folder = _host!.Router.GetParentPath(file);
+            async Task<C4kItem?> ItemAsync() =>
+                folder is null ? null : (await _host.ReadFolderAsync(folder, CancellationToken.None))?.Items.FirstOrDefault(i => SamePath(i.FilePath, file));
+            var trusted = await Task.Run(async () => await ItemAsync() is { } before && _host.FolderTrust.IsTrusted(before));
+            var updated = C4kWriter.SetLogin(existing, user, keyFile);
+            await Task.Run(async () =>
+            {
+                await WriteItemTextAsync(file, updated, CancellationToken.None);
+                if (trusted && await ItemAsync() is { } after)
+                {
+                    _host.FolderTrust.Trust(after);
+                }
+            });
+            Notify(Loc.T("Zapisano logowanie w {0}.", file));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
+            or VfsProviderNotFoundException or NotSupportedException or TimeoutException or OperationCanceledException
+            or System.Text.Json.JsonException)
+        {
+            Notify(Loc.T("Nie można zapisać logowania w pliku .c4k: {0}", ex.Message), isError: true);
         }
     }
 

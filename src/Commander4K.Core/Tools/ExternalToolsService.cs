@@ -33,6 +33,7 @@ public sealed class ExternalToolsService(ExternalToolsConfig config)
     public const string DiffTool = "diff";
     public const string TerminalTool = "terminal";
     public const string VsCodeTool = "vscode";
+    public const string SshTool = "ssh";
 
     private readonly ExternalToolsConfig _config = config ?? throw new ArgumentNullException(nameof(config));
 
@@ -59,6 +60,12 @@ public sealed class ExternalToolsService(ExternalToolsConfig config)
                 new("pwsh.exe", ["-NoExit", "-WorkingDirectory", "{dir}"]),
                 new("powershell.exe", ["-NoExit"]),
             ],
+            // {files} = the ssh arguments (port, key, user, host, remote command).
+            [SshTool] =
+            [
+                new("wt.exe", ["ssh.exe", "{files}"]),
+                new("ssh.exe", ["{files}"]),
+            ],
             // The folder as the workspace, plus the chosen files opened in it.
             [VsCodeTool] =
             [
@@ -80,6 +87,10 @@ public sealed class ExternalToolsService(ExternalToolsConfig config)
     /// <param name="directory">Local or UNC directory the terminal starts in.</param>
     public Task<ToolLaunchResult> OpenTerminalAsync(string directory) =>
         LaunchAsync(TerminalTool, new ToolArguments(Directory: directory));
+
+    /// <summary>Opens a terminal running OpenSSH's <c>ssh</c> with <paramref name="sshArguments"/> (colours are the terminal's).</summary>
+    public Task<ToolLaunchResult> OpenSshTerminalAsync(IReadOnlyList<string> sshArguments) =>
+        LaunchAsync(SshTool, new ToolArguments(Files: sshArguments));
 
     /// <summary>Opens <paramref name="directory"/> in VS Code (or VSCodium) with <paramref name="files"/> as editors.</summary>
     public Task<ToolLaunchResult> OpenInVsCodeAsync(string directory, IReadOnlyList<string> files) =>

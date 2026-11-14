@@ -75,6 +75,15 @@ public sealed partial class WebView2Host : NativeControlHost
     /// <summary>Gives keyboard focus to the page (the native window does not take part in Avalonia's focus).</summary>
     public void FocusPage() => _controller?.MoveFocus(CoreWebView2MoveFocusReason.Programmatic);
 
+    /// <summary>Gives the keyboard back to the app's window (a page keeps it until something else takes it).</summary>
+    public void ReleaseFocus()
+    {
+        if (TopLevel.GetTopLevel(this)?.TryGetPlatformHandle()?.Handle is { } window)
+        {
+            SetFocus(window);
+        }
+    }
+
     /// <summary>The shared environment for a profile folder (the browser and the Mermaid renderer use the same one).</summary>
     /// <param name="browserArguments">Chromium switches, used when this call creates the folder's environment.</param>
     public static Task<CoreWebView2Environment> GetEnvironmentAsync(string profileFolder, string? browserArguments = null)
@@ -91,6 +100,28 @@ public sealed partial class WebView2Host : NativeControlHost
 
             return environment;
         }
+    }
+
+    /// <summary>Copies embedded page files (<paramref name="prefix"/> + name) into <paramref name="folder"/>, once per size; a virtual host then serves them.</summary>
+    internal static string ExtractAssets(string folder, string prefix, params string[] names)
+    {
+        Directory.CreateDirectory(folder);
+        var assembly = typeof(WebView2Host).Assembly;
+        foreach (var name in names)
+        {
+            using var resource = assembly.GetManifestResourceStream(prefix + name)
+                ?? throw new InvalidOperationException($"Missing embedded resource {prefix}{name}.");
+            var target = Path.Combine(folder, name);
+            if (File.Exists(target) && new FileInfo(target).Length == resource.Length)
+            {
+                continue;
+            }
+
+            using var file = File.Create(target);
+            resource.CopyTo(file);
+        }
+
+        return folder;
     }
 
     private async Task InitializeAsync(nint hwnd)
@@ -130,4 +161,7 @@ public sealed partial class WebView2Host : NativeControlHost
 
     [LibraryImport("user32.dll")]
     private static partial short GetKeyState(int virtualKey);
+
+    [LibraryImport("user32.dll")]
+    private static partial nint SetFocus(nint window);
 }

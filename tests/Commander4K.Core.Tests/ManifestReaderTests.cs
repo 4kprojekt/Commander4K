@@ -80,6 +80,49 @@ public sealed class ManifestReaderTests : IDisposable
     }
 
     [Fact]
+    public void Options_are_read_for_previews_and_panels()
+    {
+        var plugin = Read("""[]""", """
+            { "previews": [{ "id": "p", "title": "P", "extensions": ["/"], "options": [
+                { "id": "imap", "type": "number", "description": "d", "values": ["a", "b"], "required": true },
+                { "id": "plain" } ] }],
+              "panels": [{ "id": "q", "title": "Q", "options": [{ "id": "x", "type": "boolean" }] }] }
+            """);
+
+        Assert.Empty(plugin.Errors);
+        var preview = plugin.Manifest!.Contributes!.Previews![0].Options!;
+        Assert.Equal(2, preview.Count);
+        Assert.Equal(("imap", "number", "d", true), (preview[0].Id, preview[0].Type, preview[0].Description, preview[0].Required));
+        Assert.Equal(["a", "b"], preview[0].Values!);
+        Assert.Equal(("plain", "string", null, false), (preview[1].Id, preview[1].Type, preview[1].Description, preview[1].Required));
+        Assert.Null(preview[1].Values);
+        Assert.Equal("boolean", plugin.Manifest.Contributes.Panels![0].Options![0].Type);
+    }
+
+    [Fact]
+    public void Options_skip_bad_entries_and_unknown_types()
+    {
+        var plugin = Read("""[]""", """
+            { "previews": [{ "id": "p", "title": "P", "extensions": ["/"], "options": [
+                { "id": "" }, { "type": "string" }, 5, { "id": "ok", "type": "weird" } ] }] }
+            """);
+
+        Assert.Empty(plugin.Errors);
+        var options = plugin.Manifest!.Contributes!.Previews![0].Options!;
+        Assert.Equal("ok", Assert.Single(options).Id);
+        Assert.Equal("string", options[0].Type);
+    }
+
+    [Fact]
+    public void Options_that_are_not_an_array_are_ignored()
+    {
+        var plugin = Read("""[]""", """{ "previews": [{ "id": "p", "title": "P", "extensions": ["/"], "options": { "id": "x" } }] }""");
+
+        Assert.Empty(plugin.Errors);
+        Assert.Null(plugin.Manifest!.Contributes!.Previews![0].Options);
+    }
+
+    [Fact]
     public void PreviewActionTargets_parses_action_and_arguments()
     {
         Assert.True(PreviewActionTargets.TryParse("c4k:plugin/check?account=C%3A%5CPoczta%5CFirma&x=1", out var action, out var arguments));

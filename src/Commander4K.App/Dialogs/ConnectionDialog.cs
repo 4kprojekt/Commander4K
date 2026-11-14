@@ -152,21 +152,7 @@ public sealed class ConnectionDialog : DialogWindow<ConnectionDialogResult?>
         _remember.IsVisible = method == AuthPassword || (type == Sftp && method == AuthKey);
     }
 
-    private async Task BrowseKeyAsync()
-    {
-        var sshFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
-        var start = Directory.Exists(sshFolder) ? await StorageProvider.TryGetFolderFromPathAsync(sshFolder) : null;
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = Loc.T("Klucz prywatny SSH"),
-            AllowMultiple = false,
-            SuggestedStartLocation = start,
-        });
-        if (files.FirstOrDefault()?.TryGetLocalPath() is { } path)
-        {
-            _keyFile.Text = path;
-        }
-    }
+    private async Task BrowseKeyAsync() => _keyFile.Text = await SshKeyPicker.PickAsync(this) ?? _keyFile.Text;
 
     /// <summary>The connection as entered, or an error message for the status line.</summary>
     private (ConnectionDialogResult? Result, string? Error) Build()

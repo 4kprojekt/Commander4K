@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Commander4K's SSH terminal: Terminal/SshTerminalView hosts this page in WebView2 (virtual host c4k-terminal.local).
+     Page -> app (chrome.webview.postMessage): { t: 'ready'|'size', cols, rows }, { t: 'in'|'bin'|'copy', d }, { t: 'paste' }.
+     App -> page: { t: 'out', d: base64 }, { t: 'theme', theme, fontSize }, { t: 'paste', d }, { t: 'copy' }, { t: 'focus' }.
+     xterm.js 6.0.0 and @xterm/addon-fit 0.11.0 (MIT), shipped with the app. -->
+<link rel="stylesheet" href="xterm.css">
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+<style>
+html, body { height: 100%; margin: 0; overflow: hidden; }
+#term { position: absolute; inset: 6px 0 0 8px; }
+</style>
+</head>
+<body>
+<div id="term"></div>
+<script>
+const post = message => window.chrome.webview.postMessage(message);
+const term = new Terminal({
+  cursorBlink: true,
+  scrollback: 10000,
+  minimumContrastRatio: 4.5, // the server's colours stay readable on light skins
+  fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term'));
+term.onData(d => post({ t: 'in', d }));
+term.onBinary(d => post({ t: 'bin', d }));
+term.onResize(size => post({ t: 'size', cols: size.cols, rows: size.rows }));
+new ResizeObserver(() => fit.fit()).observe(document.body);
+
+const copy = () => {
+  const text = term.getSelection();
+  if (text) { post({ t: 'copy', d: text }); term.clearSelection(); }
+  return !!text;
+};
+
+// Right click as in Windows Terminal: copies the selection, pastes when there is none.
+document.addEventListener('contextmenu', e => { e.preventDefault(); if (!copy()) { post({ t: 'paste' }); } });
+
+window.chrome.webview.addEventListener('message', e => {
+  const m = e.data;
+  switch (m.t) {
+    case 'out': term.write(Uint8Array.from(atob(m.d), c => c.charCodeAt(0))); break;
+    case 'theme':
+      term.options.theme = m.theme;
+      term.options.fontSize = m.fontSize;
+      document.body.style.background = m.theme.background;
+      fit.fit();
+      break;
+    case 'paste': term.paste(m.d); break; // bracketed paste when the shell asked for it
+    case 'copy': copy(); break;
+    case 'focus': term.focus(); break;
+  }
+});
+
+fit.fit();
+post({ t: 'ready', cols: term.cols, rows: term.rows });
+</script>
+</body>
+</html>

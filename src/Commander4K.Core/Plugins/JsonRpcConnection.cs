@@ -192,7 +192,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
         {
             if (message.TryGetProperty("error", out var error))
             {
-                var code = error.TryGetProperty("code", out var c) ? c.GetInt32() : JsonRpcException.ServerError;
+                var code = error.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.Number && c.TryGetInt32(out var n) ? n : JsonRpcException.ServerError;
                 var text = error.TryGetProperty("message", out var m) ? m.GetString() : Loc.T("Błąd wtyczki");
                 waiting.TrySetException(new JsonRpcException(code, text ?? Loc.T("Błąd wtyczki"),
                     error.TryGetProperty("data", out var data) ? data.Clone() : null));

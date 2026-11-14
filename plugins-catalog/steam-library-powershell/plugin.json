@@ -2,21 +2,33 @@
   "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
   "id": "official.steam-library",
   "name": "Steam: biblioteka gier",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "4Kprojekt",
   "description": "Oficjalna wtyczka: gry zainstalowane w bibliotece Steam jako kafelki z okładkami (klik uruchamia grę) i jako tabela. Folder steamapps (lub folder Steama) z plikiem steam.c4k: { \"plugin\": \"official.steam-library\" }.",
   "runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" },
   "permissions": ["fs.read"],
   "contributes": {
     "previews": [
-      { "id": "games", "title": "Steam: gry", "extensions": ["/"], "priority": -10 }
+      {
+        "id": "games", "title": "Steam: gry", "extensions": ["/"], "priority": -10,
+        "options": [
+          { "id": "steamPath", "type": "string", "description": "Steam's own folder for covers when the library is elsewhere, e.g. D:\\Steam." },
+          { "id": "allLibraries", "type": "boolean", "description": "false shows only this folder's games; true (default) adds every library from libraryfolders.vdf." },
+          { "id": "sort", "type": "string", "values": ["name", "size", "updated"], "description": "Game order: name (default), size or updated." }
+        ]
+      }
     ],
     "panels": [
       {
         "id": "games",
         "title": "Steam: biblioteka gier",
         "description": "Zainstalowane gry z rozmiarem i datą aktualizacji (folder steamapps lub folder Steama).",
-        "requiresArgument": true
+        "requiresArgument": true,
+        "options": [
+          { "id": "steamPath", "type": "string", "description": "Steam's own folder for covers when the library is elsewhere, e.g. D:\\Steam." },
+          { "id": "allLibraries", "type": "boolean", "description": "false shows only this folder's games; true (default) adds every library from libraryfolders.vdf." },
+          { "id": "sort", "type": "string", "values": ["name", "size", "updated"], "description": "Game order: name (default), size or updated." }
+        ]
       }
     ]
   }

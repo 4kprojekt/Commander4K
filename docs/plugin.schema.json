@@ -4,6 +4,24 @@
   "title": "Commander4K plugin manifest (plugin.json)",
   "type": "object",
   "required": ["id", "name", "version", "author", "description", "runtime", "permissions", "contributes"],
+  "$defs": {
+    "options": {
+      "type": "array",
+      "description": "The keys of the \"options\" object a .c4k item passes to this preview/panel. The built-in .c4k editor suggests and checks them; the host does not enforce them.",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "The key inside \"options\"." },
+          "type": { "enum": ["string", "number", "boolean", "array", "object"], "default": "string" },
+          "description": { "type": "string" },
+          "values": { "type": "array", "items": { "type": "string" }, "description": "Allowed or suggested values." },
+          "required": { "type": "boolean", "default": false }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
   "properties": {
     "$schema": { "type": "string" },
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$", "description": "Unique id; the builtin. prefix is reserved." },
@@ -59,6 +77,7 @@
               "accepts": { "type": "boolean", "default": false, "description": "The panel can receive files sent from a file panel with F5; the host asks it which receivers fit the selection." },
               "provides": { "type": "boolean", "default": false, "description": "The panel can provide the selected rows as files for a file panel." },
               "card": { "type": "boolean", "default": false, "description": "The plugin answers panel.card, so a dashboard tile with \"card\": \"<plugin id>/<panel id>\" shows this panel as a live widget." },
+              "options": { "$ref": "#/$defs/options" },
               "actions": {
                 "type": "array",
                 "items": {
@@ -91,6 +110,7 @@
               "webRoot": { "type": "string", "description": "Folder inside the plugin (relative, no ..) with the HTML/JS pages shown when preview.render returns kind \"web\". Required for that kind." },
               "card": { "type": "boolean", "default": false, "description": "The plugin answers preview.card, so .c4k dashboards can show this preview as a live card." },
               "enter": { "type": "boolean", "default": false, "description": "Enter on a matching file opens the pinned preview; Shift+Enter keeps the shell open." },
+              "options": { "$ref": "#/$defs/options" },
               "setup": { "type": "boolean", "default": false, "description": "Folder previews: the plugin answers preview.setup, so when the user gives a folder this preview the app asks the plugin for the folder's options (the plugin asks the user) before writing the .c4k file." },
               "suggest": {
                 "type": "object",

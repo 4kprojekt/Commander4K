@@ -33,6 +33,14 @@
     <!-- Offline Mermaid diagrams (Mermaid 12.2.0, MIT — LICENSE-mermaid.txt), extracted to data/mermaid on first use. -->
     <EmbeddedResource Include="Assets\Mermaid\render.html" LogicalName="mermaid/render.html" />
     <EmbeddedResource Include="Assets\Mermaid\mermaid.min.js" LogicalName="mermaid/mermaid.min.js" />
+    <!-- The SSH terminal (xterm.js 6.0.0 + addon-fit 0.11.0, MIT — LICENSE-xterm.txt), extracted to data/xterm on first use. -->
+    <EmbeddedResource Include="Assets\Xterm\terminal.html" LogicalName="xterm/terminal.html" />
+    <EmbeddedResource Include="Assets\Xterm\xterm.js" LogicalName="xterm/xterm.js" />
+    <EmbeddedResource Include="Assets\Xterm\xterm.css" LogicalName="xterm/xterm.css" />
+    <EmbeddedResource Include="Assets\Xterm\addon-fit.js" LogicalName="xterm/addon-fit.js" />
+    <!-- The .c4k editor (Monaco 0.52.2, MIT - Assets\Monaco\SOURCE.md), extracted to data/monaco on first use; the base schema it extends. -->
+    <EmbeddedResource Include="Assets\Monaco\**/*" Exclude="Assets\Monaco\SOURCE.md" LogicalName="monaco/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../docs/c4k.schema.json" LogicalName="docs/c4k.schema.json" />
     <!-- window.c4k, injected into web preview pages (Preview/WebPreviewView). -->
     <EmbeddedResource Include="Preview\WebBridge.js" LogicalName="preview/web-bridge.js" />
   </ItemGroup>

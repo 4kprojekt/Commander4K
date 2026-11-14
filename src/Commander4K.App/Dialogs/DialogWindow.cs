@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Declarative;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Commander4K.App.Theming;
 using Commander4K.Core.Localization;
 
@@ -367,7 +368,7 @@ public sealed class LoginDialog : DialogWindow<LoginResult?>
         _user = new TextBox().Text(userName ?? string.Empty).PlaceholderText(Loc.T("użytkownik (np. DOMENA\\jan)"));
         _user.IsEnabled = !lockUser;
         _password = new TextBox().PasswordChar('•').PlaceholderText(Loc.T("hasło"));
-        var body = new List<Control> { Message(Loc.T("„{0}” wymaga zalogowania.", realm)), Label(Loc.T("Użytkownik")), _user, Label(Loc.T("Hasło")).Margin(0, 6, 0, 4), _password };
+        var body = new List<Control> { Message(Loc.T("„{0}” wymaga zalogowania.", realm.Replace("://@", "://", StringComparison.Ordinal))), Label(Loc.T("Użytkownik")), _user, Label(Loc.T("Hasło")).Margin(0, 6, 0, 4), _password };
         if (error is not null)
         {
             body.Insert(0, Ds.Notice(brushes, error, NoticeKind.Error).Margin(0, 0, 0, 6));
@@ -379,8 +380,11 @@ public sealed class LoginDialog : DialogWindow<LoginResult?>
                 .PlaceholderText(@"C:\Users\…\.ssh\id_ed25519");
             _useKey = new CheckBox().Content(Loc.T("Zaloguj kluczem prywatnym (hasło powyżej = hasło klucza)"));
             _useKey.IsCheckedChanged += (_, _) => _keyFile.IsEnabled = _useKey.IsChecked == true;
+            var browse = new Button().Col(1).Content(Loc.T("Wybierz…")).Margin(6, 0, 0, 0).IsEnabled(false);
+            browse.Click += async (_, _) => _keyFile.Text = await SshKeyPicker.PickAsync(this) ?? _keyFile.Text;
+            _useKey.IsCheckedChanged += (_, _) => browse.IsEnabled = _useKey.IsChecked == true;
             body.Add(_useKey.Margin(0, 8, 0, 0));
-            body.Add(_keyFile.Margin(0, 4, 0, 0));
+            body.Add(new Grid().Cols("*,Auto").Margin(0, 4, 0, 0).Children(_keyFile, browse));
         }
 
         HeaderGlyph = "🔑";
@@ -396,6 +400,23 @@ public sealed class LoginDialog : DialogWindow<LoginResult?>
             var key = _useKey?.IsChecked == true && !string.IsNullOrWhiteSpace(_keyFile?.Text) ? _keyFile!.Text!.Trim() : null;
             Complete(new LoginResult(_user.Text.Trim(), _password.Text ?? string.Empty, key));
         }
+    }
+}
+
+/// <summary>The system file picker for an SSH private key, starting in <c>~/.ssh</c>.</summary>
+internal static class SshKeyPicker
+{
+    public static async Task<string?> PickAsync(Window owner)
+    {
+        var sshFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
+        var start = Directory.Exists(sshFolder) ? await owner.StorageProvider.TryGetFolderFromPathAsync(sshFolder) : null;
+        var files = await owner.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = Loc.T("Klucz prywatny SSH"),
+            AllowMultiple = false,
+            SuggestedStartLocation = start,
+        });
+        return files.FirstOrDefault()?.TryGetLocalPath();
     }
 }
 

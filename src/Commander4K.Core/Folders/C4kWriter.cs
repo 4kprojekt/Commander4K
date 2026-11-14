@@ -82,6 +82,24 @@ public static class C4kWriter
         return root.ToJsonString(Indented) + "\n";
     }
 
+    /// <summary>The login of an <c>open</c> item: <c>user</c> and <c>keyFile</c> (removed for a password login). Never a password.</summary>
+    /// <exception cref="JsonException">The file is not a JSON object.</exception>
+    public static string SetLogin(string existing, string user, string? keyFile)
+    {
+        var root = Parse(existing);
+        root["user"] = user;
+        if (keyFile is null)
+        {
+            root.Remove("keyFile");
+        }
+        else
+        {
+            root["keyFile"] = keyFile;
+        }
+
+        return root.ToJsonString(Indented) + "\n";
+    }
+
     /// <summary><see cref="TileSize.Small"/> removes the key, since it is the default.</summary>
     /// <exception cref="JsonException">The file is not a JSON object.</exception>
     public static string SetSize(string existing, TileSize size)

@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/4kprojekt/Commander4K/main/docs/plugin.schema.json",
   "id": "official.mail",
   "name": "Poczta",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "author": "4Kprojekt",
   "description": "Oficjalna wtyczka: poczta IMAP/SMTP w folderach .eml. Folder konta z plikiem .c4k: { \"plugin\": \"official.mail\", \"options\": { \"imap\": \"imap.example.com:993\", \"smtp\": \"smtp.example.com:465\", \"user\": \"ja@example.com\", \"refresh\": \"5m\", \"since\": \"3m\" } }. Opcja from (adres nadawcy) jest opcjonalna: domyślnie user, a gdy user nie jest adresem, user@serwer-imap. Hasło zna tylko aplikacja.",
   "runtime": { "type": "powershell", "entry": "main.ps1", "version": ">=7.2" },
@@ -13,7 +13,18 @@
       { "id": "add-account", "title": "Dodaj konto pocztowe", "category": "Poczta", "description": "Pyta o adres i serwery, sprawdza logowanie i dodaje folder konta z plikiem .c4k, a gdy bieżący folder jest dashboardem, także kartę konta." }
     ],
     "previews": [
-      { "id": "account", "title": "Poczta: konto", "extensions": ["/"], "priority": -10, "card": true, "setup": true },
+      {
+        "id": "account", "title": "Poczta: konto", "extensions": ["/"], "priority": -10, "card": true, "setup": true,
+        "options": [
+          { "id": "imap", "type": "string", "description": "IMAP server as host:port, e.g. imap.example.com:993 (993 = implicit TLS).", "required": true },
+          { "id": "smtp", "type": "string", "description": "SMTP server as host:port, e.g. smtp.example.com:465; leave out for receive-only accounts." },
+          { "id": "user", "type": "string", "description": "Login and address of the mailbox, e.g. me@example.com.", "required": true },
+          { "id": "from", "type": "string", "description": "Sender address for new mail, e.g. me@example.com; default is user, or user@imap-host when user is not an address." },
+          { "id": "name", "type": "string", "description": "Sender display name, e.g. Jan Kowalski; written by the account setup." },
+          { "id": "refresh", "type": "string", "description": "Automatic check interval such as 30s, 5m or 1h (minimum 1m); false checks only on open and on \"Sprawdź teraz\"." },
+          { "id": "since", "type": "string", "description": "How far back to download mail: 3m (months), 1y, 10d, or a date like 2026-01-01; default 3m." }
+        ]
+      },
       { "id": "message", "title": "Poczta: wiadomość", "extensions": [".eml"], "priority": 60, "enter": true }
     ]
   }

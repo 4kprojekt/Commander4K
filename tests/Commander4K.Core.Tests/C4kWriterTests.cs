@@ -42,6 +42,16 @@ public sealed class C4kWriterTests
     }
 
     [Fact]
+    public void SetLogin_roundtrips_and_a_password_login_drops_the_key()
+    {
+        var json = C4kWriter.SetLogin("{\"open\":\"sftp://host\",\"keyFile\":\"old\"}", "ubuntu", @"C:\keys\id");
+        var item = C4kItem.Parse(@"C:\x", "a.c4k", json);
+
+        Assert.Equal(("ubuntu", @"C:\keys\id", "sftp://host"), (item.User, item.KeyFile, item.Open));
+        Assert.Null(JsonNode.Parse(C4kWriter.SetLogin(json, "root", null))!["keyFile"]);
+    }
+
+    [Fact]
     public void SetSize_small_removes_key()
     {
         Assert.Null(JsonNode.Parse(C4kWriter.SetSize("{\"size\":\"wide\"}", TileSize.Small))!["size"]);

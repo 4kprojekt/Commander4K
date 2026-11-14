@@ -47,17 +47,43 @@ public sealed class PanelTab
     public string? FolderViewOrigin { get; private set; }
 
     /// <summary>
-    /// The folder holding the <c>.c4k</c> whose <c>open</c> brought this tab here (a server, another folder); Esc and Pliki
-    /// return to it. Kept on a failed connection and while the tab stays on the target or below it; any other navigation drops it.
+    /// The folder this tab left for a detour: the one holding the <c>.c4k</c> whose <c>open</c> brought it here, or the
+    /// folder it was in when it entered an sftp/ftp server any other way. Esc and Pliki return to it. Kept on a failed
+    /// connection and while the tab stays on the target or below it (a server: anywhere on it); other navigation drops it.
     /// </summary>
     public string? Origin { get; private set; }
 
     private string? _originTarget;
 
-    public void SetOrigin(string origin, string target)
+    /// <summary>
+    /// <c>false</c> for an origin the tab noted itself on entering the network (<c>net://</c>, an sftp/ftp server): it
+    /// lasts for the whole stay there, Esc uses it, the Pliki switch does not.
+    /// </summary>
+    public bool OriginFromItem { get; private set; }
+
+    /// <summary>The <c>.c4k</c> file whose <c>open</c> brought the tab here: a login typed for it is saved there.</summary>
+    public string? OriginItemFile { get; private set; }
+
+    public void SetOrigin(string origin, string target, bool fromItem = true, string? itemFile = null)
     {
         Origin = origin;
-        _originTarget = target.TrimEnd('\\', '/');
+        OriginItemFile = itemFile;
+        OriginFromItem = fromItem;
+        _originTarget = ServerOf(target) ?? target.TrimEnd('\\', '/');
+    }
+
+    /// <summary><c>sftp://host:port</c> of an sftp/ftp path, without the user (a login may add it to the path); else <c>null</c>.</summary>
+    private static string? ServerOf(string? path)
+    {
+        if (path is null || VfsPath.GetScheme(path) is not ("sftp" or "ftp"))
+        {
+            return null;
+        }
+
+        var start = path.IndexOf("://", StringComparison.Ordinal) + 3;
+        var slash = path.IndexOf('/', start);
+        var authority = slash < 0 ? path[start..] : path[start..slash];
+        return path[..start] + authority[(authority.LastIndexOf('@') + 1)..];
     }
 
     /// <summary>The origin, cleared: going back to it ends the detour.</summary>
@@ -65,6 +91,7 @@ public sealed class PanelTab
     {
         var origin = Origin;
         Origin = null;
+        OriginItemFile = null;
         _originTarget = null;
         return origin;
     }
@@ -96,9 +123,17 @@ public sealed class PanelTab
     private static bool SameFolder(string a, string b) =>
         string.Equals(a.TrimEnd('\\', '/'), b.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsNetwork(string path) => VfsPath.GetScheme(path) is "net" or "sftp" or "ftp";
+
     private bool IsWithinOriginTarget(string path)
     {
-        var trimmed = path.TrimEnd('\\', '/');
+        if (!OriginFromItem)
+        {
+            return IsNetwork(path);
+        }
+
+        // A server target is the whole server: ".." above the folder a .c4k opened is still the same detour.
+        var trimmed = ServerOf(_originTarget) is not null && ServerOf(path) is { } server ? server : path.TrimEnd('\\', '/');
         return _originTarget is { } target
             && (string.Equals(trimmed, target, StringComparison.OrdinalIgnoreCase)
                 || (trimmed.StartsWith(target, StringComparison.OrdinalIgnoreCase) && trimmed[target.Length] is '\\' or '/'));
@@ -252,6 +287,15 @@ public sealed class PanelTab
         Changed?.Invoke();
     }
 
+    private CancellationTokenSource _sizes = new();
+
+    /// <summary>Esc: stops the folder sizes being counted (a whole server can take minutes); the listing stays.</summary>
+    public void CancelSizes()
+    {
+        _sizes.Cancel();
+        _sizes = new();
+    }
+
     /// <summary>Computes the size of a directory row in the background, updating the row as totals arrive.</summary>
     public async Task CalculateSizeAsync(VfsEntry entry)
     {
@@ -261,7 +305,8 @@ public sealed class PanelTab
         }
 
         var generation = _generation;
-        var token = _listing?.Token ?? CancellationToken.None;
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(_listing?.Token ?? CancellationToken.None, _sizes.Token);
+        var token = cancel.Token;
         Changed?.Invoke();
         try
         {
@@ -356,10 +401,18 @@ public sealed class PanelTab
     private async Task LoadAsync(string path, string? focusName, bool preserveState)
     {
         // Leaving a failed location (".." from an unreachable server) keeps the origin; only leaving a working one drops it.
-        if (Origin is not null && Error is null && !IsLoading && !IsWithinOriginTarget(path))
+        if (Origin is not null && Error is null && (!IsLoading || !OriginFromItem) && !IsWithinOriginTarget(path))
         {
             Origin = null;
+            OriginItemFile = null;
             _originTarget = null;
+        }
+
+        // Entering the network (net://, a server; from the drive menu or a typed path): Esc anywhere there leads back to
+        // the folder the tab left, or to the home folder when it has none (the app started on net://).
+        if (Origin is null && IsNetwork(path))
+        {
+            SetOrigin(Error is null && !IsNetwork(Path) ? Path : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path, fromItem: false);
         }
 
         _listing?.Cancel();
