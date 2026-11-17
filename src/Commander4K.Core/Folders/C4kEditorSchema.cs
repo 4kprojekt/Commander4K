@@ -86,6 +86,20 @@ public static class C4kEditorSchema
             }
         }
 
+        // Entries of "views" get the same hints as the file (plugin ids, options…), plus the entry-only keys.
+        if (properties["views"]?["items"] is JsonObject entry && entry["properties"] is JsonObject entryProperties)
+        {
+            foreach (var (key, value) in properties.Where(p => p.Key is not ("views" or "$schema" or "title")))
+            {
+                entryProperties[key] = value?.DeepClone();
+            }
+
+            if (allOf.Count > 0)
+            {
+                entry["allOf"] = allOf.DeepClone();
+            }
+        }
+
         return root;
     }
 

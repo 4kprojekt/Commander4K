@@ -79,6 +79,7 @@ public sealed class SshMonitorTests
 
         Assert.NotEqual(Commander4K.PluginSdk.CardStatus.None, card.Status);
         Assert.Contains(card.Actions, a => a.Target == Commander4K.PluginSdk.CardActions.Refresh);
+        Assert.Contains(card.Actions, a => a.Label == "SSH" && a.Target.StartsWith(SshMonitor.TerminalPrefix, StringComparison.Ordinal));
     }
 
     private static SshStats Reading(params long[] ticks) =>

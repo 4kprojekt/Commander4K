@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Commander4K.PluginSdk;
 
 namespace Commander4K.Core.Folders;
@@ -71,9 +72,31 @@ public sealed record C4kItem
     /// <summary>SHA-256 of the file text: trust is given to this exact content.</summary>
     public string Hash { get; init; } = string.Empty;
 
+    /// <summary>
+    /// JSON key <c>views</c>: the ways this file can be shown, in file order (the path bar offers them as a switch).
+    /// Each is a whole item: the file's keys with the entry's own on top. The item itself is the default one
+    /// (<c>"default": true</c>, else the first). Empty without the key.
+    /// </summary>
+    public IReadOnlyList<C4kItem> Views { get; init; } = [];
+
+    /// <summary>In <see cref="Views"/>: the entry the file opens with.</summary>
+    public bool IsDefault { get; init; }
+
+    /// <summary>Trust is per file: every entry of <see cref="Views"/> answers with the hash and summary of them all.</summary>
+    public string? SharedTrustHash { get; init; }
+
+    public IReadOnlyList<string>? SharedTrustSummary { get; init; }
+
+    /// <summary>The <c>terminal</c> and <c>monitor</c> views: <see cref="Open"/> names their server instead of being the action.</summary>
+    public bool IsServerView => Plugin is null && Panel is null && Run is null && FolderViewIds.IsServerView(View);
+
+    /// <summary>The SSH monitor, as a card or as the <c>monitor</c> view.</summary>
+    private bool IsSshMonitor => string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase)
+        || (IsServerView && string.Equals(View, FolderViewIds.Monitor, StringComparison.OrdinalIgnoreCase));
+
     public FolderActionKind Kind =>
         Run is not null ? FolderActionKind.Run
-        : Open is not null ? FolderActionKind.Open
+        : Open is not null && !IsServerView ? FolderActionKind.Open
         : Url is not null ? FolderActionKind.Url
         : Panel is not null ? FolderActionKind.Panel
         : FolderActionKind.View;
@@ -83,33 +106,35 @@ public sealed record C4kItem
     public bool IsPlainFiles => Kind == FolderActionKind.View && Plugin is null && (View is null || string.Equals(View, FolderViewIds.Files, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>SHA-256 over only what trust unlocks (run, api, an ssh card's server and login), so resizing or retitling keeps it.</summary>
-    public string TrustHash
+    public string TrustHash => SharedTrustHash ?? HashOf(TrustParts());
+
+    private static string HashOf(List<object?> parts) =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(parts))));
+
+    private List<object?> TrustParts()
     {
-        get
+        var parts = new List<object?>();
+        if (Run is { } run)
         {
-            var parts = new List<object?>();
-            if (Run is { } run)
-            {
-                parts.Add(new object?[] { "run", run.Command, run.Arguments, run.WorkingDirectory, run.Hidden });
-            }
-
-            if (Api is { } api)
-            {
-                parts.Add(new object?[] { "api", api.Method, api.Url, api.Body, api.Headers.OrderBy(h => h.Key, StringComparer.OrdinalIgnoreCase).Select(h => new[] { h.Key, h.Value }) });
-            }
-
-            if (string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
-            {
-                parts.Add(new object?[] { "ssh", Open ?? CardTarget, User, KeyFile, OptionText("user"), OptionText("keyFile") });
-            }
-
-            if (IsRemoteCard && !string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
-            {
-                parts.Add(new object?[] { "remote", Open ?? CardTarget, User, KeyFile });
-            }
-
-            return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(parts))));
+            parts.Add(new object?[] { "run", run.Command, run.Arguments, run.WorkingDirectory, run.Hidden });
         }
+
+        if (Api is { } api)
+        {
+            parts.Add(new object?[] { "api", api.Method, api.Url, api.Body, api.Headers.OrderBy(h => h.Key, StringComparer.OrdinalIgnoreCase).Select(h => new[] { h.Key, h.Value }) });
+        }
+
+        if (IsSshMonitor)
+        {
+            parts.Add(new object?[] { "ssh", Open ?? CardTarget, User, KeyFile, OptionText("user"), OptionText("keyFile") });
+        }
+
+        if (IsRemoteCard && !IsSshMonitor)
+        {
+            parts.Add(new object?[] { "remote", Open ?? CardTarget, User, KeyFile });
+        }
+
+        return parts;
     }
 
     /// <summary>A text value of <see cref="Options"/> (the ssh card reads its login there).</summary>
@@ -127,6 +152,11 @@ public sealed record C4kItem
     /// <summary>What trusting this file unlocks, one line each.</summary>
     public IReadOnlyList<string> TrustSummary()
     {
+        if (SharedTrustSummary is { } shared)
+        {
+            return shared;
+        }
+
         var lines = new List<string>();
         if (Run is { } run)
         {
@@ -136,7 +166,7 @@ public sealed record C4kItem
         {
             lines.Add($"{api.Method} {api.Url}");
         }
-        else if (string.Equals(Card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase) && CardTarget is { } server)
+        else if (IsSshMonitor && CardTarget is { } server)
         {
             lines.Add("SSH " + server);
         }
@@ -225,12 +255,59 @@ public sealed record C4kItem
                 error ??= ex.Message;
             }
 
-            return error is null ? item : item with { Error = error };
+            item = error is null ? item : item with { Error = error };
+            return root.TryGetProperty("views", out var views) ? WithViews(item, folder, fileName, root, views) : item;
         }
         catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException)
         {
             return item with { Error = ex.Message };
         }
+    }
+
+    /// <summary>
+    /// <c>views</c>: each entry is parsed as the file with the entry's keys on top (the file's <c>title</c> stays the
+    /// file's). The result is the default entry carrying them all; a single entry makes no switch.
+    /// </summary>
+    private static C4kItem WithViews(C4kItem item, string folder, string fileName, JsonElement root, JsonElement views)
+    {
+        if (views.ValueKind != JsonValueKind.Array || views.EnumerateArray().Any(v => v.ValueKind != JsonValueKind.Object))
+        {
+            return item with { Error = item.Error ?? "\"views\" must be a list of objects." };
+        }
+
+        var parsed = new List<C4kItem>();
+        foreach (var entry in views.EnumerateArray())
+        {
+            var merged = new JsonObject();
+            foreach (var property in root.EnumerateObject().Where(p => p.Name is not ("views" or "title" or "default")).Concat(entry.EnumerateObject().Where(p => p.Name != "views")))
+            {
+                merged[property.Name] = JsonNode.Parse(property.Value.GetRawText());
+            }
+
+            var view = Parse(folder, fileName, merged.ToJsonString());
+            parsed.Add(view with
+            {
+                Hash = item.Hash,
+                Title = C4kJson.String(entry, "title") ?? view.View ?? view.Panel ?? view.Plugin ?? (parsed.Count + 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                IsDefault = entry.TryGetProperty("default", out var isDefault) && isDefault.ValueKind == JsonValueKind.True,
+            });
+        }
+
+        if (parsed.Count == 0)
+        {
+            return item;
+        }
+
+        var chosen = Math.Max(0, parsed.FindIndex(v => v.IsDefault));
+        var trust = HashOf([.. parsed.SelectMany(v => v.TrustParts())]);
+        IReadOnlyList<string> summary = [.. parsed.SelectMany(v => v.TrustSummary()).Distinct()];
+        parsed = [.. parsed.Select((v, i) => v with { IsDefault = i == chosen, SharedTrustHash = trust, SharedTrustSummary = summary })];
+        return parsed[chosen] with
+        {
+            Title = item.Title,
+            Error = item.Error ?? parsed.FirstOrDefault(v => v.Error is not null)?.Error,
+            Views = parsed.Count > 1 ? parsed : [],
+        };
     }
 
     private static C4kItem ParseCard(JsonElement root, C4kItem item)

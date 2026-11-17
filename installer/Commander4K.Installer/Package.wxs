@@ -55,6 +55,8 @@
                   Impersonate="yes"
                   Return="asyncNoWait" />
 
+    <!-- The licence page takes RTF only; License.rtf is the repo's LICENSE (MIT), keep the two in step. -->
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
     <ui:WixUI Id="WixUI_FeatureTree" />
     <UI>
       <Publish Dialog="ExitDialog"

@@ -13,6 +13,7 @@ using Commander4K.Core.Localization;
 using Commander4K.PluginSdk;
 using Commander4K.Plugins.BuiltIn.Dashboard;
 using Commander4K.Plugins.BuiltIn.Previews;
+using Commander4K.Plugins.BuiltIn.Remote;
 
 namespace Commander4K.App.Preview;
 
@@ -37,6 +38,13 @@ public sealed class DashboardView : ScrollViewer
     private readonly Func<PreviewTile, Task> _open;
     private readonly Func<PreviewTile, double, Control> _shortcut;
     private readonly Func<int, Task>? _resizeTile;
+    private readonly Func<int, TimeSpan?, Task>? _saveRefresh;
+
+    /// <summary>How often each card reads itself now; no entry or <c>null</c> = only on demand.</summary>
+    private readonly Dictionary<int, TimeSpan?> _intervals = [];
+
+    /// <summary>Seconds offered by the refresh button's menu.</summary>
+    private static readonly int[] RefreshChoices = [5, 10, 30, 60, 300];
     private readonly Func<C4kItem, Task<bool>>? _askTrust;
     private readonly Action<string, bool> _notify;
     private readonly ConcurrentDictionary<int, CardSource> _sources = new();
@@ -54,10 +62,12 @@ public sealed class DashboardView : ScrollViewer
     /// <param name="shortcut">Draws a plain tile (the preview's usual tile look) at the given width.</param>
     /// <param name="askTrust">Asks the user to trust one item's <c>.c4k</c> file; <c>null</c> = such cards stay locked.</param>
     /// <param name="notify">Status-bar message (text, is error) for card actions that fail.</param>
+    /// <param name="saveRefresh">Writes the refresh interval picked on a card into its file; <c>null</c> = it lasts while the view does.</param>
     public DashboardView(AppHost app, DashboardPreview dashboard, SkinBrushes brushes, Func<PreviewTile, Task> open,
         Func<PreviewTile, double, Control> shortcut, Func<C4kItem, Task<bool>>? askTrust,
-        Action<string, bool> notify, Func<int, Task>? resizeTile = null)
+        Action<string, bool> notify, Func<int, Task>? resizeTile = null, Func<int, TimeSpan?, Task>? saveRefresh = null)
     {
+        _saveRefresh = saveRefresh;
         _notify = notify;
         _app = app;
         _dashboard = dashboard;
@@ -293,6 +303,7 @@ public sealed class DashboardView : ScrollViewer
                 _app.SshMonitor.Retain(server); // released in StopAsync; another dashboard on the same server keeps the session
             }
 
+            _intervals[index] = tile.Refresh ?? WidgetCards.DefaultRefresh(tile.Card);
             CardSource? source = null; // one read at a time per card (the loop guarantees it), so no lock is needed
             loop.Add(slot.Index, async (previous, ct) =>
             {
@@ -311,7 +322,7 @@ public sealed class DashboardView : ScrollViewer
                 }
 
                 return await source.Load(previous, ct).ConfigureAwait(false);
-            }, tile.Refresh ?? WidgetCards.DefaultRefresh(tile.Card));
+            }, _intervals[index]);
         }
 
         if (!_stopped)
@@ -355,9 +366,37 @@ public sealed class DashboardView : ScrollViewer
                 await RunPluginActionAsync(index, name, arguments);
                 break;
             default:
+                // A button leading to the card's own server signs in like the card: with the login from its file.
+                var path = action.Target.StartsWith(SshMonitor.TerminalPrefix, StringComparison.Ordinal) ? action.Target[SshMonitor.TerminalPrefix.Length..] : action.Target;
+                if (_targets.TryGetValue(index, out var server) && string.Equals(path, server, StringComparison.OrdinalIgnoreCase)
+                    && _dashboard.Slots.FirstOrDefault(s => s.Index == index) is { } slot)
+                {
+                    _app.ApplyItemLogin(slot.Item, server);
+                }
+
                 await _open(new PreviewTile(action.Label, null, null, null, action.Target));
                 break;
         }
+    }
+
+    /// <summary>The interval picked in a card's refresh menu: applied at once, then written into the card's file.</summary>
+    private async Task SetRefreshAsync(int index, TimeSpan? refresh)
+    {
+        // shortcut: "off" removes the key, so a clock or disks card is back on its default interval after a reload; write an explicit "off" value if that matters.
+        _intervals[index] = refresh;
+        _loop?.SetRefresh(index, refresh);
+        if (_saveRefresh is not null)
+        {
+            await _saveRefresh(index, refresh);
+        }
+    }
+
+    private static string IntervalName(TimeSpan interval)
+    {
+        var seconds = (long)interval.TotalSeconds;
+        return seconds % 3600 == 0 ? Loc.T("Co {0} h", seconds / 3600)
+            : seconds % 60 == 0 ? Loc.T("Co {0} min", seconds / 60)
+            : Loc.T("Co {0} s", seconds);
     }
 
     /// <summary>A <c>c4k:plugin/…</c> card button: the preview that drew the card runs it, then the card is read again.</summary>
@@ -419,6 +458,7 @@ public sealed class DashboardView : ScrollViewer
     {
         private readonly Border _frame = new();
         private CardState _state = new(slot.Index, null, true, null);
+        private bool _menuOpen;
 
         /// <summary>Rows the tile spans: a taller card shows more lines, a bigger chart and larger thumbnails.</summary>
         private int Rows => TileSizes.Span(slot.Item.Size).Rows;
@@ -449,7 +489,7 @@ public sealed class DashboardView : ScrollViewer
         public void Update(CardState state)
         {
             _state = state;
-            if (_frame.Parent is not null)
+            if (_frame.Parent is not null && !_menuOpen) // a redraw would take the open menu's button away; it follows on close
             {
                 _frame.Child = Content(owner._brushes);
             }
@@ -529,9 +569,11 @@ public sealed class DashboardView : ScrollViewer
 
             foreach (var action in buttons)
             {
+                var isRefresh = action.Target == CardActions.Refresh;
                 var button = new Button
                 {
-                    Content = action.Label,
+                    Content = isRefresh ? action.Label + " ▾" : action.Label,
+                    Flyout = isRefresh ? RefreshMenu() : null,
                     Height = 26,
                     Padding = new Thickness(10, 0),
                     Margin = new Thickness(3),
@@ -545,7 +587,10 @@ public sealed class DashboardView : ScrollViewer
                 button.Click += async (_, e) =>
                 {
                     e.Handled = true;
-                    await owner.RunActionAsync(slot.Index, action);
+                    if (!isRefresh)
+                    {
+                        await owner.RunActionAsync(slot.Index, action);
+                    }
                 };
                 actions.Children.Add(button);
             }
@@ -573,6 +618,47 @@ public sealed class DashboardView : ScrollViewer
             }
 
             return grid;
+        }
+
+        /// <summary>The refresh button's menu: read now, or how often the card reads itself (the current choice is marked).</summary>
+        private MenuFlyout RefreshMenu()
+        {
+            var current = owner._intervals.GetValueOrDefault(slot.Index);
+            var menu = new MenuFlyout();
+            menu.Items.Add(Choice(Loc.T("Odśwież teraz"), null, () =>
+            {
+                owner._loop?.RefreshNow(slot.Index);
+                return Task.CompletedTask;
+            }));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Choice(Loc.T("Bez automatycznego odświeżania"), current is null, () => owner.SetRefreshAsync(slot.Index, null)));
+            IEnumerable<TimeSpan> intervals = RefreshChoices.Select(s => TimeSpan.FromSeconds(s));
+            foreach (var interval in (current is { } own ? intervals.Append(own) : intervals).Distinct().Order())
+            {
+                menu.Items.Add(Choice(IntervalName(interval), interval == current, () => owner.SetRefreshAsync(slot.Index, interval)));
+            }
+
+            menu.Opened += (_, _) => _menuOpen = true;
+            menu.Closed += (_, _) =>
+            {
+                _menuOpen = false;
+                Update(_state);
+            };
+            return menu;
+        }
+
+        /// <param name="selected"><c>null</c> = a plain command, otherwise one of the interval choices.</param>
+        private static MenuItem Choice(string text, bool? selected, Func<Task> run)
+        {
+            var item = new MenuItem { Header = text };
+            if (selected is { } on)
+            {
+                item.ToggleType = MenuItemToggleType.Radio;
+                item.IsChecked = on;
+            }
+
+            item.Click += async (_, _) => await run();
+            return item;
         }
 
         private Control Item(CardItem item, int position, int lines, SkinBrushes brushes) => item switch

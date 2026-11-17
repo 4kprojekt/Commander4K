@@ -117,6 +117,24 @@ public static class C4kWriter
         return root.ToJsonString(Indented) + "\n";
     }
 
+    /// <summary>The card's <c>refresh</c> (<c>"30s"</c>, <c>"5m"</c>); <c>null</c> removes the key.</summary>
+    /// <exception cref="JsonException">The file is not a JSON object.</exception>
+    public static string SetRefresh(string existing, TimeSpan? refresh)
+    {
+        var root = Parse(existing);
+        if (refresh is not { } interval)
+        {
+            root.Remove("refresh");
+        }
+        else
+        {
+            var seconds = (long)interval.TotalSeconds;
+            root["refresh"] = seconds % 60 == 0 ? $"{seconds / 60}m" : $"{seconds}s";
+        }
+
+        return root.ToJsonString(Indented) + "\n";
+    }
+
     /// <summary>Comments are dropped when the file is written again, so the caller warns first.</summary>
     public static bool HasComments(string json)
     {

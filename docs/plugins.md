@@ -165,7 +165,7 @@ Ask for the fewest permissions that do the job.
 
 Sensitive form fields: in a `preview.render` form field, set `"password": true` to mask the value in the UI. The value is still sent through the form protocol; plugins should not log or persist it unless the user explicitly asks.
 
-`options` is the `"options"` object of the `.c4k` item when the panel or preview was opened through it (see [.c4k files](#c4k-files)), otherwise `null`.
+`options` is the `"options"` object of the `.c4k` item when the panel or preview was opened through it (see [.c4k files](#c4k-files)), otherwise `null`. When the item has `views`, a plugin named by one entry gets that entry's `options`, else the file's (an entry's `options` replace the file's, they are not merged); `preview.setup` answers are written at the top of the file, so every entry of the plugin shares them. A plugin needs no code for `views`: design a folder preview or panel so it is useful as one of several looks of a folder (the user switches between them on the path bar), and suggest such a file in your plugin's README instead of asking users to pick one view.
 
 `context` = `{ activePath, otherPath, selection: [{ name, path, kind, size, modified, hidden }] }`:
 - `activePath` is the location of the file list the user is looking at;
@@ -641,6 +641,7 @@ The file name without `.c4k` is the default `title`. One target per item:
 | Target | Example | What happens |
 |---|---|---|
 | `view` | `"gallery"`, `"notes"`, `"markdown"`, `"files"`, `"api"` | Built-in views: image thumbnails (made in the background and kept in the folder's hidden `.thumbnail.c4k`, named `<image>.<size>-<mtime>.webp`, stale ones deleted), Markdown notes with their links, a Markdown file (`file`, README.md by default), the plain list, the fields of an HTTP API (`api`, GET and HEAD only). `"settings"`, `"skins"` and `"plugins"` are the app's own pages (settings, skins, plugin manager): the app writes `settings.c4k`, `skins.c4k` and `plugins.c4k` into `config/`, `config/skins/` and the plugins folder when those have no `.c4k` file, and *Pliki* switches between the page and the files. A second `.c4k` file in one of these folders turns it into a dashboard. |
+| `view` `"terminal"` / `"monitor"` (+ `open`, `user`, `keyFile`) | `{ "view": "terminal", "open": "sftp://root@v8.example.com" }` | An SSH shell (`terminal`) or the server's status, CPU, memory and disks (`monitor`, the `ssh` card as a whole view) in the panel. `open` names the server and is not a link here. `monitor` needs trust (below). Mostly used as entries of `views`. |
 | `plugin` (+ `preview`) | `{ "plugin": "official.steam-library" }` | The plugin's preview (`contributes.previews`, `extensions: ["/"]`) renders the folder, with `options`. On Enter it fills the panel; Esc returns to the files. |
 | `panel` (+ `plugin`) | `{ "panel": "builtin.sysinfo" }`, `{ "plugin": "examples.git", "panel": "log" }` | Opens a panel plugin with the folder as `argument` and `options`: a built-in panel by its id, a plugin's panel by `plugin` + `panel` (or `"<plugin>/<panel>"`). |
 | `open` (+ `user`, `keyFile`) | `{ "open": "sftp://me@nas.lan/srv", "keyFile": "~/.ssh/id_ed25519" }` | Goes there instead; relative paths are resolved against the file's folder. The tab remembers that folder as its origin: Esc (or *Pliki*) goes back to its file list, also after a failed connection, which stays on screen with its error. Navigating elsewhere by hand drops the origin. |
@@ -657,6 +658,22 @@ Other keys: `title`, `description`, `icon`, `image` (a picture for the tile), `o
   "options": { "sort": "size" }
 }
 ```
+
+**Several views of one file.** `"views": [ {…}, {…} ]` lists ways to show the same thing. Each entry is an object with the same keys as the file (`view`, `plugin`, `open`, `options`…) plus `title` (the label on the switch; the view, panel or plugin name by default) and `"default": true` (what opens first; the first entry when none is marked). An entry is the file's keys with its own on top, so shared keys (`open`, `user`) are written once; the file's own `title`, `default` and `views` are not inherited. With two or more entries the panel's path bar shows a second switch with the titles beside Pliki · Auto · Widok; one entry just applies its keys. `views` must be a list of objects. For example a server with an SSH shell, its SFTP files and a monitor:
+
+```json
+{
+  "open": "sftp://v8.example.com",
+  "user": "root",
+  "views": [
+    { "title": "SSH", "view": "terminal" },
+    { "title": "SFTP", "default": true },
+    { "title": "Monitor", "view": "monitor" }
+  ]
+}
+```
+
+Trust is per file: all views share one hash and one list ("Zezwól" covers every view), so a file with a `monitor` view is locked until trusted.
 
 **Trust.** An item that runs a command, sends a request that may change something (`api` with a method other than GET/HEAD), signs in to an SSH server (`ssh` card) or reads an SFTP/FTP target as a card stays locked until the user allows **that file** ("Zezwól"). Trust is stored in `config/trusted-folders.json` per file path, with a hash of only those fields (`run`, the request's method, URL, body and headers, the server, `user` and `keyFile`, also inside an `ssh` card's `options`), so resizing a tile or changing its title keeps it, while another command, server or login, or the same file under another name, asks again. On a dashboard each card is locked or live on its own.
 

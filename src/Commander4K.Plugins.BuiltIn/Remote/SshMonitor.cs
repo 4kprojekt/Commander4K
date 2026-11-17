@@ -20,6 +20,9 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
 {
     private const string AuditId = "builtin.remote";
 
+    /// <summary>Card button target that opens the SSH terminal on the <c>sftp://</c> path after it.</summary>
+    public const string TerminalPrefix = "c4k:ssh/";
+
     private readonly ConcurrentDictionary<string, SshClient> _clients = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>One connection attempt per server at a time, so two cards cannot open (and leak) two sessions.</summary>
@@ -49,7 +52,7 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
     public async Task<PreviewCard> LoadCardAsync(string sftpPath, string? optionsJson, PreviewCard? previous, CancellationToken cancellationToken,
         Func<string, string>? resolvePath = null, string? user = null, string? keyFile = null)
     {
-        CardAction[] actions = [new(Loc.T("Otwórz"), sftpPath), new(Loc.T("Odśwież"), CardActions.Refresh)];
+        CardAction[] actions = [new("SSH", TerminalPrefix + sftpPath), new("SFTP", sftpPath), new(Loc.T("Odśwież"), CardActions.Refresh)];
         RemoteEndpoint endpoint;
         try
         {

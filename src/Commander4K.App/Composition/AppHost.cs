@@ -384,6 +384,16 @@ public sealed class AppHost : IAsyncDisposable
 
     public RemoteTransferVfsPlugin Remote { get; } = new();
 
+    /// <summary>The login from the .c4k file is kept for this session only; saved connections remain the place for passwords.</summary>
+    public void ApplyItemLogin(C4kItem item, string target)
+    {
+        if (VfsPath.GetScheme(target) is "sftp" or "ftp" && (item.KeyFile is not null || item.User is not null))
+        {
+            Remote.SetLogin(target, new RemoteLogin(item.User ?? RemoteTransferVfsPlugin.UserNameOf(target) ?? Environment.UserName,
+                PrivateKeyFile: item.KeyFile is { } key ? item.Resolve(key) : null));
+        }
+    }
+
     public ArchiveVfsPlugin Archives { get; } = new();
 
     /// <summary>Extra file-list columns (WDX), switched on per column in the settings.</summary>

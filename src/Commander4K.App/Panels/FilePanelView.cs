@@ -57,6 +57,9 @@ public sealed class FilePanelView : ViewBase
     private TextBox _pathBox = null!;
     /// <summary>The Pliki · Auto · Widok switch on the path bar (rebuilt when the mode or the skin changes).</summary>
     private ContentControl _modeSwitch = null!;
+    private ContentControl _viewSwitch = null!;
+    private Border _viewSwitchRule = null!;
+    private (TabViews Views, SkinBrushes Skin)? _viewSwitchShown;
     private Control? _viewDot;
     private Border _statusBorder = null!;
     private Decorator _emptyFolderSetup = null!;
@@ -474,7 +477,11 @@ public sealed class FilePanelView : ViewBase
                             new Border().Ref(out _accentEdge).Width(3).Col(0),
                             new TextBox().Ref(out _pathBox).Col(1).BorderThickness(new Thickness(0)).MinHeight(24).Padding(7, 2)
                                 .VerticalContentAlignment(VerticalAlignment.Center),
-                            new ContentControl().Ref(out _modeSwitch).Col(2).Focusable(false)
+                            // The views of the .c4k file on screen (SSH · SFTP · Monitor), a rule, then Pliki · Auto · Widok.
+                            new ContentControl().Ref(out _viewSwitch).Col(2).Focusable(false).IsVisible(false)
+                                .VerticalAlignment(VerticalAlignment.Center).Margin(6, 0, 0, 0),
+                            new Border().Ref(out _viewSwitchRule).Col(3).Width(1).Margin(8, 6, 2, 6).IsVisible(false),
+                            new ContentControl().Ref(out _modeSwitch).Col(4).Focusable(false)
                                 .VerticalAlignment(VerticalAlignment.Center).Margin(6, 0),
                             // One click to switch this panel elsewhere: drives, This PC, network, saved and new connections.
                             new Button().Focusable(false).Ref(out _locationButton).Col(5).Content("▾").Padding(10, 0).MinWidth(32)
@@ -716,6 +723,7 @@ public sealed class FilePanelView : ViewBase
         UpdateLoadingCard();
         UpdateStatus();
         UpdateViewDot();
+        UpdateViewSwitch();
         // Changed fires on every cursor move and streamed batch: rebuild the tab buttons only when they would differ.
         if (_tabStrip.Children.Count > 0 && TabsKey() != _tabsKey)
         {
@@ -1025,8 +1033,7 @@ public sealed class FilePanelView : ViewBase
         var showingPreview = Mode is PreviewPanelView || IsFolderView;
         _modeSwitch.IsVisible = Mode is null || showingPreview || ContentOf(ActiveTab)?.FolderBound == true;
 
-        // A plugin's own folder view has its "Pliki (Esc)" button: the path bar and the switch add nothing there.
-        _pathBorder.IsVisible = Mode is not PreviewPanelView { IsPinnedFolder: true };
+        UpdateViewSwitch();
 
         // A folder tab (plugin manager, settings, skins) is its view or its files; elsewhere the panel's folder mode.
         var folderTab = ContentOf(ActiveTab)?.FolderBound == true;
@@ -1042,6 +1049,44 @@ public sealed class FilePanelView : ViewBase
 
         _modeSwitch.Content = segmented;
         UpdateViewDot();
+    }
+
+    /// <summary>Shows a view of the <c>.c4k</c> file on screen (an index into its <c>views</c>); set by the window.</summary>
+    public Func<FilePanelView, int, Task>? ShowItemView { get; set; }
+
+    /// <summary>
+    /// The second switch: the views of the .c4k file this tab shows. Only while one of them is on screen — the file's
+    /// view over the folder, or the place its <c>open</c> led to — never over the folder's plain files.
+    /// </summary>
+    private void UpdateViewSwitch()
+    {
+        var views = ActiveTab.Views;
+        var atFolder = views is not null && string.Equals(ActiveTab.Path.TrimEnd('\\', '/'), views.Folder.Path.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+        var visible = views is not null && (Mode is null ? !atFolder : IsFolderView || Mode is PreviewPanelView { IsPinnedFolder: true });
+        _viewSwitch.IsVisible = visible;
+        _viewSwitchRule.IsVisible = visible && _modeSwitch.IsVisible;
+        _viewSwitchRule.Background = _skins.Current.PanelBorder;
+
+        // A plugin's own folder view has its "Pliki (Esc)" button: the path bar and the switch add nothing there,
+        // unless the file has more views to switch to.
+        _pathBorder.IsVisible = visible || Mode is not PreviewPanelView { IsPinnedFolder: true };
+        if (!visible || _viewSwitchShown == (views!, _skins.Current))
+        {
+            return;
+        }
+
+        _viewSwitchShown = (views!, _skins.Current);
+        var segmented = Ds.Segmented(_skins.Current, [.. views!.Item.Views.Select(v => v.Title)], views.Current,
+            index => _ = ShowItemView?.Invoke(this, index), onToolbar: true);
+        if (segmented.Child is Panel buttons)
+        {
+            foreach (var button in buttons.Children.OfType<Button>())
+            {
+                button.Focusable = false; // panel chrome never takes the keyboard from the list
+            }
+        }
+
+        _viewSwitch.Content = segmented;
     }
 
     /// <summary>A dot on "Widok" while the listed folder has its own .c4k files: the switch has a view to show.</summary>

@@ -134,6 +134,27 @@ public sealed class McpDashboardToolsTests
     }
 
     [Fact]
+    public async Task Views_are_checked_like_items()
+    {
+        // A "folder" hidden in a view entry gets the same policy as the item's own.
+        var outside = await CallItems("save_dashboard",
+            [("a", """{ "views": [ { "title": "A", "view": "notes" }, { "title": "B", "view": "gallery", "folder": "mfs://other" } ] }""")], ("folder", "mfs://d"));
+        Assert.True(outside.IsError);
+        Assert.Contains("outside", outside.Text, StringComparison.Ordinal);
+
+        var report = McpDashboardTools.Analyze(C4kReader.Build("mfs://d",
+            [("srv.c4k", """{ "open": "docs", "views": [ { "title": "SSH", "view": "terminal" }, { "title": "Pliki", "default": true }, { "title": "Pliki", "view": "monitor" } ] }""")]), []);
+        Assert.Equal(2, report.Errors.Count(e => e.Contains("sftp://", StringComparison.Ordinal)));
+        Assert.Contains(report.Warnings, w => w.Contains("title repeats", StringComparison.Ordinal));
+
+        var good = McpDashboardTools.Analyze(C4kReader.Build("mfs://d",
+            [("srv.c4k", """{ "open": "sftp://u@h/", "views": [ { "title": "SSH", "view": "terminal" }, { "title": "SFTP", "default": true }, { "title": "Monitor", "view": "monitor" } ] }""")]), []);
+        Assert.Empty(good.Errors);
+        Assert.Contains(good.Warnings, w => w.Contains("trusts this file", StringComparison.Ordinal));
+        Assert.Contains("\"views\"", McpDashboardTools.Guide([]), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Guide_lists_installed_card_plugins_and_save_is_a_confirmed_write()
     {
         var guide = await Call("dashboard_guide");

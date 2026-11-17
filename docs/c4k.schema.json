@@ -90,6 +90,42 @@
       "pattern": "^[0-9]+[smh]$",
       "description": "Read the card again every 10s, 5m, 1h… while the dashboard is visible (at least 2 s)."
     },
+    "views": {
+      "type": "array",
+      "description": "Several ways to show this file: each entry has the file's own keys on top of the file's (view, plugin, open, options…) plus title (the label on the path bar's switch; the view name by default) and default. The entry with default: true (else the first) is what opens. The file's own title, default and views are not inherited. With two or more entries the panel gets a second switch with the titles. Trust is per file and covers all views.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Label on the switch; the view, panel or plugin name by default."
+          },
+          "default": {
+            "type": "boolean",
+            "description": "The view that opens first (the first entry when none is marked)."
+          },
+          "view": {
+            "$ref": "#/$defs/view"
+          },
+          "plugin": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "panel": {
+            "type": "string"
+          },
+          "open": {
+            "type": "string"
+          },
+          "options": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
     "size": {
       "enum": [
         "small",
@@ -113,9 +149,11 @@
         "api",
         "settings",
         "skins",
-        "plugins"
+        "plugins",
+        "terminal",
+        "monitor"
       ],
-      "description": "settings, skins and plugins are the app's own pages (settings, skins, plugin manager); the app writes settings.c4k, skins.c4k and plugins.c4k into config/, config/skins/ and the plugins folder."
+      "description": "settings, skins and plugins are the app's own pages (settings, skins, plugin manager); the app writes settings.c4k, skins.c4k and plugins.c4k into config/, config/skins/ and the plugins folder. terminal (an SSH shell) and monitor (status, CPU, memory and disks) show the server named by open (an sftp:// path); open is not a link there, and monitor needs the user's trust in the file. Both are meant for entries of views."
     },
     "run": {
       "description": "A command started in the item's folder after the user trusts this file (trust covers run, api, ssh and remote card fields, so renaming the title or resizing keeps it). A .ps1 runs with PowerShell 7.",

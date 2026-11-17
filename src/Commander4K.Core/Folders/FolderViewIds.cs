@@ -24,6 +24,16 @@ public static class FolderViewIds
     /// <summary>Card only: status, CPU, memory and disks of an SSH server (the tile's <c>open</c> is an <c>sftp://</c> path).</summary>
     public const string Ssh = "ssh";
 
+    /// <summary>An SSH shell on the server named by <c>open</c> (an <c>sftp://</c> path), in the panel.</summary>
+    public const string Terminal = "terminal";
+
+    /// <summary>The <see cref="Ssh"/> card as a whole view: status, CPU, memory and disks of the server named by <c>open</c>.</summary>
+    public const string Monitor = "monitor";
+
+    /// <summary>Views of a server rather than of a folder: their <c>open</c> is the server, not somewhere to go.</summary>
+    public static bool IsServerView(string? view) =>
+        string.Equals(view, Terminal, StringComparison.OrdinalIgnoreCase) || string.Equals(view, Monitor, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>The app's settings page (the view of <c>config/</c>).</summary>
     public const string Settings = "settings";
 
@@ -38,5 +48,5 @@ public static class FolderViewIds
 
     public static bool IsAppView(string? view) => view is not null && AppViews.Contains(view, StringComparer.OrdinalIgnoreCase);
 
-    public static readonly IReadOnlyList<string> All = [Files, Gallery, Notes, Markdown, Api, Settings, Skins, Plugins];
+    public static readonly IReadOnlyList<string> All = [Files, Gallery, Notes, Markdown, Api, Terminal, Monitor, Settings, Skins, Plugins];
 }

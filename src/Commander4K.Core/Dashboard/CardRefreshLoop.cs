@@ -45,10 +45,26 @@ public sealed class CardRefreshLoop : IAsyncDisposable
         foreach (var slot in _slots.Values)
         {
             Track(LoadAsync(slot));
-            if (slot.Refresh is { } interval)
-            {
-                Track(TickAsync(slot, interval));
-            }
+            StartTimer(slot, slot.Refresh);
+        }
+    }
+
+    /// <summary>Changes how often a card is read again, from now on; <c>null</c> = only on <see cref="RefreshNow"/>.</summary>
+    public void SetRefresh(int index, TimeSpan? refresh)
+    {
+        if (!_stopped && _slots.TryGetValue(index, out var slot))
+        {
+            StartTimer(slot, refresh);
+        }
+    }
+
+    private void StartTimer(Slot slot, TimeSpan? refresh)
+    {
+        slot.Timer?.Dispose(); // ends the previous timer's loop
+        slot.Timer = refresh is { } interval ? new PeriodicTimer(interval, _time) : null;
+        if (slot.Timer is { } timer)
+        {
+            Track(TickAsync(slot, timer));
         }
     }
 
@@ -82,9 +98,9 @@ public sealed class CardRefreshLoop : IAsyncDisposable
         _ = task.ContinueWith(t => _running.TryRemove(t, out _), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
-    private async Task TickAsync(Slot slot, TimeSpan interval)
+    private async Task TickAsync(Slot slot, PeriodicTimer timer)
     {
-        using var timer = new PeriodicTimer(interval, _time);
+        using var _ = timer;
         try
         {
             while (await timer.WaitForNextTickAsync(_stop.Token).ConfigureAwait(false))
@@ -207,6 +223,9 @@ public sealed class CardRefreshLoop : IAsyncDisposable
         public Func<PreviewCard?, CancellationToken, Task<PreviewCard>> Load { get; } = load;
 
         public TimeSpan? Refresh { get; } = refresh;
+
+        /// <summary>The running refresh timer; disposing it ends its loop.</summary>
+        public PeriodicTimer? Timer { get; set; }
 
         public PreviewCard? Card { get; set; }
 

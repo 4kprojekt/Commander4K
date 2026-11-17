@@ -7,6 +7,11 @@ using Commander4K.PluginSdk;
 
 namespace Commander4K.App.Panels;
 
+/// <summary>A <c>.c4k</c> file with several views shown in a tab.</summary>
+/// <param name="Item">The file's item; its <see cref="Core.Folders.C4kItem.Views"/> are the choices.</param>
+/// <param name="Current">Index of the view on screen.</param>
+public sealed record TabViews(VfsEntry Folder, Core.Folders.C4kFolder Config, Core.Folders.C4kItem Item, int Current);
+
 /// <summary>
 /// One tab of a file panel: location, rows, cursor, marks. Mutated on the UI thread only; listings are produced by
 /// <see cref="VfsRouter.OpenListing"/> on a background producer and arrive here in ≤16 ms batches.
@@ -57,7 +62,7 @@ public sealed class PanelTab
 
     /// <summary>
     /// <c>false</c> for an origin the tab noted itself on entering the network (<c>net://</c>, an sftp/ftp server): it
-    /// lasts for the whole stay there, Esc uses it, the Pliki switch does not.
+    /// lasts for the whole stay there; Esc and the Pliki switch both go back to it.
     /// </summary>
     public bool OriginFromItem { get; private set; }
 
@@ -117,8 +122,12 @@ public sealed class PanelTab
         }
     }
 
-    /// <summary>The path to start in next time: never a location that failed (its origin or the last working folder instead).</summary>
-    public string PathToRestore => Error is null ? Path : Origin ?? FailedReturnPath ?? Path;
+    /// <summary>
+    /// The path to start in next time: never a location that failed (its origin or the last working folder instead), and
+    /// for a place a <c>.c4k</c> item opened, the folder with that file — a tab restored straight onto the server would
+    /// not know its file any more, so Pliki and the view switch would have nowhere to go back to.
+    /// </summary>
+    public string PathToRestore => Error is null && !(OriginFromItem && Origin is not null) ? Path : Origin ?? FailedReturnPath ?? Path;
 
     private static bool SameFolder(string a, string b) =>
         string.Equals(a.TrimEnd('\\', '/'), b.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
@@ -137,6 +146,22 @@ public sealed class PanelTab
         return _originTarget is { } target
             && (string.Equals(trimmed, target, StringComparison.OrdinalIgnoreCase)
                 || (trimmed.StartsWith(target, StringComparison.OrdinalIgnoreCase) && trimmed[target.Length] is '\\' or '/'));
+    }
+
+    /// <summary>
+    /// The <c>.c4k</c> file with several views (<see cref="Core.Folders.C4kItem.Views"/>) this tab is showing, and which
+    /// one: the path bar offers the others. Dropped when the tab goes anywhere but the file's folder or the place its
+    /// <c>open</c> led to.
+    /// </summary>
+    public TabViews? Views { get; private set; }
+
+    public void SetViews(TabViews? views)
+    {
+        if (Views != views)
+        {
+            Views = views;
+            Changed?.Invoke();
+        }
     }
 
     public string? FolderViewPlugin { get; private set; }
@@ -406,6 +431,11 @@ public sealed class PanelTab
             Origin = null;
             OriginItemFile = null;
             _originTarget = null;
+        }
+
+        if (Views is { } views && !SameFolder(path, views.Folder.Path) && !(Origin is not null && OriginFromItem && IsWithinOriginTarget(path)))
+        {
+            Views = null;
         }
 
         // Entering the network (net://, a server; from the drive menu or a typed path): Esc anywhere there leads back to

@@ -219,6 +219,9 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
 
     public Func<Plugins.BuiltIn.Dashboard.DashboardPreview, int, Task>? ResizeDashboardTile { get; init; }
 
+    /// <summary>Writes the refresh interval picked on a dashboard card (<c>null</c> = none) into the card's file.</summary>
+    public Func<Plugins.BuiltIn.Dashboard.DashboardPreview, int, TimeSpan?, Task>? SaveDashboardTileRefresh { get; init; }
+
     public Func<string, BrowserPanelView>? CreateBrowserPreview { get; init; }
 
     public Func<string, Task>? ConfigureSftpConnection { get; init; }
@@ -803,10 +806,19 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
         C4kItem action, bool pinned, VfsEntry folder)
     {
         var folderPlugin = _app.BuiltInPreviews.OfType<Plugins.BuiltIn.Previews.FolderPreviewPlugin>().First();
-        if (action.Kind != FolderActionKind.View)
+
+        // The server's monitor is its "ssh" card drawn as the only, large tile of a dashboard (trust, refresh and all).
+        if (action.IsServerView && string.Equals(action.View, FolderViewIds.Monitor, StringComparison.OrdinalIgnoreCase) && pinned)
+        {
+            var monitor = new C4kFolder(action.Folder, [action with { Card = FolderViewIds.Ssh, Size = TileSize.Huge, Views = [] }], 0);
+            return (folderPlugin, (_, _, _) => Task.FromResult<PreviewContent>(Plugins.BuiltIn.Previews.FolderViews.Dashboard(monitor)));
+        }
+
+        if (action.Kind != FolderActionKind.View || action.IsServerView)
         {
             var what = action.Kind switch
             {
+                FolderActionKind.View => action.Open ?? string.Empty,
                 FolderActionKind.Panel => Loc.T("panel „{0}”", action.PanelId ?? string.Empty),
                 FolderActionKind.Open => action.Open ?? string.Empty,
                 FolderActionKind.Url => action.Url ?? string.Empty,
@@ -2176,7 +2188,8 @@ public sealed class PreviewPanelView : ModeViewBase, IPanelModeView
                     await resize(dashboard, index);
                     await ReloadCurrentAsync();
                 }
-            });
+            },
+            (index, refresh) => SaveDashboardTileRefresh is { } save ? save(dashboard, index, refresh) : Task.CompletedTask);
         SetStatus(Loc.P(dashboard.Slots.Count, "{0} kafelek|{0} kafelki|{0} kafelków") + (folder is { } shown ? " · " + shown.Path : string.Empty));
         return _dashboard;
     }

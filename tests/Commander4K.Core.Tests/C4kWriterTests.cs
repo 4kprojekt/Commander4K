@@ -66,6 +66,16 @@ public sealed class C4kWriterTests
     }
 
     [Fact]
+    public void SetRefresh_roundtrips_and_null_removes_key()
+    {
+        const string File = "{\"card\":\"ssh\",\"open\":\"sftp://h\",\"refresh\":\"30s\"}";
+
+        Assert.Equal(TimeSpan.FromSeconds(5), C4kItem.Parse(@"C:\x", "a.c4k", C4kWriter.SetRefresh(File, TimeSpan.FromSeconds(5))).Refresh);
+        Assert.Equal("5m", (string?)JsonNode.Parse(C4kWriter.SetRefresh(File, TimeSpan.FromMinutes(5)))!["refresh"]);
+        Assert.Null(JsonNode.Parse(C4kWriter.SetRefresh(File, null))!["refresh"]);
+    }
+
+    [Fact]
     public void ItemFor_plugin_with_options()
     {
         var item = C4kWriter.ItemFor(new FolderSuggestionView(Plugin: "p", Preview: "v", OptionsJson: "{\"a\":1}"));

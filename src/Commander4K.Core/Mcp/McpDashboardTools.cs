@@ -81,7 +81,8 @@ public static class McpDashboardTools
                 "Writes one .c4k file per item into the folder after the same checks as check_dashboard; refuses items with errors. One file is one "
                 + "view, two or more make a dashboard ordered by file name. A file with the same name is replaced (this call is confirmed by the user) "
                 + "unless it contains comments, which are never overwritten; a folder that has exactly one .c4k file is not turned into a dashboard "
-                + "unless the items include that file. Cards that run commands, use SSH or send POST requests stay locked until the user presses \"Zezwól\".",
+                + "unless the items include that file. To give one thing several switchable looks, write one file with \"views\" (see dashboard_guide) "
+                + "instead of several files. Cards that run commands, use SSH or send POST requests stay locked until the user presses \"Zezwól\".",
                 ItemsSchema("The items to write: one { name, json } per .c4k file."),
                 McpToolMode.Ask,
                 PathArguments: ["folder"],
@@ -152,6 +153,7 @@ public static class McpDashboardTools
             }
 
             CheckItem(item, where, tile, previews, errors, warnings);
+            CheckViews(item, where, errors, warnings);
         }
 
         if (folder.Skipped > 0)
@@ -164,6 +166,54 @@ public static class McpDashboardTools
         }
 
         return new DashboardReport(errors, warnings, tile ? Picture(folder.Items) : string.Empty);
+    }
+
+    /// <summary>Every entry of <c>views</c> (or the item itself without them): what it shows and what it needs.</summary>
+    private static void CheckViews(C4kItem item, string where, List<string> errors, List<string> warnings)
+    {
+        IReadOnlyList<C4kItem> views = item.Views.Count > 0 ? item.Views : [item];
+        var titles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var view in views)
+        {
+            var name = item.Views.Count > 0 ? $"{where}: view \"{view.Title}\"" : where;
+            if (view.IsServerView)
+            {
+                if (view.Open is null || !view.Open.StartsWith("sftp://", StringComparison.OrdinalIgnoreCase))
+                {
+                    errors.Add($"{name}: \"{view.View}\" needs \"open\" with an sftp:// path (in the entry or in the file).");
+                }
+
+                if (string.Equals(view.View, FolderViewIds.Monitor, StringComparison.OrdinalIgnoreCase))
+                {
+                    warnings.Add($"{name}: the monitor waits until the user trusts this file.");
+                }
+            }
+
+            if (item.Views.Count == 0)
+            {
+                continue;
+            }
+
+            if (!titles.Add(view.Title))
+            {
+                warnings.Add($"{name}: the title repeats; the switch needs a different label for each view.");
+            }
+
+            if (view.IsPlainFiles)
+            {
+                warnings.Add($"{name}: no view, plugin, panel, open or url of its own or from the file; it shows nothing but the files.");
+            }
+
+            if (view.Run is not null)
+            {
+                warnings.Add($"{name}: \"run\" as a view starts the command on every switch; use a separate .c4k file for commands.");
+            }
+        }
+
+        if (item.Views.Count > 5)
+        {
+            warnings.Add($"{where}: {item.Views.Count} views make a long switch on the path bar; keep it to 2-4 with one-word titles.");
+        }
     }
 
     private static void CheckItem(C4kItem item, string where, bool tile, IReadOnlyList<McpCardPreview> previews, List<string> errors, List<string> warnings)
@@ -417,8 +467,8 @@ public static class McpDashboardTools
             return McpToolResult.Error("Not saved.\n" + Format(report, saved: null));
         }
 
-        // The "folder" key is a path too: it gets the same policy as the folder argument.
-        foreach (var item in draft.Items)
+        // The "folder" key is a path too: it gets the same policy as the folder argument, in every entry of "views".
+        foreach (var item in draft.Items.SelectMany(i => i.Views.Prepend(i)))
         {
             if (McpToolDispatcher.Refusal(item.ContextFolder, roots, protectedRoots) is { } refusal)
             {
@@ -528,9 +578,17 @@ public static class McpDashboardTools
 
         ## Item keys
         - `title` (default: the file name), `description`, `icon` (one emoji or symbol), `image` (a picture file).
-        - What the item is, one of: `view` (`files`, `gallery`, `dashboard`, `notes`, `markdown`), `plugin` (+ `preview`/`panel`, `options`),
+        - What the item is, one of: `view` (`files`, `gallery`, `dashboard`, `notes`, `markdown`, `terminal`, `monitor`; the last two show the SSH server named
+          by `open` (sftp://) as a shell or a status page, and `monitor` needs the user's trust), `plugin` (+ `preview`/`panel`, `options`),
           `open` (a path: folder, file, sftp://, \\server\share; + `user`, `keyFile`), `url` (http/https), `run` (a command; needs the
           user's trust), `panel`.
+        - `views`: one file, several ways to show the same thing; the panel's path bar gets a switch with their titles. Each entry is an
+          object with the item keys above (not `card`, `size`, `refresh`: the tile is the file's) plus `title` (the switch label; one
+          word) and `"default": true` (what opens first; else the first entry). An entry is the file's keys with its own on top, so
+          write shared keys (`open`, `user`, `keyFile`, `plugin`, `options`) once at the top; an entry's `options` replace the file's.
+          A file with `views` is still one file: alone in a folder it is that folder's view, not a dashboard; in a dashboard its tile
+          is the default view. Use `views` instead of several files when the user wants to switch between looks of one thing
+          (a server: shell, files, monitor; a project: notes, gallery, a plugin's view), and several files for a dashboard of tiles.
         - `folder`: the folder the item is about, instead of the one that holds the file (relative to it).
         - `card`: makes the tile live (see below). `refresh`: "30s", "5m", "1h" (at least 2 s; only while visible). `options`: object for the card.
         - `size`: the tile's footprint (columns x rows): `small` 1x1 (default), `wide` 2x1, `tall` 1x2, `large` 2x2, `huge` 3x2,
@@ -592,6 +650,10 @@ public static class McpDashboardTools
         - `60 VPS.c4k`: `{ "card": "ssh", "size": "tall", "open": "sftp://deploy@vps.example.com/", "refresh": "30s" }`
         - `70 Runbook.c4k`: `{ "open": "docs/runbook.md", "card": true, "size": "wide" }`
         - `80 Dyżur.c4k`: `{ "card": "note", "size": "wide", "options": { "text": "Ten tydzień: Ania (tel. wewn. 214)." } }`
+
+        ## Recipe: one server, three views (a single file, e.g. `vps.c4k` alone in its folder)
+        `{ "open": "sftp://deploy@vps.example.com/", "views": [ { "title": "SSH", "view": "terminal" }, { "title": "SFTP", "default": true }, { "title": "Monitor", "view": "monitor" } ] }`
+        Folder with a plugin view and its plain looks: `{ "views": [ { "title": "Repo", "plugin": "official.git-repo", "default": true }, { "title": "Notatki", "view": "notes" }, { "title": "Galeria", "view": "gallery" } ] }`
 
         Project: `files` card on src (small), `markdown` card on docs (wide), `gallery` on design/ (small), url items (small) for the
         repository, CI and the tracker, a `note` (full) with the next milestone.

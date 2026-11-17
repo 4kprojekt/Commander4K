@@ -61,6 +61,25 @@ public sealed class CardRefreshLoopTests
     }
 
     [Fact]
+    public async Task SetRefresh_starts_and_stops_the_timer()
+    {
+        var calls = 0;
+        await using var loop = new CardRefreshLoop();
+        loop.Add(0, (_, _) => Task.FromResult(Card($"read {Interlocked.Increment(ref calls)}")), null);
+        loop.Start();
+        await WaitUntilAsync(() => Volatile.Read(ref calls) == 1);
+
+        loop.SetRefresh(0, TimeSpan.FromMilliseconds(20));
+        await WaitUntilAsync(() => Volatile.Read(ref calls) >= 3);
+
+        loop.SetRefresh(0, null);
+        await Task.Delay(60, TestToken); // a read that was already starting may still land
+        var after = Volatile.Read(ref calls);
+        await Task.Delay(150, TestToken);
+        Assert.Equal(after, Volatile.Read(ref calls));
+    }
+
+    [Fact]
     public async Task Stop_cancels_in_flight_loads_and_timers()
     {
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

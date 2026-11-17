@@ -63,7 +63,7 @@ internal static class McpPluginKnowledge
                 var files = string.Join(" ", preview.Extensions.Where(e => e != "/"));
                 text.Append($"  - preview \"{preview.Title}\": render_preview path=<{(folders && files.Length == 0 ? "folder" : "file")}> plugin=\"{id}\"")
                     .Append(files.Length > 0 ? $" for {files}" : string.Empty)
-                    .Append(folders ? $"; a folder shows it with a .c4k file {{\"plugin\": \"{m.Id}\"}}" : string.Empty)
+                    .Append(folders ? $"; a folder shows it with a .c4k file {{\"plugin\": \"{m.Id}\"}} (or as one entry of that file's \"views\", beside other looks of the folder)" : string.Empty)
                     .Append(preview.Card ? $"; dashboard card \"{id}\"" : string.Empty)
                     .AppendLine();
             }

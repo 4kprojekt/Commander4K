@@ -59,6 +59,7 @@ public sealed class MainWindow : Window
 
     private readonly DispatcherTimer _jobsTimer;
     private readonly DispatcherTimer _notificationTimer;
+    private readonly DispatcherTimer _pathsTimer;
     private AppHost? _host;
     private SkinManager? _skins;
     private FilePanelView _left = null!;
@@ -169,6 +170,8 @@ public sealed class MainWindow : Window
 
         _jobsTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(200), DispatcherPriority.Background, (_, _) => RefreshJobsBar());
         _notificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+        _pathsTimer = new DispatcherTimer(TimeSpan.FromSeconds(3), DispatcherPriority.Background, (_, _) => SavePanelPaths());
+        _pathsTimer.Start();
         _notificationTimer.Tick += (_, _) =>
         {
             _notificationTimer.Stop();
@@ -258,6 +261,7 @@ public sealed class MainWindow : Window
             p.TabSelected += panel => _ = RestoreTabFolderModeAsync(panel);
             p.LocationMenuRequested += sender => _ = ShowDriveMenuAsync(sender).AsTask();
             p.FolderModeRequested += panel => _ = ApplyFolderModeAsync(panel);
+            p.ShowItemView = ShowItemViewAsync;
             p.ConfigureEmptyFolderRequested += folderPath =>
             {
                 SetActive(p);
@@ -914,7 +918,8 @@ public sealed class MainWindow : Window
             OpenTile = (tile, folder) => OpenTileAsync(tile, folder, source),
             RunShortcut = RunShortcut,
             AskFolderTrust = AskFolderTrustAsync,
-            ResizeDashboardTile = ResizeDashboardTileAsync,
+            ResizeDashboardTile = (dashboard, index) => ChangeDashboardTileAsync(dashboard, index, (item, text) => C4kWriter.SetSize(text, TileSizes.Next(item.Size))),
+            SaveDashboardTileRefresh = (dashboard, index, refresh) => ChangeDashboardTileAsync(dashboard, index, (_, text) => C4kWriter.SetRefresh(text, refresh)),
         };
 
     /// <summary>
@@ -969,6 +974,11 @@ public sealed class MainWindow : Window
             }
         }
 
+        if (panel.ActiveTab == probed && probed.FolderMode != mode)
+        {
+            return; // Pliki · Auto · Widok was clicked again while the server answered: that click decides
+        }
+
         if (config is null && mode == FolderViewMode.Auto && inheritParentView)
         {
             if (expectedTab is not null && panel.ActiveTab != expectedTab)
@@ -992,6 +1002,7 @@ public sealed class MainWindow : Window
         // Several items: the dashboard. One item is performed; "view": "files" keeps the files (Widok then shows "no view").
         if (config is { Layout: C4kLayout.Dashboard })
         {
+            panel.ActiveTab.SetViews(null);
             ShowPinnedFolder(panel, folder, config, null);
             return;
         }
@@ -1033,8 +1044,10 @@ public sealed class MainWindow : Window
         var current = path;
         while (true)
         {
+            // Above a server's root is its host in net://: listing that probes ports and shares for seconds, and no
+            // folder view lives there.
             var parent = _host!.Router.GetParentPath(current);
-            if (parent is null || SamePath(parent, current))
+            if (parent is null || SamePath(parent, current) || VfsPath.GetScheme(parent) != VfsPath.GetScheme(path))
             {
                 return null;
             }
@@ -1047,8 +1060,7 @@ public sealed class MainWindow : Window
             }
             catch (OperationCanceledException) when (budget.IsCancellationRequested)
             {
-                Notify(Loc.T("Nie udało się sprawdzić nadrzędnych widoków folderu w wyznaczonym czasie."), isError: true);
-                return null;
+                return null; // a slow server: the folder shows its files; an inherited view is a convenience, not an error
             }
 
             if (config is null)
@@ -1067,7 +1079,7 @@ public sealed class MainWindow : Window
                 return null;
             }
 
-            if (item is not { IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel })
+            if (item is not { IsPlainFiles: false, IsServerView: false, Kind: FolderActionKind.View or FolderActionKind.Panel })
             {
                 return null;
             }
@@ -1093,7 +1105,7 @@ public sealed class MainWindow : Window
 
         var config = await Task.Run(() => _host!.ReadFolderAsync(path, CancellationToken.None));
         if (config is null
-            || (config.Layout != C4kLayout.Dashboard && config.Single is not { Error: null, IsPlainFiles: false, Kind: FolderActionKind.View or FolderActionKind.Panel })
+            || (config.Layout != C4kLayout.Dashboard && config.Single is not { Error: null, IsPlainFiles: false, IsServerView: false, Kind: FolderActionKind.View or FolderActionKind.Panel })
             || panel.Mode is not null || !SamePath(panel.ActiveTab.Path, path))
         {
             return; // no view, or the user went elsewhere meanwhile
@@ -1119,6 +1131,13 @@ public sealed class MainWindow : Window
 
         if (panel.FolderMode != FolderViewMode.Files)
         {
+            // The place a .c4k "open" led to is that file's view already: Auto and Widok stay on it. Asking the server's
+            // folder for its own view found none and covered the files with "no view".
+            if (panel.ActiveTab is { OriginFromItem: true, Origin: not null })
+            {
+                return;
+            }
+
             // A folder that failed to list has no view to look for: asking the dead server again (its .c4k files, then
             // its parents') made the window wait for seconds and covered the error with "no view".
             if (panel.ActiveTab is { Error: null } tab)
@@ -1126,10 +1145,11 @@ public sealed class MainWindow : Window
                 await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true);
             }
         }
-        // An origin the tab noted itself (a server entered from the drive menu) stays: Pliki there means the server's files.
-        else if ((panel.ActiveTab.OriginFromItem || panel.ActiveTab.Error is not null) && ReturnPath(panel.ActiveTab) is { } back)
+        // Pliki on a detour — a .c4k "open", the network (net://, a server entered any way) or a failed listing — leaves
+        // it like Esc: back to the files of the folder the tab came from.
+        else if (ReturnPath(panel.ActiveTab) is { } back)
         {
-            await panel.ActiveTab.NavigateAsync(back); // Pliki after a .c4k "open" or a failed listing: the folder to go back to
+            await panel.ActiveTab.NavigateAsync(back);
         }
     }
 
@@ -1146,7 +1166,7 @@ public sealed class MainWindow : Window
         }
 
         tab.SetFolderViewInfo(null, null);
-        if (tab.FolderMode != FolderViewMode.Files && tab.Error is null)
+        if (tab.FolderMode != FolderViewMode.Files && tab.Error is null && tab is not { OriginFromItem: true, Origin: not null }) // on a .c4k "open" target: its view already
         {
             await EnterFolderAsync(panel, new VfsEntry(tab.Title, tab.Path, VfsEntryKind.Directory), inheritParentView: true, expectedTab: tab);
         }
@@ -1369,7 +1389,7 @@ public sealed class MainWindow : Window
             new(Loc.T("▦ Kafelki"), Loc.T("dashboard: skróty do folderów, stron i skryptów"), FolderViewIds.Dashboard, "dashboard skróty tiles"),
             new(Loc.T("🗒 Notatki"), Loc.T("notatki Markdown z powiązaniami (Obsidian)"), FolderViewIds.Notes, "obsidian markdown"),
             new(Loc.T("📄 README"), Loc.T("plik Markdown folderu"), FolderViewIds.Markdown, "markdown opis"),
-            new(Loc.T("🔐 Połączenie SSH"), Loc.T("wejście otwiera serwer SFTP z kluczem"), "ssh", "sftp klucz key serwer"),
+            new(Loc.T("🔐 Połączenie SSH"), Loc.T("wejście otwiera serwer: pliki (SFTP), terminal i monitor"), "ssh", "sftp klucz key serwer terminal monitor"),
             new(Loc.T("🌐 Strona WWW"), Loc.T("wejście otwiera stronę w przeglądarce panelu"), "url", "www http link"),
             new(Loc.T("▶ Skrypt"), Loc.T("wejście uruchamia polecenie (po Twojej zgodzie)"), "run", "script ps1 bat polecenie"),
         };
@@ -1440,8 +1460,13 @@ public sealed class MainWindow : Window
                     return;
                 }
 
+                // One file, three views of the server: the path bar switches between its shell, its files and its monitor.
                 var address = answers["address"];
                 var ssh = Item("open", address);
+                ssh["views"] = new System.Text.Json.Nodes.JsonArray(
+                    new System.Text.Json.Nodes.JsonObject { ["title"] = "SSH", ["view"] = FolderViewIds.Terminal },
+                    new System.Text.Json.Nodes.JsonObject { ["title"] = "SFTP", ["default"] = true },
+                    new System.Text.Json.Nodes.JsonObject { ["title"] = "Monitor", ["view"] = FolderViewIds.Monitor });
                 if (answers.GetValueOrDefault("keyFile") is { Length: > 0 } key)
                 {
                     ssh["keyFile"] = key;
@@ -1554,6 +1579,35 @@ public sealed class MainWindow : Window
     /// <summary>Performs one item of <paramref name="folder"/> (Enter, a tile, an inherited view).</summary>
     private async Task RunFolderActionAsync(FilePanelView panel, VfsEntry folder, C4kFolder config, C4kItem action)
     {
+        var tab = panel.ActiveTab;
+        await PerformFolderActionAsync(panel, folder, config, action);
+
+        // A file with several views: the tab remembers which one it shows, and the path bar offers the others.
+        var shown = panel.ActiveTab == tab
+            && (SamePath(tab.Path, folder.Path) || (tab.OriginFromItem && SamePath(tab.OriginItemFile ?? string.Empty, action.FilePath)));
+        tab.SetViews(shown ? ViewsOf(folder, config, action) : null);
+    }
+
+    /// <summary>The view set of the file <paramref name="action"/> comes from, with it as the current one; <c>null</c> for a file with one view.</summary>
+    private static TabViews? ViewsOf(VfsEntry folder, C4kFolder config, C4kItem action)
+    {
+        var file = action.Views.Count > 1 ? action : config.Items.FirstOrDefault(i => i.Views.Count > 1 && SamePath(i.FilePath, action.FilePath));
+        var index = file is null ? -1 : action.Views.Count > 1 ? file.Views.ToList().FindIndex(v => v.IsDefault) : file.Views.ToList().IndexOf(action);
+        return index >= 0 ? new TabViews(folder, config, file!, index) : null;
+    }
+
+    /// <summary>The path bar's view switch: another view of the <c>.c4k</c> file the tab shows.</summary>
+    private async Task ShowItemViewAsync(FilePanelView panel, int index)
+    {
+        if (panel.ActiveTab.Views is { } views && index < views.Item.Views.Count)
+        {
+            SetActive(panel);
+            await RunFolderActionAsync(panel, views.Folder, views.Config, views.Item.Views[index]);
+        }
+    }
+
+    private async Task PerformFolderActionAsync(FilePanelView panel, VfsEntry folder, C4kFolder config, C4kItem action)
+    {
         var host = _host!;
         switch (action.Kind)
         {
@@ -1567,6 +1621,7 @@ public sealed class MainWindow : Window
                 var openTab = panel.ActiveTab;
                 var navigation = panel.NavigateAsync(target);
                 openTab.SetOrigin(action.Folder, target, itemFile: action.FilePath); // after NavigateAsync, which drops an origin the new path is not under
+                openTab.SetViews(ViewsOf(folder, config, action)); // at once: the switch stays up while the server connects
                 await navigation;
                 return;
 
@@ -1591,6 +1646,31 @@ public sealed class MainWindow : Window
                 _ = panel.NavigateAsync(folder.Path);
                 panel.ActiveTab.SetFolderViewInfo(folder.Name, PluginDisplayName(action.Plugin, panelId));
                 await OpenPanelInAsync(panelId, folder.Path, panel, action.Options, folderView: true);
+                return;
+
+            case FolderActionKind.View when action.IsServerView:
+                if (action.CardTarget is not { } server || VfsPath.GetScheme(server) != "sftp")
+                {
+                    Notify(Loc.T("{0}: widok „{1}” potrzebuje „open” ze ścieżką sftp://.", action.FilePath, action.View!), isError: true);
+                    break;
+                }
+
+                if (string.Equals(action.View, FolderViewIds.Monitor, StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowPinnedFolder(panel, folder, config, action);
+                    return;
+                }
+
+                ApplyItemLogin(action, server);
+                if (Browser.WebView2Host.RuntimeVersion() is null)
+                {
+                    await OpenSshInWindowsTerminalAsync(server);
+                    break;
+                }
+
+                _ = panel.NavigateAsync(folder.Path);
+                panel.ShowMode(new Terminal.SshTerminalView(host, server, _skins!.Current, Notify, RunShortcut), folderView: true);
+                SetActive(panel);
                 return;
 
             case FolderActionKind.View when action.Plugin is null && FolderViewIds.IsAppView(action.View):
@@ -1730,7 +1810,16 @@ public sealed class MainWindow : Window
 
         try
         {
-            if (target == "c4k:plugins")
+            if (ServerViewIndex(listPanel.ActiveTab.Views, target) is { } viewIndex)
+            {
+                // A monitor's SSH / SFTP buttons are the other views of the file on screen, when it has them.
+                await ShowItemViewAsync(listPanel, viewIndex);
+            }
+            else if (target.StartsWith(SshMonitor.TerminalPrefix, StringComparison.Ordinal))
+            {
+                await OpenSshTerminalAsync(listPanel, target[SshMonitor.TerminalPrefix.Length..]);
+            }
+            else if (target == "c4k:plugins")
             {
                 await OpenPluginManagerAsync();
             }
@@ -1827,6 +1916,39 @@ public sealed class MainWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException or InvalidOperationException or NotSupportedException)
         {
             Notify(ex.Message, isError: true);
+        }
+    }
+
+    /// <summary>The view of the tab's <c>.c4k</c> file that a server button means: its terminal for <c>c4k:ssh/…</c>, its <c>open</c> for the server's path.</summary>
+    private static int? ServerViewIndex(TabViews? views, string target)
+    {
+        if (views is null)
+        {
+            return null;
+        }
+
+        var terminal = target.StartsWith(SshMonitor.TerminalPrefix, StringComparison.Ordinal);
+        var server = terminal ? target[SshMonitor.TerminalPrefix.Length..] : target;
+        var index = views.Item.Views.ToList().FindIndex(v => v.CardTarget is { } own && SamePath(own, server)
+            && (terminal ? v.IsServerView && string.Equals(v.View, FolderViewIds.Terminal, StringComparison.OrdinalIgnoreCase) : v.Kind == FolderActionKind.Open));
+        return index >= 0 ? index : null;
+    }
+
+    /// <summary>A card's SSH button: the terminal over the dashboard (its exit returns there); OpenSSH in Windows Terminal without the WebView2 runtime.</summary>
+    private async Task OpenSshTerminalAsync(FilePanelView panel, string server)
+    {
+        if (VfsPath.GetScheme(server) != "sftp")
+        {
+            Notify(Loc.T("Nieznany cel kafelka: {0}", server), isError: true);
+        }
+        else if (Browser.WebView2Host.RuntimeVersion() is null)
+        {
+            await OpenSshInWindowsTerminalAsync(server);
+        }
+        else
+        {
+            panel.ShowModeReturningToCurrent(new Terminal.SshTerminalView(_host!, server, _skins!.Current, Notify, RunShortcut));
+            SetActive(panel);
         }
     }
 
@@ -1938,15 +2060,7 @@ public sealed class MainWindow : Window
         await RunFolderActionAsync(listPanel, folderEntry, config, item);
     }
 
-    /// <summary>The login from the .c4k file is kept for this session only; saved connections remain the place for passwords.</summary>
-    private void ApplyItemLogin(C4kItem item, string target)
-    {
-        if (VfsPath.GetScheme(target) is "sftp" or "ftp" && (item.KeyFile is not null || item.User is not null))
-        {
-            _host!.Remote.SetLogin(target, new RemoteLogin(item.User ?? RemoteTransferVfsPlugin.UserNameOf(target) ?? Environment.UserName,
-                PrivateKeyFile: item.KeyFile is { } key ? item.Resolve(key) : null));
-        }
-    }
+    private void ApplyItemLogin(C4kItem item, string target) => _host!.ApplyItemLogin(item, target);
 
     /// <summary>An item of the folder a tile came from, read again from disk; a link to a file elsewhere finds nothing.</summary>
     private async Task<(C4kFolder Config, C4kItem Item)?> FindFolderItemAsync(string filePath, VfsEntry? folder)
@@ -2753,6 +2867,45 @@ public sealed class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// The panels' folders are written a few seconds after they change, not only on exit: a process that is killed
+    /// (a debugger's stop, a crash) would otherwise start next time where the last clean exit was.
+    /// </summary>
+    private void SavePanelPaths()
+    {
+        if (_host is not { } host || _left is null || _right is null || _savingPaths || IsLoadingAny()
+            || (host.Settings.LeftPath == _left.ActiveTab.PathToRestore && host.Settings.RightPath == _right.ActiveTab.PathToRestore))
+        {
+            return;
+        }
+
+        host.Settings.LeftPath = _left.ActiveTab.PathToRestore;
+        host.Settings.RightPath = _right.ActiveTab.PathToRestore;
+        _ = SaveAsync();
+
+        async Task SaveAsync()
+        {
+            _savingPaths = true;
+            try
+            {
+                await host.SaveSettingsAsync();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Another save holds the file: the next tick or the exit writes it.
+            }
+            finally
+            {
+                _savingPaths = false;
+            }
+        }
+    }
+
+    private bool _savingPaths;
+
+    /// <summary>A folder still listing may yet fail (a login, a dead server): its path is saved once it settles.</summary>
+    private bool IsLoadingAny() => _left.ActiveTab.IsLoading || _right.ActiveTab.IsLoading;
+
     private void SaveState()
     {
         if (_host is null)
@@ -3239,29 +3392,10 @@ public sealed class MainWindow : Window
     private async ValueTask OpenTerminalAsync(CommandInvocation _)
     {
         var path = _active.ActiveTab.Path;
-        // On an SFTP server: a shell there, in the folder on screen, signed in like the panel (key and user; ssh asks for a password).
-        if (VfsPath.GetScheme(path) == "sftp" && Browser.WebView2Host.RuntimeVersion() is not null)
+        // On an SFTP server: OpenSSH in the system terminal, signed in like the panel. The shell inside a panel is the
+        // "terminal" view of a .c4k file.
+        if (await OpenSshInWindowsTerminalAsync(path))
         {
-            // The terminal in the opposite panel, beside the server's files; one per server (F9 again comes back to it).
-            var target = ModeTarget().Target;
-            if (target.Mode is not Terminal.SshTerminalView open || open.Server != RemoteTransferVfsPlugin.RealmFor(path))
-            {
-                target.ShowMode(new Terminal.SshTerminalView(_host!, path, _skins!.Current, Notify, RunShortcut));
-            }
-
-            SetActive(target);
-            return;
-        }
-
-        // Without WebView2: OpenSSH in Windows Terminal.
-        if (VfsPath.GetScheme(path) == "sftp" && SshCommandLine.For(path, _host!.Remote.LoginFor(path)) is { } ssh)
-        {
-            var remote = await _host.Tools.OpenSshTerminalAsync(ssh);
-            if (!remote.Launched)
-            {
-                Notify(remote.Error ?? Loc.T("Nie znaleziono terminala."), isError: true);
-            }
-
             return;
         }
 
@@ -3271,6 +3405,24 @@ public sealed class MainWindow : Window
         {
             Notify(result.Error ?? Loc.T("Nie znaleziono terminala."), isError: true);
         }
+    }
+
+    /// <summary>Without WebView2: OpenSSH in Windows Terminal.</summary>
+    /// <returns><c>false</c> when <paramref name="path"/> is not an SFTP path with a usable login.</returns>
+    private async Task<bool> OpenSshInWindowsTerminalAsync(string path)
+    {
+        if (VfsPath.GetScheme(path) != "sftp" || SshCommandLine.For(path, _host!.Remote.LoginFor(path)) is not { } ssh)
+        {
+            return false;
+        }
+
+        var remote = await _host.Tools.OpenSshTerminalAsync(ssh);
+        if (!remote.Launched)
+        {
+            Notify(remote.Error ?? Loc.T("Nie znaleziono terminala."), isError: true);
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -3465,8 +3617,11 @@ public sealed class MainWindow : Window
             .FirstOrDefault();
     }
 
-    /// <summary>⤢ on a dashboard tile: the next size goes into that item's own file. Trust ignores the size, so it stays.</summary>
-    private async Task ResizeDashboardTileAsync(Commander4K.Plugins.BuiltIn.Dashboard.DashboardPreview dashboard, int index)
+    /// <summary>
+    /// ⤢ or the refresh menu on a dashboard tile: the new size or interval goes into that item's own file. Trust
+    /// ignores both, so it stays.
+    /// </summary>
+    private async Task ChangeDashboardTileAsync(Commander4K.Plugins.BuiltIn.Dashboard.DashboardPreview dashboard, int index, Func<C4kItem, string, string> change)
     {
         if ((uint)index >= (uint)dashboard.Slots.Count)
         {
@@ -3492,7 +3647,7 @@ public sealed class MainWindow : Window
                 return;
             }
 
-            var updated = C4kWriter.SetSize(existing, TileSizes.Next(item.Size));
+            var updated = change(item, existing);
             await Task.Run(() => WriteItemTextAsync(file, updated, CancellationToken.None));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or VfsAuthenticationRequiredException
