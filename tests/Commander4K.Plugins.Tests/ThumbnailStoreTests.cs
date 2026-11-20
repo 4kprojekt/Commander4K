@@ -197,7 +197,7 @@ public sealed class ThumbnailStoreTests : IAsyncDisposable
     private async Task WaitForDeletionsAsync()
     {
         var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline && Directory.GetFiles(ThumbnailFolder, "*.webp").Length > 3)
+        while (DateTime.UtcNow < deadline && (Directory.GetFiles(ThumbnailFolder, "*.webp").Length > 3 || File.Exists(Path.Combine(ThumbnailFolder, "stranger.webp"))))
         {
             await Task.Delay(50, TestToken);
         }
