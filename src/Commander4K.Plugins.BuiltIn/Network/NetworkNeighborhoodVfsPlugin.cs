@@ -21,7 +21,8 @@ public sealed record SavedConnection(string Name, string Path, string? Descripti
 
 /// <param name="Display">Label shown in the panel.</param>
 /// <param name="HostName">Name used in the host's path; must resolve (e.g. the full DNS name).</param>
-internal delegate void HostSink(string Display, string HostName, IPAddress? Address, IReadOnlyList<int> Ports, VfsEntryFlags Flags, string? ServiceDescription = null);
+/// <param name="Source">Where the host comes from, shown first in its description.</param>
+internal delegate void HostSink(string Display, string HostName, IPAddress? Address, IReadOnlyList<int> Ports, VfsEntryFlags Flags, string Source, string? ServiceDescription = null);
 
 /// <summary>
 /// Network neighbourhood (<c>net://</c>) and SMB shares (UNC / <c>smb://</c>). The root separates LAN devices from
@@ -31,10 +32,12 @@ internal delegate void HostSink(string Display, string HostName, IPAddress? Addr
 public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChangeNotifier
 {
     public const string RootPath = NetworkPath.RootPath;
-    public const string LanPath = "net://?lan";
+    public const string LanPath = LanHostsFile.LanPath;
     public const string RemotePath = "net://?remote";
     public const string AddLanHostPath = "net://?add-host";
     public const string ScanLanPath = "net://?scan-lan";
+    public const string EditLanHostsPath = "net://?edit-hosts";
+    public const string ForgetLanHostsPath = "net://?forget-hosts";
 
     public static IReadOnlyList<int> CommonServicePorts { get; } =
         [21, 22, 23, 53, 80, 81, 139, 443, 445, 554, 1883, 3000, 3306, 3389, 5000, 5001, 8000, 8080, 8081, 8291, 8443, 8728, 8729, 9000, 9090, 9100, 32400];
@@ -85,8 +88,21 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
     /// <summary>Favourite servers and shares shown in the Remote group.</summary>
     public IReadOnlyList<SavedConnection> SavedConnections { get; set; } = [];
 
-    /// <summary>Hosts explicitly added to the LAN list.</summary>
-    public IReadOnlyList<LanHostSetting> LanHosts { get; set; } = [];
+    /// <summary>
+    /// The <c>.c4k</c> item holding the hosts the user added to the LAN list (<see cref="LanHostsFile"/>);
+    /// read on every listing, so an edit shows after a refresh. <c>null</c> = none.
+    /// </summary>
+    public string? LanHostsPath { get; set; }
+
+    /// <summary>The host of a LAN row (<c>net://NAS</c>); <c>null</c> for groups, actions and shares.</summary>
+    public static string? HostOf(string path) =>
+        path.Contains('?', StringComparison.Ordinal) ? null : NetworkPath.Parse(path) is { Level: NetworkPathLevel.Host } parsed ? parsed.Host : null;
+
+    /// <summary>The hosts of <see cref="LanHostsPath"/> as they are on disk now.</summary>
+    public Task<LanHostsFile.Content> ReadLanHostsAsync(CancellationToken cancellationToken) =>
+        LanHostsPath is { } file
+            ? LanHostsFile.ReadAsync(file, cancellationToken)
+            : Task.FromResult(new LanHostsFile.Content([], null));
 
     /// <summary>Whether to check the extended common TCP port list during LAN discovery.</summary>
     public bool ScanPopularPorts { get; set; }
@@ -272,20 +288,54 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
     {
         yield return new VfsEntry(Loc.T("Skanuj adresy IP"), ScanLanPath, VfsEntryKind.Action);
         yield return new VfsEntry(Loc.T("+ Dodaj host LAN"), AddLanHostPath, VfsEntryKind.Action);
+        var manual = await ReadLanHostsAsync(cancellationToken).ConfigureAwait(false);
+        if (LanHostsPath is { } hostsFile)
+        {
+            // Says where the hand-added hosts are kept; Enter opens that file.
+            yield return new VfsEntry(Loc.T("Edytuj hosty dodane ręcznie"), EditLanHostsPath, VfsEntryKind.Action,
+                Description: manual.Error is { } error ? Loc.T("Błąd w pliku {0}: {1}", hostsFile, error) : hostsFile);
+        }
+
+        if (_index is not null)
+        {
+            yield return new VfsEntry(Loc.T("Wyczyść zapamiętane hosty"), ForgetLanHostsPath, VfsEntryKind.Action,
+                Description: Loc.T("Usuwa hosty zapamiętane z wcześniejszych skanowań; te, które są w sieci, wrócą."));
+        }
+
+        // A host of the file is always listed by the file's entry (its name, its services), whichever source sees it:
+        // the other sources skip its name and its addresses. A row cannot be taken back once it is in the panel, so
+        // their rows wait in `held` until the names of the file's hosts are resolved, then pass the same check.
+        var manualSource = Loc.T("Dodany ręcznie ({0})", LanHostsFile.FileName);
+        var manualKeys = manual.Hosts.Select(host => host.Host).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        List<Action>? held = [];
 
         var output = Channel.CreateUnbounded<VfsEntry>(new UnboundedChannelOptions { SingleReader = true });
         var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var seenAddresses = new HashSet<IPAddress>();
         var seenGate = new Lock();
 
-        void Emit(string display, string hostName, IPAddress? address, IReadOnlyList<int> ports, VfsEntryFlags flags, string? serviceDescription = null)
+        void Emit(string display, string hostName, IPAddress? address, IReadOnlyList<int> ports, VfsEntryFlags flags, string source, string? serviceDescription = null)
         {
+            var isManual = source == manualSource;
+
             // A host is reported once, whether it was found by name, by address, or both. Both keys are checked before
             // either is claimed: claiming one and then rejecting on the other dropped hosts (a host shown by its IP
             // claimed the address under its name, so the address check then failed for itself and for its DNS name).
             lock (seenGate)
             {
-                if (seenNames.Contains(display) || (address is not null && seenAddresses.Contains(address)))
+                if (!isManual && held is not null)
+                {
+                    held.Add(() => Emit(display, hostName, address, ports, flags, source, serviceDescription));
+                    return;
+                }
+
+                if (!isManual && (manualKeys.Contains(hostName) || (address is not null && manualKeys.Contains(address.ToString()))))
+                {
+                    return;
+                }
+
+                // Nobody else may hold a file host's address, so only two file entries can share one; both are shown.
+                if (seenNames.Contains(display) || (!isManual && address is not null && seenAddresses.Contains(address)))
                 {
                     return;
                 }
@@ -297,13 +347,25 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
                 }
             }
 
-            var description = DescribePorts(ports, address);
-            if (!string.IsNullOrWhiteSpace(serviceDescription))
-            {
-                description = string.IsNullOrWhiteSpace(description) ? serviceDescription : $"{description} · {serviceDescription}";
-            }
+            var description = string.Join(" · ", new[] { source, DescribePorts(ports, address), serviceDescription }.Where(part => !string.IsNullOrWhiteSpace(part)));
 
             output.Writer.TryWrite(new VfsEntry(display, NetworkPath.HostPath(hostName), VfsEntryKind.Host, Flags: flags, Description: description));
+        }
+
+        void ReleaseHeld(IEnumerable<IPAddress> manualAddresses)
+        {
+            List<Action> waiting;
+            lock (seenGate)
+            {
+                manualKeys.UnionWith(manualAddresses.Select(address => address.ToString()));
+                waiting = held ?? [];
+                held = null;
+            }
+
+            foreach (var row in waiting)
+            {
+                row();
+            }
         }
 
         // Each source swallows its own cancellation: an exception escaping a Task.Run lambda stops a debugger
@@ -312,7 +374,7 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
         discovery.CancelAfter(DiscoveryBudget);
         var token = discovery.Token;
         var sources = Task.WhenAll(
-            Task.Run(() => EmitManualHostsAsync(Emit, token), CancellationToken.None),
+            Task.Run(() => EmitManualHostsAsync(manual.Hosts, manualSource, Emit, ReleaseHeld, token), CancellationToken.None),
             Task.Run(() => EmitCachedHostsAsync(Emit, token), CancellationToken.None),
             Task.Run(() => EmitBrowserServersAsync(Emit, token), CancellationToken.None),
             Task.Run(() => EmitScanAsync(Emit, token), CancellationToken.None),
@@ -344,13 +406,12 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
         try
         {
             // Hosts with a DNS name first: the cache may also hold the same address from a visit when it had no name,
-            // and the first one emitted wins.
+            // and the first one emitted wins. Within each group the hosts are checked side by side.
             var hosts = await _index.GetHostsAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var host in hosts.OrderBy(h => IPAddress.TryParse(h.Host, out _)))
+            using var gate = new SemaphoreSlim(16);
+            foreach (var group in hosts.GroupBy(h => IPAddress.TryParse(h.Host, out _)).OrderBy(g => g.Key))
             {
-                var address = host.Address is not null && IPAddress.TryParse(host.Address, out var parsed) ? parsed : null;
-                var display = IPAddress.TryParse(host.Host, out _) ? host.Host : DiscoveredHost.ShortName(host.Host);
-                emit(display, host.Host, address, host.OpenPorts, VfsEntryFlags.Cached);
+                await Task.WhenAll(group.Select(host => EmitCachedHostAsync(host, gate, emit, cancellationToken))).ConfigureAwait(false);
             }
         }
         catch (Exception)
@@ -358,6 +419,50 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
             // The cache is an accelerator; live discovery still runs. Cancellation also ends here quietly: these
             // sources run inside Task.Run, and the listing reports the cancellation itself.
         }
+    }
+
+    /// <summary>
+    /// A remembered host is checked before it is listed: the ports it had open are tried again, so its row says whether
+    /// it answers now. Without an address or ports to try, with discovery off, or when the check is cut short, the
+    /// row only says it is remembered. Never throws.
+    /// </summary>
+    private async Task EmitCachedHostAsync(NetworkHostRecord host, SemaphoreSlim gate, HostSink emit, CancellationToken cancellationToken)
+    {
+        var address = host.Address is not null && IPAddress.TryParse(host.Address, out var parsed) ? parsed : null;
+        var display = IPAddress.TryParse(host.Host, out _) ? host.Host : DiscoveredHost.ShortName(host.Host);
+        var ports = host.OpenPorts;
+        var source = Loc.T("Zapamiętany z wcześniejszego wykrycia");
+        if (LanDiscoveryEnabled && address is not null && host.OpenPorts.Count > 0)
+        {
+            try
+            {
+                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    ports = await _scanner.ProbeHostAsync(address, host.OpenPorts, _scanner.NeighbourConnectTimeout, cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    gate.Release();
+                }
+
+                if (ports.Count > 0)
+                {
+                    source = Loc.T("Odpowiada · zapamiętany wcześniej");
+                    _index?.UpsertHost(host with { OpenPorts = ports, LastSeen = DateTimeOffset.UtcNow });
+                }
+                else
+                {
+                    source = Loc.T("Nie odpowiada · ostatnio widziany {0}", host.LastSeen.ToLocalTime().ToString("d", System.Globalization.CultureInfo.CurrentCulture));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Navigation away or the discovery budget: listed unchecked.
+            }
+        }
+
+        emit(display, host.Host, address, ports, VfsEntryFlags.Cached, source);
     }
 
     private async Task EmitBrowserServersAsync(HostSink emit, CancellationToken cancellationToken)
@@ -382,46 +487,81 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
 
         foreach (var name in names)
         {
-            emit(name.ToUpperInvariant(), name, null, [], VfsEntryFlags.None);
+            emit(name.ToUpperInvariant(), name, null, [], VfsEntryFlags.None, Loc.T("Wykryty przez otoczenie sieciowe Windows"));
         }
     }
 
-    private async Task EmitManualHostsAsync(HostSink emit, CancellationToken cancellationToken)
+    /// <summary>The local addresses of each host of the file; none when discovery is off or the name does not resolve. Never throws.</summary>
+    private async Task<Dictionary<LanHostSetting, IPAddress[]>> ResolveManualHostsAsync(IReadOnlyList<LanHostSetting> hosts, CancellationToken cancellationToken)
     {
+        var resolved = await Task.WhenAll(hosts.Select(async Task<IPAddress[]> (saved) =>
+        {
+            try
+            {
+                return LanDiscoveryEnabled ? await ResolveLocalAddressesAsync(saved.Host, cancellationToken).ConfigureAwait(false) : [];
+            }
+            catch (OperationCanceledException)
+            {
+                return [];
+            }
+        })).ConfigureAwait(false);
+        return hosts.Zip(resolved).DistinctBy(pair => pair.First).ToDictionary(pair => pair.First, pair => pair.Second);
+    }
+
+    /// <summary>
+    /// Every host of the file is listed, whatever happens to its probe: the other sources leave these hosts to this one,
+    /// so a probe cut short by the discovery budget still ends in a row (without the port details).
+    /// </summary>
+    /// <param name="resolved">Called once with the addresses of the file's hosts, before any of them is probed.</param>
+    private async Task EmitManualHostsAsync(IReadOnlyList<LanHostSetting> saved, string source, HostSink emit, Action<IEnumerable<IPAddress>> resolved, CancellationToken cancellationToken)
+    {
+        Dictionary<LanHostSetting, IPAddress[]> hosts = [];
         try
         {
-            await Parallel.ForEachAsync(
-                LanHosts.ToArray(),
-                new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
-                async (saved, token) =>
+            hosts = await ResolveManualHostsAsync(saved, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            resolved(hosts.Values.SelectMany(addresses => addresses)); // the other sources' rows wait for this
+        }
+
+        using var gate = new SemaphoreSlim(8);
+        await Task.WhenAll(hosts.Select(async pair =>
+        {
+            var (host, addresses) = pair;
+            string? description = null;
+            try
+            {
+                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
                 {
-                    var addresses = LanDiscoveryEnabled
-                        ? await ResolveLocalAddressesAsync(saved.Host, token).ConfigureAwait(false)
-                        : [];
                     var scanPorts = ScanPopularPorts ? CommonServicePorts : _scanner.Ports;
-                    var openPorts = addresses.Length == 0
-                        ? []
-                        : (await Task.WhenAll(addresses.Select(address =>
-                            _scanner.ProbeHostAsync(address, scanPorts, _scanner.NeighbourConnectTimeout, token))).ConfigureAwait(false))
-                            .SelectMany(ports => ports)
-                            .Distinct()
-                            .Order()
-                            .ToArray();
-                    var address = addresses.FirstOrDefault();
-                    var description = !LanDiscoveryEnabled
-                        ? Loc.T("Host dodany ręcznie · wykrywanie usług jest wyłączone.")
+                    var openPorts = (await Task.WhenAll(addresses.Select(address =>
+                            _scanner.ProbeHostAsync(address, scanPorts, _scanner.NeighbourConnectTimeout, cancellationToken))).ConfigureAwait(false))
+                        .SelectMany(ports => ports)
+                        .Distinct()
+                        .Order()
+                        .ToArray();
+                    description = !LanDiscoveryEnabled
+                        ? Loc.T("wykrywanie usług jest wyłączone")
                         : addresses.Length == 0
                             ? Loc.T("Nie znaleziono lokalnego adresu IPv4; host nie był skanowany.")
                         : openPorts.Length == 0
-                            ? Loc.T("Host dodany ręcznie · nie wykryto typowych usług TCP.")
+                            ? Loc.T("nie wykryto typowych usług TCP")
                             : Loc.T("Otwarte porty TCP: {0}", string.Join(", ", openPorts.Select(port => $"{port} ({DescribePort(port)})")));
-                    emit(saved.Name, saved.Host, address, [], VfsEntryFlags.None, description);
-                }).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // Navigation away and the discovery budget both end the user-added host probes quietly.
-        }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Navigation away or the discovery budget: the host is listed without its services.
+            }
+
+            emit(host.Name, host.Host, addresses.FirstOrDefault(), [], VfsEntryFlags.None, source, description);
+        })).ConfigureAwait(false);
     }
 
     private static async Task<IPAddress[]> ResolveLocalAddressesAsync(string host, CancellationToken cancellationToken)
@@ -467,7 +607,7 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
                 cancellationToken,
                 ScanPopularPorts ? CommonServicePorts : null).ConfigureAwait(false))
             {
-                emit(host.DisplayName, host.HostName, host.Address, host.OpenPorts, VfsEntryFlags.None);
+                emit(host.DisplayName, host.HostName, host.Address, host.OpenPorts, VfsEntryFlags.None, Loc.T("Wykryty skanem sieci"));
                 _index?.UpsertHost(new NetworkHostRecord(
                     host.HostName,
                     host.Address.ToString(),
@@ -506,7 +646,7 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
                 var first = group.First();
                 var host = first.Address?.ToString() ?? first.HostName;
                 var display = first.Address is null ? DiscoveredHost.ShortName(first.HostName) : first.Address.ToString();
-                emit(display, host, first.Address, [], VfsEntryFlags.None, DescribeServices(group));
+                emit(display, host, first.Address, [], VfsEntryFlags.None, Loc.T("Ogłoszony przez mDNS"), DescribeServices(group));
             }
         }
         catch (OperationCanceledException)
@@ -521,7 +661,8 @@ public sealed class NetworkNeighborhoodVfsPlugin : IVfsProviderPlugin, IVfsChang
 
     private async IAsyncEnumerable<VfsEntry> EnumerateHostAsync(string host, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        foreach (var saved in LanHosts.Where(saved => string.Equals(saved.Host, host, StringComparison.OrdinalIgnoreCase)))
+        var manual = await ReadLanHostsAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var saved in manual.Hosts.Where(saved => string.Equals(saved.Host, host, StringComparison.OrdinalIgnoreCase)))
         {
             foreach (var service in saved.Services)
             {

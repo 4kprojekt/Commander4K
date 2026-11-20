@@ -440,6 +440,7 @@ public sealed class AppHost : IAsyncDisposable
                     new ExternalToolsService(toolsTask.Result),
                     indexTask.Result);
                 host.KeyBindings = new Dictionary<string, string>(keymapTask.Result.Bindings, StringComparer.OrdinalIgnoreCase);
+                await host.EnsureLanHostsFileAsync(cancellationToken).ConfigureAwait(false);
                 host.PluginCatalog.Load();
                 _ = Task.Run(() => host.PluginCatalog.RefreshAsync(host.Settings.PluginCatalogUrl), CancellationToken.None);
                 await host.PowerShell.ReloadAsync(cancellationToken).ConfigureAwait(false);
@@ -455,11 +456,39 @@ public sealed class AppHost : IAsyncDisposable
 
     public Task SaveSettingsAsync() => Config.SaveSettingsAsync(Settings);
 
-    /// <summary>Pushes settings that live inside plugins (saved connections, manual LAN hosts, discovery).</summary>
+    /// <summary>
+    /// The LAN hosts added by hand live in <c>config/lan/LAN.c4k</c> (<see cref="LanHostsFile"/>). The file is written
+    /// when it is missing, with the hosts older versions kept in settings.json, which then lets go of them.
+    /// </summary>
+    private async Task EnsureLanHostsFileAsync(CancellationToken cancellationToken)
+    {
+        var file = LanHostsFile.PathIn(Config.ConfigDirectory);
+        try
+        {
+            if (File.Exists(file))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            await File.WriteAllTextAsync(file, LanHostsFile.Write(null, Settings.LanHosts), cancellationToken).ConfigureAwait(false);
+            if (Settings.LanHosts.Count > 0)
+            {
+                Settings.LanHosts = [];
+                await SaveSettingsAsync().ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A read-only config folder: the LAN list works without hand-added hosts.
+        }
+    }
+
+    /// <summary>Pushes settings that live inside plugins (saved connections, the LAN hosts file, discovery).</summary>
     public void ApplySettings()
     {
         Network.SavedConnections = [.. Settings.Connections.Select(c => new SavedConnection(c.Name, c.Path))];
-        Network.LanHosts = Settings.LanHosts;
+        Network.LanHostsPath = LanHostsFile.PathIn(Config.ConfigDirectory);
         Network.ScanPopularPorts = Settings.LanScanPopularPorts;
         Network.LanDiscoveryEnabled = Settings.LanDiscovery;
         foreach (var folders in BuiltInPreviews.OfType<FolderPreviewPlugin>())

@@ -13,5 +13,10 @@ public static class EditorCards
         new(WidgetCards.Note, "A note; text from options.text or from the text file in open.",
             [new OptionContribution("text", "string", "The note text (otherwise the file named in open).")]),
         new(WidgetCards.Disks, "Fixed disks with free space; open limits it to one disk.", []),
+        new(FolderViewIds.Ssh, "A Linux server over SSH (open = sftp://…): load, memory and disks. An sftp:// link is this card by default; \"card\": false makes it a plain shortcut.",
+        [
+            new OptionContribution("show", "array", "The readings to show, from: status, load, cpu, memory, disks, uptime. Default: load, memory, disks."),
+            new OptionContribution("autoConnect", "boolean", "false = the tile connects only after its \"Połącz\" button. Default: true."),
+        ]),
     ];
 }

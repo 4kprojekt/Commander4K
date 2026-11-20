@@ -77,6 +77,13 @@ public sealed class SqliteIndexServiceTests : IAsyncLifetime
 
         var host = Assert.Single(await _index.GetHostsAsync(TestToken));
         Assert.Equal([445, 22], host.OpenPorts);
+        _index.RemoveHost("192.168.1.10"); // by address; the name works too
+        await _index.FlushAsync();
+        Assert.Empty(await _index.GetHostsAsync(TestToken));
+        _index.UpsertHost(new NetworkHostRecord("NAS", "192.168.1.10", [445], DateTimeOffset.UtcNow));
+        _index.ClearHosts();
+        await _index.FlushAsync();
+        Assert.Empty(await _index.GetHostsAsync(TestToken));
 
         var size = await _index.GetDirectorySizeAsync(@"c:\big", TestToken);
         Assert.Equal(123_456, size?.Bytes);

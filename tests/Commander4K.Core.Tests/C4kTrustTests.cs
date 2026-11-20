@@ -73,7 +73,8 @@ public sealed class C4kTrustTests : IDisposable
         Assert.True(item.NeedsTrust);
         Assert.Equal(["SFTP sftp://kamil@vps.example.com/home"], item.TrustSummary());
         Assert.False(Item("""{ "open": "C:\x", "card": true }""").NeedsTrust);
-        Assert.False(Item("""{ "open": "sftp://kamil@vps.example.com/home" }""").NeedsTrust);
+        Assert.True(Item("""{ "open": "sftp://kamil@vps.example.com/home" }""").NeedsTrust); // an ssh card by default: its tile signs in
+        Assert.False(Item("""{ "open": "sftp://kamil@vps.example.com/home", "card": false }""").NeedsTrust);
     }
 
     [Fact]

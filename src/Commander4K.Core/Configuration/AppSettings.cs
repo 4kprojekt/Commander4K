@@ -22,7 +22,7 @@ public sealed class ConnectionSetting
     public string? Secret { get; set; }
 }
 
-/// <summary>A host explicitly added to the LAN list, whose common service ports are checked on discovery.</summary>
+/// <summary>A host explicitly added to the LAN list (an entry of <see cref="LanHostsFile"/>), whose common service ports are checked on discovery.</summary>
 public sealed class LanHostSetting
 {
     public string Name { get; set => field = value ?? string.Empty; } = string.Empty;
@@ -140,6 +140,7 @@ public sealed class AppSettings
     public List<ConnectionSetting> Connections { get; set; } = [];
 
     /// <summary>User-added local hosts shown in the LAN network group.</summary>
+    /// <summary>Only read from older settings: the hosts now live in <c>config/lan/LAN.c4k</c> (<see cref="LanHostsFile"/>).</summary>
     public List<LanHostSetting> LanHosts { get; set; } = [];
 
     /// <summary>Also probe common TCP service ports during an explicit LAN IP scan.</summary>

@@ -64,6 +64,23 @@ public sealed class C4kViewsTests
     }
 
     [Fact]
+    public void A_link_to_an_ssh_server_is_an_ssh_card_unless_the_file_says_otherwise()
+    {
+        Assert.Equal("ssh", Parse("""{ "open": "sftp://root@h" }""").Card);
+        Assert.True(Parse("""{ "open": "sftp://root@h" }""").NeedsTrust); // it signs in, so it waits for "Zezwól"
+        Assert.Null(Parse("""{ "open": "sftp://root@h", "card": false }""").Card);
+        Assert.Equal("files", Parse("""{ "open": "sftp://root@h", "card": "files" }""").Card);
+        Assert.Null(Parse("""{ "open": "ftp://h" }""").Card);
+        Assert.Null(Parse("""{ "open": "C:\\Data" }""").Card);
+        Assert.Null(Parse("""{ "view": "terminal", "open": "sftp://root@h" }""").Card);
+
+        // With views the default entry is the card, and the file's trust covers it even without a monitor view.
+        var views = Parse("""{ "open": "sftp://root@h", "views": [ { "view": "terminal" }, { "default": true } ] }""");
+        Assert.Equal("ssh", views.Card);
+        Assert.True(views.NeedsTrust);
+    }
+
+    [Fact]
     public void Trust_is_shared_by_every_view_and_monitor_needs_it()
     {
         var item = Parse("""{ "open": "sftp://h", "user": "root", "views": [ { "view": "monitor" }, { "default": true } ] }""");

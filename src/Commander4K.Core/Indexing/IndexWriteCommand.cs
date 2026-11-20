@@ -95,6 +95,25 @@ internal sealed record UpsertHostCommand(NetworkHostRecord Host) : IndexWriteCom
     }
 }
 
+internal sealed record RemoveHostCommand(string Host) : IndexWriteCommand
+{
+    public override void Execute(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = Create(connection, transaction, "DELETE FROM net_hosts WHERE host = $host COLLATE NOCASE OR address = $host;");
+        command.Parameters.AddWithValue("$host", Host);
+        command.ExecuteNonQuery();
+    }
+}
+
+internal sealed record ClearHostsCommand : IndexWriteCommand
+{
+    public override void Execute(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = Create(connection, transaction, "DELETE FROM net_hosts;");
+        command.ExecuteNonQuery();
+    }
+}
+
 internal sealed record SetDirectorySizeCommand(string Path, long Bytes, long Files, long UnixSeconds) : IndexWriteCommand
 {
     public override void Execute(SqliteConnection connection, SqliteTransaction transaction)

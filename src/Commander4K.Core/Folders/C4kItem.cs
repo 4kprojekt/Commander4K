@@ -256,6 +256,15 @@ public sealed record C4kItem
             }
 
             item = error is null ? item : item with { Error = error };
+
+            // A link to an SSH server is a live tile on a dashboard (the "ssh" card) unless the file names another
+            // card or says "card": false. Entries of "views" are parsed here too, so the file's trust covers it.
+            if (item is { Card: null, Kind: FolderActionKind.Open, CardTarget: { } server } && !root.TryGetProperty("card", out _)
+                && VfsPath.GetScheme(server) == "sftp")
+            {
+                item = item with { Card = FolderViewIds.Ssh };
+            }
+
             return root.TryGetProperty("views", out var views) ? WithViews(item, folder, fileName, root, views) : item;
         }
         catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException)

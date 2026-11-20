@@ -240,6 +240,15 @@ public sealed class RemoteTransferVfsPlugin : IVfsProviderPlugin, IAsyncDisposab
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _sessions.TryRemove(new KeyValuePair<string, Lazy<Task<IRemoteSession>>>(key, lazy));
+
+                // A server that refuses, times out or breaks the handshake is an I/O failure to every caller, like a
+                // dead disk or share: they catch IOException, and a SocketException once left a tile click unhandled
+                // and closed the app.
+                if (ex is System.Net.Sockets.SocketException or Renci.SshNet.Common.SshException or TimeoutException or FluentFTP.Exceptions.FtpException)
+                {
+                    throw new IOException($"{endpoint.Host}:{endpoint.Port}: {ex.Message}", ex);
+                }
+
                 throw;
             }
         }

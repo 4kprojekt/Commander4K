@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using Commander4K.Core.Configuration;
 using Commander4K.Plugins.BuiltIn.Network;
 using Commander4K.Plugins.BuiltIn.Remote;
 
@@ -10,6 +11,14 @@ namespace Commander4K.Plugins.Tests;
 public sealed class NetworkAndRemoteTests
 {
     private static CancellationToken TestToken => TestContext.Current.CancellationToken;
+
+    /// <summary>A LAN hosts file (<c>LAN.c4k</c>) with these hosts, in a throw-away folder.</summary>
+    private static string HostsFile(params LanHostSetting[] hosts)
+    {
+        var path = Path.Combine(Directory.CreateTempSubdirectory("c4k-lan-").FullName, LanHostsFile.FileName);
+        File.WriteAllText(path, LanHostsFile.Write(null, hosts));
+        return path;
+    }
 
     [Theory]
     [InlineData("net://", "Root", "", "")]
@@ -147,7 +156,7 @@ public sealed class NetworkAndRemoteTests
         var plugin = new NetworkNeighborhoodVfsPlugin
         {
             SavedConnections = [new SavedConnection("Home SSH", "sftp://user@home.lan/")],
-            LanHosts = [new Commander4K.Core.Configuration.LanHostSetting { Name = "MikroTik", Host = "192.168.1.1" }],
+            LanHostsPath = HostsFile(new LanHostSetting { Name = "MikroTik", Host = "192.168.1.1" }),
         };
 
         var entries = new List<PluginSdk.VfsEntry>();
@@ -166,7 +175,7 @@ public sealed class NetworkAndRemoteTests
         var plugin = new NetworkNeighborhoodVfsPlugin
         {
             LanDiscoveryEnabled = false,
-            LanHosts = [new Commander4K.Core.Configuration.LanHostSetting { Name = "MikroTik", Host = "192.168.1.1" }],
+            LanHostsPath = HostsFile(new LanHostSetting { Name = "MikroTik", Host = "192.168.1.1" }),
         };
 
         var entries = new List<PluginSdk.VfsEntry>();
@@ -178,8 +187,138 @@ public sealed class NetworkAndRemoteTests
         var host = Assert.Single(entries, e => e.Name == "MikroTik");
         Assert.Equal("net://192.168.1.1", host.Path);
         Assert.Contains("wyłączone", host.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("Dodany ręcznie (LAN.c4k)", host.Description, StringComparison.Ordinal); // every host says where it comes from
+        Assert.Equal(plugin.LanHostsPath, Assert.Single(entries, e => e.Path == NetworkNeighborhoodVfsPlugin.EditLanHostsPath).Description);
         Assert.Contains(NetworkNeighborhoodVfsPlugin.AddLanHostPath, entries.Select(e => e.Path));
         Assert.Contains(NetworkNeighborhoodVfsPlugin.ScanLanPath, entries.Select(e => e.Path));
+    }
+
+    [Fact]
+    public async Task A_host_of_the_file_keeps_its_name_when_the_cache_knows_it_too()
+    {
+        var folder = Directory.CreateTempSubdirectory("c4k-lan-index-").FullName;
+        await using var index = await Commander4K.Core.Indexing.SqliteIndexService.OpenAsync(Path.Combine(folder, "index.db"), TestToken);
+        index.UpsertHost(new Commander4K.Core.Indexing.NetworkHostRecord("192.168.1.1", "192.168.1.1", [80], DateTimeOffset.UtcNow));
+        index.UpsertHost(new Commander4K.Core.Indexing.NetworkHostRecord("nas.lan", "192.168.1.20", [445], DateTimeOffset.UtcNow));
+        await index.FlushAsync();
+        var plugin = new NetworkNeighborhoodVfsPlugin(index)
+        {
+            LanDiscoveryEnabled = false,
+            LanHostsPath = HostsFile(new LanHostSetting { Name = "MikroTik", Host = "192.168.1.1" }),
+        };
+
+        var entries = new List<PluginSdk.VfsEntry>();
+        await foreach (var entry in plugin.EnumerateAsync(NetworkNeighborhoodVfsPlugin.LanPath, TestToken))
+        {
+            entries.Add(entry);
+        }
+
+        var hosts = entries.Where(e => e.Kind == PluginSdk.VfsEntryKind.Host).ToList();
+        Assert.Equal(["MikroTik", "NAS"], hosts.Select(h => h.Name).Order());
+        Assert.StartsWith("Zapamiętany", hosts.Single(h => h.Name == "NAS").Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_host_of_the_file_given_by_name_absorbs_the_row_of_its_address()
+    {
+        var folder = Directory.CreateTempSubdirectory("c4k-lan-index-").FullName;
+        await using var index = await Commander4K.Core.Indexing.SqliteIndexService.OpenAsync(Path.Combine(folder, "index.db"), TestToken);
+        index.UpsertHost(new Commander4K.Core.Indexing.NetworkHostRecord("127.0.0.1", "127.0.0.1", [80], DateTimeOffset.UtcNow));
+        await index.FlushAsync();
+        var plugin = new NetworkNeighborhoodVfsPlugin(
+            index,
+            new LanScanner { Ports = [], ConnectTimeout = TimeSpan.FromMilliseconds(50), NeighbourConnectTimeout = TimeSpan.FromMilliseconds(50) },
+            EmptyServiceBrowser.Instance)
+        {
+            DiscoveryBudget = TimeSpan.FromMilliseconds(800),
+            LanHostsPath = HostsFile(new LanHostSetting { Name = "Ten komputer", Host = "localhost" }),
+        };
+
+        var entries = new List<PluginSdk.VfsEntry>();
+        await foreach (var entry in plugin.EnumerateAsync(NetworkNeighborhoodVfsPlugin.LanPath, TestToken))
+        {
+            entries.Add(entry);
+        }
+
+        // The cache answers long before the name resolves, and still only the file's row is shown.
+        Assert.Equal("net://localhost", Assert.Single(entries, e => e.Name == "Ten komputer").Path);
+        Assert.DoesNotContain(entries, e => e.Name == "127.0.0.1");
+    }
+
+    [Theory]
+    [InlineData("sftp")]
+    [InlineData("ftp")]
+    public async Task A_refused_connection_is_an_IOException_naming_the_port(string scheme)
+    {
+        // Callers (tile clicks, jobs, previews) catch IOException; the raw SocketException once closed the app.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop(); // nothing listens there now
+        await using var plugin = new RemoteTransferVfsPlugin();
+        plugin.SetCredentials($"{scheme}://me@127.0.0.1:{port}", new NetworkCredential("me", "secret"));
+
+        var error = await Assert.ThrowsAsync<IOException>(async () => await plugin.GetEntryAsync($"{scheme}://me@127.0.0.1:{port}/", TestToken));
+
+        Assert.Contains($"127.0.0.1:{port}", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Remembered_hosts_say_whether_they_still_answer()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var folder = Directory.CreateTempSubdirectory("c4k-lan-index-").FullName;
+        await using var index = await Commander4K.Core.Indexing.SqliteIndexService.OpenAsync(Path.Combine(folder, "index.db"), TestToken);
+        index.UpsertHost(new Commander4K.Core.Indexing.NetworkHostRecord("alive.test", "127.0.0.1", [port], DateTimeOffset.UtcNow.AddDays(-3)));
+        index.UpsertHost(new Commander4K.Core.Indexing.NetworkHostRecord("gone.test", "192.0.2.1", [445], DateTimeOffset.UtcNow.AddDays(-3))); // TEST-NET-1: nothing answers
+        await index.FlushAsync();
+        var plugin = new NetworkNeighborhoodVfsPlugin(
+            index,
+            new LanScanner { Ports = [], ConnectTimeout = TimeSpan.FromMilliseconds(50), NeighbourConnectTimeout = TimeSpan.FromMilliseconds(300) },
+            EmptyServiceBrowser.Instance)
+        {
+            DiscoveryBudget = TimeSpan.FromSeconds(2),
+        };
+
+        var entries = new List<PluginSdk.VfsEntry>();
+        await foreach (var entry in plugin.EnumerateAsync(NetworkNeighborhoodVfsPlugin.LanPath, TestToken))
+        {
+            entries.Add(entry);
+        }
+
+        Assert.StartsWith("Odpowiada", entries.Single(e => e.Name == "ALIVE").Description, StringComparison.Ordinal);
+        Assert.StartsWith("Nie odpowiada", entries.Single(e => e.Name == "GONE").Description, StringComparison.Ordinal);
+        Assert.Contains(entries, e => e.Path == NetworkNeighborhoodVfsPlugin.ForgetLanHostsPath);
+    }
+
+    [Fact]
+    public void Hosts_file_round_trips_and_keeps_the_rest_of_the_item()
+    {
+        const string Existing = """
+            {
+              // my LAN
+              "open": "net://?lan", "title": "Dom",
+              "options": { "other": 1, "hosts": [ { "host": "10.0.0.1" }, { "name": "no host" } ] }
+            }
+            """;
+
+        // An entry without a usable host is not listed, and is reported so that nothing rewrites the file over it.
+        var read = LanHostsFile.Parse(Existing);
+        Assert.Contains("entry 2", read.Error, StringComparison.Ordinal);
+        Assert.Equal(("10.0.0.1", "10.0.0.1"), (Assert.Single(read.Hosts).Name, read.Hosts[0].Host));
+        Assert.NotNull(LanHostsFile.Parse("""{ "options": { "hosts": [ { "host": "http://nas.lan:8080" } ] } }""").Error);
+        Assert.NotNull(LanHostsFile.Parse("""{ "options": { "hosts": "nas" } }""").Error);
+
+        var written = LanHostsFile.Write(Existing,
+            [new LanHostSetting { Name = "NAS", Host = "nas.lan", Services = [new() { Name = "WWW", Port = 5000, Scheme = "https" }] }]);
+        var root = System.Text.Json.Nodes.JsonNode.Parse(written)!;
+        Assert.Equal(("Dom", 1), ((string?)root["title"], (int)root["options"]!["other"]!));
+        var again = Assert.Single(LanHostsFile.Parse(written).Hosts);
+        Assert.Equal(("NAS", "nas.lan", 5000, "https"), (again.Name, again.Host, again.Services[0].Port, again.Services[0].Scheme));
+        Assert.Equal("net://?lan", Commander4K.Core.Folders.C4kItem.Parse(Path.GetTempPath(), "LAN.c4k", written).Open);
+        Assert.NotNull(LanHostsFile.Parse("{ nope").Error);
     }
 
     [Fact]
@@ -188,15 +327,12 @@ public sealed class NetworkAndRemoteTests
         var plugin = new NetworkNeighborhoodVfsPlugin
         {
             LanDiscoveryEnabled = false,
-            LanHosts =
-            [
-                new Commander4K.Core.Configuration.LanHostSetting
-                {
-                    Name = "Router",
-                    Host = "192.168.1.1",
-                    Services = [new Commander4K.Core.Configuration.LanHostServiceSetting { Name = "WWW", Port = 8080, Scheme = "http" }],
-                },
-            ],
+            LanHostsPath = HostsFile(new LanHostSetting
+            {
+                Name = "Router",
+                Host = "192.168.1.1",
+                Services = [new LanHostServiceSetting { Name = "WWW", Port = 8080, Scheme = "http" }],
+            }),
         };
 
         var entries = new List<PluginSdk.VfsEntry>();

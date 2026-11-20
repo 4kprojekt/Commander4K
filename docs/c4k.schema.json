@@ -69,7 +69,7 @@
     },
     "options": {
       "type": "object",
-      "description": "Passed to the plugin as options (preview.render, panel.load, preview.card)."
+      "description": "Passed to the plugin as options (preview.render, panel.load, preview.card). In config/lan/LAN.c4k (open: net://?lan) it holds the LAN hosts added by hand: hosts = [ { name, host, services: [ { name, scheme: http|https, port } ] } ]."
     },
     "api": {
       "$ref": "#/$defs/api"

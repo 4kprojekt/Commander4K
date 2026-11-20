@@ -610,7 +610,9 @@ public static class McpDashboardTools
           "as": "value" | "chart" | "status", "unit", "ok": ["ok","green"] } ] }`. `chart` adds a point on every refresh (a live line chart);
           `status` colours the card (ok values green, others red). Secrets: write `{secret:name}` in a header or the body (never in the url);
           the user enters the value once, it is stored encrypted. Methods other than GET/HEAD wait for the user's trust.
-        - `ssh`: CPU, memory, load, disks and uptime of a Linux server: `open` = sftp://user@host/, `user`, `keyFile`. Waits for the user's trust.
+        - `ssh`: a Linux server: `open` = sftp://user@host/, `user`, `keyFile`. `options.show` picks the readings from status, load, cpu, memory,
+          disks, uptime (default: load, memory, disks); `options.autoConnect: false` makes the tile wait for its "Połącz" button. An item whose
+          `open` is an sftp:// path is this card without saying so (`"card": false` = a plain shortcut). Waits for the user's trust.
         - Widgets (no folder needed): `clock` (`options.timeZone`: IANA or Windows id; refreshes every 15 s), `note` (`options.text`, or the
           start of the text file in `open`), `disks` (used/free space of this PC's disks, or of the disk holding `open`; every minute;
           amber from 90 %, red from 95 %).

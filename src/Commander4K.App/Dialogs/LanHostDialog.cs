@@ -16,7 +16,8 @@ public sealed class LanHostDialog : DialogWindow<LanHostSetting?>
     private readonly ComboBox _serviceScheme;
     private readonly TextBlock _status;
 
-    public LanHostDialog(SkinBrushes brushes) : base(Loc.T("Dodaj host LAN"), brushes, 520)
+    /// <param name="file">The file the host is written into, named in the dialog.</param>
+    public LanHostDialog(SkinBrushes brushes, string file) : base(Loc.T("Dodaj host LAN"), brushes, 520)
     {
         _name = new TextBox().PlaceholderText(Loc.T("np. MikroTik"));
         _host = new TextBox().PlaceholderText(Loc.T("adres IP lub nazwa, np. 192.168.1.1 albo mikrotik.lan"));
@@ -42,6 +43,8 @@ public sealed class LanHostDialog : DialogWindow<LanHostSetting?>
                 _servicePort.Col(2).Margin(6, 0, 0, 0)),
             new TextBlock().Text(Loc.T("Podaj usługę i port, aby dodać np. WWW do tego hosta. Skan popularnych portów ustawisz osobno w „Skanuj adresy IP”."))
                 .TextWrapping(TextWrapping.Wrap).Margin(0, 8, 0, 0),
+            Ds.Muted(brushes, Loc.T("Host zostanie zapisany w pliku {0}. Na liście LAN F4 otwiera ten plik, a F8 usuwa host.", file))
+                .TextWrapping(TextWrapping.Wrap).Margin(0, 8, 0, 0),
             _status.Margin(0, 8, 0, 0),
             ButtonRow(
                 (Loc.T("Dodaj"), Accept, true),
@@ -52,7 +55,7 @@ public sealed class LanHostDialog : DialogWindow<LanHostSetting?>
     private void Accept()
     {
         var host = _host.Text?.Trim() ?? string.Empty;
-        if (!IsValidHost(host))
+        if (!LanHostsFile.IsValidHost(host))
         {
             _status.Text = Loc.T("Podaj adres IPv4 albo nazwę hosta bez protokołu, portu i ścieżki.");
             _status.Foreground = Brushes.Error;
@@ -85,17 +88,5 @@ public sealed class LanHostDialog : DialogWindow<LanHostSetting?>
             Host = host,
             Services = services,
         });
-    }
-
-    private static bool IsValidHost(string host)
-    {
-        if (host.Length == 0 || host.Any(char.IsWhiteSpace) || host.IndexOfAny(['/', '\\', ':', '@']) >= 0)
-        {
-            return false;
-        }
-
-        return System.Net.IPAddress.TryParse(host, out var address)
-            ? address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
-            : Uri.CheckHostName(host) == UriHostNameType.Dns;
     }
 }

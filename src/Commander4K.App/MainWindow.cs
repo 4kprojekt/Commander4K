@@ -253,6 +253,8 @@ public sealed class MainWindow : Window
                 {
                     NetworkNeighborhoodVfsPlugin.AddLanHostPath => AddLanHostAsync(),
                     NetworkNeighborhoodVfsPlugin.ScanLanPath => ConfigureLanScanAsync(),
+                    NetworkNeighborhoodVfsPlugin.EditLanHostsPath => EditLanHostsAsync(),
+                    NetworkNeighborhoodVfsPlugin.ForgetLanHostsPath => ForgetLanHostsAsync(),
                     _ => ExecuteAsync(CommandIds.AddConnection),
                 };
             };
@@ -1471,6 +1473,14 @@ public sealed class MainWindow : Window
                 {
                     ssh["keyFile"] = key;
                 }
+
+                // The dashboard tile's settings are written out (they are the defaults), so the user sees what to edit or delete.
+                ssh["card"] = FolderViewIds.Ssh;
+                ssh["options"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["show"] = new System.Text.Json.Nodes.JsonArray([.. SshMonitor.DefaultShow.Select(reading => (System.Text.Json.Nodes.JsonNode)reading)]),
+                    ["autoConnect"] = true,
+                };
 
                 newItems.Add((HostOf(address, "ssh"), C4kWriter.Create(ssh)));
                 break;
@@ -3327,6 +3337,14 @@ public sealed class MainWindow : Window
             return;
         }
 
+        // Hosts of the LAN list are edited in the file that keeps the hand-added ones.
+        if (_active.ActiveTab.CurrentEntry is { Kind: VfsEntryKind.Host }
+            && string.Equals(_active.ActiveTab.Path, NetworkNeighborhoodVfsPlugin.LanPath, StringComparison.OrdinalIgnoreCase))
+        {
+            await EditLanHostsAsync();
+            return;
+        }
+
         if (_active.ActiveTab.CurrentEntry is not { Kind: VfsEntryKind.File } entry || !IsFileSystemPath(entry.Path))
         {
             Notify(Loc.T("Edycja działa dla plików na dyskach i udziałach sieciowych."));
@@ -4062,6 +4080,12 @@ public sealed class MainWindow : Window
             return;
         }
 
+        if (string.Equals(_active.ActiveTab.Path, NetworkNeighborhoodVfsPlugin.LanPath, StringComparison.OrdinalIgnoreCase))
+        {
+            await RemoveLanHostsAsync(targets); // hosts are entries of a file and of the cache, not files to delete
+            return;
+        }
+
         if (_host!.Settings.ConfirmDelete && !await new ConfirmDialog(_skins!.Current, Loc.T("Usuń"), Loc.T("Usunąć {0}? Tej operacji nie można cofnąć.", DescribeSelection(targets)), Loc.T("Usuń")).ShowAsync(this))
         {
             return;
@@ -4617,31 +4641,167 @@ public sealed class MainWindow : Window
 
     private async Task AddLanHostAsync()
     {
-        var host = await new LanHostDialog(_skins!.Current).ShowAsync(this);
+        var host = await new LanHostDialog(_skins!.Current, _host!.Network.LanHostsPath!).ShowAsync(this);
         if (host is null)
         {
             return;
         }
 
-        var hosts = _host!.Settings.LanHosts;
-        var existing = hosts.FindIndex(saved => string.Equals(saved.Host, host.Host, StringComparison.OrdinalIgnoreCase));
-        if (existing >= 0)
+        if (!await ChangeLanHostsAsync(hosts =>
+            {
+                var existing = hosts.FindIndex(saved => string.Equals(saved.Host, host.Host, StringComparison.OrdinalIgnoreCase));
+                if (existing >= 0)
+                {
+                    host.Services.InsertRange(0, hosts[existing].Services.Where(old =>
+                        host.Services.All(service => !SameService(old, service))));
+                    hosts[existing] = host;
+                }
+                else
+                {
+                    hosts.Add(host);
+                }
+            }))
         {
-            host.Services.InsertRange(0, hosts[existing].Services.Where(old =>
-                host.Services.All(service => !SameService(old, service))));
-            hosts[existing] = host;
-        }
-        else
-        {
-            hosts.Add(host);
+            return;
         }
 
-        _host.ApplySettings();
-        await _host.SaveSettingsAsync();
         Notify(host.Services.Count == 0
             ? Loc.T("Dodano host LAN: {0}.", host.Name)
             : Loc.T("Dodano usługę do hosta LAN: {0}.", host.Name));
         await ReloadLanPanelsAsync();
+    }
+
+    /// <summary>
+    /// Rewrites the hand-added LAN hosts (<c>config/lan/LAN.c4k</c>, <see cref="LanHostsFile"/>) with a changed list. A
+    /// file that does not parse is left alone, and one with comments is rewritten only after a question.
+    /// </summary>
+    private async Task<bool> ChangeLanHostsAsync(Action<List<LanHostSetting>> change)
+    {
+        var file = _host!.Network.LanHostsPath!;
+        // Disk errors are caught inside the pool lambdas (a debugger stops on anything that leaves one).
+        var (existing, readError) = await Task.Run<(string? Text, string? Error)>(() =>
+        {
+            try
+            {
+                return (File.Exists(file) ? File.ReadAllText(file) : null, (string?)null);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return (null, ex.Message);
+            }
+        });
+        var content = existing is null ? new LanHostsFile.Content([], readError) : LanHostsFile.Parse(existing);
+        if (content.Error is { } error)
+        {
+            Notify(Loc.T("Błąd w pliku {0}: {1}", file, error), isError: true);
+            return false;
+        }
+
+        if (existing is not null && C4kWriter.HasComments(existing)
+            && !await new ConfirmDialog(_skins!.Current, Loc.T("Zapisać plik .c4k?"),
+                Loc.T("{0} ma komentarze; zapis listy hostów je usunie.", file), Loc.T("Zapisz")).ShowAsync(this))
+        {
+            return false;
+        }
+
+        var hosts = content.Hosts.ToList();
+        change(hosts);
+        var writeError = await Task.Run<string?>(() =>
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                File.WriteAllText(file, LanHostsFile.Write(existing, hosts));
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return ex.Message;
+            }
+        });
+        if (writeError is not null)
+        {
+            Notify(Loc.T("Nie można zapisać {0}: {1}", file, writeError), isError: true);
+        }
+
+        return writeError is null;
+    }
+
+    /// <summary>
+    /// F8 on the LAN list. A host added by hand leaves its file; a remembered one is forgotten. A host that is on the
+    /// network right now comes back with the next scan, which the question says.
+    /// </summary>
+    private async Task RemoveLanHostsAsync(IReadOnlyList<VfsEntry> targets)
+    {
+        var names = targets.Where(t => t.Kind == VfsEntryKind.Host).Select(t => NetworkNeighborhoodVfsPlugin.HostOf(t.Path)).OfType<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (names.Count == 0)
+        {
+            return;
+        }
+
+        var host = _host!;
+        if (host.Settings.ConfirmDelete && !await new ConfirmDialog(_skins!.Current, Loc.T("Usuń"),
+                Loc.T("Usunąć {0} z listy LAN?", string.Join(", ", names)) + "\n\n" +
+                Loc.T("Host dodany ręcznie zniknie z pliku {0}. Host wykryty w sieci zostanie zapomniany i wróci na listę, gdy skanowanie znów go znajdzie.", host.Network.LanHostsPath!),
+                Loc.T("Usuń")).ShowAsync(this))
+        {
+            return;
+        }
+
+        var manual = await Task.Run(() => host.Network.ReadLanHostsAsync(CancellationToken.None));
+        if (manual.Hosts.Any(saved => names.Contains(saved.Host)) && !await ChangeLanHostsAsync(hosts => hosts.RemoveAll(saved => names.Contains(saved.Host))))
+        {
+            return;
+        }
+
+        if (host.Index is { } index)
+        {
+            foreach (var name in names)
+            {
+                index.RemoveHost(name);
+            }
+
+            await index.FlushAsync(); // the reload below reads the cache
+        }
+
+        _active.ActiveTab.Marked.Clear();
+        await ReloadLanPanelsAsync();
+    }
+
+    /// <summary>"Clear remembered hosts" on the LAN list: empties the host cache; the scan fills it again with what is on the network.</summary>
+    private async Task ForgetLanHostsAsync()
+    {
+        if (_host!.Index is not { } index
+            || !await new ConfirmDialog(_skins!.Current, Loc.T("Wyczyść zapamiętane hosty"),
+                Loc.T("Usunąć wszystkie hosty zapamiętane z wcześniejszych skanowań? Hosty, które są teraz w sieci, wrócą po skanowaniu. Hosty dodane ręcznie zostają."),
+                Loc.T("Wyczyść")).ShowAsync(this))
+        {
+            return;
+        }
+
+        index.ClearHosts();
+        await index.FlushAsync(); // the reload below reads the cache
+        await ReloadLanPanelsAsync();
+    }
+
+    /// <summary>The LAN hosts file in the <c>.c4k</c> editor (the external editor without the WebView2 runtime).</summary>
+    private async Task EditLanHostsAsync()
+    {
+        var file = _host!.Network.LanHostsPath!;
+        if (!await Task.Run(() => File.Exists(file)) && !await ChangeLanHostsAsync(_ => { }))
+        {
+            return;
+        }
+
+        if (Browser.WebView2Host.RuntimeVersion() is not null)
+        {
+            await OpenItemEditorAsync(file);
+        }
+        else if (await _host.Tools.EditAsync(file) is { Launched: false } result)
+        {
+            Notify(result.Error ?? Loc.T("Nie udało się uruchomić edytora."), isError: true);
+        }
     }
 
     private async Task ConfigureLanScanAsync()

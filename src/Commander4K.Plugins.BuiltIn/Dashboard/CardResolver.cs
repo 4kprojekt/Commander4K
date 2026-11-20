@@ -59,7 +59,18 @@ public sealed class CardResolver(
         if (string.Equals(card, FolderViewIds.Ssh, StringComparison.OrdinalIgnoreCase))
         {
             return target is not null && VfsPath.GetScheme(target) == "sftp"
-                ? Guarded(tile, (previous, ct) => ssh.LoadCardAsync(target, tile.Options, previous, ct, tile.Resolve, tile.User, tile.KeyFile))
+                ? Guarded(tile, (previous, ct) => ssh.LoadCardAsync(target, tile.Options, previous, ct, tile.Resolve, tile.User, tile.KeyFile, everything: tile.IsServerView)) with
+                {
+                    Invoke = (action, _, _) =>
+                    {
+                        if (action == SshMonitor.ConnectAction)
+                        {
+                            ssh.Connect(target);
+                        }
+
+                        return Task.CompletedTask;
+                    },
+                }
                 : Fixed(ErrorCard(Loc.T("Karta „ssh” potrzebuje „open” ze ścieżką sftp://.")));
         }
 

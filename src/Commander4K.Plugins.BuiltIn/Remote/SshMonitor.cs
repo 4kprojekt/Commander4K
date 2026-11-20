@@ -20,6 +20,45 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
 {
     private const string AuditId = "builtin.remote";
 
+    /// <summary>The card's own action (<c>c4k:plugin/connect</c>): the "Połącz" button of a tile with <c>autoConnect: false</c>.</summary>
+    public const string ConnectAction = "connect";
+
+    /// <summary>What <c>options.show</c> may list; a card without it shows <see cref="DefaultShow"/>, the monitor view all of it.</summary>
+    public static IReadOnlyList<string> ShowKeys { get; } = ["status", "load", "cpu", "memory", "disks", "uptime"];
+
+    public static IReadOnlyList<string> DefaultShow { get; } = ["load", "memory", "disks"];
+
+    /// <summary>Servers whose "Połącz" was pressed: their tiles connect until the last dashboard showing them goes away.</summary>
+    private readonly ConcurrentDictionary<string, byte> _connectAsked = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>"Połącz" on a tile with <c>autoConnect: false</c>: the next reads of that server connect.</summary>
+    public void Connect(string sftpPath)
+    {
+        if (TryKey(sftpPath) is { } key)
+        {
+            _connectAsked[key] = 0;
+        }
+    }
+
+    /// <summary><c>options.show</c> (a list of <see cref="ShowKeys"/>) and <c>options.autoConnect</c> (only <c>false</c> switches it off).</summary>
+    internal static (IReadOnlySet<string> Show, bool AutoConnect) CardOptions(string? optionsJson)
+    {
+        IEnumerable<string> show = DefaultShow;
+        var autoConnect = true;
+        if (optionsJson is not null)
+        {
+            using var options = JsonDocument.Parse(optionsJson);
+            if (options.RootElement.TryGetProperty("show", out var list) && list.ValueKind == JsonValueKind.Array)
+            {
+                show = [.. list.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!)];
+            }
+
+            autoConnect = !(options.RootElement.TryGetProperty("autoConnect", out var auto) && auto.ValueKind == JsonValueKind.False);
+        }
+
+        return (show.ToHashSet(StringComparer.OrdinalIgnoreCase), autoConnect);
+    }
+
     /// <summary>Card button target that opens the SSH terminal on the <c>sftp://</c> path after it.</summary>
     public const string TerminalPrefix = "c4k:ssh/";
 
@@ -49,8 +88,9 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
     /// <param name="resolvePath">Resolves a relative <c>keyFile</c> against the tile's folder; without it only <c>~</c> is expanded.</param>
     /// <param name="user">The item's own <c>user</c>, used when the options name none.</param>
     /// <param name="keyFile">The item's own <c>keyFile</c>, used when the options name none.</param>
+    /// <param name="everything">The monitor view: every reading, and it connects whatever the options say.</param>
     public async Task<PreviewCard> LoadCardAsync(string sftpPath, string? optionsJson, PreviewCard? previous, CancellationToken cancellationToken,
-        Func<string, string>? resolvePath = null, string? user = null, string? keyFile = null)
+        Func<string, string>? resolvePath = null, string? user = null, string? keyFile = null, bool everything = false)
     {
         CardAction[] actions = [new("SSH", TerminalPrefix + sftpPath), new("SFTP", sftpPath), new(Loc.T("Odśwież"), CardActions.Refresh)];
         RemoteEndpoint endpoint;
@@ -63,13 +103,19 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             return Card(CardStatus.Error, ex.Message, [], []);
         }
 
+        var key = endpoint.SessionKey;
+        var (show, autoConnect) = CardOptions(optionsJson);
+        if (!everything && !autoConnect && !_connectAsked.ContainsKey(key))
+        {
+            return Card(CardStatus.None, Loc.T("Nie połączono."), [], [new(Loc.T("Połącz"), PreviewActionTargets.PluginPrefix + ConnectAction), .. actions[..2]]);
+        }
+
         var login = Login(optionsJson, user, keyFile, endpoint, resolvePath) ?? remote.LoginFor(sftpPath);
         if (login is null)
         {
             return Card(CardStatus.Error, Loc.T("Wymaga logowania."), [], actions);
         }
 
-        var key = endpoint.SessionKey;
         try
         {
             var client = await ClientAsync(key, endpoint, login, cancellationToken).ConfigureAwait(false);
@@ -77,7 +123,7 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             command.CommandTimeout = TimeSpan.FromSeconds(10);
             await command.ExecuteAsync(cancellationToken).ConfigureAwait(false);
             audit.Record(AuditId, "ssh.monitor", endpoint.Host);
-            return Describe(SshStatsParser.Parse(command.Result), previous, actions);
+            return Describe(SshStatsParser.Parse(command.Result), previous, actions, everything ? null : show);
         }
         catch (SshAuthenticationException)
         {
@@ -105,6 +151,7 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
         if (left == 0)
         {
             _holders.TryRemove(new KeyValuePair<string, int>(key, 0));
+            _connectAsked.TryRemove(key, out _);
             await DropAsync(key).ConfigureAwait(false);
         }
     }
@@ -223,9 +270,16 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
     }
 
     /// <param name="previous">This card's last result: CPU use is the difference from the counters read for it.</param>
-    internal PreviewCard Describe(SshStats stats, PreviewCard? previous, CardAction[] actions)
+    /// <param name="show">The readings to draw (<see cref="ShowKeys"/>); <c>null</c> = all, with the load only while there is no CPU reading yet.</param>
+    internal PreviewCard Describe(SshStats stats, PreviewCard? previous, CardAction[] actions, IReadOnlySet<string>? show = null)
     {
-        var items = new List<CardItem> { new CardValue(Loc.T("Status"), Loc.T("połączony"), CardStatus.Ok) };
+        bool Shows(string reading) => show is null || show.Contains(reading);
+        var items = new List<CardItem>();
+        if (Shows("status") || !stats.IsLinux)
+        {
+            items.Add(new CardValue(Loc.T("Status"), Loc.T("połączony"), CardStatus.Ok));
+        }
+
         if (!stats.IsLinux)
         {
             items.Add(new CardValue(Loc.T("System"), stats.System.Length > 0 ? stats.System : "?"));
@@ -236,30 +290,31 @@ public sealed class SshMonitor(RemoteTransferVfsPlugin remote, AuditLog audit) :
             ? SshStatsParser.CpuPercent(before, now)
             : null;
 
-        if (cpu is { } percent)
+        if (stats.LoadAverage.Length == 3 && (show is null ? cpu is null : show.Contains("load")))
+        {
+            items.Add(new CardValue(Loc.T("Obciążenie"), string.Join(" ", stats.LoadAverage.Select(l => l.ToString("0.00", CultureInfo.InvariantCulture)))));
+        }
+
+        if (cpu is { } percent && Shows("cpu"))
         {
             items.Add(new CardValue("CPU", $"{percent:0} %", percent >= 90 ? CardStatus.Warning : CardStatus.None));
             var chart = (previous?.Items.OfType<CardChart>().FirstOrDefault()?.Chart ?? new ChartData(ChartKind.Line, [], "%", 0, 100))
                 .Append("CPU", new ChartPoint(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, Math.Round(percent, 1)));
             items.Add(new CardChart(chart));
         }
-        else if (stats.LoadAverage.Length == 3)
-        {
-            items.Add(new CardValue(Loc.T("Obciążenie"), string.Join(" ", stats.LoadAverage.Select(l => l.ToString("0.00", CultureInfo.InvariantCulture)))));
-        }
 
-        if (stats.MemTotalKb > 0)
+        if (stats.MemTotalKb > 0 && Shows("memory"))
         {
             var used = stats.MemTotalKb - stats.MemAvailableKb;
             items.Add(new CardProgress(Loc.T("Pamięć"), (double)used / stats.MemTotalKb, $"{Gb(used)} / {Gb(stats.MemTotalKb)}"));
         }
 
-        foreach (var (mount, size, used) in stats.Disks.Where(d => d.SizeKb > 0).OrderByDescending(d => d.SizeKb).Take(3))
+        foreach (var (mount, size, used) in stats.Disks.Where(d => d.SizeKb > 0 && Shows("disks")).OrderByDescending(d => d.SizeKb).Take(3))
         {
             items.Add(new CardProgress(mount, (double)used / size, $"{(double)used / size:P0} · {Gb(size)}"));
         }
 
-        if (stats.Uptime > TimeSpan.Zero)
+        if (stats.Uptime > TimeSpan.Zero && Shows("uptime"))
         {
             items.Add(new CardValue(Loc.T("Czas pracy"), stats.Uptime.TotalDays >= 1
                 ? Loc.T("{0} d {1} h", (int)stats.Uptime.TotalDays, stats.Uptime.Hours)

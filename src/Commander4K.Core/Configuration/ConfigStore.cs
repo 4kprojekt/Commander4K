@@ -15,6 +15,7 @@ namespace Commander4K.Core.Configuration;
 [JsonSerializable(typeof(KeymapFile))]
 [JsonSerializable(typeof(ExternalToolsConfig))]
 [JsonSerializable(typeof(AppSettings))]
+[JsonSerializable(typeof(List<LanHostSetting>))]
 [JsonSerializable(typeof(Skin))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 internal sealed partial class ConfigJsonContext : JsonSerializerContext;

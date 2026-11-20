@@ -82,6 +82,37 @@ public sealed class SshMonitorTests
         Assert.Contains(card.Actions, a => a.Label == "SSH" && a.Target.StartsWith(SshMonitor.TerminalPrefix, StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Card_shows_load_memory_and_disks_unless_options_say_otherwise()
+    {
+        var stats = SshStatsParser.Parse("@@uname\nLinux\n@@loadavg\n0.10 0.20 0.30 1/1 1\n@@meminfo\nMemTotal: 8000000 kB\nMemAvailable: 6000000 kB\n@@uptime\n90000.00 1.00\n");
+        var remote = new RemoteTransferVfsPlugin();
+        var monitor = new SshMonitor(remote, new Commander4K.Core.Plugins.AuditLog(null));
+
+        var (show, autoConnect) = SshMonitor.CardOptions(null);
+        var byDefault = monitor.Describe(stats, null, [], show).Items;
+        var uptimeOnly = monitor.Describe(stats, null, [], SshMonitor.CardOptions("""{ "show": ["uptime"], "autoConnect": false }""").Show).Items;
+
+        Assert.True(autoConnect);
+        Assert.False(SshMonitor.CardOptions("""{ "autoConnect": false }""").AutoConnect);
+        Assert.Equal(["Obciążenie", "Pamięć"], byDefault.Select(i => i is Commander4K.PluginSdk.CardValue v ? v.Label : ((Commander4K.PluginSdk.CardProgress)i).Label));
+        Assert.Equal("Czas pracy", ((Commander4K.PluginSdk.CardValue)Assert.Single(uptimeOnly)).Label);
+    }
+
+    [Fact]
+    public async Task Card_with_autoConnect_off_waits_for_its_connect_button()
+    {
+        var remote = new RemoteTransferVfsPlugin();
+        await using var audit = new Commander4K.Core.Plugins.AuditLog(null);
+        await using var monitor = new SshMonitor(remote, audit);
+
+        // 192.0.2.1 is TEST-NET-1: a connection attempt would end as an error card, not as "Nie połączono.".
+        var card = await monitor.LoadCardAsync("sftp://root@192.0.2.1/", """{ "autoConnect": false }""", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal("Nie połączono.", card.Subtitle);
+        Assert.Equal(Commander4K.PluginSdk.PreviewActionTargets.PluginPrefix + SshMonitor.ConnectAction, card.Actions[0].Target);
+    }
+
     private static SshStats Reading(params long[] ticks) =>
         SshStatsParser.Parse($"@@uname\nLinux\n@@loadavg\n0.10 0.20 0.30 1/1 1\n@@stat\ncpu  {string.Join(' ', ticks)}\n");
 

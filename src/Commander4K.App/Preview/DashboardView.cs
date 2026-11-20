@@ -530,7 +530,7 @@ public sealed class DashboardView : ScrollViewer
 
             if ((card?.Subtitle ?? slot.Item.Description) is { Length: > 0 } subtitle)
             {
-                body.Children.Add(new TextBlock { Text = subtitle, FontSize = brushes.FontSize - 1, Foreground = brushes.MutedForeground, TextWrapping = TextWrapping.Wrap, MaxLines = 2 * Rows + 1 });
+                body.Children.Add(new TextBlock { Text = subtitle, FontSize = brushes.FontSize - 1, Foreground = card?.Status == CardStatus.Error ? brushes.Error : brushes.MutedForeground, TextWrapping = TextWrapping.Wrap, MaxLines = 2 * Rows + 1 });
             }
 
             if (card is { Items: [CardValue kpi] })

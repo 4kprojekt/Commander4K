@@ -129,6 +129,12 @@ public sealed class SqliteIndexService : IAsyncDisposable
 
     public void UpsertHost(NetworkHostRecord host) => Enqueue(new UpsertHostCommand(host));
 
+    /// <summary>Forgets a remembered LAN host, by its name or address; discovery adds it again when it sees it.</summary>
+    public void RemoveHost(string host) => Enqueue(new RemoveHostCommand(host));
+
+    /// <summary>Forgets every remembered LAN host.</summary>
+    public void ClearHosts() => Enqueue(new ClearHostsCommand());
+
     public void SetDirectorySize(string path, long bytes, long files) =>
         Enqueue(new SetDirectorySizeCommand(path, bytes, files, DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
 
